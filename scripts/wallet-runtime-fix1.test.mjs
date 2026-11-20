@@ -56,10 +56,10 @@ test("fix1 JB14 an older Inbox read cannot replace a newer permission decision",
   r.state.beforeInboxSummary=async()=>{r.state.beforeInboxSummary=null;entered();await gate;};
   await event(r); await held;
   await r.frame.getByRole("button",{name:"Allow",exact:true}).click();
-  await r.frame.getByRole("button",{name:"Turn Off",exact:true}).waitFor();
+  await r.frame.getByRole("button",{name:"Turn off internet access",exact:true}).waitFor();
   const response=r.page.waitForResponse(u=>u.url().endsWith("/api/apps/inbox/summary"));
   release(); await response; await settled(r);
-  assert.equal(await r.frame.getByRole("button",{name:"Turn Off",exact:true}).count(),1);
+  assert.equal(await r.frame.getByRole("button",{name:"Turn off internet access",exact:true}).count(),1);
   assert.equal(await r.frame.getByRole("button",{name:"Allow",exact:true}).count(),0);
 });
 
@@ -98,10 +98,11 @@ for (const presentation of ["window","rail"]) test(`fix1 Inbox background refres
 test("fix1 Wallet accounts remain visible when only requests are unavailable",async t=>{
   const r=await runtimeView(t,"wallet",{approvalsUnavailable:true,accounts:[{account_id:"external",chain_namespace:"eip155:20",address:request().address,
     connector_id:"wallet-walletconnect",proof_type:"siwe",wallet_display_name:"Trust Wallet",wallet_mark:"wallet"}]});
-  await r.frame.locator("#wallet-status").filter({hasText:"Wallet requests are unavailable."}).waitFor();
+  await r.frame.locator("#wallet-status").filter({hasText:"Wallet could not load your requests."}).waitFor();
   assert.equal(await r.frame.locator('.wallet-account .wallet-card-name').count(),1,"the independent account read is rendered before the request-read error");
   assert.equal(await r.frame.locator('.wallet-account .wallet-card-name').textContent(),"Trust Wallet");
   assert.equal(await r.frame.getByRole("button",{name:/Send/}).first().isEnabled(),true);
+  await r.capture("wallet-requests-unavailable-light-window.png");
 });
 
 test("fix1 removal dialog names its row and uses the shared removal sentence",async t=>{
@@ -114,7 +115,8 @@ test("fix1 removal dialog names its row and uses the shared removal sentence",as
   assert.equal(await identity.textContent(),"Trust Wallet");
   assert.equal(await identity.evaluate(el=>el.dir),"auto");
   assert.equal(await identity.evaluate(el=>getComputedStyle(el).unicodeBidi),"isolate");
-  assert.equal(await r.frame.getByText("Remove this account from Home. Your wallet and funds stay unchanged. Passkey confirmation is required.",{exact:true}).count(),1);
+  assert.equal(await r.frame.getByText("Remove this account from your Home. Your funds stay unchanged. This does not cancel a transaction in your wallet. Removing the last account connected through WalletConnect also clears Home's saved connection. Confirm with your passkey to remove the account.",{exact:true}).count(),1);
+  await r.capture("wallet-external-account-removal-light-window.png");
 });
 
 test("fix1 passkey-begin consent conflict keeps the fixed Inbox sentence",async t=>{
@@ -122,7 +124,7 @@ test("fix1 passkey-begin consent conflict keeps the fixed Inbox sentence",async 
     passkeyError:'request failed: 409 Conflict {"schema":"elastos.home.wallet-connector.effect.error/v1","code":"conflict"}'});
   await r.frame.getByRole("button",{name:"Allow",exact:true}).click();
   await r.frame.locator("#refresh:enabled").waitFor();
-  assert.equal(await r.frame.locator("#status-text").textContent(),"This request has changed. Refresh Inbox and review the current request.");
+  assert.equal(await r.frame.locator("#status-text").textContent(),"Refresh Inbox and review the current request before trying again.");
   assert.equal(r.calls.filter(c=>c.path.endsWith("/actions")&&c.input.action_id.includes("allow")).length,0);
 });
 
@@ -141,12 +143,10 @@ test("fix1 account-name branches after the external fallback are managed-only",a
   assert(!body.includes('connectorId ==='),"unreachable external connector branches have been removed");
 });
 
-test("fix1 request-kind titles match the Inbox producer",async()=>{
+test("fix1 request-kind titles stay consistent across account proof types",async()=>{
   const {requestTitle}=await import("../capsules/wallet/browser/wallet-format.js");
-  const titles={auth_challenge:"Wallet sign-in request",capability_grant:"Wallet access request",credential:"Credential signing request",
-    publish_envelope:"Publish approval request",transaction_intent:"Send transaction",browser_account_access:"Browser account access request",
-    browser_personal_sign:"Sign a message",browser_typed_data_sign:"Sign typed data",bitcoin_bip322_proof:"Bitcoin proof request",
-    revocation:"Revocation approval request",unknown:"Wallet approval request"};
+  const {rustRequestTitles,rustTitlePath}=await import('./lib/wallet-connection-title-oracle.mjs');
+  const titles=rustRequestTitles(await readFile(new URL('../'+rustTitlePath,import.meta.url),'utf8'));
   for(const [intent,title] of Object.entries(titles)) for(const proof_type of ["managed_evm","siwe"])
     assert.equal(requestTitle({intent,proof_type,connector_id:proof_type==="siwe"?"wallet-metamask":null}),title,intent);
 });

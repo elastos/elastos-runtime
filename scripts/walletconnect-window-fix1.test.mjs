@@ -35,7 +35,7 @@ for(const engine of ['chromium','webkit']){
   r.request('transaction',{intent:'transaction_intent'});await r.choose('transaction');await r.state('request-multiple');assert.equal(await r.frame.locator('main').getAttribute('data-request-id'),'transaction');assert.match(await r.frame.locator('main').innerText(),/Send transaction/);r.peer.choose({request:'reject'});await r.frame.getByRole('button',{name:/^Send to /}).click();await r.state('transaction-declined');
   assert.equal(r.fixture.state.approvals.find(row=>row.request_id==='transaction').status,'approved');
   await r.click('Back to connection');await r.state('linked');await r.choose('transaction');await r.state('transaction-declined');
-  await r.reopen();await r.state('linked');assert.doesNotMatch(await r.frame.locator('main').innerText(),/Transaction result unknown/,'approved recovery never owns the default screen');
+  await r.reopen();await r.state('linked');assert.doesNotMatch(await r.frame.locator('main').innerText(),/Home could not confirm the transaction result/,'approved recovery never owns the default screen');
   await r.click('Disconnect');await r.state('disconnected');await r.click('Connect wallet');await r.state('qr-shown');await r.click('Cancel');
  });
  for(const ending of ['refused','failed'])test(`next waiting request is reachable after ${ending} through visible controls in ${engine}`,windowTestOptions(engine,60000),async t=>{

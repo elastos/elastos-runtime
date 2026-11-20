@@ -1,4 +1,4 @@
-import { readText, relativeTime, requestTitle, requestingAppName, shortAddress } from "./wallet-format.js?v=wallet-20260523a";
+import { readText, relativeTime, requestTitle, requestOutcomeName, requestingAppName, shortAddress } from "./wallet-format.js?v=wallet-20260523a";
 
 export function createWalletActivity({ activityNode, textNode }) {
   function renderActivity(requests) {
@@ -53,22 +53,22 @@ export function activityTitle(request) {
   const status = readText(request.status);
   const capsule = requestingAppName(request);
   if (request.transaction_hash && status === "rejected" && decisionWasDismissed(request)) {
-    return `${capsule} · Sent from wallet after request was dismissed`;
+    return `${capsule} · Dismissed, but your wallet reported it as sent`;
   }
   if (request.transaction_hash) {
     return `${capsule} · Sent transaction`;
   }
   if (status === "completed") {
-    return `${capsule} · Approved ${requestTitle(request)}`;
+    return `${capsule} · Approved ${requestOutcomeName(request)}`;
   }
   if (status === "rejected") {
     if (request.intent === "transaction_intent" && decisionWasDismissed(request) && readText(request.connector_id)) {
       return `${capsule} · Dismissed transaction request`;
     }
-    return `${capsule} · Rejected ${requestTitle(request)}`;
+    return `${capsule} · Rejected ${requestOutcomeName(request)}`;
   }
   if (status === "expired") {
-    return `${capsule} · Expired ${requestTitle(request)}`;
+    return `${capsule} · Expired ${requestOutcomeName(request)}`;
   }
   return `${capsule} · ${requestTitle(request)}`;
 }
@@ -80,7 +80,7 @@ export function activitySubtitle(request) {
   }
   if (request.transaction_hash) {
     const dismissed = request.status === "rejected" && decisionWasDismissed(request);
-    parts.push(`tx ${dismissed ? readText(request.transaction_hash) : shortAddress(request.transaction_hash)}`);
+    parts.push(`Transaction hash: ${dismissed ? readText(request.transaction_hash) : shortAddress(request.transaction_hash)}`);
   } else if (request.reason) {
     parts.push(readText(request.reason));
   }

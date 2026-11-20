@@ -24,7 +24,6 @@ test('wallet_windows_state_producers_and_controls: render-only matrix', async t 
     assert(['window-local: produced by the window lane','reducer over shared fixture','provisional'].includes(row.origin));
     if(row.origin === 'provisional')assert(row.provisional.every(p=>p.startsWith('needs an example from the foundation lane:')));
   });
-  await t.test('actual producers and live controls await window lanes and N1/N2 review', {skip:'render-only enabling lane'},()=>{});
 });
 
 test('rule oracles reject deliberate broken states, one mutation per rule', () => {
@@ -160,7 +159,7 @@ test('known transaction refusal survives failed saving; failed hash recording ne
   const row=states.find(r=>r.designState==='metamask/transaction-access-error');
   for(const provider of ['settled-refused-recorded','settled-refused-recording_failed']){
     const v=fixtureView({...row,provider});
-    assert.equal(viewText(v.status),'Your browser wallet did not allow this transaction.');
+    assert.equal(viewText(v.status),'Your wallet did not allow this transaction.');
     assert(!/unknown|waiting/i.test(viewText(v.status)));
     assert.equal(v.focus,'outcome');assert(!v.actions.some(a=>a.id==='send-request'));
     if(provider.endsWith('recording_failed'))assert.match(viewText(v.notice),/Home cannot save that answer/);
@@ -191,7 +190,7 @@ test('import and model construction work with browser/effect globals forbidden',
     const {connectionView}=await import(process.argv[1]);
     const input=Object.freeze({window:'metamask',stage:'ready'});
     const view=connectionView(input);
-    if(view.title!=='Browser wallet')throw new Error('view');
+    if(view.title!=='MetaMask or Brave Wallet')throw new Error('view');
   `,new URL('../capsules/_shared/wallet-connection-view.mjs',import.meta.url).href],{encoding:'utf8',timeout:10000});
   assert.equal(result.status,0,result.stderr);
 });

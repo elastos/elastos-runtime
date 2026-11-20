@@ -7,12 +7,12 @@ import { productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 const root = new URL("../", import.meta.url);
 // Wording belongs to the real summary. Fixtures and assertions read that source.
 const source = await readFile(new URL("elastos/crates/elastos-server/src/api/gateway_update_notice.rs", root), "utf8");
-const copy = name => JSON.parse(source.match(new RegExp(`const ${name}: &str = ("[^"\\n]*");`))[1]);
+const copy = name => JSON.parse(source.match(new RegExp(`const ${name}: &str =\\s*("[^"\\n]*");`))[1]);
 const preference = (enabled, readable = true) => ({ enabled, readable, label:copy("SWITCH_LABEL"), save_error:copy("SAVE_ERROR"), message:copy(!readable ? "UNREADABLE_TEXT" : enabled ? "ON_TEXT" : "OFF_TEXT") });
 const release = "bafkreiaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const notice = () => ({ id:`home-update:${release}`, kind:"home_update_available", source_app:"system", severity:"info", read:false,
   title:copy("NOTICE_TITLE"), body:copy("NOTICE_BODY").replace("{version}","0.7.1"), created_at:1794826800, action_ref:null });
-const notes = ["# Home improvements", "Home tells you when a newer version was found.", "Review the release in System before installation.", "Read release notes before you approve.", "Keep your saved files through the update.", "Control background checks in System."];
+const notes = ["# Home improvements", "Home tells you when a newer version was found.", "Review the release in System before installation.", "Read release notes before you approve.", "Keep your saved files through the update.", "Control update checks in System."];
 
 async function fixture() {
   const state = { settings:preference(true), entry:notice(), actions:[], writes:[], approvals:[], holdReads:true, releases:[], guest:false, failWrite:false };
@@ -58,7 +58,7 @@ async function fixture() {
         if(state.entry)state.entry.read=true;
       } else if(action.action_id.startsWith("notification-dismiss:"))state.entry=null;
       else throw new Error("Notice attempted an approval");
-      jsonResponse(response,{message:"Saved."});return true;
+      jsonResponse(response,{message:"Done."});return true;
     }
     if (url.pathname === "/api/apps/system/summary") {
       const summary=makeSystemSummary(makeAppearanceRecord());summary.access.role=state.guest?"guest":"admin";
@@ -69,14 +69,15 @@ async function fixture() {
       if(summary.runtime_update && state.settings.message===copy("INVALID_VERSION_TEXT")) {
         summary.source.installed_version="broken";
         summary.runtime_update={configured:true,available:false,can_apply:false,checking:false,current_version:"broken",
-          message:"Installed release version is invalid. Run `elastos update --force` locally to install a verified signed release and repair it.",background_checks:state.settings};
+          message:copy("INVALID_VERSION_TEXT"),background_checks:state.settings,controller:state.updateController};
       }
       jsonResponse(response,summary);return true;
     }
     if (url.pathname === "/api/apps/system/update-background") {
       let body="";for await(const part of request)body+=part;const input=JSON.parse(body);
       state.writes.push({input,token:request.headers["x-elastos-home-token"]});
-      if(state.failWrite && state.failStatus==='drop')response.destroy();
+      if(state.failWrite && state.failStatus==='saved-drop'){state.settings=preference(input.enabled);response.destroy();}
+      else if(state.failWrite && state.failStatus==='drop')response.destroy();
       else if(state.failWrite)jsonResponse(response,{error:"Save failed"},state.failStatus||409);
       else{state.settings=preference(input.enabled);jsonResponse(response,state.settings);}return true;
     }
@@ -256,16 +257,20 @@ test("update notice uses real Inbox, bell and System navigation; switch saves an
     for(const status of [401,403]) {
       f.state.failStatus=status;
       await system.locator("label.system-switch:has(#update-background-choice)").click();
-      await system.getByText("Sign in as the Home owner to change background checks.",{exact:true}).waitFor();
+      await system.getByText("Sign in as an admin of this Home, then open System again from Home.",{exact:true}).waitFor();
       await system.locator('#update-background-choice:not(:disabled)').waitFor({state:'attached'});
     }
-    for(const status of [500,'drop']) {
+    for(const status of [500,'drop','saved-drop']) {
       f.state.failStatus=status;
       await system.locator("label.system-switch:has(#update-background-choice)").click();
       await system.locator('#update-background-choice:not(:disabled)').waitFor({state:'attached'});
-      await system.getByText('Home could not confirm the setting change. Try again.',{exact:true}).waitFor();
+      await system.getByText('Home could not confirm your change. Try again.',{exact:true}).waitFor();
       assert.equal(await system.getByText(copy('SAVE_ERROR'),{exact:true}).count(),0,'storage guidance belongs only to 409');
       await screen(page,'phone-no-answer',true);
+      if(status==='saved-drop') {
+        await system.getByText(copy(f.state.settings.enabled?'ON_TEXT':'OFF_TEXT'),{exact:true}).waitFor({timeout:8000});
+        assert.equal(await system.getByRole('switch',{name:copy('SWITCH_LABEL')}).isChecked(),f.state.settings.enabled,'a later read recovers the committed setting after its reply was lost');
+      }
     }
     // Feedback belongs to the complete setting state, even when its words stay the same.
     for(const field of ['enabled','readable','message']) {
@@ -273,9 +278,12 @@ test("update notice uses real Inbox, bell and System navigation; switch saves an
       f.state.settings=initial;f.state.failWrite=true;f.state.failStatus=409;
       await page.reload();
       await system.getByText(initial.message,{exact:true}).waitFor();
+      assert.equal(await system.getByText(initial.message,{exact:true}).count(),1,"the repair text appears once");
       await system.locator("label.system-switch:has(#update-background-choice)").click();
       await system.locator('#update-background-choice:not(:disabled)').waitFor({state:'attached'});
       await system.getByText(copy('SAVE_ERROR'),{exact:true}).waitFor();
+      assert.equal(await system.getByText(initial.message,{exact:true}).count(),1,'a save error keeps the broken-version explanation visible');
+      await screen(page,'phone-save-error-and-invalid-version',true);
       f.state.settings={...initial,[field]:field==='message'?copy('OFF_TEXT'):!initial[field]};
       await page.evaluate(()=>document.querySelector('#system-frame').contentWindow.postMessage({
         type:'elastos:runtime-events',schema:'elastos.home.runtime-events/v1',events:[],
@@ -329,4 +337,41 @@ test("update notice uses real Inbox, bell and System navigation; switch saves an
     assert.deepEqual(f.requestFailures,[]);
     await page.close();
   } finally {await browser.close();await f.close();}
+});
+
+test("System keeps repair paths and commands out of the setting hint", async () => {
+  const f=await fixture();const browser=await chromium.launch(productSmokeLaunchOptions());
+  try {
+    const page=await browser.newPage({viewport:{width:390,height:844}});
+    for(const stateName of ['FOLDER_TEXT','UNREADABLE_TEXT','INVALID_VERSION_TEXT']) {
+      f.state.settings={...preference(false,false),message:copy(stateName)};
+      await page.goto(f.baseUrl+'/fixture?settings=about');
+      const system=page.frameLocator('#system-frame');
+      await system.getByRole('switch',{name:copy('SWITCH_LABEL')}).waitFor();
+      const hint=await system.locator('#update-background-message').innerText();
+      assert.ok(hint.trim(),stateName+' keeps a next step');
+      if(stateName==='FOLDER_TEXT') assert.match(hint,/free disk space/,'folder failure keeps the common repair on screen');
+      assert.doesNotMatch(hint,/Local\/|notice\.json|\.notice\.lock|elastos update/);
+      if(stateName!=='UNREADABLE_TEXT')assert.match(hint,/Home's log/,'the helper can find the repair steps');
+    }
+    await page.close();
+  } finally {await browser.close();await f.close();}
+});
+
+
+test("System preserves failed-update feedback when the installed version is unreadable", async () => {
+  const f=await fixture();let browser;
+  try {
+    browser=await chromium.launch(productSmokeLaunchOptions());
+    f.state.settings={...preference(false),message:copy("INVALID_VERSION_TEXT")};
+    f.state.updateController={phase:"failed",message:"Home could not finish the update. Open System again to check its status."};
+    const page=await browser.newPage({viewport:{width:390,height:844}});
+    await page.goto(f.baseUrl+"/fixture?settings=about");
+    const system=page.frameLocator("#system-frame");
+    await system.locator("#update-background-message").getByText(copy("INVALID_VERSION_TEXT"),{exact:true}).waitFor();
+    assert.equal(await system.locator("#runtime-update-status").textContent(),f.state.updateController.message,
+      "drawing the background setting keeps the failed-update message visible");
+    assert.deepEqual(f.requestFailures,[]);
+    await page.close();
+  } finally {await browser?.close();await f.close();}
 });

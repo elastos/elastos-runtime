@@ -209,7 +209,7 @@ export function createWalletPreferences({
       `Remove ${displayName}?`,
       remove.dataset.walletAccountManaged === "true"
         ? "Built-in accounts require their Wallet recovery key to restore later. Passkey confirmation is required."
-        : "Remove this account from Home. Your wallet and funds stay unchanged. Passkey confirmation is required.",
+        : "Remove this account from your Home. Your funds stay unchanged. This does not cancel a transaction in your wallet. Removing the last account connected through WalletConnect also clears Home's saved connection. Confirm with your passkey to remove the account.",
       [textNode("p", remove.dataset.walletAccountDescription || "", "wallet-state")],
       [
         modalButton("Cancel", closeModal, true),

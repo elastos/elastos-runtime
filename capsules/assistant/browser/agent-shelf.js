@@ -330,7 +330,7 @@ function renderComposerAttachments() {
           : file.kind === "text"
             ? "Text"
             : file.text
-              ? `text · ${formatBytes(new TextEncoder().encode(String(file.text)).length)}`
+              ? `Text · ${formatBytes(new TextEncoder().encode(String(file.text)).length)}`
               : file.uri
                 ? "desktop · reference"
                 : `${formatBytes(file.size)}`;

@@ -91,7 +91,7 @@ export function createWalletAccountActions({
       );
     }
     rows.push(
-      flowRow("Delete account", "Remove from this Wallet", () => confirmDeleteAccount(account)),
+      flowRow("Delete account", "Delete from Wallet", () => confirmDeleteAccount(account)),
     );
     openFlowModal("Account", account.name, rows);
   }

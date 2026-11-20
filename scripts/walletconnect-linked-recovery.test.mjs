@@ -64,7 +64,7 @@ for(const engine of ['chromium','webkit']){
   r.fixture.state.expiredLaunch=true;await r.refresh();await r.state('window-expired');await r.capture('linked-window-expired');
   const text=(await r.frame.locator('main').innerText()).replace(/\s+/g,' ');
   assert.equal(text.match(/Close this window/g)?.length,1,'Home close advice replaces the old instruction');
-  assert.match(text,/Close this window with Home’s window controls, then choose WalletConnect in Wallet/);
+  assert.match(text,/Close this window with Home['’]s window controls, then choose WalletConnect in Wallet/);
   assert.equal(await r.frame.locator('button').count(),0);
  });
  test(`reopened linked window names the data it could not read in ${engine}`,windowTestOptions(engine,60000),async t=>{

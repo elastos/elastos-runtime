@@ -116,7 +116,7 @@ for (const engine of ['chromium','webkit']) test(`extension_request_feedback_in_
           // The design receipt is an independent control-order oracle.
           const labels=(expected?.inventory||[`Open ${view.request.app} [primary]`]).filter(s=>/\[(primary|quiet secondary|bordered secondary)\]$/.test(s)).filter(s=>!((facts.capability||facts.payment)&&s.startsWith('WalletConnect [')));
           const normalized=label=>{
-            const text=label.replace(/^\[mark:[^\]]+\]\s*/,'').replace(/\s+/g,' ');
+            const text=label.replace('Show Request','Show request').replace('Wallet activity','Activity in Wallet').replace(/^\[mark:[^\]]+\]\s*/,'').replace(/\s+/g,' ');
             return row.window==='panel'?text:text.replaceAll('MetaMask',view.account?.name||'MetaMask').replaceAll('UniSat',view.account?.name||'UniSat').replaceAll('Browser',view.request?.app||'Browser').replaceAll('Notes',view.request?.app||'Notes');
           };
           let expectedControls=labels.map(s=>({label:normalized(s.replace(/ \[(primary|quiet secondary|bordered secondary)\]$/,'')),primary:s.endsWith('[primary]')}));
@@ -209,10 +209,10 @@ for(const engine of ['chromium','webkit'])test(`isolated names share text baseli
     }
     const mark=document.querySelector('.connection-account-header .connection-heading img')?.getBoundingClientRect();
     const note=[...document.querySelectorAll('.connection-content > .connection-note')].at(-1),button=document.querySelector('.connection-content > .connection-actions [data-action="close-window"]');
-    return {baselines,mark:mark&&{width:mark.width,height:mark.height},gap:note&&button?note.getBoundingClientRect().top-button.getBoundingClientRect().bottom:null,computed:[...document.querySelectorAll('.connection-computed-detail')].map(e=>({text:e.textContent,hasAppLabel:!!e.querySelector('.connection-detail-label')})),app:[...document.querySelectorAll('.connection-context')].map(e=>e.textContent)};
+    return {baselines,mark:mark&&{width:mark.width,height:mark.height},gapBeforeClose:note&&button?button.getBoundingClientRect().top-note.getBoundingClientRect().bottom:null,computed:[...document.querySelectorAll('.connection-computed-detail')].map(e=>({text:e.textContent,hasAppLabel:!!e.querySelector('.connection-detail-label')})),app:[...document.querySelectorAll('.connection-context')].map(e=>e.textContent)};
    });
    if(name.includes('/request-')||name==='walletconnect/link-wait'){assert(measured.baselines.length,name+': baseline samples');assert(measured.baselines.every(b=>b.delta<=.5),name+': '+JSON.stringify(measured.baselines));}
-   if(name.endsWith('/linked')){assert.deepEqual(measured.mark,{width:36,height:36});if(name==='metamask/linked')assert(measured.gap>=8,'stop-sharing note has space after Close window');}
+   if(name.endsWith('/linked')){assert.deepEqual(measured.mark,{width:36,height:36});if(name==='metamask/linked')assert(measured.gapBeforeClose>=8,'the single stop-sharing notice has space before Close window');}
    if(name==='walletconnect/transaction-declined'){assert.equal(measured.computed.length,1);assert.equal(measured.computed[0].hasAppLabel,false);assert(!measured.computed[0].text.includes('From app:'));}
    assert(measured.app.every(text=>!text.includes('BrowserSite reported by Browser:')&&!text.includes('Browser  Site reported')),'Browser shown once');
    checks.push({name,...measured});

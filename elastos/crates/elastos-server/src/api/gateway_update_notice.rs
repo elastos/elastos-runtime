@@ -9,15 +9,22 @@ const MAX_STATE_BYTES: usize = 64 * 1024;
 const FIRST_WAIT: u64 = 3 * 60;
 const CHECK_INTERVAL: u64 = 6 * 60 * 60;
 const MAX_SPREAD: u64 = 60 * 60;
-const SWITCH_LABEL: &str = "Check for updates in the background";
-const ON_TEXT: &str = "Home tries a few checks each day; the source can see the internet address and check time, while your name and installed version stay private.";
-const OFF_TEXT: &str = "Background checks are off; System checks for updates while it is open.";
-const SAVE_ERROR: &str = "Home could not save background checks. On the device that runs Home, check free disk space, write access and private ownership of Local/Shared/System/Updates and its .notice.lock file inside this Home's data folder. Move notice.json aside if it is a folder, then try again.";
-const NOTICE_TITLE: &str = "Home update found";
-const NOTICE_BODY: &str = "Home {version} was found. Review the update in System.";
-const FOLDER_TEXT: &str = "Background checks are off because Home cannot use Local/Shared/System/Updates inside this Home's data folder. On the device that runs Home, check free disk space and write access. Use a real folder and a regular .notice.lock file, both owned by and private to the account that runs Home, then turn this on.";
-const INVALID_VERSION_TEXT: &str = "Home cannot check for updates until you repair the installed version. On the device that runs Home, run elastos update --force.";
-const UNREADABLE_TEXT: &str = "Background checks are off because Home could not read its settings. On the device that runs Home, repair or move aside Local/Shared/System/Updates/notice.json inside this Home's data folder, then turn this on.";
+const SWITCH_LABEL: &str = "Check for updates automatically";
+const ON_TEXT: &str = "Home tries to check for updates about every 6 to 7 hours while it runs. The update server can see your internet address and when you check, but not your name or installed version.";
+const OFF_TEXT: &str =
+    "Automatic update checks are off. System checks for updates while it is open.";
+const SAVE_ERROR: &str =
+    "Home could not save this setting. Check that the computer that runs Home has free disk space, then try again. Home's log has more steps.";
+const SAVE_REPAIR: &str = "Home could not save update checks. On the device that runs Home, check free disk space, write access and private ownership of Local/Shared/System/Updates and its .notice.lock file inside this Home's data folder. Move notice.json aside if it is a folder, then try again.";
+const NOTICE_TITLE: &str = "Update available";
+const NOTICE_BODY: &str = "ElastOS {version} is available.";
+const FOLDER_TEXT: &str = "Automatic update checks are off because Home cannot use its update settings. Check that the computer that runs Home has free disk space, then turn this on. Home's log has more steps.";
+const FOLDER_REPAIR: &str = "Update checks are off because Home cannot use Local/Shared/System/Updates inside this Home's data folder. On the device that runs Home, check free disk space and write access. Use a real folder and a regular .notice.lock file, both owned by and private to the account that runs Home, then turn this on.";
+pub(super) const INVALID_VERSION_TEXT: &str = "Home cannot check for updates because it cannot read its installed version. Home's log has the repair steps.";
+pub(super) const INVALID_VERSION_REPAIR: &str = "Home cannot check for updates until you repair the installed version. On the device that runs Home, run elastos update --force.";
+const UNREADABLE_TEXT: &str =
+    "Automatic update checks are off because Home could not read its settings. Turn the switch on to reset this setting. If that does not work, Home's log has the repair steps.";
+const UNREADABLE_REPAIR: &str = "Update checks are off because Home could not read its settings. On the device that runs Home, repair or move aside Local/Shared/System/Updates/notice.json inside this Home's data folder, then turn this on.";
 
 #[derive(Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -81,7 +88,7 @@ fn read_state(path: &Path) -> anyhow::Result<NoticeState> {
     anyhow::ensure!(state.schema == SCHEMA, "unknown update settings schema");
     anyhow::ensure!(
         state.accounts.len() <= 256,
-        "too many update acknowledgements"
+        "Home could not save your choice for this update notice."
     );
     Ok(state)
 }
@@ -103,6 +110,41 @@ fn write_state(path: &Path, state: &NoticeState) -> anyhow::Result<()> {
     Ok(())
 }
 
+// Keep one fault per Home and operation. Polling a persistent fault must not
+// consume the disk space that its repair may need. Recovery removes the entry.
+fn log_repair_change(
+    data_dir: &Path,
+    operation: &'static str,
+    fault: Option<(&'static str, &'static str, String)>,
+) {
+    use std::sync::{LazyLock, Mutex};
+    type Faults = BTreeMap<(PathBuf, &'static str), (&'static str, String)>;
+    static FAULTS: LazyLock<Mutex<Faults>> = LazyLock::new(|| Mutex::new(BTreeMap::new()));
+    let mut faults = FAULTS.lock().unwrap_or_else(|error| error.into_inner());
+    let key = (data_dir.to_owned(), operation);
+    if let Some((kind, repair, error)) = fault {
+        // tempfile appends a new path to each create/write error. Keep its
+        // underlying cause, so repeated attempts at the same fault log once.
+        let error = error
+            .split(" at path ")
+            .next()
+            .unwrap_or(&error)
+            .replace(data_dir.to_string_lossy().as_ref(), "[Home data]");
+        let current = (kind, error.clone());
+        if faults.insert(key, current.clone()) != Some(current) {
+            tracing::warn!(operation, error = %error, "{repair}");
+        }
+    } else if let Some((kind, _)) = faults.remove(&key) {
+        let message = match kind {
+            "save" => "Update settings can be saved again.",
+            "folder" => "Update settings folder is usable again.",
+            "version" => "Installed version is readable again.",
+            _ => "Update settings are readable again.",
+        };
+        tracing::info!(operation, "{message}");
+    }
+}
+
 pub(super) fn preference(data_dir: &Path) -> serde_json::Value {
     let locked = locked_path(data_dir);
     let folder_usable = locked.is_ok();
@@ -114,6 +156,24 @@ pub(super) fn preference(data_dir: &Path) -> serde_json::Value {
         .is_some_and(|source| {
             crate::update::installed_release_version(&source.installed_version).is_err()
         });
+    let fault = if !folder_usable {
+        Some((
+            "folder",
+            FOLDER_REPAIR,
+            state.as_ref().err().unwrap().to_string(),
+        ))
+    } else if let Err(error) = &state {
+        Some(("unreadable", UNREADABLE_REPAIR, error.to_string()))
+    } else if invalid_version {
+        Some((
+            "version",
+            INVALID_VERSION_REPAIR,
+            "installed release version is invalid".into(),
+        ))
+    } else {
+        None
+    };
+    log_repair_change(data_dir, "read", fault);
     let message = if !folder_usable {
         FOLDER_TEXT
     } else if state.is_err() {
@@ -146,7 +206,7 @@ pub(super) async fn set_background(
             Err(_) => {
                 return (
                     StatusCode::UNAUTHORIZED,
-                    Json(serde_json::json!({"error":"Open System from Home and sign in again."})),
+                    Json(serde_json::json!({"error":"Sign in as an admin of this Home, then open System again from Home."})),
                 )
                     .into_response()
             }
@@ -154,7 +214,7 @@ pub(super) async fn set_background(
     if require_admin_principal(&state.data_dir, &launch.context).is_err() {
         return (
             StatusCode::FORBIDDEN,
-            Json(serde_json::json!({"error":"Ask the Home owner to change background checks."})),
+            Json(serde_json::json!({"error":"Ask an admin of this Home to change this."})),
         )
             .into_response();
     }
@@ -169,12 +229,22 @@ pub(super) async fn set_background(
         write_state(&path, &settings)
     })();
     match result {
-        Ok(()) => Json(preference(&state.data_dir)).into_response(),
-        Err(_) => (
-            StatusCode::CONFLICT,
-            Json(serde_json::json!({"error": SAVE_ERROR})),
-        )
-            .into_response(),
+        Ok(()) => {
+            log_repair_change(&state.data_dir, "save", None);
+            Json(preference(&state.data_dir)).into_response()
+        }
+        Err(error) => {
+            log_repair_change(
+                &state.data_dir,
+                "save",
+                Some(("save", SAVE_REPAIR, error.to_string())),
+            );
+            (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({"error": SAVE_ERROR})),
+            )
+                .into_response()
+        }
     }
 }
 
@@ -242,18 +312,20 @@ pub(super) async fn acknowledge(
         } else if let Some(release) = action.strip_prefix("notification-dismiss:home-update:") {
             (release, true)
         } else {
-            anyhow::bail!("unsupported update notice action");
+            anyhow::bail!(
+            "Home could not save your choice for this update notice. Refresh Inbox and try again."
+        );
         };
     anyhow::ensure!(
         cid::Cid::try_from(release).is_ok(),
-        "invalid update notice identity"
+        "Home could not save your choice for this update notice. Refresh Inbox and try again."
     );
     let (path, _lock) = locked_path(data_dir)?;
     let mut state = read_state(&path)?;
     if state.release_cid.as_deref() == Some(release) {
         anyhow::ensure!(
             state.accounts.contains_key(&context.principal_id) || state.accounts.len() < 256,
-            "too many update acknowledgements"
+            "Home could not save your choice for this update notice."
         );
         let account = state
             .accounts
@@ -263,7 +335,7 @@ pub(super) async fn acknowledge(
         account.dismissed |= dismiss;
         write_state(&path, &state)?;
     }
-    Ok("Saved update notice choice.".into())
+    Ok("Done.".into())
 }
 
 pub(super) fn now_secs() -> u64 {

@@ -165,7 +165,7 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
         assert.equal(await f.frame.getByRole('button', { name: 'Cancel', exact: true }).count(), 0);
         await f.action('stop-waiting').focus(); await f.top.keyboard.press('Enter'); await f.state('request-cancelled');
         assert.doesNotMatch(await f.frame.locator('body').innerText(), /ignore a later answer/);
-        assert.match(await f.frame.locator('body').innerText(), /Check your wallet and Wallet activity/);
+        assert.match(await f.frame.locator('body').innerText(), kind==='metamask'?/Check your wallet and Activity in Wallet/:/Check UniSat and Activity in Wallet/);
         await f.top.waitForFunction(() => testState.pending.length > 0);
         await f.top.evaluate(() => { const p = testState.pending.shift(); p.resolve(p.result); });
         await f.state('request-done');
@@ -556,6 +556,16 @@ for (const engine of ['chromium','webkit']) test(`${engine} MetaMask: typed data
       await typed.state('request-typed-data');await typed.action('send-request').click();await typed.state('request-done');
       assert.equal(await typed.top.evaluate(()=>testState.receipts[0].signature_type),'eip712');
     }finally{await typed.close();}
+    // A presentation label can change without changing the signing method.
+    const relabel=source=>source.replace('if (selected) return requests.length > 1', "if (selected) selected.title = 'Sign a message';\n    if (selected) return requests.length > 1");
+    const renamed=await fixture(browser,'metamask',{saved:true,requests:'typed',mutate:relabel});
+    try{
+      await renamed.state('request-typed-data');await renamed.action('send-request').click();await renamed.state('request-done');
+      assert.equal(await renamed.top.evaluate(()=>testState.receipts[0].signature_type),'eip712','intent owns signing after the heading changes');
+    }finally{await renamed.close();}
+    const sentenceDriven=await fixture(browser,'metamask',{saved:true,requests:'typed',mutate:source=>relabel(source).replace("requests.find(request => request.request_id === selected.id)?.intent === 'browser_typed_data_sign'", "selected.title === 'Sign typed data'")});
+    try{await sentenceDriven.state('request-waiting');assert.notEqual(await sentenceDriven.frame.locator('main').getAttribute('data-state'),'request-typed-data','the former sentence comparison loses the typed-data state');}
+    finally{await sentenceDriven.close();}
     for(const mode of ['approve','decline','stop','timeout']){
       const f=await fixture(browser,'metamask',{saved:true,requests:'transaction'});
       try{
@@ -564,7 +574,7 @@ for (const engine of ['chromium','webkit']) test(`${engine} MetaMask: typed data
         await f.action('send-request').click();
         if(mode==='decline'){
           await f.state('transaction-wallet-error');
-          assert.doesNotMatch(await f.frame.locator('body').innerText(), /Transaction result unknown/);
+          assert.doesNotMatch(await f.frame.locator('body').innerText(), /Home does not know if the transaction was sent/);
           await f.top.evaluate(value=>{emitWallet('chainChanged','0x1');emitWallet('accountsChanged',[value]);},B);
           await f.state('transaction-wallet-error');assert.equal(await f.action('send-request').count(),0);continue;
         }

@@ -93,7 +93,7 @@ bootstrap Runtime without people, as the release does:
 
 Runtime uses one local health observation for repair and the Community status
 in Chat, System and the command line. Failed bootstrap joins, an ended receive task and failed health
-queries put Home in **Reconnecting to Community**, even when Carrier remembers
+queries put Home in **Reconnecting to Community…**, even when Carrier remembers
 a neighbour. Home retains its messages and draft, and resumes sending when
 local health succeeds again.
 
@@ -106,7 +106,7 @@ Failure logs keep a bounded reason when it changes and once a minute while
 that reason continues. A failed first join keeps Home running in Reconnecting.
 If the local topic is absent, the paced repair restores it. Incoming and
 outgoing failure logs use the same change and minute rule. While a check runs,
-status says **It is checking the link**. A future-check countdown rounds up to
+status says **Reconnecting to Community…**. A future-check countdown rounds up to
 a whole second.
 
 A later repair can restore a missing topic after an earlier attempt failed.

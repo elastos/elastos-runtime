@@ -8,7 +8,7 @@ const delay=ms=>new Promise(r=>setTimeout(r,ms));
 test('B16 the shown account must match eth_accounts before Home receives a proof',async()=>{
  const {exerciseWalletConnect}=await import('./lib/walletconnect-capsule-fixture.mjs');
  const result=await exerciseWalletConnect('link-shown-account-mismatch');
- assert.equal(result.error,'Select an account in your phone wallet.');
+ assert.equal(result.error,'Select an account in your wallet.');
  assert.equal(result.calls.some(call=>call.method==='personal_sign'),false);
  assert.equal(result.routes.some(call=>call.path.endsWith('/challenge')||call.path.endsWith('/verify')),false);
 });

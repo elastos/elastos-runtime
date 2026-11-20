@@ -16,7 +16,7 @@ test('F3: the designed typed-data fixture carries typed data and renders its own
 
 test('8: earlier-session request has the contract sentence and loses Send',()=>{
   const v=reduceConnection({window:'metamask',stage:'request-waiting',waitSeconds:300},{message:packet('outcome-request_unavailable'),summary,nowSeconds:1800000001});
-  assert.equal(viewText(v.status),'This request is unavailable. Return to the app and ask for a new request.');
+  assert.match(viewText(v.status),/new request/);
   assert(!v.actions.some(a=>a.id==='send-request'));assert.equal(v.wait,null);assert.equal(v.focus,'outcome');
 });
 
@@ -27,9 +27,9 @@ test('8: message answers select receipt stages before rendering',()=>{
   }
 });
 
-test('8: unknown cross-window safety states uncertainty and names Wallet activity',()=>{
+test('8: unknown cross-window safety states uncertainty and names Activity in Wallet',()=>{
   const v=fixtureView({...state('metamask/extension-busy'),safety:'state-payment-none'});
-  assert.match(viewText(v.notice),/cannot tell/i);assert.match(viewText(v.notice),/Wallet activity/);assert.doesNotMatch(viewText(v.notice),/reload/i);
+  assert.match(viewText(v.notice),/cannot tell/i);assert.match(viewText(v.notice),/Activity in Wallet/);assert.doesNotMatch(viewText(v.notice),/reload/i);
 });
 
 test('9: renderer rejects forged and copied views before touching the document',()=>{

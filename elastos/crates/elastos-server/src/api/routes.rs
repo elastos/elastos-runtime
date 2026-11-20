@@ -82,7 +82,7 @@ pub(crate) async fn community_status(
         .unwrap_or_else(|| {
             serde_json::json!({
                 "state": "isolated", "connected": false,
-                "detail": "Community is not configured on this Home.", "next_retry_seconds": null,
+                "detail": "Community is unavailable on this Home.", "next_retry_seconds": null,
             })
         }),
     )

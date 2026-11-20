@@ -1,20 +1,20 @@
 const networks = new Map([[1,'Ethereum'],[20,'Elastos Smart Chain'],[8453,'Base'],[11155111,'Sepolia test network']]);
-const noSupportedNetwork = 'Your wallet did not approve a network this Home supports. Select Connect wallet and choose Ethereum, Elastos Smart Chain, Base or Sepolia in your phone wallet.';
+const noSupportedNetwork = 'Your wallet did not approve a network this Home supports. Select Connect wallet and choose Ethereum, Elastos Smart Chain, Base or Sepolia in your wallet.';
 const unavailableNetwork = id => `WalletConnect in this Home does not offer network ${id}.`;
 // Shared with capsule and SDK journey tests so copy has one source.
 export const walletConnectMessages = {
-  proposalDeclined: 'Your phone wallet declined the connection request. Select Connect wallet to try again.',
-  ownershipDeclined: 'Your phone wallet declined the ownership signature. Select Connect wallet to try again.',
-  linkTimeout: 'Your phone wallet did not answer in time. Select Connect wallet to try again.',
-  linkError: 'Home could not finish linking. Select Connect wallet to try again.',
-  signatureDeclined: 'Your phone wallet declined this signature request. Ask the app to send a new request.',
-  signatureTimeout: 'Your phone wallet did not answer in time. Ask the app to send a new signature request.',
+  proposalDeclined: 'Your wallet declined the connection request. Select Connect wallet to try again.',
+  ownershipDeclined: 'Your wallet declined the ownership signature. Select Connect wallet to try again.',
+  linkTimeout: 'Your wallet did not answer in time. Select Connect wallet to try again.',
+  linkError: 'Home could not connect your wallet. Select Connect wallet to try again.',
+  signatureDeclined: 'Your wallet declined this signature request. Ask the app to send a new request.',
+  signatureTimeout: 'Your wallet did not answer in time. Ask the app to send a new signature request.',
   signatureError: 'Home could not finish this signature request. Ask the app to send a new request.',
-  transactionDeclined: 'Your phone wallet declined this transaction. Check your phone wallet and Wallet activity before you send again.',
-  transactionTimeout: 'Your phone wallet did not answer in time. Check your phone wallet and Wallet activity before you send again.',
-  transactionError: 'Home could not confirm this transaction. Check your phone wallet and Wallet activity before you send again.',
-  consumed: 'This request is no longer available for review here. Check your phone wallet and Wallet activity before you ask the app for a new request.',
-  transactionRecovery: 'Check your phone wallet and Wallet activity before you send again.',
+  transactionDeclined: 'Your wallet declined this transaction. Check your wallet and Activity in Wallet before you send again.',
+  transactionTimeout: 'Your wallet did not answer in time. Check your wallet and Activity in Wallet before you send again.',
+  transactionError: 'Home could not confirm this transaction. Check your wallet and Activity in Wallet before you send again.',
+  consumed: 'This request is no longer available for review here. Check your wallet and Activity in Wallet before you ask the app for a new request.',
+  transactionRecovery: 'Check your wallet and Activity in Wallet before you send again.',
   unsupportedNetwork: id => `${unavailableNetwork(id)} Open Wallet to check your requests and activity.`,
   pendingUnsupportedNetwork: id => `${unavailableNetwork(id)} Reject this request in Wallet.`,
   unapprovedNetwork: name => `This wallet connection has no approved account on ${name}. Select Connect wallet for a new QR code and choose the requested account and network.`,
@@ -29,7 +29,7 @@ const approvedNetworks = provider => {
 export function createWalletConnectClient({ api, origin, copyLink, pairingView, onPhase = () => {}, loadAdapter = () => import(`./vendor/reown-appkit.js?instance=${crypto.randomUUID()}`), clearMemory = () => {} }) {
   let provider, adapter, activeRevision, sessionApi, projectId, pairing, operation, restoring, restoreAttempt, retiring, cleanupPromise, latestPermission, cleanupRequired = false, removed = false, hadSession = false, sessionExpiry = 0, generation = 0, operationContext, operationDispatched = false, observedAccounts;
   const stopped = 'Home stopped waiting for your wallet. Select Connect wallet for a new QR code.';
-  const removedMessage = 'Your phone wallet removed this connection. Select Connect wallet for a new QR code.';
+  const removedMessage = 'Your wallet removed this connection. Select Connect wallet for a new QR code.';
   const muted = message => Object.assign(new Error(message), {tone:'muted'});
   const waitFor = async (promise, signal) => {
     if (!signal) return promise;
@@ -71,8 +71,8 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
     // A fresh action must match the account this window can currently display.
     const shownAccounts=observedAccounts ?? provider.accounts;
     if (Array.isArray(shownAccounts) && (!shownAccounts[0] || String(shownAccounts[0]).toLowerCase() !== String(value).toLowerCase()))
-      throw muted('Select an account in your phone wallet.');
-    if (!/^0x[0-9a-fA-F]{40}$/.test(value || '')) throw new Error('Select an account in your phone wallet.');
+      throw muted('Select an account in your wallet.');
+    if (!/^0x[0-9a-fA-F]{40}$/.test(value || '')) throw new Error('Select an account in your wallet.');
     return value;
   };
   const chain = async signal => {
@@ -131,7 +131,7 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
     const config = await waitFor(api('wallet/config'),signal);
     const permission = await waitFor(api('internet'),signal);
     latestPermission = permission;
-    if (permission.status !== 'granted') throw muted('WalletConnect needs internet access. The Home owner can allow it in Inbox. Then select Connect wallet.');
+    if (permission.status !== 'granted') throw muted('WalletConnect needs internet access. An admin of this Home can allow it in Inbox. Then select Connect wallet.');
     if (activeRevision !== undefined && activeRevision !== config.walletconnect.storage_revision) {
       provider = undefined;
       await waitFor(retireAdapter(),signal);
@@ -323,13 +323,13 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
     operationContext = review?.intent;
     if (!review || review.status !== 'pending') throw Object.assign(new Error(walletConnectMessages.consumed), {tone:'muted'});
     requireNetwork(review.chain_namespace);
-    if (!same(review.address,signer) || review.chain_namespace !== namespace) throw new Error('Select the requested account and network in your phone wallet, then review again.');
+    if (!same(review.address,signer) || review.chain_namespace !== namespace) throw new Error('Select the requested account and network in your wallet, then review again.');
     const ttl = review.expires_at - Math.ceil(Date.now()/1000);
     if (!Number.isSafeInteger(review.expires_at) || ttl <= 0 || review.intent === 'transaction_intent' && ttl < 300) throw new Error('Wallet request expires soon. Request a fresh review.');
     const supported = ['auth_challenge','browser_personal_sign','browser_typed_data_sign','capability_grant','credential','publish_envelope','protected_content_rights_signature','transaction_intent','revocation'];
     if (!supported.includes(review.intent)) throw new Error('This request type is unavailable in WalletConnect. Reject it in Wallet.');
     if (review.intent === 'browser_typed_data_sign')
-      throw new Error('Typed data signing is unavailable in this connector. Reject this request in Wallet or use another linked account.');
+      throw new Error('Typed data signing is unavailable in this connector. Reject this request in Wallet or use another account in Wallet.');
     const {handoff,binding} = await api(`${path}/approve`,{method:'POST',body:'{}'});
     if (!handoff || !binding || handoff.request_id !== action.approvalRequestId
       || handoff.payload_hash !== binding.payload_hash || !same(handoff.signer,signer)
@@ -353,7 +353,7 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
       let receipt;
       try { receipt = await api(`${path}/complete`,{method:'POST',body:JSON.stringify({payload_hash:handoff.payload_hash,signer,transaction_hash:hash})}); }
       catch { throw Object.assign(new Error(`Wallet returned transaction hash ${hash}. Runtime could not confirm it. Keep this hash and check it before sending again.`),{transactionHash:hash}); }
-      return {status:receipt.receipt_status || 'completed',effect:'transaction',message:receipt.receipt_status === 'sent_after_dismissal' ? 'Request dismissed. Transaction sent from wallet.' : 'Transaction sent.'};
+      return {status:receipt.receipt_status || 'completed',effect:'transaction',message:receipt.receipt_status === 'sent_after_dismissal' ? 'Request dismissed. Your wallet reported this transaction as sent.' : 'Transaction sent.'};
     }
     if (handoff.signature_type !== 'personal_sign' || typeof handoff.message !== 'string') throw new Error('Runtime returned an invalid signature request.');
     operationDispatched = true;

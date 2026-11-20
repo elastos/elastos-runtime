@@ -873,9 +873,9 @@ fn enter_browser_home_controller(
 
 fn controller_space_notice(no_open: bool) -> &'static str {
     if no_open {
-        "Home will start. Free disk space before updating."
+        "Home will start. Free some disk space before updating."
     } else {
-        "Home will open. Free disk space before updating."
+        "Home will open. Free some disk space before updating."
     }
 }
 

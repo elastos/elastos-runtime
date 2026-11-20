@@ -589,12 +589,35 @@ async fn n5_guest_request_creates_no_question() {
         .path()
         .join("ElastOS/SystemServices/WalletConnect/internet.json");
     assert!(!path.exists());
-    assert_ne!(
-        f.route(&token, INTERNET, Some(json!({"action":"request"})))
-            .await
-            .0,
-        StatusCode::OK
-    );
+    let (status, plain) = f
+        .route(&token, INTERNET, Some(json!({"action":"request"})))
+        .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(plain["text"], "Ask an admin of this Home to open WalletConnect, choose Connect wallet, then allow internet access in Inbox.");
+    let response = f
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .header(HOST, f.addr.as_str())
+                .header("origin", "null")
+                .uri(INTERNET)
+                .method("POST")
+                .header("x-elastos-home-token", token)
+                .header("accept", "application/json")
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({"action":"request"}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), status);
+    let body = axum::body::to_bytes(response.into_body(), 2048)
+        .await
+        .unwrap();
+    let error: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(error["code"], "walletconnect_admin_required");
+    assert_eq!(error["message"], plain["text"]);
     assert!(!path.exists(), "guest request creates no owner question");
     let (first, second) = tokio::join!(
         f.route(&f.connector, INTERNET, Some(json!({"action":"request"}))),

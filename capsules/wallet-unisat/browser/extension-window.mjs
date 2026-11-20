@@ -46,13 +46,13 @@ export function startExtensionWindow(kind, homeClipboard) {
       // A stored link names its recorded network, not a fresh provider read.
       return [networkName(chain)];
     };
-    return { name: kind === 'metamask' ? 'Browser wallet' : 'UniSat', mark: kind === 'metamask' ? 'wallet' : kind, connection: null,
+    return { name: kind === 'metamask' ? 'Your wallet' : 'UniSat', mark: kind === 'metamask' ? 'wallet' : kind, connection: null,
       accounts: rows.map(row => ({ address: row.address, networks: networks(row.chain_namespace) })) };
   }
 
   function networkName(chain) {
     return ({ 'eip155:1': 'Ethereum', 'eip155:20': 'Elastos Smart Chain', 'eip155:8453': 'Base',
-      'bip122:000000000019d6689c085ae165831e93': 'Bitcoin' })[chain] || String(chain || 'Network unknown').slice(0, 80);
+      'bip122:000000000019d6689c085ae165831e93': 'Bitcoin' })[chain] || String(chain?.startsWith('eip155:') ? `Network ${chain.slice(7)}` : chain || 'Unknown network').slice(0, 80);
   }
 
   function signable(request) {
@@ -75,7 +75,7 @@ export function startExtensionWindow(kind, homeClipboard) {
     if (accountEvent && accounts.length && !accounts.some(a => sameAccount(a.address, accountEvent[0]))) return 'account-unavailable';
     if (kind === 'unisat' && networkEvent !== null && networkEvent !== 'livenet') return networkEvent === 'testnet' ? 'network-changed' : 'network-unknown';
     if (requests.length > 1 && !picked) return 'request-list';
-    if (selected) return requests.length > 1 ? 'request-multiple' : selected.transaction ? 'transaction-waiting' : selected.title === 'Sign typed data' ? 'request-typed-data' : 'request-waiting';
+    if (selected) return requests.length > 1 ? 'request-multiple' : selected.transaction ? 'transaction-waiting' : requests.find(request => request.request_id === selected.id)?.intent === 'browser_typed_data_sign' ? 'request-typed-data' : 'request-waiting';
     return accountView() ? 'linked' : 'ready';
   }
 
@@ -125,24 +125,24 @@ export function startExtensionWindow(kind, homeClipboard) {
     if (refusal) {
       root.dataset.state = 'request-consumed';
       root.dataset.extensionFeedback = 'consumed';
-      const wallet = kind === 'metamask' ? 'your browser wallet' : 'UniSat';
+      const wallet = kind === 'metamask' ? 'your wallet' : 'UniSat';
       const needed = refusal.cause === 'account' ? refusal.address : refusal.network;
-      const app = selected.actor === 'browser' && selected.site ? selected.site : selected.app;
-      feedbackText(root.querySelector('.connection-status'), refusal.cause === 'account' ? [wallet[0].toUpperCase()+wallet.slice(1), ` was using a different ${refusal.cause}. This request needed ${refusal.cause} `, {value:needed}, '.'] : ['Home could not confirm the required network. This request needed network ', {value:needed}, '.']);
-      feedbackText(root.querySelector('.connection-notice'), [`This request can no longer be sent. Select ${refusal.cause} `, {value:needed}, ` in ${wallet}. After switching, return to `, {value:app}, ' and make a new request.']);
+      const app = selected.actor === 'browser' && selected.site ? selected.site : selected.app === 'Requesting app' ? 'the app' : selected.app;
+      feedbackText(root.querySelector('.connection-status'), refusal.cause === 'account' ? [wallet[0].toUpperCase()+wallet.slice(1), ` was using a different ${refusal.cause}. This request needed ${refusal.cause} `, {value:needed}, '.'] : ['Home could not confirm that ', wallet, ' was on ', {value:needed}, '.']);
+      feedbackText(root.querySelector('.connection-notice'), kind === 'metamask' ? [`This request can no longer be sent. In ${wallet}, switch to `, {value:needed}, '. Then go back to ', {value:app}, ' and start a new request.'] : [`This request can no longer be sent. Select ${refusal.cause} `, {value:needed}, ` in ${wallet}. Then go back to `, {value:app}, ' and start a new request.']);
     } else if (stage === 'network-changed' && preflightFailure === stage && networkEvent !== 'testnet') {
       root.querySelector('.connection-status')?.replaceChildren();
     } else if (['request-wallet-error', 'transaction-wallet-error'].includes(stage)) {
       root.dataset.extensionFeedback = 'unknown-error';
-      feedbackText(root.querySelector('.connection-status'), [selected.transaction ? 'Home could not finish this request. The transaction may have been sent.' : 'Home could not finish this request.']);
-      feedbackText(root.querySelector('.connection-notice'), ['Check your wallet and Wallet activity before making another request.']);
+      feedbackText(root.querySelector('.connection-status'), [selected.transaction ? 'Home could not confirm the result. The transaction may have been sent.' : 'Home could not confirm the result.']);
+      feedbackText(root.querySelector('.connection-notice'), [kind === 'metamask' ? 'Before you make another request, check your wallet, then open Wallet from Home and check Activity.' : 'Before you try again, check UniSat and Activity in Wallet.']);
     }
     // v1 keeps the admitted Home operation alive after local Stop/timeout.
     // R5's filtered Check action assumes a terminal wait, which v1 cannot claim.
     const notice = root.querySelector('.connection-notice');
-    if (notice?.textContent.includes('Home will ignore a later answer.')) {
+    if (notice && ['extension-timeout','extension-cancelled','link-timeout','link-cancelled','request-timeout','request-cancelled'].includes(stage)) {
       root.dataset.extensionFeedback = 'local-wait';
-      feedbackText(notice, ['An operation may still be waiting in your wallet. Closing this window does not cancel it. Check your wallet and Wallet activity.']);
+      feedbackText(notice, [kind === 'metamask' ? 'This request may still be in progress in your wallet. Closing this window does not cancel it. Check your wallet and Activity in Wallet before making another request. Open Wallet from Home to see Activity.' : 'A request may still be waiting in UniSat. Closing this window does not cancel it. Check UniSat and Activity in Wallet.']);
     }
     // Some R5 outcome tables still offer only navigation that v1 cannot do.
     // Until the shared capability fallback covers them, reuse its Close part.

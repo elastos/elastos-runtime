@@ -287,7 +287,8 @@ authority decision.
 Runtime supplies the exact principal, requesting actor, account, chain, payload
 hash and expiry. It checks pending state before handing off once, and checks the
 approved request and hash before completion. A closed connector window leaves an
-approved, unfinished transaction visible with "Check your phone wallet". Opening
+approved, unfinished transaction visible with "This transaction may already have
+been sent. Check your wallet before sending again." Opening
 it again supplies recovery instructions and keeps the send control disabled.
 A returned transaction hash is passed to Runtime once even if the account,
 network or expiry changed during the phone prompt. An approved WalletConnect
@@ -302,9 +303,9 @@ app keeps its rejection after dismissal. Completion keeps its original session
 binding. Dismiss does not cancel a phone transaction.
 Runtime records one hash returned within the same grace period after dismissal,
 with the normal completion bindings. The request stays dismissed; Activity shows
-"Sent from wallet after request was dismissed" with the hash and a sent mark.
+"Dismissed, but your wallet reported it as sent" with the hash and a sent mark.
 Runtime logs `wallet.approval.sent_after_dismissal` for this receipt, and the
-connector reports "Request dismissed. Transaction sent from wallet."
+connector reports "Request dismissed. Your wallet reported this transaction as sent."
 An unfinished WalletConnect prompt expires after the grace period. Other
 connectors keep their signing TTL; [N3](#n3-outside-wallet-requests) defines
 MetaMask's receipt-only exception after this work.
@@ -1037,8 +1038,7 @@ recovery action. Runtime still checks ID/status/expiry/proof independently.
 **After this work.** An existing grant/step-up stale-ID/status/expiry refusal has one fixed answer:
 HTTP 409 with exactly the N2 error body and code conflict. The existing request,
 step-up and answer checks keep their semantics; only their conflict projection
-is standardized. Inbox displays exactly: `This request has changed. Refresh
-Inbox and review the current request.` It refreshes, creates no automatic retry
+is standardized. Inbox displays exactly: `Refresh Inbox and review the current request before trying again.` It refreshes, creates no automatic retry
 and neither grants nor fabricates a question on that error. This is response
 classification, not a new consent fence or producer change.
 

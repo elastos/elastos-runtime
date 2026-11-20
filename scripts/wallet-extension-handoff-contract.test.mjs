@@ -85,7 +85,7 @@ for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'
         },{kind,fault});
         await f.action('send-request').click();await f.state('request-consumed');
         const text=await f.frame.locator('body').innerText();
-        assert.match(text,/This request can no longer be sent/);assert.match(text,/After switching/);assert.doesNotMatch(text,/try again|unknown/i);
+        assert.match(text,/This request can no longer be sent/);assert.match(text,/and (?:start|make) a new request/);assert.doesNotMatch(text,/try again|unknown/i);
         assert.equal(await f.action('send-request').count(),0);
         assert.equal(await f.top.evaluate(()=>testState.requests[0].status),'approved');
         await f.top.evaluate(()=>testState.walletAddress=testState.address);

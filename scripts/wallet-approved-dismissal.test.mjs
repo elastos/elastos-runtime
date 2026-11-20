@@ -88,7 +88,7 @@ test("Activity distinguishes pending rejection, approved dismissal and a late wa
   assert.match(activityTitle(request), /Rejected/);
   assert.match(activityTitle({ ...request, approved_at: 10 }), /Dismissed transaction request/);
   const late = { ...request, approved_at: 10, transaction_hash: `0x${"a".repeat(64)}` };
-  assert.match(activityTitle(late), /Sent from wallet after request was dismissed/);
+  assert.match(activityTitle(late), /Dismissed, but your wallet reported it as sent/);
   assert.equal(activityIcon(late), "✓");
   assert.equal(activityIcon({ ...request, approved_at: 10 }), "·");
   assert(activitySubtitle(late).includes(late.transaction_hash));
@@ -108,7 +108,7 @@ for (const dismissed of [false, true]) test(`Wallet uses the current rejection r
   button.dataset.walletRequestReject = "approval:stale";
   await requests.onRequestClick({ target: button });
   assert.equal(messages.at(-1), dismissed
-    ? "Request dismissed. Check your connected wallet before sending again."
+    ? "Request dismissed. This does not cancel the transaction in your wallet. Check your wallet before making a new request."
     : "Request rejected.");
 });
 

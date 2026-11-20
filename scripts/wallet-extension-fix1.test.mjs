@@ -14,7 +14,7 @@ const breaks = {
   X1:s=>s.replace("root.dataset.extensionFeedback = 'consumed';", "root.dataset.extensionFeedback = 'consumed'; root.querySelector('.connection-actions').append(renderConnection(document, connectionView({window:kind,stage:'request-waiting',summary:selected,account:accountView(),waitSeconds:remaining(),supportedActions:['send-request']})).querySelector('button'));"),
   X2:s=>s.replace("if (!next) { draw(); return; }", "if (!next) { refusal = null; stage = 'request-unavailable'; draw(); return; }"),
   X3:s=>s.replace("'Switch to the linked account before approving.', ", ""),
-  'stop-copy':s=>s.replace('An operation may still be waiting in your wallet. Closing this window does not cancel it. Check your wallet and Wallet activity.', 'Home will ignore a later answer.'),
+  'stop-copy':s=>s.replaceAll('Closing this window does not cancel it.', 'Home will ignore a later answer.'),
   saved:s=>s.replace('const rows = address ? row ? [row] : [] : candidates;', 'const rows = address ? row ? [row] : [] : [];'),
   read:s=>s.replace("action === 'refresh-status') void refresh()","action === 'refresh-status') void perform({kind:'link'})"),
   disconnect:s=>s.replace('if (data.value.length) disconnected = false;',''),
@@ -32,7 +32,7 @@ const other = kind => kind === 'metamask' ? '0x'+'2'.repeat(40) : 'bc1q'+'b'.rep
 
 async function unisatIdentity(f, saved) {
   await f.state(saved ? 'linked' : 'ready');
-  assert.equal(await f.frame.locator('h1').innerText(), 'Browser wallet');
+  assert.equal(await f.frame.locator('h1').innerText(), 'UniSat');
   assert.match(await f.frame.locator('.connection-heading img').getAttribute('src'), /connection-wallet/);
   assert.equal(await f.top.evaluate(() => testState.calls.length), 0, 'a saved link is not fresh discovery');
   if (saved) return;
@@ -76,10 +76,10 @@ async function preflight(f, kind, fault, type) {
   await f.action('send-request').click();
   await f.state('request-consumed');
   const text=await f.frame.locator('body').innerText();
-  assert.match(text, fault==='account' ? /was using a different account/ : /could not confirm the required network/);
+  assert.match(text, fault==='account' ? /was using a different account/ : /could not confirm that .* was on/);
   assert.match(text, fault==='account' ? new RegExp('account '+(kind==='metamask'?'0x'+'1'.repeat(40):'bc1q'+'a'.repeat(38))) : kind==='unisat' ? /Bitcoin/ : /Elastos Smart Chain/);
   assert.match(text,/This request can no longer be sent/);
-  assert.match(text,/After switching, return to .* and make a new request/);
+  assert.match(text,/Then go back to .* and start a new request/);
   assert.doesNotMatch(text,/try again|result unknown/i);
   assert.equal(await f.action('send-request').count(),0);
   assert.equal(await f.action('connect').count(),0);
@@ -281,7 +281,7 @@ for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'
   try {
     const f=await fixture(browser,kind,{saved:true,requests:true});try{
       await f.state('request-waiting');await f.action('send-request').click();await f.state('request-done');
-      assert.equal(await f.frame.locator('h1').innerText(),kind==='metamask'?'Browser wallet':'UniSat');
+      assert.equal(await f.frame.locator('h1').innerText(),kind==='metamask'?'MetaMask or Brave Wallet':'UniSat');
       assert.match(await f.frame.locator('.connection-heading img').getAttribute('src'),new RegExp('connection-'+(kind==='metamask'?'wallet':kind)));
       // Existing response schema permits these statuses. This is a projection
       // check: today's pending-only Runtime endpoint normally omits them.
@@ -305,5 +305,21 @@ for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'
     const text=await f.frame.locator('body').innerText();
     await f.frame.evaluate(()=>dispatchEvent(new Event('focus')));await f.state('request-consumed');assert.equal(await f.frame.locator('body').innerText(),text);
     assert.equal(await f.top.evaluate(()=>testState.requests.filter(r=>r.status==='pending').length),1);
+  }finally{await f.close();}}finally{await browser.close();}
+});
+
+for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'])test(`${engine} ${kind}: consumed requests with no app name return to the app`,windowTestOptions(engine,20000),async()=>{
+  const browser=await playwright[engine].launch({headless:true});
+  try{const f=await fixture(browser,kind,{saved:true,requests:true});try{
+    await f.state('request-waiting');
+    const before=await f.frame.evaluate(()=>window.__windowReadsFinished||0);
+    await f.top.evaluate(()=>{testState.requests[0].capsule_id='notes';delete testState.requests[0].requesting_origin;delete testState.requests[0].requesting_app_name;});
+    await f.frame.evaluate(()=>dispatchEvent(new Event('focus')));await assertReadAfter(f,before);
+    await f.top.evaluate(value=>testState.walletAddress=value,other(kind));
+    await f.action('send-request').click();await f.state('request-consumed');
+    const text=await f.frame.locator('.connection-notice').innerText();
+    assert.match(text,/Then (?:go back|return) to the app and (?:start|make) a new request/);
+    assert.doesNotMatch(text,/Requesting app/);
+    assert.equal(await f.action('send-request').count(),0);
   }finally{await f.close();}}finally{await browser.close();}
 });

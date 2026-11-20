@@ -10,16 +10,25 @@ use tokio::time::Instant;
 
 pub(super) const GRANT: &str = "walletconnect.internet.grant";
 pub(super) const REVOKE: &str = "walletconnect.internet.revoke";
-const CONSENT: &str = "WalletConnect needs the internet to link this Home to your phone wallet. The WalletConnect service that carries the messages can see this computer's internet address. Your keys stay in your phone wallet, and you approve each request there. You can turn this off at any time here in Inbox.";
+const CONSENT: &str = "WalletConnect needs internet access to connect your wallet to this Home. The WalletConnect service carries the messages and can see this computer's internet address. Your keys stay in your wallet, where you approve each request. You can turn this off at any time in Inbox.";
 const MAX_BYTES: usize = 1024 * 1024;
 const MAX_SOCKETS: usize = 2;
 const RESOURCE: &str = "elastos://walletconnect/internet";
 
 #[derive(Debug)]
+struct AdminConsentRequired;
+impl std::fmt::Display for AdminConsentRequired {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Ask an admin of this Home to open WalletConnect, choose Connect wallet, then allow internet access in Inbox.")
+    }
+}
+impl std::error::Error for AdminConsentRequired {}
+
+#[derive(Debug)]
 pub(super) struct ConsentConflict;
 impl std::fmt::Display for ConsentConflict {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("This request has changed. Refresh Inbox and review the current request.")
+        f.write_str("Refresh Inbox and review the current request before trying again.")
     }
 }
 impl std::error::Error for ConsentConflict {}
@@ -184,10 +193,11 @@ pub(super) async fn step_up_request(
     ensure_admin_context(&state.data_dir, &launch.context)?;
     anyhow::ensure!(
         launch.launch_context.executable_actor == INBOX_CAPSULE_ID,
-        "Inbox launch required"
+        "Open Inbox from Home, then try again."
     );
     let _guard = state.walletconnect.inner.lock().await;
-    let c = load(&state.data_dir)?.ok_or_else(|| anyhow::anyhow!("Open WalletConnect first"))?;
+    let c = load(&state.data_dir)?
+        .ok_or_else(|| anyhow::anyhow!("Start a WalletConnect connection in Wallet first."))?;
     if !((op == GRANT && c.status == "requested") || (op == REVOKE && c.status == "granted")) {
         return Err(ConsentConflict.into());
     }
@@ -202,15 +212,17 @@ pub(super) async fn answer(
     ensure_admin_context(&state.data_dir, &launch.context)?;
     anyhow::ensure!(
         launch.launch_context.executable_actor == INBOX_CAPSULE_ID,
-        "Inbox launch required"
+        "Open Inbox from Home, then try again."
     );
     let mut inner = state.walletconnect.inner.lock().await;
-    let mut c =
-        load(&state.data_dir)?.ok_or_else(|| anyhow::anyhow!("Open WalletConnect first"))?;
+    let mut c = load(&state.data_dir)?
+        .ok_or_else(|| anyhow::anyhow!("Start a WalletConnect connection in Wallet first."))?;
     let (verb, id) = action
         .strip_prefix("walletconnect-internet-")
         .and_then(|v| v.split_once(':'))
-        .ok_or_else(|| anyhow::anyhow!("Invalid WalletConnect internet action"))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!("Home could not complete this WalletConnect request. Try again.")
+        })?;
     if id != c.id {
         return Err(ConsentConflict.into());
     }
@@ -285,13 +297,13 @@ pub(super) async fn answer(
                 clear_all_storage(&state.data_dir)?;
                 c.cleanup_pending = false;
                 save(&state.data_dir, &c)?;
-                return Ok("WalletConnect connection turned off.".into());
+                return Ok("Internet access for WalletConnect is off.".into());
             }
         }
-        _ => anyhow::bail!("Invalid WalletConnect internet action"),
+        _ => anyhow::bail!("Home could not complete this WalletConnect request. Try again."),
     }
     save(&state.data_dir, &c)?;
-    Ok("WalletConnect internet choice saved.".into())
+    Ok("Saved.".into())
 }
 pub(super) fn notification(
     state: &GatewayState,
@@ -325,7 +337,7 @@ pub(super) fn notification(
         } else if c.status == "granted" {
             "WalletConnect can use the internet."
         } else if c.cleanup_pending {
-            "WalletConnect is off. Select Turn Off again to finish clearing its saved session."
+            "Internet access for WalletConnect is off. Choose Finish disconnecting to remove the saved connection."
         } else {
             "Internet access for WalletConnect is off."
         }
@@ -371,7 +383,7 @@ pub(super) async fn internet(
             })?;
             anyhow::ensure!(
                 input.action == "request",
-                "Invalid WalletConnect internet action"
+                "Home could not complete this WalletConnect request. Try again."
             );
             ensure_consent_request(&state, &authority.home_launch_context(), &inner)?;
         }
@@ -380,7 +392,22 @@ pub(super) async fn internet(
     .await;
     match result {
         Ok(v) => Json(v).into_response(),
-        Err(e) => system_error_response(e),
+        Err(e) => {
+            let admin_required = e.is::<AdminConsentRequired>();
+            let message = e.to_string();
+            let response = system_error_response(e);
+            if admin_required
+                && headers.get("accept").and_then(|v| v.to_str().ok()) == Some("application/json")
+            {
+                (
+                    response.status(),
+                    Json(json!({"code": "walletconnect_admin_required", "message": message})),
+                )
+                    .into_response()
+            } else {
+                response
+            }
+        }
     }
 }
 
@@ -397,7 +424,7 @@ fn ensure_consent_request(
     if current.as_ref().is_none_or(|c| {
         c.status != "granted" && (c.status != "requested" || c.at + 1800 <= now_ts())
     }) {
-        ensure_admin_context(&state.data_dir, context).map_err(|_| anyhow::anyhow!("Only this Home's owner can allow WalletConnect internet access. Ask the owner to review Inbox."))?;
+        ensure_admin_context(&state.data_dir, context).map_err(|_| AdminConsentRequired)?;
         anyhow::ensure!(
             inner.sockets.values().all(|s| *s.done.borrow()),
             "Finish stopping WalletConnect first"

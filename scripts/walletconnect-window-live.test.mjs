@@ -333,7 +333,7 @@ for(const engine of ['chromium','webkit'])test(`a wallet answer names Home while
  const r=await setup(t,engine);await r.link();await r.approval('checking-response');
  let release,entered;const held=new Promise(resolve=>{release=resolve;}),checking=new Promise(resolve=>{entered=resolve;});t.after(()=>release());
  await r.page.route('**/wallet/approvals/checking-response/complete',async route=>{entered();await held;await route.continue();});
- await r.click('send-request');await checking;await r.frame.getByText('Your wallet has answered. Home is checking the response.',{exact:true}).waitFor();
+ await r.click('send-request');await checking;await r.frame.getByText('Your wallet has answered. Home is checking the answer.',{exact:true}).waitFor();
  assert.equal(r.fixture.state.completed,0);assert.equal(await r.frame.getByRole('button',{name:'Stop waiting',exact:true}).count(),1);await r.capture('response-checking');
  release();await r.state('request-done');assert.equal(r.fixture.state.completed,1);assert.deepEqual(r.errors,[]);
 });
@@ -343,7 +343,7 @@ for(const engine of ['chromium','webkit'])test(`proof checking stays bound while
  let release,entered;const held=new Promise(resolve=>{release=resolve;}),checking=new Promise(resolve=>{entered=resolve;});t.after(()=>release());
  await r.page.route('**/api/auth/evm/verify',async route=>{entered();await held;await route.continue();});
  await r.qr();await r.pair();await checking;await r.peer.changeAccount();
- await r.frame.getByText('Your wallet has answered. Home is checking the response.',{exact:true}).waitFor();
+ await r.frame.getByText('Your wallet has answered. Home is checking the answer.',{exact:true}).waitFor();
  assert.match(await r.frame.locator('code.connection-address').innerText(),new RegExp(first.slice(0,6),'i'),'the response still belongs to the account that signed');assert.equal(r.fixture.state.verified,0);
  release();await r.state('account-changed');assert.equal(r.fixture.state.verified,1);assert.match(await r.frame.locator('code.connection-address').innerText(),new RegExp(r.peer.address.slice(0,6),'i'),'the changed account is offered for a separate link');
  assert.equal(await r.frame.locator('[data-action=send-message]').count(),1);await r.capture('account-changed-after-proof-response');assert.deepEqual(r.errors,[]);
@@ -419,7 +419,7 @@ for(const engine of ['chromium','webkit'])test(`proof timeout survives relay and
 for(const engine of ['chromium','webkit'])for(const cleanupFails of [false,true])test(`a known hash survives stopping Home completion in ${engine}${cleanupFails?' when cleanup fails':''}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);await r.link();await r.approval('hash-before-stop',{intent:'transaction_intent'});
  let release,entered;const held=new Promise(resolve=>{release=resolve;}),checking=new Promise(resolve=>{entered=resolve;});t.after(()=>release());await r.page.route('**/wallet/approvals/hash-before-stop/complete',async route=>{entered();await held;await route.continue();});
- await r.click('send-request');await checking;await r.frame.getByText('Your wallet has answered. Home is checking the response.',{exact:true}).waitFor();r.fixture.state.deleteFails=cleanupFails;await r.click('stop-waiting');const stopped=cleanupFails?'transaction-wallet-error':'transaction-cancelled';await r.state(stopped);assert.ok((await r.frame.locator('main').innerText()).includes(r.peer.lastTransactionHash));await r.capture(cleanupFails?'known-hash-after-failed-stop':'known-hash-after-stop');release();await until(()=>r.fixture.state.completed===1,'the existing posted completion can finish');await r.state(stopped);assert.deepEqual(r.errors,[]);
+ await r.click('send-request');await checking;await r.frame.getByText('Your wallet has answered. Home is checking the answer.',{exact:true}).waitFor();r.fixture.state.deleteFails=cleanupFails;await r.click('stop-waiting');const stopped=cleanupFails?'transaction-wallet-error':'transaction-cancelled';await r.state(stopped);assert.ok((await r.frame.locator('main').innerText()).includes(r.peer.lastTransactionHash));await r.capture(cleanupFails?'known-hash-after-failed-stop':'known-hash-after-stop');release();await until(()=>r.fixture.state.completed===1,'the existing posted completion can finish');await r.state(stopped);assert.deepEqual(r.errors,[]);
 });
 for(const engine of ['chromium','webkit'])test(`Send remains bound to its visible request ID in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);await r.link();await r.approval('current');const before=r.fixture.state.calls.filter(row=>row.path.endsWith('/approve')).length;

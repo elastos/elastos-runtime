@@ -61,7 +61,7 @@ function inboxSummary() {
         {
           id: "request-wallet",
           kind: "wallet_approval_request",
-          title: "Wallet review",
+          title: "Review request",
           body: "Review the exact wallet request.",
           severity: "info",
           read: true,
@@ -198,7 +198,7 @@ async function run() {
       detailTitle: document.querySelector("#entry-detail .entry-title")?.textContent?.trim() || "",
     }));
     assert(secondSelection.rowCount === 2, "pending filter must restore all current entries", secondSelection);
-    assert(secondSelection.detailTitle === "Wallet review", "row selection must drive the detail panel", secondSelection);
+    assert(secondSelection.detailTitle === inboxSummary().notifications.entries[1].title, "row selection must drive the detail panel", secondSelection);
 
     await page.setViewportSize({ width: 820, height: 760 });
     const compact = await page.evaluate(() => ({

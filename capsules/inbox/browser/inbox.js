@@ -1,4 +1,4 @@
-    const WALLET_REQUEST_UNAVAILABLE = "This request is unavailable. Return to the app and ask for a new request.";
+    const WALLET_REQUEST_UNAVAILABLE = "This request is unavailable. Go back to the app and start a new request.";
     const INBOX_SAFETY_REFRESH_MS = 5 * 60 * 1000;
     const launchParams = new URLSearchParams(window.location.search);
     const homeParentOrigin = launchParams.get("home_origin") || "";
@@ -255,7 +255,7 @@
             && body.code === "conflict" && Object.keys(body).length === 2;
         } catch (_) {}
         if (conflict) {
-          const error = new Error("This request has changed. Refresh Inbox and review the current request.");
+          const error = new Error("Refresh Inbox and review the current request before trying again.");
           error.status = 409;
           try { await loadInbox(); } catch (_) {}
           throw error;
@@ -317,7 +317,7 @@
             } catch (_) {}
           }
           if (conflict) {
-            const error = new Error("This request has changed. Refresh Inbox and review the current request.");
+            const error = new Error("Refresh Inbox and review the current request before trying again.");
             error.status = 409;
             loadInbox().catch(() => {}).finally(() => reject(error));
             return;
@@ -573,7 +573,7 @@
         const expected = `${service}-internet-allow:` + (walletconnect ? current.request?.id : current.request?.request_id);
         if (current.status !== "requested" || (actionId && actionId !== expected)) {
           await loadInbox();
-          throw new Error("This request has changed. Refresh Inbox and review the current request.");
+          throw new Error("Refresh Inbox and review the current request before trying again.");
         }
         const stepUpToken = await requestPasskeyStepUp(`${service}.internet.grant`, current.request);
         await inboxAction(expected, {step_up_token:stepUpToken});
@@ -618,11 +618,11 @@
           } finally { setButtonsDisabled(false); }
         };
         if (entry.kind === "walletconnect_internet_request" && actionId?.startsWith("walletconnect-internet-allow:")) {
-          actions.appendChild(createActionButton("Don't Allow", actionId.replace("-allow:", "-deny:")));
+          actions.appendChild(createActionButton("Don't allow", actionId.replace("-allow:", "-deny:")));
           actions.appendChild(createButton("Allow", () => allowInternet(actionId, "walletconnect"), "primary"));
         } else if (actionId?.startsWith("walletconnect-internet-turn-off:")) {
           const cleaning = state.walletconnectInternet?.status === "revoked";
-          actions.appendChild(createButton(cleaning ? "Finish disconnecting" : "Turn Off", turnOff, "danger"));
+          actions.appendChild(createButton(cleaning ? "Finish disconnecting" : "Turn off internet access", turnOff, "danger"));
         } else if (entry.kind === "walletconnect_internet_decision") {
           actions.appendChild(createButton("Allow", () => allowInternet(null, "walletconnect"), "primary"));
         }
@@ -630,7 +630,7 @@
       }
       if (entry.kind === "browser_internet_decision") {
         if (actionId?.startsWith("browser-internet-turn-off:")) {
-          actions.appendChild(createButton("Turn Off", async () => {
+          actions.appendChild(createButton("Turn off internet access", async () => {
             if (!await confirmInternetOff()) return;
             setButtonsDisabled(true);
             try {
@@ -656,7 +656,7 @@
       }
 
       if (typeof actionId === "string" && actionId.startsWith("browser-internet-allow:")) {
-        actions.appendChild(createActionButton("Don't Allow", actionId.replace("browser-internet-allow:", "browser-internet-deny:")));
+        actions.appendChild(createActionButton("Don't allow", actionId.replace("browser-internet-allow:", "browser-internet-deny:")));
         actions.appendChild(createButton("Allow", () => allowInternet(actionId), "primary"));
       } else if (typeof actionId === "string" && actionId.startsWith("room-approve-request:")) {
         actions.appendChild(createActionButton("Approve", actionId, "primary"));
@@ -845,7 +845,7 @@
           const entry = state.entries.find(e => e.id === id);
           if (entry) {
             const message = outcome.message?.startsWith("Request dismissed.")
-              ? "Request dismissed. Check your connected wallet before sending again." : "Request rejected.";
+              ? "Request dismissed. This does not cancel the transaction in your wallet. Check your wallet before making a new request." : "Request rejected.";
             state.walletAcknowledgement = { ...entry, read: true, severity: "info", action_ref: null, localAcknowledgement: message };
             state.walletDecisions.add(id);
             state.focusWalletAcknowledgement = true;

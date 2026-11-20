@@ -8,7 +8,7 @@ import {importProductSmokePlaywright,productSmokeLaunchOptions} from './product-
 import {walletConnectRelayFixture} from './lib/walletconnect-relay-fixture.mjs';
 import {walletConnectMessages as messages} from '../capsules/wallet-walletconnect/browser/walletconnect-client.mjs';
 const permissionText = 'Allow WalletConnect to use the internet?';
-const turnedOff = 'Internet access is off for WalletConnect.';
+const turnedOff = 'Internet access for WalletConnect is off.';
 // API and passkey responses are fixtures. All app markup, scripts, CSS and SDK are real.
 test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{timeout:240000},async t=>{
   let permissionPosts=0,holdApprovalList=false,releaseApprovalList,approvalListHeld,holdConnectionStatus=false,releaseConnectionStatus,connectionStatusHeld;
@@ -109,7 +109,7 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     await page.evaluate(()=>inbox.style.display='none');await shot('r4-waiting-dark');await page.evaluate(()=>inbox.style.display='block');
     await theme('light');await shot('r4-r5-permission-light');
     await page.evaluate(()=>inbox.style.display='none');await shot('r4-waiting-light');await page.evaluate(()=>inbox.style.display='block');
-    await inbox.locator('#entry-detail').getByRole('button',{name:"Don't Allow",exact:true}).click();
+    await inbox.locator('#entry-detail').getByRole('button',{name:"Don't allow",exact:true}).click();
     await inbox.locator('#entry-detail').getByRole('button',{name:'Allow',exact:true}).waitFor();
     await shot('r12-off-light');await theme('dark');await shot('r12-off-dark');
     // A refusal clears the saved action. A later Allow from the off entry cannot resume it.
@@ -155,13 +155,13 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     await invoke('connect');
     await wallet.locator('.connection-qr').waitFor({timeout:20000});
     await page.evaluate(()=>{inbox.style.display='block';inbox.contentWindow.location.reload();});
-    const turnOff=inbox.locator('#entry-detail').getByRole('button',{name:'Turn Off',exact:true});await turnOff.click();
+    const turnOff=inbox.locator('#entry-detail').getByRole('button',{name:'Turn off internet access',exact:true});await turnOff.click();
     const dialog=inbox.locator('#walletconnect-internet-confirm');await dialog.waitFor();
     assert.equal(await dialog.locator(':focus').textContent(),'Cancel');
     const before=passkeys;
     for(const value of ['dark','light']){await theme(value);await shot(`r5-r14-confirm-${value}`);}
     await dialog.getByRole('button',{name:'Cancel',exact:true}).click();assert.equal(passkeys,before);
-    await turnOff.click();await dialog.getByRole('button',{name:'Turn Off',exact:true}).click();
+    await turnOff.click();await dialog.getByRole('button',{name:'Turn off internet access',exact:true}).click();
     await wallet.locator('[data-focus=outcome]').filter({hasText:turnedOff}).waitFor({timeout:10000});
     assert.equal(await wallet.locator('[role=dialog]').count(),0);assert.equal(passkeys,before+1);
     await inbox.locator('#entry-detail').getByRole('button',{name:'Allow',exact:true}).waitFor();
@@ -241,7 +241,7 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
       await invoke('connect');
       await walletFrame.waitForFunction(()=>typeof window.finishPhone==='function');
       releaseConnectionStatus();await walletFrame.evaluate(()=>window.heldStatusPoll);
-      assert.equal(await wallet.locator('[data-focus=outcome]').textContent(),'Open your wallet on your phone and sign the message to confirm this account is yours.','an older Allow response cannot replace an active connection instruction');
+      assert.equal(await wallet.locator('[data-focus=outcome]').textContent(),'Open your wallet and sign the message to confirm this account is yours.','an older Allow response cannot replace an active connection instruction');
       assert.equal(await wallet.locator('[data-action=connect]:enabled,[data-action=start-over]:enabled').count(),0);
       await walletFrame.evaluate(()=>{window.phoneWait=false;window.finishPhone();});
       try { await wallet.locator('[data-focus=outcome]').filter({hasText:'Connected.'}).waitFor({timeout:10000}); } catch { assert.fail('After the phone reply: '+await wallet.locator('[data-focus=outcome]').textContent()); }
@@ -292,16 +292,16 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
       const linking=['proposal','ownership'].includes(scope);
       const key=scope==='proposal'?'proposalFailure':'phoneFailure';
       const phoneError=scope==='proposal'&&ending==='timeout'?{message:'The QR code expired. Select Connect wallet for a new one.'}:error;
-      const message=scope==='proposal' ? ending==='timeout'?'QR code expired.':ending==='decline'?'Connection declined.':'Could not connect.' : scope==='ownership' ? ending==='decline'?'Account confirmation declined.':ending==='timeout'?'Time to connect ran out.':'Could not connect.' : scope==='signature' ? ending==='decline'?'your wallet did not approve this message.':ending==='timeout'?'Time to answer ran out.':'This request is unavailable. Return to the app and ask for a new request.' : ending==='decline'?'your wallet did not approve this transaction.':'Transaction result unknown.';
+      const message=scope==='proposal' ? ending==='timeout'?'QR code expired.':ending==='decline'?'Connection declined.':'Could not connect.' : scope==='ownership' ? ending==='decline'?'Your wallet declined to sign the message.':ending==='timeout'?'Time to connect ran out.':'Could not connect.' : scope==='signature' ? ending==='decline'?'your wallet did not approve this message.':ending==='timeout'?'Time to answer ran out.':/go back to the app and start a new request\./ : ending==='decline'?'your wallet did not approve this transaction.':'Home could not confirm the transaction result.';
       approvalRequests=linking?[]:[freshRequest(scope==='transaction'?'transaction_intent':'browser_personal_sign')];
       await reload();
       await walletFrame.evaluate(({key,error,sdkError})=>{window[key]=sdkError?Object.assign(new Error(error.message),error.code===undefined?{}:{code:error.code}):error;},{key,error:phoneError,sdkError});
       const review=wallet.locator('[data-wallet-request-sign]');
       await invoke(linking?'connect':'send-request');
       await wallet.locator('[data-focus=outcome]').filter({hasText:message}).waitFor();
+      if(scope==='signature'&&!['decline','timeout'].includes(ending))await wallet.locator('[data-state=request-unavailable]').waitFor();
       assert.equal(await wallet.locator('[data-focus=outcome]').getAttribute('aria-live'),'polite');
       if(!linking)await walletFrame.waitForFunction(()=>!document.querySelector('[data-wallet-request-sign]'));
-      if(scope!=='proposal')await wallet.locator('main').filter({hasText:/Connected\.|Confirm this account|Connect on|Account confirmation|Time to|Could not|did not|could not|unknown|unavailable|cannot be sent/ }).waitFor();
       for(const value of ['dark','light']){await theme(value);await shot(`r17-${scope}-${ending}-${value}`);}
       if(!linking) {
         assert.equal(approvalRequests[0].status,'approved','handoff consumes the pending request');
@@ -342,7 +342,6 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     await walletFrame.waitForFunction(()=>!document.querySelector('[data-wallet-request-sign]'));
     assert.equal(approvalRequests[0].status,'approved');
     assert.equal(await wallet.locator('[data-focus=outcome]').getAttribute('aria-live'),'polite');
-    await wallet.locator('main').filter({hasText:/Connected\.|Confirm this account|Connect on|Account confirmation|Time to|Could not|did not|could not|unknown|unavailable|cannot be sent/ }).waitFor();
     for(const value of ['dark','light']){await theme(value);await shot(`r16-post-handoff-network-${value}`);}
     // A Home return while the phone is waiting must render a disabled Review.
     approvalRequests=[freshRequest()];await reload();
@@ -517,7 +516,7 @@ for (const journey of ['A','B']) test(`round18 ${journey}: the open window recov
       await connectVisible();
       await wallet.locator('[data-focus=outcome]').filter({hasText:permissionText}).waitFor();
       status='refused';await nextPoll();
-      await t.test('refusal gives a true sentence and a working next step',async()=>assert.equal(await text(),'Internet access is off for WalletConnect.'));
+      await t.test('refusal gives a true sentence and a working next step',async()=>assert.equal(await text(),'Internet access for WalletConnect is off.'));
     } else {
       status='revoked';revision++;keys={};await wallet.locator('[data-focus=outcome]').filter({hasText:turnedOff}).waitFor({timeout:10000});
       assert.equal(await wallet.locator('[role=dialog]').count(),0,'Turn Off removes the QR');

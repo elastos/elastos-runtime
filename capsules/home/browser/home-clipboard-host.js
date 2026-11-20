@@ -210,7 +210,7 @@ export function createHomeClipboardPrompt({
     ],
     "wallet:wallet.address:write": [
       "Copy Wallet address?",
-      "Continue to copy this Wallet address to this device clipboard.",
+      "This copies the wallet address to this device's clipboard.",
       "Copy",
     ],
     "wallet:wallet.recovery-key:write": [
@@ -219,23 +219,23 @@ export function createHomeClipboardPrompt({
       "Copy secret",
     ],
     "wallet-metamask:wallet.address:write": [
-      "Copy linked Wallet address?",
-      "Continue to copy this linked Wallet address to this device clipboard.",
+      "Copy wallet address?",
+      "This copies the wallet address to this device's clipboard.",
       "Copy",
     ],
     "wallet-unisat:wallet.address:write": [
-      "Copy linked Wallet address?",
-      "Continue to copy this linked Wallet address to this device clipboard.",
+      "Copy wallet address?",
+      "This copies the wallet address to this device's clipboard.",
       "Copy",
     ],
     "wallet-walletconnect:wallet.address:write": [
-      "Copy linked Wallet address?",
-      "Continue to copy this linked Wallet address to this device clipboard.",
+      "Copy wallet address?",
+      "This copies the wallet address to this device's clipboard.",
       "Copy",
     ],
     "wallet-walletconnect:wallet.connection-link:write": [
       "Copy wallet connection link?",
-      "Copy this link to connect a wallet on this computer.",
+      "Copy the link, then paste it into a wallet app on this computer.",
       "Copy link",
     ],
     "library:resource.uri:write": [

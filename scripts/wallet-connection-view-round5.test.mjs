@@ -2,7 +2,7 @@ import {windowTestOptions} from './lib/walletconnect-window-resources.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {titleSources as sourceFixture,rustTitlePath as rustPath,assertTitleSources,assertTitleSourceBlobs} from './lib/wallet-connection-title-oracle.mjs';
+import {currentTitleSources,rustTitlePath as rustPath,assertTitleSources,assertTitleSourceBlobs} from './lib/wallet-connection-title-oracle.mjs';
 import {writeFile} from 'node:fs/promises';
 import * as product from '../capsules/_shared/wallet-connection-view.mjs';
 import {shared,states,fixtureArguments} from './wallet-connection-view-fixtures.mjs';
@@ -20,14 +20,14 @@ function busyGuard(api=product){for(const window of ['metamask','unisat','wallet
  if(!api.stageNames[window].includes(stage))continue;
  for(const transaction of [false,true])for(const supportedActions of [undefined,...Array.from({length:8},(_,mask)=>['close-window','check-access','check-status'].filter((_,i)=>mask&(1<<i)))]){
   const v=reduce(window,transaction?{intent:'transaction_intent'}:{}, {stage,localSafety:null,waitSeconds:300,supportedActions},api);const notice=api.viewText(v.notice);
-  if(transaction&&stage==='request-busy'){assert.match(notice,/The transaction may still be waiting/);assert.doesNotMatch(notice,/another window/);}else{assert.match(notice,/An operation may still be waiting/);assert.match(notice,/Home cannot tell whether another window has payment work/);}
-  assert.match(notice,/Wallet activity/);assert.doesNotMatch(notice,/reload/i);
+  if(transaction&&stage==='request-busy'){assert.match(notice,/The transaction may still be waiting/);assert.doesNotMatch(notice,/another window/);}else{assert.match(notice,/A request may still be waiting/);assert.match(notice,/Home cannot tell whether another window has a transaction in progress/);}
+  assert.match(notice,/Activity in Wallet/);assert.doesNotMatch(notice,/reload/i);
  }
 }}
 test('R5 F-B: every unknown busy notice survives every supported-action subset',()=>busyGuard());
 test('R5: later capability adaptation preserves link-error and unsafe-retry recovery once',()=>{
  for(const window of ['metamask','unisat','walletconnect'])for(const stage of ['link-error','account-changed','account-unavailable-unknown'])for(const supportedActions of [[],['close-window'],['check-access']]){
-  const v=product.connectionView({window,stage,localSafety:null,supportedActions});const text=words(v);assert.match(text,/Wallet activity/);assert.equal((text.match(/Close this window/g)||[]).length,1);assert.doesNotMatch(text,/Open .* to check its account and connection/);
+  const v=product.connectionView({window,stage,localSafety:null,supportedActions});const text=words(v);assert.match(text,/Activity in Wallet|open Wallet from Home and check Activity/i);assert.equal((text.match(/Close this window/g)||[]).length,1);assert.doesNotMatch(text,/Open .* to check its account and connection/);
  }
 });
 function rejectedGuard(api=product){for(const window of ['walletconnect','metamask','unisat'])for(const transaction of [false,true]){
@@ -44,15 +44,19 @@ function queueGuard(api=product){for(const window of ['walletconnect','metamask'
  const v=api.reduceConnection({window,stage:'request-list'},{summary:selected,otherSummaries:other,nowSeconds:1800000001});assert.equal(v.queueCount,4);assert.equal(v.queuePendingCount,1);assert.equal(v.queueRecoveryCount,1);assert.equal(v.queueRejectedCount,1);assert.equal(v.queueDismissedCount,1);assert.equal(v.queueOtherCount,0);assert.equal(v.choices.length,4);
 }}
 test('R5 K21: rejected and dismissed transactions have their own queue counts',()=>queueGuard());
-const titleGuard=(api=product,sources=sourceFixture.files)=>assertTitleSources(intent=>api.reduceSummary(raw('metamask',{intent}),{connector:'wallet-metamask'}).title,sources);
+const titleGuard=(api=product,sources=currentTitleSources)=>assertTitleSources(intent=>api.reduceSummary(raw('metamask',{intent}),{connector:'wallet-metamask'}).title,sources);
 test('R5: canonical titles equal both raw integration sources including the unknown kind',async()=>{
  assertTitleSourceBlobs();await titleGuard();
- const broken=structuredClone(sourceFixture.files);broken[rustPath].source=broken[rustPath].source.replace('Wallet approval request','Wrong unknown title');await assert.rejects(()=>titleGuard(product,broken),/Wallet and Inbox/);
+ const broken=structuredClone(currentTitleSources);broken[rustPath].source=broken[rustPath].source.replace(/(fn wallet_approval_title\(intent: &str\) -> String \{[\s\S]*?_\s*=>\s*")[^"]+(")/,'$1Wrong unknown title$2');await assert.rejects(()=>titleGuard(product,broken),/Wallet and Inbox/);
 });
-function commonGuard(api=product){for(const stage of ['request-expired','request-wallet-error']){const models=['metamask','unisat'].map(window=>reduce(window,{requesting_app_name:'Browser'}, {stage},api));assert.equal(api.viewText(models[0].notice),api.viewText(models[1].notice));assert.equal(api.viewText(models[0].notice),'To try again, return to Browser and make a new request.');}}
-test('R5: extension recovery uses one common sentence',()=>commonGuard());
+function commonGuard(api=product){for(const window of ['metamask','unisat'])for(const stage of ['request-expired','request-wallet-error']){
+ const v=reduce(window,{requesting_app_name:'Browser'},{stage},api);
+ assert(v.notice.some(p=>p.kind==='app'&&p.text==='Browser'),'recovery names the requesting app');
+ assert.match(api.viewText(v.notice),/new request/);assert(!v.actions.some(a=>a.id==='send-request'));
+}}
+test('R5: extension recovery names the app and requires a new request',()=>commonGuard());
 function neutralGuard(api=product){
- for(const window of ['metamask','unisat'])for(const stage of ['extension-missing','extensions-unavailable','link-wait']){const v=api.connectionView({window,stage,waitSeconds:300});assert.doesNotMatch([api.viewText(v.status),api.viewText(v.notice),v.title].join(' '),/Enable|MetaMask|UniSat/);}
+ for(const window of ['metamask','unisat'])for(const stage of ['extension-missing','extensions-unavailable','link-wait']){const v=api.connectionView({window,stage,waitSeconds:300});assert.doesNotMatch([api.viewText(v.status),api.viewText(v.notice)].join(' '),/Enable/);assert.equal(v.title,window==='metamask'?'MetaMask or Brave Wallet':'UniSat');}
  const provider=shared.messages.find(r=>r.id==='state-com.brave.wallet').message.snapshot;const v=api.connectionView({window:'metamask',stage:'link-wait',provider,waitSeconds:300});assert.equal(v.title,'Brave Wallet');assert.match(api.viewText(v.status)+api.viewText(v.notice),/Brave Wallet/);assert.doesNotMatch(api.viewText(v.status)+api.viewText(v.notice),/MetaMask/);
 }
 test('R5: absent or unidentified extensions use neutral copy and verified Brave keeps its name',()=>neutralGuard());
@@ -89,9 +93,9 @@ for(const engine of ['chromium','webkit']){const skip=windowTestOptions(engine).
  test('R5: Runtime resolution and neutral extension cards render literally in '+engine,{skip},async()=>variant(engine,null,async f=>{
  for(const window of ['metamask','unisat','walletconnect'])for(const dismissed of [false,true]){
   const args=[{window,stage:'request-waiting',compact:true,showNextRequests:true},{summary:raw(window,{status:'rejected',...(dismissed?{approved_at:1800000000}:{}),intent:'transaction_intent'}),otherSummaries:[raw(window,{request_id:'dismissed-in-queue',status:'rejected',approved_at:1800000000,intent:'transaction_intent'})],nowSeconds:1800000001}];
-  const got=await f.page.evaluate(async args=>{const m=await import('/capsules/_shared/wallet-connection-view.mjs');window.m?.dispose();const v=m.reduceConnection(...args);window.m=m.mountConnection(document.querySelector('#mount'),v);return {stage:v.stage,text:window.m.root.innerText,focus:document.activeElement.dataset.focus};},args);assert.equal(got.stage,dismissed?'request-dismissed':'request-rejected');assert.equal(got.focus,'outcome');assert.match(got.text,/1 dismissed request/);assert.doesNotMatch(got.text,/to review/);assert.equal(await f.page.locator('[data-action="send-request"]').count(),0);const feedback=await f.page.locator('.connection-feedback').boundingBox();assert(feedback.y>=0&&feedback.y+feedback.height<=182,'outcome and exits fit the compact frame');await f.page.screenshot({path:proof.path+`/${window}-${got.stage}-${engine}.png`});receipts.push({engine,case:window+'/'+got.stage,result:'PASS'});
+  const got=await f.page.evaluate(async args=>{const m=await import('/capsules/_shared/wallet-connection-view.mjs');window.m?.dispose();const v=m.reduceConnection(...args);window.m=m.mountConnection(document.querySelector('#mount'),v);return {stage:v.stage,text:window.m.root.innerText,focus:document.activeElement.dataset.focus};},args);assert.equal(got.stage,dismissed?'request-dismissed':'request-rejected');assert.equal(got.focus,'outcome');assert.match(got.text,/1 dismissed request/);assert.equal(await f.page.locator('[data-action="send-request"]').count(),0);const feedback=await f.page.locator('.connection-feedback').boundingBox();assert(feedback.y>=0&&feedback.y+feedback.height<=182,'outcome and exits fit the compact frame');await f.page.screenshot({path:proof.path+`/${window}-${got.stage}-${engine}.png`});receipts.push({engine,case:window+'/'+got.stage,result:'PASS'});
  }
- for(const window of ['metamask','unisat']){const got=await f.page.evaluate(async kind=>{const m=await import('/capsules/_shared/wallet-connection-view.mjs');window.m?.dispose();window.m=m.mountConnection(document.querySelector('#mount'),m.connectionView({window:kind,stage:'extension-missing',compact:true,supportedActions:['close-window']}));return window.m.root.innerText;},window);assert.doesNotMatch(got,/Enable|MetaMask|UniSat/);await f.page.screenshot({path:proof.path+`/${window}-neutral-absence-${engine}.png`});}
+ for(const window of ['metamask','unisat']){const got=await f.page.evaluate(async kind=>{const m=await import('/capsules/_shared/wallet-connection-view.mjs');window.m?.dispose();window.m=m.mountConnection(document.querySelector('#mount'),m.connectionView({window:kind,stage:'extension-missing',compact:true,supportedActions:['close-window']}));return window.m.root.innerText;},window);assert.doesNotMatch(got,/Enable/);assert.match(got,window==='metamask'?/MetaMask or Brave Wallet/:/UniSat/);await f.page.screenshot({path:proof.path+`/${window}-neutral-absence-${engine}.png`});}
  }));
 }
 
@@ -104,7 +108,7 @@ test('R5: direct guards reject every escaped source break',async t=>{
   ['K6 live selection replaces signer',s=>s.replace('const account = accountDisplay(input.account, window, requestScreen?summary:null);','const account = accountDisplay(input.account, window, requestScreen?summary:null);if(account&&currentSelection){account.accounts[0].address=currentSelection.address;account.accounts[0].networks=[currentSelection.network];}'),accountGuard],
   ['K8 actor map replaces app label',s=>s.replace("? summary.requesting_app_name : 'Requesting app'","? ({browser:'Browser',notes:'Notes'}[summary.capsule_id]||summary.requesting_app_name) : 'Requesting app'"),nameGuard],
   ['K21 rejected transaction becomes recovery',s=>s.replace("queued.filter(r=>r.status==='approved'&&r.transaction)","queued.filter(r=>['approved','rejected'].includes(r.status)&&r.transaction)"),queueGuard],
-  ['unknown title diverges',s=>s.replace("requestTitles[summary.intent]:'Wallet approval request'","requestTitles[summary.intent]:'Approval request'"),titleGuard],
+  ['unknown title diverges',s=>s.replace("requestTitles[summary.intent]:'Review request'","requestTitles[summary.intent]:'Approval request'"),titleGuard],
  ];
  for(const[name,mutate,guard]of mutations)await t.test(name,()=>withTestView({mutateSource:source=>{const changed=mutate(source);assert.notEqual(changed,source,'source break applies');return changed;}},async api=>{await assert.rejects(async()=>guard(api),assert.AssertionError);t.diagnostic(name+': CAUGHT');}));
 });
@@ -114,7 +118,7 @@ test('R5: corrected F-B guard rejects the pinned round-four product notice',()=>
 test('R5: capability copy cannot replace a returned transaction recovery or its save failure',()=>{
  for(const window of ['metamask','walletconnect'])for(const supportedActions of [[],['close-window'],['check-access']]){
   const summary=product.reduceSummary(raw(window,{intent:'transaction_intent'}),{connector:'wallet-'+window});
-  const v=product.connectionView({window,stage:'transaction-timeout',summary,walletResult:{disposition:'answered',receipt:'recording_failed'},supportedActions});assert.match(product.viewText(v.status),/returned a transaction result/);assert.match(words(v),/Wallet activity before sending again/);assert.doesNotMatch(words(v),/still be waiting|account and connection/);
+  const v=product.connectionView({window,stage:'transaction-timeout',summary,walletResult:{disposition:'answered',receipt:'recording_failed'},supportedActions});assert.match(product.viewText(v.status),/returned a transaction result/);assert.match(words(v),/Activity in Wallet before sending again/);assert.doesNotMatch(words(v),/still be waiting|account and connection/);
   const refused=product.connectionView({window,stage:'transaction-declined',summary,walletResult:{disposition:'declined',receipt:'recording_failed'},supportedActions});assert.match(words(refused),/Home cannot save that answer/);
  }
 });

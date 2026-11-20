@@ -4,7 +4,7 @@
   "contractCommit": "c81a0c6db58dd13df1512e4bec43aca9941c2642",
   "contracts": {
     "docs/HOME_SHELL_HOST_CONTRACT.md": "b7cfec9e36e869d8f8520dde3d490d2d44259756350e4bcdf5f7b4aa88233930",
-    "docs/WALLET_PROVIDER.md": "867a2a755ef67049ae05c47538b4d1a853e38d8390dee3af07a45374978f4f37"
+    "docs/WALLET_PROVIDER.md": "b80d910766080a5d4fd8a058dd547d954d632a5655b4e58dd8111e834639a89f"
   },
   "messages": [
     {
