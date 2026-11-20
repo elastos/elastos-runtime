@@ -1889,7 +1889,7 @@ async fn run_upgrade_with_restart(
             download_total,
         )?;
         owner.progress("downloading", DOWNLOAD_MESSAGE)?;
-        let support_plan = support_plan.context("Home could not prepare the update. Try again.")?;
+        let support_plan = support_plan.context("Home could not prepare the update because its download plan is missing.")?;
         Some(
             on_heap(|| {
                 crate::setup::stage_planned_update_support(
