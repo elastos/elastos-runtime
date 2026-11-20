@@ -113,9 +113,6 @@ h2 { font-size: var(--el-text-lg); font-weight: 600; }
 .connection-wallet, .connection-app, .connection-home { max-width:min(18em, 65vw); }
 .connection-site-row { display:flex; flex-direction:column; gap:2px; margin-bottom:8px; font-size:var(--el-text-md); color:var(--el-muted); }
 .connection-site-row .connection-site { max-width:100%; overflow-wrap:anywhere; }
-.connection-account-header .connection-heading { margin-bottom:0; }
-.connection-account-header:has(.connection-heading) { flex-wrap:wrap; }
-.connection-account-header .connection-status { flex-basis:100%; }
 .connection-content { min-width:0; }
 .connection-detail { overflow-wrap:anywhere; }
 .connection-request-account { flex-wrap:wrap; }
@@ -139,7 +136,6 @@ h2 { font-size: var(--el-text-lg); font-weight: 600; }
 .connection-compact .connection-qr { width:56px; height:56px; }
 /* Post-action waits and outcomes retain feedback outside scrolling identity. */
 .connection-window:not(.connection-panel) { height:100svh; min-height:0; }
-.connection-window:not(.connection-panel) > .connection-heading { flex-shrink:0; }
 .connection-window:not(.connection-panel) > .connection-content { min-height:0; display:flex; flex-direction:column; }
 .connection-request:not(.connection-request-choice) { display:flex; flex-direction:column; min-height:0; }
 .connection-request > :not(.connection-identity) { flex-shrink:0; }
@@ -169,7 +165,6 @@ h2 { font-size: var(--el-text-lg); font-weight: 600; }
 
 /* Keep the clipping box inside the baseline-bearing isolated inline box. */
 .connection-isolated-text { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.connection-account-header .connection-heading img { width:36px; height:36px; }
 .connection-content > .connection-note { margin-top:16px; }
 .connection-host-label, .connection-host-end { display:inline-block; width:max-content; max-width:100%; white-space:normal; overflow-wrap:anywhere; vertical-align:baseline; }
 .connection-site-row .connection-site { display:block; line-height:1.5; }
@@ -178,7 +173,6 @@ h2 { font-size: var(--el-text-lg); font-weight: 600; }
 .connection-approval-window > .connection-content { display:block; overflow:visible; }
 .connection-approval-window .connection-request { display:block; overflow:visible; }
 .connection-approval-window .connection-identity { overflow:visible; max-height:none; }
-.connection-approval-window .connection-heading { margin-top:8px; }
 .connection-card-start { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; }
 .connection-more { color:var(--el-muted); font-size:var(--el-text-md); }
 .connection-approval-unit { display:block; margin-top:8px; }
@@ -189,11 +183,9 @@ h2 { font-size: var(--el-text-lg); font-weight: 600; }
 .connection-approval-window .connection-request-choice { margin-bottom:8px; }
 @media(max-width:280px) { body { min-width:0; } }
 .connection-approval-window { padding:16px 20px; }
-.connection-approval-window > .connection-heading { margin:0 0 12px; }
 .connection-approval-window .connection-card { padding:12px; }
 .connection-approval-window .connection-card-start .el-button { min-height:28px; }
 .connection-compact.connection-approval-window { padding:6px 8px; }
-.connection-compact.connection-approval-window > .connection-heading { margin:0 0 4px; }
 .connection-compact.connection-approval-window .connection-card { padding:8px; }
 .connection-compact.connection-approval-window .connection-card-start .el-button { min-height:24px; padding:2px 6px; font-size:12px; }
 .connection-site-row .connection-site { display:inline; }
