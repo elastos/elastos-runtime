@@ -64,10 +64,9 @@ class TwoHomeReceiptTests(unittest.TestCase):
                 shutil.rmtree(path)
             helpers = {'require_disk_space': mock.Mock(), 'remove_message_fixture': cleanup}
             with mock.patch.dict(function.__globals__, {
-                    'sys': types.SimpleNamespace(platform='linux'),
                     'runpy': types.SimpleNamespace(run_path=lambda _: helpers)}),                     mock.patch.object(Path, 'home', return_value=root),                     mock.patch.object(JOURNEY['subprocess'], 'run', side_effect=RuntimeError('stop before external build')) as run:
                 with self.assertRaisesRegex(RuntimeError, 'stop before external build'):
-                    function([])
+                    function([], platform="linux")
                 self.assertEqual(run.call_args.args[0][:2], ['openssl', 'req'])
             self.assertEqual(len(removed), 1)
             self.assertFalse(removed[0].exists())

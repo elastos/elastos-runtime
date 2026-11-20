@@ -2415,11 +2415,11 @@ def require_message_receipt(path):
     return json.loads(encoded)
 
 
-def two_home_message_matrix(arguments):
+def two_home_message_matrix(arguments, platform=sys.platform):
     parser = argparse.ArgumentParser()
     parser.add_argument("--evidence-dir", type=Path)
     args = parser.parse_args(arguments)
-    if sys.platform != "linux":
+    if platform != "linux":
         raise RuntimeError("the two-network arrangements require Linux namespaces")
     root = Path.cwd().resolve()
     journey = runpy.run_path(str(root / "scripts/ci-installed-journeys.py"))
