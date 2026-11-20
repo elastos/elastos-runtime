@@ -63,12 +63,22 @@ try {
     const page = await browser.newPage({ viewport: native ? null : { width: 800, height: 600 } });
     const browserSession = native ? await browser.newBrowserCDPSession() : null;
     const browserPid = native ? (await browserSession.send("SystemInfo.getProcessInfo")).processInfo.find(p => p.type === "browser").id : null;
+    const browserIdentity = native ? JSON.parse((await run(binary, ["--identity", String(browserPid)], { timeout: 5000 })).stdout) : null;
     const driverErrors = [];
+    const pressedKeys = new Set();
+    const pendingNativeInputs = new Set();
+    let acceptingInput = true;
     page.on("console", message => { if (message.type() === "error") driverErrors.push(message.text()); });
     await page.exposeFunction("driveInput", async request => {
+      assert.ok(acceptingInput, "fixture input remains active");
       const b = request.rect;
+      if (request.phase === "key-down") pressedKeys.add(request.key);
       if (native) {
-        await run(binary, ["--input", String(browserPid), JSON.stringify(request)], { timeout: 5000 });
+        if (request.phase === "key-up") assert.ok(pressedKeys.has(request.key), "only release an owned key");
+        const pending = run(binary, ["--input", String(browserPid), JSON.stringify({ ...request, ownedKey: pressedKeys.has(request.key) }),
+          JSON.stringify(browserIdentity)], { timeout: 5000 });
+        pendingNativeInputs.add(pending);
+        try { await pending; } finally { pendingNativeInputs.delete(pending); }
       } else if (request.phase === "wheel") {
         await page.mouse.move(b.x + 120, b.y + 180);
         for (const delta of request.deltas) {
@@ -81,6 +91,10 @@ try {
         else await page.mouse.up();
       } else if (request.phase === "key") {
         await page.keyboard.press(request.key);
+      } else if (request.phase === "key-down") {
+        await page.keyboard.down(request.key);
+      } else if (request.phase === "key-up") {
+        await page.keyboard.up(request.key);
       } else {
         const selection = request.phase === "select";
         const back = request.phase === "drag-back";
@@ -92,6 +106,7 @@ try {
           selection ? y : b.y + (back ? b.height - 14 : 36), { steps: 16 });
         await page.mouse.up();
       }
+      if (request.phase === "key-up") pressedKeys.delete(request.key);
     });
     await page.addInitScript(() => {
       window.webkit = { messageHandlers: { probe: { postMessage: async text => {
@@ -101,16 +116,37 @@ try {
         catch (error) { console.error(error); window.__continue(false); }
       } } } };
     });
-    await page.goto(`${url}?${mode}${matrix ? "&matrix" : ""}#home_token=follow-fixture`);
-    await page.waitForFunction(() => window.__report, null, { timeout: matrix ? 180000 : 55000 });
-    record({ engine: "Chromium", input: native ? "CGEvent" : "Playwright", driverErrors, ...await page.evaluate(() => window.__report) });
-    await page.close();
+    try {
+      await page.goto(`${url}?${mode}${matrix ? "&matrix" : ""}#home_token=follow-fixture`);
+      await page.waitForFunction(() => window.__report, null, { timeout: matrix ? 180000 : 55000 });
+      record({ engine: "Chromium", input: native ? "process-targeted CGEvent keys" : "Playwright", browserIdentity, driverErrors, ...await page.evaluate(() => window.__report) });
+    } finally {
+      acceptingInput = false;
+      const cleanupErrors = [];
+      // Every native helper call has a 5s timeout. Finish any in-flight down
+      // before cleanup sends its up; refuse new input once teardown starts.
+      for (const pending of await Promise.allSettled([...pendingNativeInputs])) {
+        if (pending.status === "rejected") cleanupErrors.push(pending.reason);
+      }
+      for (const key of pressedKeys) {
+        try {
+          if (native) {
+            assert.ok(browser.isConnected(), "owned browser connection remains live for cleanup");
+            await run(binary, ["--input", String(browserPid), JSON.stringify({ phase: "key-up", key, ownedKey: true }),
+              JSON.stringify(browserIdentity)], { timeout: 5000 });
+          }
+          else await page.keyboard.up(key);
+        } catch (error) { cleanupErrors.push(error); }
+      }
+      await page.close();
+      if (cleanupErrors.length) throw new AggregateError(cleanupErrors, "owned input cleanup failed");
+    }
   }
   await browser.close(); browser = null;
   if (native) {
     for (const mode of modes) {
       const { stdout } = await run(binary, [`${url}?${mode}${matrix ? "&matrix" : ""}#home_token=follow-fixture`], { timeout: matrix ? 190000 : 60000 });
-      record({ engine: "system WebKit", input: "CGEvent", ...JSON.parse(stdout.trim()) });
+      record({ engine: "system WebKit", input: "process-targeted CGEvent keys", ...JSON.parse(stdout.trim()) });
     }
   }
   await writeFile(resolve(output, `${(ref || "worktree").replaceAll("/", "-")}${matrix ? "-matrix" : ""}.json`), JSON.stringify(reports, null, 2));
@@ -125,7 +161,16 @@ try {
         "shared failures cannot hide fixture or input errors");
       assert.deepEqual(Object.keys(report.checks), Object.keys(prior.checks), "same matrix checks");
       assert.deepEqual(report.failures.filter(f => !prior.failures.includes(f)), [], "candidate has no new failures");
-      for (const label of ["1px then 220ms quiet then 80px and growth", "stationary scrollbar hold with 150px growth",
+      for (const prefix of ["native PageUp in short ", "native PageUp repeated short ", "native textarea ",
+        "native Home with selected textarea text:", "native End with selected textarea text:", "native PageUp with selected textarea text:",
+        "native Home in ", "native ArrowUp in ", "held editable ", "editable "]) {
+        const checks = Object.entries(report.checks).filter(([label]) => label.startsWith(prefix));
+        assert.ok(checks.length, `required editable checks present: ${prefix}`);
+        for (const [label, passed] of checks) assert.equal(passed, true, label);
+      }
+      for (const label of ["native Shift+Space on message button does not scroll", "native Shift+Space on message button",
+        "native ArrowUp on message button", "repeated field key and blur restore scroll styles",
+        "1px then 220ms quiet then 80px and growth", "stationary scrollbar hold with 150px growth",
         "stream growth and completion without Jump flash"]) assert.equal(report.checks[label], true, label);
       console.log(JSON.stringify({ engine: report.engine, fallback: report.fallback, swallow: report.swallow,
         sharedFailures: report.failures }));

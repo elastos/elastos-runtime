@@ -1,4 +1,4 @@
-// Native CGEvent keys and drags for system WKWebView and the owned Chromium test window.
+// Process-targeted CGEvent keys and native drags for owned browser test windows.
 import ApplicationServices
 import Cocoa
 import WebKit
@@ -7,6 +7,45 @@ final class Probe: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
   var web: WKWebView!
   var window: NSWindow!
   var screenOrigin: CGPoint?
+  var pressedKeys = Set<String>()
+  // Keep split keyboard state private to this helper, never the shared HID table.
+  let keySource = CGEventSource(stateID: .privateState)
+  var targetPID = getpid()
+  var targetIdentity: [String: Any]?
+  var inputErrors = [String]()
+
+  static func identity(_ pid: pid_t) -> [String: Any]? {
+    guard let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated,
+          let launched = app.launchDate, let executable = app.executableURL else { return nil }
+    return ["pid": Int(pid), "launched": launched.timeIntervalSince1970, "executable": executable.path]
+  }
+
+  func ownsTarget() -> Bool {
+    if targetPID == getpid() { return true }
+    guard let expected = targetIdentity, let actual = Probe.identity(targetPID) else { return false }
+    return NSDictionary(dictionary: expected).isEqual(to: actual)
+  }
+
+  func diagnostics() -> [String: Any] {
+    let frontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier ?? -1
+    return ["accessibilityTrusted": AXIsProcessTrusted(), "frontmostPID": Int(frontmost),
+      "helperPID": Int(getpid()), "targetPID": Int(targetPID), "targetIsFrontmost": frontmost == targetPID,
+      "targetIdentityValid": ownsTarget(), "keyboardInput": "process-targeted CGEvent",
+      "os": ProcessInfo.processInfo.operatingSystemVersionString]
+  }
+
+  func fail(_ message: String) {
+    inputErrors.append(message)
+    fputs("\(message)\n", stderr)
+  }
+
+  func terminate(_ code: Int32, message: String) -> Never {
+    fail(message)
+    let released = releaseHeldKeys()
+    fputs("owned key cleanup: released=\(released) remaining=\(pressedKeys.count)\n", stderr)
+    window?.close()
+    exit(code)
+  }
 
   func start(url: String) {
     let config = WKWebViewConfiguration()
@@ -28,19 +67,16 @@ final class Probe: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
     let url = URL(string: url)!
     web.load(URLRequest(url: url))
     DispatchQueue.main.asyncAfter(deadline: .now() + 180) {
-      fputs("timeout\n", stderr)
-      exit(2)
+      self.terminate(2, message: "timeout")
     }
   }
 
   func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-    fputs("navigation failed: \(error.localizedDescription)\n", stderr)
-    exit(1)
+    terminate(1, message: "navigation failed: \(error.localizedDescription)")
   }
 
   func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-    fputs("provisional failed: \(error.localizedDescription)\n", stderr)
-    exit(1)
+    terminate(1, message: "provisional failed: \(error.localizedDescription)")
   }
 
   func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -48,24 +84,34 @@ final class Probe: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
     guard let data = text.data(using: .utf8),
           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
           let phase = obj["phase"] as? String else {
-      print(text)
-      fflush(stdout)
-      exit(0)
+      terminate(1, message: "malformed fixture report")
     }
     if phase == "done" {
-      print(text)
+      let released = releaseHeldKeys()
+      var report = obj
+      report["nativeHeldKeysReleased"] = released
+      report["nativeHeldKeysRemaining"] = pressedKeys.count
+      report["nativeDiagnostics"] = diagnostics()
+      report["nativeInputErrors"] = inputErrors
+      let data = try! JSONSerialization.data(withJSONObject: report)
+      print(String(data: data, encoding: .utf8)!)
       fflush(stdout)
-      exit(0)
+      window?.close()
+      exit(released && inputErrors.isEmpty ? 0 : 3)
     }
-    NSApp.activate(ignoringOtherApps: true)
-    window.makeKeyAndOrderFront(nil)
-    pump(0.1)
-    let trusted = AXIsProcessTrusted() && NSWorkspace.shared.frontmostApplication?.processIdentifier == getpid()
-    if trusted { input(obj) }
-    let flag = trusted ? "true" : "false"
+    let releasing = phase == "key-up" && pressedKeys.contains(obj["key"] as? String ?? "")
+    if !releasing {
+      NSApp.activate(ignoringOtherApps: true)
+      window.makeKeyAndOrderFront(nil)
+      pump(0.1)
+    }
+    let trusted = AXIsProcessTrusted() && ownsTarget()
+      && (releasing || NSWorkspace.shared.frontmostApplication?.processIdentifier == targetPID)
+    let delivered = trusted && input(obj)
+    let flag = delivered ? "true" : "false"
     web.evaluateJavaScript("window.__continue(\(flag)); 0") { _, error in
       if let error {
-        fputs("continue \(phase): \(error.localizedDescription)\n", stderr)
+        self.terminate(1, message: "continue \(phase): \(error.localizedDescription)")
       }
     }
   }
@@ -89,7 +135,7 @@ final class Probe: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
     RunLoop.current.run(until: Date().addingTimeInterval(seconds))
   }
 
-  func input(_ obj: [String: Any]) {
+  func input(_ obj: [String: Any]) -> Bool {
     let rect = obj["rect"] as? [String: Double] ?? [:]
     switch obj["phase"] as? String {
     case "drag-away": drag(rect, fromTop: false)
@@ -128,12 +174,14 @@ final class Probe: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
       }
       if momentum { wheel(0, momentumPhase: 4) }
       else { wheel(0, phase: 4) }
-    case "key": press(obj["key"] as? String ?? "PageUp")
+    case "key", "key-down", "key-up":
+      guard press(obj["key"] as? String ?? "PageUp", phase: obj["phase"] as? String ?? "key", repeatKey: obj["repeat"] as? Bool ?? false) else { return false }
     default: break
     }
     // Pump native animation steps as in the system WebKit review. The page
     // waits separately for event delivery and quiet-period settlement.
     if screenOrigin == nil { pump(0.5) }
+    return true
   }
 
   func drag(_ rect: [String: Double], fromTop: Bool) {
@@ -174,7 +222,21 @@ final class Probe: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
     post(end, .leftMouseUp)
   }
 
-  func press(_ name: String) {
+  func releaseHeldKeys() -> Bool {
+    if pressedKeys.isEmpty { return true }
+    guard AXIsProcessTrusted(), ownsTarget() else {
+      fail("owned key cleanup refused: Accessibility or target identity unavailable")
+      return false
+    }
+    // A release goes only to our original target, even if focus moved elsewhere.
+    // Posting has no delivery acknowledgement; fixture event receipts verify it.
+    for name in Array(pressedKeys) {
+      if !press(name, phase: "key-up") { return false }
+    }
+    return pressedKeys.isEmpty
+  }
+
+  func press(_ name: String, phase: String = "key", repeatKey: Bool = false) -> Bool {
     let code: CGKeyCode
     switch name {
     case "Home": code = 115
@@ -182,30 +244,63 @@ final class Probe: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
     case "End": code = 119
     case "PageDown": code = 121
     case "Shift+Space": code = 49
-    default: code = 116
+    case "PageUp": code = 116
+    default: fail("unsupported key: \(name)"); return false
     }
-    let source = CGEventSource(stateID: .hidSystemState)
-    let down = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: true)
-    let up = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: false)
-    down?.flags = name == "Shift+Space" ? .maskShift : []
-    up?.flags = []
-    down?.post(tap: .cghidEventTap)
-    pump(0.05)
-    up?.post(tap: .cghidEventTap)
+    guard ownsTarget(), let source = keySource,
+          let down = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: true),
+          let up = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: false) else {
+      fail("key event creation or target identity failed")
+      return false
+    }
+    if phase == "key-up" && !pressedKeys.contains(name) {
+      fail("refusing release of an unowned key: \(name)")
+      return false
+    }
+    down.flags = name == "Shift+Space" ? .maskShift : []
+    up.flags = []
+    if phase != "key-up" {
+      down.setIntegerValueField(.keyboardEventAutorepeat, value: repeatKey ? 1 : 0)
+      down.postToPid(targetPID)
+      pressedKeys.insert(name)
+    }
+    if phase == "key" { pump(0.05) }
+    if phase != "key-down" {
+      up.postToPid(targetPID)
+      pressedKeys.remove(name)
+    }
+    return true
   }
 }
 
 let app = NSApplication.shared
 let probe = Probe()
-if CommandLine.arguments[1] == "--input" {
-  // The runner supplies the browser PID it just launched, and page coordinates.
-  // Refuse input if that owned window cannot become the frontmost application.
-  let pid = pid_t(CommandLine.arguments[2])!
-  guard AXIsProcessTrusted(), let owned = NSRunningApplication(processIdentifier: pid) else { exit(3) }
+guard CommandLine.arguments.count > 1 else { exit(2) }
+if CommandLine.arguments[1] == "--identity" {
+  guard CommandLine.arguments.count == 3, let pid = pid_t(CommandLine.arguments[2]),
+        let identity = Probe.identity(pid),
+        let data = try? JSONSerialization.data(withJSONObject: identity),
+        let text = String(data: data, encoding: .utf8) else { exit(3) }
+  print(text)
+} else if CommandLine.arguments[1] == "--input" {
+  // The runner captures the launch identity of its CDP-owned browser once.
+  // Validate it again before every input, including background key cleanup.
+  guard CommandLine.arguments.count == 5, let pid = pid_t(CommandLine.arguments[2]),
+        let obj = try? JSONSerialization.jsonObject(with: Data(CommandLine.arguments[3].utf8)) as? [String: Any],
+        let identity = try? JSONSerialization.jsonObject(with: Data(CommandLine.arguments[4].utf8)) as? [String: Any],
+        let owned = NSRunningApplication(processIdentifier: pid) else { exit(3) }
+  probe.targetPID = pid
+  probe.targetIdentity = identity
+  guard AXIsProcessTrusted(), probe.ownsTarget() else { exit(3) }
+  let releasing = obj["phase"] as? String == "key-up" && obj["ownedKey"] as? Bool == true
+  if releasing {
+    guard let key = obj["key"] as? String else { exit(3) }
+    probe.pressedKeys.insert(key)
+    exit(probe.press(key, phase: "key-up") ? 0 : 3)
+  }
   owned.activate(options: [.activateIgnoringOtherApps])
   probe.pump(0.15)
   guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else { exit(4) }
-  let obj = try! JSONSerialization.jsonObject(with: Data(CommandLine.arguments[3].utf8)) as! [String: Any]
   func webOrigin(_ element: AXUIElement, depth: Int = 0) -> CGPoint? {
     guard depth < 15 else { return nil }
     var role: CFTypeRef?
@@ -233,7 +328,7 @@ if CommandLine.arguments[1] == "--input" {
   }
   guard let origin else { exit(5) }
   probe.screenOrigin = origin
-  probe.input(obj)
+  if !probe.input(obj) { probe.terminate(3, message: "input failed") }
 } else {
   probe.start(url: CommandLine.arguments[1])
   app.run()
