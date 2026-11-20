@@ -47,16 +47,18 @@ service owner. Shutdown waits for them before closing registered clients;
 dropping the HTTP server also cancels their service token. A held authenticated
 handshake control proves that its admission is released during shutdown.
 
-The HTTP transport admits at most 128 sockets, including queued and authenticated
-connections, with at most 32 pending in total, 32 per source network and 8 pending
-per source network. The guard survives HTTP upgrade and remains with the relay
-actor. IPv4 uses one address; IPv6 uses a /64. Forwarded headers grant no separate
-budget, so a reverse proxy shares that budget. QAD validates source ownership
-with stateless Retry before reserving pending slots and uses the same /64 rule.
+The HTTP transport uses the configurable `ConnectionLimits` policy, whose total
+and pending capacities reserve places for at least 64 source allocations.
+The guard survives HTTP upgrade and remains with the relay actor. IPv4 uses one
+address; IPv6 uses a /48. Runtime terminates TLS itself and accounts the socket's
+actual source address. QAD validates source ownership with stateless Retry before
+reserving bounded pending slots and uses the same /48 grouping.
 Retire these changes when upstream bounds both transports with equivalent guards.
 
-The standalone workspace keeps intermediates in its own target directory. Its
-independent lock graph cannot replace Home dependencies in the shared cache.
+The standalone workspace keeps its independent lock graph. Repository Cargo
+configuration owns intermediate build storage; final executables remain in each
+workspace's target directory. The product lock-graph guard checks that Runtime
+still resolves these path forks rather than an additional registry copy.
 
 The final actor flush uses the existing write deadline, including during owned
 shutdown. A peer that leaves a real output buffer full cannot hold shutdown open.
