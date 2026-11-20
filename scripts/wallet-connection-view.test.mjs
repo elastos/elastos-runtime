@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { connectionView, connectionKey, reduceProvider, reduceSummary, reduceConnection, reduceAlternative, stageNames, viewText } from '../capsules/_shared/wallet-connection-view.mjs';
-import { states, shared, pictures, fixtureView } from './wallet-connection-view-fixtures.mjs';
+import { connectionView, connectionKey, reduceProvider, reduceSummary, reduceConnection, reduceAlternative, stageNames, viewText, renderConnection } from '../capsules/_shared/wallet-connection-view.mjs';
+import { states, shared, pictures, fixtureView, fixtureArguments } from './wallet-connection-view-fixtures.mjs';
 import { ruleFailures } from './lib/wallet-connection-view-rules.mjs';
 import { contractCopy } from './lib/wallet-connection-picture-oracle.mjs';
 
@@ -24,6 +24,19 @@ test('wallet_windows_state_producers_and_controls: render-only matrix', async t 
     assert(['window-local: produced by the window lane','reducer over shared fixture','provisional'].includes(row.origin));
     if(row.origin === 'provisional')assert(row.provisional.every(p=>p.startsWith('needs an example from the foundation lane:')));
   });
+});
+
+test('extension account marks follow fresh provider identity in every fixture state', () => {
+  const snapshot=shared.messages.find(row=>row.valid&&row.message.snapshot).message.snapshot;
+  for(const row of states.filter(row=>['unisat','metamask'].includes(row.window))){
+    const base=fixtureView(row),[input]=fixtureArguments(row);
+    for(const availability of ['unknown','absent','found'])for(const providerId of row.window==='unisat'?['unisat']:[null,'io.metamask','com.brave.wallet']){
+      const provider={...snapshot,providerId,alternatives:[],availability,firstAccount:null,requiredAccountAvailable:null,network:null,networkIssue:null,access:'unknown',busy:false,paymentPending:null};
+      const view=connectionView({...input,stage:base.stage,account:base.account,summary:base.request||undefined,provider});
+      const expected=availability==='found'&&providerId==='unisat'?'unisat':availability==='found'&&providerId==='io.metamask'?'metamask':'wallet';
+      assert.equal(view.accountMark,expected,`${row.designState}/${availability}/${providerId}`);
+    }
+  }
 });
 
 test('rule oracles reject deliberate broken states, one mutation per rule', () => {
@@ -182,6 +195,53 @@ test('same-stage focus uses stable address keys and invalid display bounds use t
 test('provider and summary reducers are public pure exports', () => {
   assert.equal(typeof reduceProvider, 'function');
   assert.equal(typeof reduceSummary, 'function');
+});
+
+function walletViewDocument() {
+  const makeEl = tag => {
+    const el = {
+      tagName: tag.toUpperCase(), children: [], childNodes: [], parentNode: null, hidden: false, dataset: {}, tabIndex: 0, dir: '', textContent: '',
+      classList: { _c: [], add(...items) { this._c.push(...items); }, contains(item) { return this._c.includes(item); } },
+      append(...items) { for (const item of items) { item.parentNode = this; this.children.push(item); this.childNodes.push(item); } },
+      appendChild(item) { this.append(item); },
+      replaceChildren(...items) { this.children = []; this.childNodes = []; this.append(...items); },
+      insertBefore(item, ref) { const index = this.children.indexOf(ref); item.parentNode = this; if (index < 0) this.children.push(item); else this.children.splice(index, 0, item); },
+      prepend(item) { item.parentNode = this; this.children.unshift(item); this.childNodes.unshift(item); },
+      setAttribute() {},
+      querySelector(sel) { const wanted = sel.startsWith('.') ? [null, sel.slice(1)] : sel.includes('.') ? sel.split('.') : [sel, null]; let found = null; const walk = node => { if (found || !node) return; const tag = wanted[0] ? node.tagName?.toLowerCase() === wanted[0] : true; const cls = wanted[1] ? node.classList?.contains(wanted[1]) : true; if (tag && cls) found = node; for (const child of node.children ?? []) walk(child); }; walk(this); return found; },
+      querySelectorAll() { return []; },
+      get className() { return this.classList._c.join(' '); },
+      set className(value) { this.classList._c = value.trim().split(/\s+/).filter(Boolean); },
+    };
+    return el;
+  };
+  const doc = {
+    createElement(tag) { const el = makeEl(tag); el.ownerDocument = doc; return el; },
+    createTextNode(text) { return { nodeType: 3, textContent: text, parentNode: null }; },
+  };
+  return doc;
+}
+
+test('signing windows expose sr-only page titles and no visible connection-heading', () => {
+  const document = walletViewDocument();
+  const linkedAccount = { name: 'Scripted phone wallet', mark: 'wallet', accounts: [{ address: '0x' + '1'.repeat(40), networks: ['Ethereum'] }] };
+  const cases = [
+    ['metamask', 'ready', null, 'MetaMask or Brave Wallet'],
+    ['metamask', 'linked', linkedAccount, 'MetaMask or Brave Wallet'],
+    ['unisat', 'ready', null, 'UniSat'],
+    ['unisat', 'linked', linkedAccount, 'UniSat'],
+    ['walletconnect', 'nothing-saved', null, 'WalletConnect'],
+    ['walletconnect', 'linked', { ...linkedAccount, connection: 'WalletConnect' }, 'WalletConnect'],
+  ];
+  for (const [window, stage, account, title] of cases) {
+    const view = connectionView({ window, stage, ...(account ? { account, localSafety: false } : {}) });
+    const root = renderConnection(document, view);
+    assert.equal(root.querySelector('h1.connection-sr-only')?.textContent, title, `${window}/${stage}: sr-only title`);
+    assert.equal(root.children.some(child => child.classList.contains('connection-heading')), false, `${window}/${stage}: visible heading`);
+  }
+  const panel = connectionView({ window: 'panel', stage: 'linked', account: linkedAccount });
+  const panelRoot = renderConnection(document, panel);
+  assert.ok(panelRoot.children.some(child => child.classList.contains('connection-heading') && child.children.some(node => node.tagName === 'H1')), 'Wallet panel keeps its visible heading header');
 });
 
 test('import and model construction work with browser/effect globals forbidden',()=>{

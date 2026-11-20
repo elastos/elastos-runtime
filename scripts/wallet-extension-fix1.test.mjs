@@ -5,6 +5,7 @@ import { requireProductSmokePlaywright } from './product-smoke-browser.mjs';
 import { fixture as baseFixture } from './lib/wallet-extension-window-fixture.mjs';
 const breaks = {
   Y11:s=>s.replace("let providerAvailability = 'unknown';", "let providerAvailability = 'found';"),
+  'Y11-discovery':s=>s.replaceAll("providerAvailability = 'found';", "providerAvailability = 'unknown';"),
   K17:s=>s.replace('const root = presentation.root;',"const root = presentation.root; root.append(document.createElement('button'));"),
   K02:s=>s.replace('approvalRequestId: selected.id })','approvalRequestId: requests[0].request_id })'),
   K07:s=>s.replace('data.value.length > 8','data.value.length > 800'),
@@ -30,32 +31,82 @@ const playwright = requireProductSmokePlaywright();
 const engineSkip = engine => windowTestOptions(engine).skip;
 const other = kind => kind === 'metamask' ? '0x'+'2'.repeat(40) : 'bc1q'+'b'.repeat(38);
 
-async function unisatIdentity(f, saved) {
-  await f.state(saved ? 'linked' : 'ready');
-  assert.equal(await f.frame.locator('h1').innerText(), 'UniSat');
-  assert.match(await f.frame.locator('.connection-heading img').getAttribute('src'), /connection-wallet/);
-  assert.equal(await f.top.evaluate(() => testState.calls.length), 0, 'a saved link is not fresh discovery');
-  if (saved) return;
-  await f.action('connect').click();
-  await f.state('linked');
-  assert.equal(await f.frame.locator('h1').innerText(), 'UniSat');
-  assert.match(await f.frame.locator('.connection-heading img').getAttribute('src'), /connection-unisat/);
+async function assertNoVisibleWindowHeading(frame, title) {
+  assert.equal(await frame.locator('main > header.connection-heading').count(), 0, 'no visible window heading');
+  assert.equal(await frame.locator('h1.connection-sr-only').innerText(), title);
+  const box = await frame.locator('h1.connection-sr-only').boundingBox();
+  assert.ok(!box || (box.width <= 1 && box.height <= 1), 'sr-only title is not visibly sized');
 }
 
-for (const engine of ['chromium', 'webkit']) test(`${engine} UniSat: identity waits for fresh Home discovery (Y11)`, { timeout: 20000, skip: engineSkip(engine) }, async t => {
+async function visibleBrandMarkCount(frame, mark) {
+  return frame.locator(`img[src$="connection-${mark}.png"]`).evaluateAll(imgs => imgs.filter(img => {
+    const box = img.getBoundingClientRect();
+    return box.width > 1 && box.height > 1;
+  }).length);
+}
+
+async function unisatIdentity(f, saved) {
+  await f.state(saved ? 'linked' : 'ready');
+  await assertNoVisibleWindowHeading(f.frame, 'UniSat');
+  assert.equal(await f.top.evaluate(() => testState.calls.length), 0, 'a saved link is not fresh discovery');
+  assert.equal(await visibleBrandMarkCount(f.frame, 'unisat'), 0, 'no visible UniSat mark before fresh Home discovery');
+  if (saved) {
+    assert.match(await f.frame.locator('.connection-account-header img').getAttribute('src'), /connection-wallet\.png$/);
+    // The same validated Home event that the real host sends after discovery.
+    await f.top.evaluate(() => document.querySelector('iframe').contentWindow.postMessage({
+      type:'home:wallet-connector-event', connectorId:'wallet-unisat', event:'accountsChanged', value:[testState.address],
+    }, '*'));
+    await f.frame.locator('.connection-account-header img[src$="connection-unisat.png"]').waitFor();
+  } else {
+    assert.equal(await f.frame.locator('.connection-account').count(), 0, 'no account before connection');
+    await f.action('connect').click();
+    await f.state('linked');
+    assert.ok(await f.top.evaluate(() => testState.calls.length) > 0, 'Home called the wallet');
+  }
+  assert.equal(await visibleBrandMarkCount(f.frame, 'unisat'), 1, 'visible UniSat account mark after fresh Home discovery');
+}
+
+for (const engine of ['chromium', 'webkit']) for (const saved of [true, false]) test(`${engine} UniSat: identity waits for fresh Home discovery (Y11, ${saved ? 'saved link' : 'fresh window'})`, { timeout: 20000, skip: engineSkip(engine) }, async t => {
   const browser = await playwright[engine].launch({ headless: true });
   try {
-    for (const saved of [false, true]) {
-      const options = { saved };
-      const good = await fixture(browser, 'unisat', options);
-      try { await unisatIdentity(good, saved); } finally { await good.close(); }
-      const bad = await baseFixture(browser, 'unisat', { ...options, mutate: source => {
-        const broken = breaks.Y11(source); assert.notEqual(broken, source, 'Y11 applies'); return broken;
-      } });
-      try { await assert.rejects(unisatIdentity(bad, saved), { code: 'ERR_ASSERTION' }); }
-      finally { await bad.close(); }
-      t.diagnostic(`Y11 ${saved ? 'saved link' : 'Ready'}: clean oracle passed; deliberate break failed`);
-    }
+    const good = await fixture(browser, 'unisat', {saved});
+    try { await unisatIdentity(good, saved); } finally { await good.close(); }
+    const bad = await baseFixture(browser, 'unisat', { saved, mutate: source => {
+      const broken = breaks[saved ? 'Y11' : 'Y11-discovery'](source); assert.notEqual(broken, source, 'Y11 applies'); return broken;
+    } });
+    try { await assert.rejects(() => unisatIdentity(bad, saved), { code: 'ERR_ASSERTION' }); }
+    finally { await bad.close(); }
+    t.diagnostic(`Y11 ${saved ? 'saved link' : 'fresh window'}: clean oracle passed; product discovery break caught`);
+  } finally { await browser.close(); }
+});
+
+async function neutralMetaMaskIdentity(f) {
+  await f.state('linked');
+  assert.equal(await f.top.evaluate(() => testState.calls.length), 0);
+  assert.equal(await visibleBrandMarkCount(f.frame, 'metamask'), 0);
+  assert.equal(await visibleBrandMarkCount(f.frame, 'wallet'), 1);
+  // This window receives availability from Home, but no verified provider ID.
+  await f.frame.evaluate(() => { window.__identityEventReceived=false; addEventListener('message', event => {
+    if(event.data?.type==='home:wallet-connector-event')window.__identityEventReceived=true;
+  }, {once:true}); });
+  await f.top.evaluate(() => document.querySelector('iframe').contentWindow.postMessage({
+    type:'home:wallet-connector-event',connectorId:'wallet-metamask',event:'accountsChanged',value:[testState.address],
+  }, '*'));
+  await f.frame.waitForFunction(() => window.__identityEventReceived);
+  assert.equal(await visibleBrandMarkCount(f.frame, 'metamask'), 0, 'availability alone does not identify MetaMask');
+  assert.equal(await visibleBrandMarkCount(f.frame, 'wallet'), 1, 'the unidentified provider keeps the generic account mark');
+}
+for (const engine of ['chromium','webkit']) test(`${engine} MetaMask window: availability alone keeps the account mark generic`, {timeout:20000,skip:engineSkip(engine)}, async t => {
+  const browser=await playwright[engine].launch({headless:true});
+  try {
+    const good=await fixture(browser,'metamask',{saved:true});
+    try { await neutralMetaMaskIdentity(good); } finally { await good.close(); }
+    const bad=await baseFixture(browser,'metamask',{saved:true,mutate:source=>{
+      const broken=source.replace("providerId: kind === 'metamask' ? null : 'unisat'", "providerId: kind === 'metamask' ? 'io.metamask' : 'unisat'");
+      assert.notEqual(broken,source,'unverified provider-ID break applies');return broken;
+    }});
+    try { await assert.rejects(()=>neutralMetaMaskIdentity(bad),{code:'ERR_ASSERTION'}); } finally { await bad.close(); }
+    t.diagnostic('neutral MetaMask oracle passed; unverified provider-ID break caught');
   } finally { await browser.close(); }
 });
 
@@ -281,8 +332,10 @@ for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'
   try {
     const f=await fixture(browser,kind,{saved:true,requests:true});try{
       await f.state('request-waiting');await f.action('send-request').click();await f.state('request-done');
-      assert.equal(await f.frame.locator('h1').innerText(),kind==='metamask'?'Your wallet':'UniSat');
-      assert.match(await f.frame.locator('.connection-heading img').getAttribute('src'),new RegExp('connection-'+(kind==='metamask'?'wallet':kind)));
+      await assertNoVisibleWindowHeading(f.frame, kind==='metamask'?'MetaMask or Brave Wallet':'UniSat');
+      // The old request-done mark belonged only to the removed window heading.
+      assert.equal(await f.frame.locator('img').count(), 0, 'request-done has no heading mark or account card mark');
+      assert.equal(await f.frame.locator('.connection-status').innerText(), 'Message signed.');
       // Existing response schema permits these statuses. This is a projection
       // check: today's pending-only Runtime endpoint normally omits them.
       for(const [status,approved_at,state] of [['rejected',null,'request-rejected'],['rejected',1,'request-dismissed']]) {
