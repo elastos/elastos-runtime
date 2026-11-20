@@ -63,7 +63,7 @@ export async function runtimeView(t, app, state = {}) {
         if (input?.action === "request") {
           if (state.cleanup) return plain("Finish clearing the previous WalletConnect session in Inbox first.", 500);
           if (!["requested", "granted"].includes(state.permission)) {
-            if (state.guest) return plain("Only this Home's owner can allow WalletConnect internet access. Ask the owner to review Inbox.", 500);
+            if (state.guest) return plain("Ask an admin of this Home to open WalletConnect, choose Connect wallet, then allow internet access in Inbox.", 500);
             state.question = "consent:new";
             state.issuedAt = Math.floor(Date.now() / 1000);
             state.permission = "requested";

@@ -35,7 +35,7 @@ export async function windowFixture() {
    if(path.startsWith('/api/')) {
     const call={path,method:req.method,revision:req.headers['if-match']};state.calls.push(call);
     if(state.expiredLaunch){res.writeHead(403).end('Launch expired');return;}
-    if(state.guest&&path.endsWith('/internet')&&req.method==='POST'&&state.permission!=='granted'){res.writeHead(403).end("Only this Home's owner can allow WalletConnect internet access. Ask the owner to review Inbox.");return;}
+    if(state.guest&&path.endsWith('/internet')&&req.method==='POST'&&state.permission!=='granted'){res.writeHead(403).end("Ask an admin of this Home to open WalletConnect, choose Connect wallet, then allow internet access in Inbox.");return;}
     let input='';for await(const chunk of req)input+=chunk;const body=input?JSON.parse(input):{};
     if(path.endsWith('/internet')&&req.method==='POST'&&state.permission!=='granted')state.permission='requested';
     if(path.endsWith('/internet'))return json({status:state.permission,request:{id:'request-1',issued_at:Math.floor(Date.now()/1000)}});
