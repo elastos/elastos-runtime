@@ -391,18 +391,19 @@ pub(super) async fn internet(
         Ok(v) => Json(v).into_response(),
         Err(e) => {
             let admin_required = e.is::<AdminConsentRequired>();
-            let mut response = system_error_response(e);
-            if admin_required {
-                for (name, value) in [
-                    ("x-elastos-error-code", "walletconnect_admin_required"),
-                    ("access-control-expose-headers", "x-elastos-error-code"),
-                ] {
-                    response
-                        .headers_mut()
-                        .insert(name, axum::http::HeaderValue::from_static(value));
-                }
+            let message = e.to_string();
+            let response = system_error_response(e);
+            if admin_required
+                && headers.get("accept").and_then(|v| v.to_str().ok()) == Some("application/json")
+            {
+                (
+                    response.status(),
+                    Json(json!({"code": "walletconnect_admin_required", "message": message})),
+                )
+                    .into_response()
+            } else {
+                response
             }
-            response
         }
     }
 }

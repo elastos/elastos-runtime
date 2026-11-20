@@ -325,10 +325,11 @@ async function copyConnectionLink(uri,{signal}) {
   finally {signal.removeEventListener('abort',cancel);}
 }
 async function fetchJson(url,init) {
-  const response=await fetch(url,init);
+  const response=await fetch(url,{...init,headers:{...init?.headers,accept:'application/json'}});
   if (!response.ok) {
     const detail=await response.text().catch(()=>'');
-    const code=response.headers.get('x-elastos-error-code');
+    let code;
+    try {code=JSON.parse(detail).code;} catch {}
     if (code === 'walletconnect_admin_required') {
       ownerConsentNeeded=true;permissionStatus='off';pendingEffect=undefined;draw();watchConnection();
       throw Object.assign(new Error('An admin of this Home can allow WalletConnect internet access in Inbox.'),{tone:'muted'});
