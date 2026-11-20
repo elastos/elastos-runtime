@@ -1,3 +1,4 @@
+import { withBrowserLaunchRecovery } from "./lib/browser-launch-recovery.mjs";
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {writeFileSync, readFileSync, renameSync} from 'node:fs';
@@ -23,7 +24,7 @@ export function assertMessageOrigins(bases, browserHost) {
 }
 async function run() {
   const require = createRequire(import.meta.url);
-  const {chromium} = require(process.env.BROWSER_OPERATOR_PLAYWRIGHT_CORE || '../elastos/tools/browser-playwright-engine/node_modules/playwright');
+  const {chromium} = withBrowserLaunchRecovery(require(process.env.BROWSER_OPERATOR_PLAYWRIGHT_CORE || '../elastos/tools/browser-playwright-engine/node_modules/playwright'));
   const [baseA, baseB, evidence, control, browserHost] = process.argv.slice(2);
   assertMessageOrigins([baseA, baseB], browserHost);
   const result = {stage:'sign_in', results:{}, negative_controls:{}, observations:[], exchanges:{}, browser_cross_home_http_requests:0};

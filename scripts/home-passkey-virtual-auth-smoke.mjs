@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { withBrowserLaunchRecovery } from "./lib/browser-launch-recovery.mjs";
 
 import {
   chmodSync,
@@ -30,7 +31,7 @@ import { cleanupVirtualPasskey, shouldRetainVirtualAuthProfile, retainedFirstOwn
   VIRTUAL_AUTH_PROFILE_CLEANUP_INSTRUCTION } from "./lib/virtual-auth-cleanup.mjs";
 
 const require = createRequire(new URL("../elastos/tools/browser-playwright-engine/package.json", import.meta.url));
-const { chromium } = require("playwright");
+const { chromium } = withBrowserLaunchRecovery(require("playwright"));
 
 const ELASTOS_BASE_URL = (process.env.ELASTOS_BASE_URL || "http://localhost:8090").replace(/\/+$/, "");
 const HOME_URL = process.env.HOME_URL || `${ELASTOS_BASE_URL}/home/`;

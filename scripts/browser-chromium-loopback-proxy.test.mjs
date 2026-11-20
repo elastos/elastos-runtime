@@ -1,3 +1,4 @@
+import { withBrowserLaunchRecovery } from "./lib/browser-launch-recovery.mjs";
 // ELASTOS_BROWSER_EXECUTABLE=/path/to/chromium node --test scripts/browser-chromium-loopback-proxy.test.mjs
 // Uses the existing Playwright dependency and temporary headless browser profiles.
 import assert from "node:assert/strict";
@@ -10,7 +11,7 @@ import path from "node:path";
 import test from "node:test";
 
 const require = createRequire(new URL("../elastos/tools/browser-playwright-engine/package.json", import.meta.url));
-const { chromium } = require("playwright");
+const { chromium } = withBrowserLaunchRecovery(require("playwright"));
 const stage = readFileSync(new URL("./build/stage-browser-vm-target.sh", import.meta.url), "utf8");
 const guestProxyArgs = [...stage.matchAll(/"(--(?:proxy-server|proxy-bypass-list|host-resolver-rules)=[^"]+)"/g)]
   .map(match => match[1]);
