@@ -102,6 +102,7 @@ test("fix1 Wallet accounts remain visible when only requests are unavailable",as
   assert.equal(await r.frame.locator('.wallet-account .wallet-card-name').count(),1,"the independent account read is rendered before the request-read error");
   assert.equal(await r.frame.locator('.wallet-account .wallet-card-name').textContent(),"Trust Wallet");
   assert.equal(await r.frame.getByRole("button",{name:/Send/}).first().isEnabled(),true);
+  await r.capture("wallet-requests-unavailable-light-window.png");
 });
 
 test("fix1 removal dialog names its row and uses the shared removal sentence",async t=>{
@@ -115,6 +116,7 @@ test("fix1 removal dialog names its row and uses the shared removal sentence",as
   assert.equal(await identity.evaluate(el=>el.dir),"auto");
   assert.equal(await identity.evaluate(el=>getComputedStyle(el).unicodeBidi),"isolate");
   assert.equal(await r.frame.getByText("Remove this account from your Home. Your funds stay unchanged. This does not cancel a transaction in your wallet. Removing the last account connected through WalletConnect also clears Home's saved connection. Confirm with your passkey to remove the account.",{exact:true}).count(),1);
+  await r.capture("wallet-external-account-removal-light-window.png");
 });
 
 test("fix1 passkey-begin consent conflict keeps the fixed Inbox sentence",async t=>{
