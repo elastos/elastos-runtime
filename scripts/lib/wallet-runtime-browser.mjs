@@ -74,7 +74,7 @@ export async function runtimeView(t, app, state = {}) {
       }
       if (url.pathname === "/api/apps/inbox/actions") {
         if (state.conflict) { state.conflictSeen = true; return json({ schema: "elastos.home.wallet-connector.effect.error/v1", code: "conflict" }, 409); }
-        let message = "WalletConnect internet choice saved.";
+        let message = "Saved.";
         if (input.action_id?.startsWith("walletconnect-internet-allow:")) {
           if (state.permission !== "requested" || input.action_id !== `walletconnect-internet-allow:${state.question}`) return json({ schema: "elastos.home.wallet-connector.effect.error/v1", code: "conflict" }, 409);
           if (input.step_up_token !== "fixture-proof") return plain(input.step_up_token ? "invalid passkey step-up token encoding" : "missing passkey step-up token", 403);
@@ -94,12 +94,12 @@ export async function runtimeView(t, app, state = {}) {
           state.permission = "revoked";
           state.cleanup = false;
           state.entries = [permissionEntry("revoked", state.question)];
-          message = "WalletConnect connection turned off.";
+          message = "Internet access for WalletConnect is off.";
         } else if (input.action_id?.startsWith("wallet-reject-request:")) {
           const id = `wallet-approval-request:${input.action_id.slice("wallet-reject-request:".length)}`;
           if (!state.entries.some(e => e.id === id)) return json({ error:"request unavailable" }, 404);
           state.entries = state.entries.filter(e => e.id !== id);
-          message = "Rejected wallet request.";
+          message = "Request rejected.";
         } else if (input.action_id?.startsWith("notification-read:")) {
           // Generated permission entries have no persisted notification row.
           message = "That inbox entry was already read or is no longer present.";

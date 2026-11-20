@@ -292,17 +292,17 @@ fn capability_request_title(action: &str) -> String {
 
 fn wallet_approval_title(intent: &str) -> String {
     match intent {
-        "auth_challenge" => "Wallet sign-in request".to_string(),
-        "capability_grant" => "Wallet access request".to_string(),
-        "credential" => "Credential signing request".to_string(),
-        "publish_envelope" => "Publish approval request".to_string(),
+        "auth_challenge" => "Review sign-in request".to_string(),
+        "capability_grant" => "Review access request".to_string(),
+        "credential" => "Sign a credential".to_string(),
+        "publish_envelope" => "Review publishing request".to_string(),
         "transaction_intent" => "Send transaction".to_string(),
-        "browser_account_access" => "Browser account access request".to_string(),
+        "browser_account_access" => "Share your wallet address with this site".to_string(),
         "browser_personal_sign" => "Sign a message".to_string(),
         "browser_typed_data_sign" => "Sign typed data".to_string(),
-        "bitcoin_bip322_proof" => "Bitcoin proof request".to_string(),
-        "revocation" => "Revocation approval request".to_string(),
-        _ => "Wallet approval request".to_string(),
+        "bitcoin_bip322_proof" => "Confirm this Bitcoin account is yours".to_string(),
+        "revocation" => "Review request".to_string(),
+        _ => "Review request".to_string(),
     }
 }
 
@@ -557,7 +557,7 @@ async fn dispatch_inbox_action(
         return Ok(if dismissed {
             "Request dismissed. This does not cancel the transaction in your wallet. Check your wallet before making a new request."
         } else {
-            "Rejected wallet request."
+            "Request rejected."
         }
         .to_string());
     }

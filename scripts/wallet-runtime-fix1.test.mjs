@@ -122,7 +122,7 @@ test("fix1 passkey-begin consent conflict keeps the fixed Inbox sentence",async 
     passkeyError:'request failed: 409 Conflict {"schema":"elastos.home.wallet-connector.effect.error/v1","code":"conflict"}'});
   await r.frame.getByRole("button",{name:"Allow",exact:true}).click();
   await r.frame.locator("#refresh:enabled").waitFor();
-  assert.equal(await r.frame.locator("#status-text").textContent(),"This request has changed. Refresh Inbox and review the current request.");
+  assert.equal(await r.frame.locator("#status-text").textContent(),"Refresh Inbox and review the current request before trying again.");
   assert.equal(r.calls.filter(c=>c.path.endsWith("/actions")&&c.input.action_id.includes("allow")).length,0);
 });
 
