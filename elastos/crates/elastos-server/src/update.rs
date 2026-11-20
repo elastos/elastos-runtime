@@ -171,7 +171,7 @@ pub struct InvalidInstalledVersion;
 
 impl std::fmt::Display for InvalidInstalledVersion {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Home cannot check for updates. The computer running Home needs attention. Check Home's log for repair details.")
+        f.write_str("Installed release version is invalid. Run `elastos update --force` locally to install a verified signed release and repair it.")
     }
 }
 impl std::error::Error for InvalidInstalledVersion {}

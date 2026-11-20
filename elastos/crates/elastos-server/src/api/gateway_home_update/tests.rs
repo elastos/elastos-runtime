@@ -1537,6 +1537,10 @@ async fn system_update_failures_explain_the_cause_without_private_error_details(
         let message = value["error"].as_str().unwrap();
         assert!(message.contains(expected_cause));
         assert!(!message.contains("private"));
+        assert!(
+            !message.contains("elastos update"),
+            "terminal repair command on screen: {message}"
+        );
     }
 }
 
