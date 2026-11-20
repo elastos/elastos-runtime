@@ -11,7 +11,6 @@ let localRelaunches = 0;
 let standalone = false;
 
 function summary(count) {
-  // The bounded Rust harness forwards stdout even when its smoke succeeds.
   console.log(`Browser launch summary: ${count} relaunch(es); limit 3; ${count > 3 ? "FAIL" : "PASS"}`);
   return count > 3;
 }
