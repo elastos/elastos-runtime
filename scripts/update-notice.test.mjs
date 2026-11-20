@@ -330,3 +330,20 @@ test("update notice uses real Inbox, bell and System navigation; switch saves an
     await page.close();
   } finally {await browser.close();await f.close();}
 });
+
+test("System keeps repair paths and commands out of the setting hint", async () => {
+  const f=await fixture();const browser=await chromium.launch(productSmokeLaunchOptions());
+  try {
+    const page=await browser.newPage({viewport:{width:390,height:844}});
+    for(const stateName of ['FOLDER_TEXT','UNREADABLE_TEXT','INVALID_VERSION_TEXT']) {
+      f.state.settings={...preference(false,false),message:copy(stateName)};
+      await page.goto(f.url+'?settings=about');
+      const system=page.frameLocator('#system-frame');
+      await system.getByRole('switch',{name:copy('SWITCH_LABEL')}).waitFor();
+      const hint=await system.locator('#update-background-message').innerText();
+      assert.ok(hint.trim(),stateName+' keeps a next step');
+      assert.doesNotMatch(hint,/Local\/|notice\.json|\.notice\.lock|elastos update/);
+    }
+    await page.close();
+  } finally {await browser.close();await f.close();}
+});
