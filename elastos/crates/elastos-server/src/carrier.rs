@@ -1583,7 +1583,8 @@ pub(crate) fn exported_endpoint_addr(addr: iroh::EndpointAddr) -> iroh::Endpoint
     let mut next = addr;
     let relay_enabled = next.addrs.iter().any(iroh::TransportAddr::is_relay);
     if relay_enabled || next.addrs.iter().any(public) {
-        next.addrs.retain(|transport| !transport.is_ip() || public(transport));
+        next.addrs
+            .retain(|transport| !transport.is_ip() || public(transport));
     }
     next.addrs.retain(|transport| transport.is_ip());
     next
@@ -1724,7 +1725,11 @@ fn apply_isolated_endpoint_policy(builder: iroh::endpoint::Builder) -> iroh::end
 }
 
 #[cfg(test)]
-fn short_lived_endpoint_builder(secret_key: SecretKey, network: CarrierNodeNetwork, approved_relay: Option<&url::Url>) -> anyhow::Result<iroh::endpoint::Builder> {
+fn short_lived_endpoint_builder(
+    secret_key: SecretKey,
+    network: CarrierNodeNetwork,
+    approved_relay: Option<&url::Url>,
+) -> anyhow::Result<iroh::endpoint::Builder> {
     short_lived_endpoint_builder_with_pin(secret_key, network, approved_relay, None)
 }
 
@@ -1766,8 +1771,22 @@ fn carrier_transport_config() -> iroh::endpoint::QuicTransportConfig {
 }
 
 #[cfg(test)]
-async fn bind_carrier_endpoint(secret_key: SecretKey, network: CarrierNodeNetwork, approved_relay: Option<&url::Url>, requested_bind_addr: std::net::SocketAddr, allow_ephemeral_fallback: bool) -> anyhow::Result<Endpoint> {
-    bind_carrier_endpoint_with_pin(secret_key, network, approved_relay, requested_bind_addr, allow_ephemeral_fallback, None).await
+async fn bind_carrier_endpoint(
+    secret_key: SecretKey,
+    network: CarrierNodeNetwork,
+    approved_relay: Option<&url::Url>,
+    requested_bind_addr: std::net::SocketAddr,
+    allow_ephemeral_fallback: bool,
+) -> anyhow::Result<Endpoint> {
+    bind_carrier_endpoint_with_pin(
+        secret_key,
+        network,
+        approved_relay,
+        requested_bind_addr,
+        allow_ephemeral_fallback,
+        None,
+    )
+    .await
 }
 
 async fn bind_carrier_endpoint_with_pin(
@@ -1778,7 +1797,14 @@ async fn bind_carrier_endpoint_with_pin(
     allow_ephemeral_fallback: bool,
     certificate: Option<[u8; 32]>,
 ) -> anyhow::Result<Endpoint> {
-    let builder = || short_lived_endpoint_builder_with_pin(secret_key.clone(), network, approved_relay, certificate);
+    let builder = || {
+        short_lived_endpoint_builder_with_pin(
+            secret_key.clone(),
+            network,
+            approved_relay,
+            certificate,
+        )
+    };
     let requested = || -> anyhow::Result<iroh::endpoint::Builder> {
         let requested = builder()?;
         // Iroh retains the other address family's default wildcard listener.
@@ -1865,7 +1891,11 @@ async fn bind_short_lived_carrier_dial_bound(
     bind_addr: Option<std::net::SocketAddr>,
 ) -> anyhow::Result<(Endpoint, iroh::EndpointAddr)> {
     let selected = relay::ClientSettings::configured()?;
-    let network = if selected.relay.is_some() { CarrierNodeNetwork::Public } else { CarrierNodeNetwork::Isolated };
+    let network = if selected.relay.is_some() {
+        CarrierNodeNetwork::Public
+    } else {
+        CarrierNodeNetwork::Isolated
+    };
     let approved = selected.relay;
     let addr = endpoint_addr_for_network(addr, network)?;
     let mut rng_bytes = [0u8; 32];
@@ -1901,10 +1931,15 @@ async fn bind_short_lived_carrier_dial_bound(
                 }
             }
         }
-        None => short_lived_endpoint_builder_with_pin(secret_key, network, approved.as_ref(), selected.certificate)?
-            .bind()
-            .await
-            .context("Failed to bind")?,
+        None => short_lived_endpoint_builder_with_pin(
+            secret_key,
+            network,
+            approved.as_ref(),
+            selected.certificate,
+        )?
+        .bind()
+        .await
+        .context("Failed to bind")?,
     };
     Ok((endpoint, addr))
 }
@@ -1952,7 +1987,11 @@ pub async fn start_carrier_node_with_registry_bound(
     community_bootstrap_node_ids: &[String],
 ) -> Result<CarrierNode> {
     let selected = relay::ClientSettings::configured()?;
-    let network = if selected.relay.is_some() { CarrierNodeNetwork::Public } else { CarrierNodeNetwork::Isolated };
+    let network = if selected.relay.is_some() {
+        CarrierNodeNetwork::Public
+    } else {
+        CarrierNodeNetwork::Isolated
+    };
     let approved = selected.relay;
     if network == CarrierNodeNetwork::Isolated && approved.is_some() {
         anyhow::bail!("ELASTOS_RELAY_URL cannot be set with ELASTOS_CARRIER_NETWORK=direct");
@@ -9083,9 +9122,18 @@ pub(crate) mod tests {
     #[test]
     fn relay_off_keeps_lan_vpn_and_routed_ticket_addresses() {
         let id = iroh::SecretKey::from_bytes(&[201; 32]).public();
-        for address in ["192.168.4.5:5000", "100.64.1.5:5000", "10.21.5.6:5000", "[fd00::123]:5000"] {
+        for address in [
+            "192.168.4.5:5000",
+            "100.64.1.5:5000",
+            "10.21.5.6:5000",
+            "[fd00::123]:5000",
+        ] {
             let addr = iroh::EndpointAddr::new(id).with_ip_addr(address.parse().unwrap());
-            assert_eq!(exported_endpoint_addr(addr.clone()), addr, "relay off lost {address}");
+            assert_eq!(
+                exported_endpoint_addr(addr.clone()),
+                addr,
+                "relay off lost {address}"
+            );
         }
     }
 
@@ -17926,7 +17974,9 @@ pub(crate) mod tests {
         let expected: Vec<_> = snapshot
             .iter()
             .copied()
-            .filter(|ip| !snapshot.iter().any(|addr| is_public_ip(addr.ip())) || is_public_ip(ip.ip()))
+            .filter(|ip| {
+                !snapshot.iter().any(|addr| is_public_ip(addr.ip())) || is_public_ip(ip.ip())
+            })
             .collect();
         assert_eq!(ips, expected, "snapshot {snapshot:?}");
     }
@@ -18799,7 +18849,7 @@ pub(crate) mod tests {
             CarrierNetworkPolicy {
                 network: CarrierNodeNetwork::Isolated,
                 relay: None,
-            certificate: None,
+                certificate: None,
             },
             Some(carrier_bind),
             &[],
@@ -18821,7 +18871,7 @@ pub(crate) mod tests {
             CarrierNetworkPolicy {
                 network: CarrierNodeNetwork::Isolated,
                 relay: None,
-            certificate: None,
+                certificate: None,
             },
             Some(carrier_bind),
             &[],
@@ -18854,7 +18904,7 @@ pub(crate) mod tests {
             CarrierNetworkPolicy {
                 network: CarrierNodeNetwork::Isolated,
                 relay: None,
-            certificate: None,
+                certificate: None,
             },
             Some("127.0.0.1:0".parse().unwrap()),
             &[hub_id],

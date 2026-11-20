@@ -536,17 +536,26 @@ pub struct ConnectionLimits {
 
 impl Default for ConnectionLimits {
     fn default() -> Self {
-        Self { total: 4096, pending: 512, per_network: 32, pending_per_network: 8 }
+        Self {
+            total: 4096,
+            pending: 512,
+            per_network: 32,
+            pending_per_network: 8,
+        }
     }
 }
 
 impl ConnectionLimits {
     /// Keep capacity for at least 64 independent source allocations.
     pub fn validate(self) -> bool {
-        self.total <= 65536 && self.pending <= 8192 && self.per_network > 0 && self.pending_per_network > 0
+        self.total <= 65536
+            && self.pending <= 8192
+            && self.per_network > 0
+            && self.pending_per_network > 0
             && self.total >= self.per_network.saturating_mul(64)
             && self.pending >= self.pending_per_network.saturating_mul(64)
-            && self.pending <= self.total && self.pending_per_network <= self.per_network
+            && self.pending <= self.total
+            && self.pending_per_network <= self.per_network
     }
 }
 
@@ -714,7 +723,9 @@ pub struct Server {
 #[non_exhaustive]
 pub enum SpawnError {
     #[error("Invalid receive budget")]
-    InvalidRateLimit { source: streams::InvalidBucketConfig },
+    InvalidRateLimit {
+        source: streams::InvalidBucketConfig,
+    },
     #[error("Unable to get local address")]
     LocalAddr { source: std::io::Error },
     #[error("Failed to bind QAD listener")]

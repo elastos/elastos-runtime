@@ -1472,7 +1472,7 @@ checksum = "252afb9ae5eaa683babdc6a068b3f5726eb19e05070c731f9b2a23a7c3e8ed34"
 
 [[package]]
 name = "elastos-auth"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "chrono",
  "hex",
@@ -1484,7 +1484,7 @@ dependencies = [
 
 [[package]]
 name = "elastos-common"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "hex",
  "libc",
@@ -1496,7 +1496,7 @@ dependencies = [
 
 [[package]]
 name = "elastos-compute"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "async-trait",
  "elastos-common",
@@ -1509,7 +1509,7 @@ dependencies = [
 
 [[package]]
 name = "elastos-crosvm"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "async-trait",
  "elastos-common",
@@ -1533,7 +1533,7 @@ dependencies = [
 
 [[package]]
 name = "elastos-identity"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -1567,7 +1567,7 @@ dependencies = [
 
 [[package]]
 name = "elastos-namespace"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1585,7 +1585,7 @@ dependencies = [
 
 [[package]]
 name = "elastos-protected-content-contracts"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "curve25519-dalek 5.0.0",
  "ed25519-dalek 2.2.0",
@@ -1601,7 +1601,7 @@ dependencies = [
 
 [[package]]
 name = "elastos-protected-content-custody"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -1625,7 +1625,7 @@ dependencies = [
 
 [[package]]
 name = "elastos-protected-content-provider-contracts"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "elastos-protected-content-contracts",
  "serde",
@@ -1635,7 +1635,7 @@ dependencies = [
 
 [[package]]
 name = "elastos-protected-content-rights"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "ed25519-dalek 2.2.0",
  "elastos-protected-content-contracts",
@@ -1648,7 +1648,7 @@ dependencies = [
 
 [[package]]
 name = "elastos-protected-content-runtime"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "async-trait",
  "elastos-protected-content-contracts",
@@ -1664,7 +1664,7 @@ dependencies = [
 
 [[package]]
 name = "elastos-runtime"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1692,7 +1692,7 @@ dependencies = [
 
 [[package]]
 name = "elastos-server"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -1720,8 +1720,10 @@ dependencies = [
  "elastos-storage",
  "elastos-tls",
  "elastos-wallet-contract",
+ "exit-provider",
  "flate2",
  "futures-lite",
+ "futures-util",
  "getrandom 0.2.17",
  "hex",
  "hkdf",
@@ -1747,12 +1749,14 @@ dependencies = [
  "tar",
  "tempfile",
  "tokio",
+ "tokio-tungstenite",
  "toml 0.8.23",
  "tower-http 0.5.2",
  "tracing",
  "tracing-subscriber",
  "url",
  "wasmparser 0.236.1",
+ "webpki-roots 1.0.10",
  "x25519-dalek 2.0.1",
  "zeroize",
  "zip",
@@ -1760,7 +1764,7 @@ dependencies = [
 
 [[package]]
 name = "elastos-storage"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "async-trait",
  "dirs",
@@ -1780,7 +1784,7 @@ dependencies = [
 
 [[package]]
 name = "elastos-tls"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "anyhow",
  "axum-server",
@@ -1898,6 +1902,15 @@ checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "exit-provider"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "url",
 ]
 
 [[package]]
@@ -2520,7 +2533,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower-service",
- "webpki-roots",
+ "webpki-roots 1.0.10",
 ]
 
 [[package]]
@@ -2970,7 +2983,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
- "webpki-roots",
+ "webpki-roots 1.0.10",
  "ws_stream_wasm",
 ]
 
@@ -3437,7 +3450,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tracing",
- "webpki-roots",
+ "webpki-roots 1.0.10",
 ]
 
 [[package]]
@@ -4652,7 +4665,7 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-streams 0.4.2",
  "web-sys",
- "webpki-roots",
+ "webpki-roots 1.0.10",
 ]
 
 [[package]]
@@ -5658,7 +5671,7 @@ dependencies = [
  "time",
  "tokio",
  "tokio-rustls",
- "webpki-roots",
+ "webpki-roots 1.0.10",
  "x509-parser 0.18.1",
 ]
 
@@ -5682,8 +5695,12 @@ checksum = "edc5f74e248dc973e0dbb7b74c7e0d6fcc301c694ff50049504004ef4d0cdcd9"
 dependencies = [
  "futures-util",
  "log",
+ "rustls",
+ "rustls-pki-types",
  "tokio",
+ "tokio-rustls",
  "tungstenite",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -5968,6 +5985,8 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.8.8",
+ "rustls",
+ "rustls-pki-types",
  "sha1 0.10.7",
  "thiserror 1.0.69",
  "utf-8",
@@ -6584,6 +6603,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "58ec80e73fd8baf57bf0d9615554c75348bda990d6d5bbeab964dd068319fecb"
 dependencies = [
  "rustls-pki-types",
+]
+
+[[package]]
+name = "webpki-roots"
+version = "0.26.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "521bc38abb08001b01866da9f51eb7c5d647a19260e00054a8c7fd5f9e57f7a9"
+dependencies = [
+ "webpki-roots 1.0.10",
 ]
 
 [[package]]

@@ -99,13 +99,18 @@ impl NetworkAdmission {
         let mut counts = self.0.lock().expect("TCP admission");
         let (pending, established) = counts.networks.get(&network).copied().unwrap_or_default();
         let now = std::time::Instant::now();
-        counts.recent.retain(|_, (_, started)| now.duration_since(*started) < Duration::from_secs(60));
+        counts
+            .recent
+            .retain(|_, (_, started)| now.duration_since(*started) < Duration::from_secs(60));
         if !self.1.validate()
             || counts.pending >= self.1.pending
             || counts.pending + counts.established >= self.1.total
             || pending >= self.1.pending_per_network
             || pending + established >= self.1.per_network
-            || counts.recent.get(&network).is_some_and(|(count, _)| *count >= self.1.per_network.saturating_mul(2))
+            || counts
+                .recent
+                .get(&network)
+                .is_some_and(|(count, _)| *count >= self.1.per_network.saturating_mul(2))
             || (!counts.recent.contains_key(&network) && counts.recent.len() >= self.1.total)
         {
             return None;
@@ -1410,13 +1415,20 @@ mod tests {
             let mut held = Vec::new();
             for source in 1..=4 {
                 for _ in 0..32 {
-                    if let Some(permit) = admission.admit(std::net::Ipv4Addr::new(192, 0, 2, source).into()) {
-                        if established { permit.establish(); }
+                    if let Some(permit) =
+                        admission.admit(std::net::Ipv4Addr::new(192, 0, 2, source).into())
+                    {
+                        if established {
+                            permit.establish();
+                        }
                         held.push(permit);
                     }
                 }
             }
-            assert!(admission.admit("198.51.100.1".parse().unwrap()).is_some(), "four networks occupied every place; established={established}");
+            assert!(
+                admission.admit("198.51.100.1".parse().unwrap()).is_some(),
+                "four networks occupied every place; established={established}"
+            );
         }
     }
 
@@ -1428,11 +1440,17 @@ mod tests {
             for subnet in 0..256u16 {
                 let ip = std::net::Ipv6Addr::new(0x2001, 0xdb8, 1, subnet, 0, 0, 0, 1).into();
                 if let Some(permit) = admission.admit(ip) {
-                    if established { permit.establish(); }
+                    if established {
+                        permit.establish();
+                    }
                     held.push(permit);
                 }
             }
-            assert!(held.len() <= if established { 32 } else { 8 }, "one IPv6 allocation gained {} places", held.len());
+            assert!(
+                held.len() <= if established { 32 } else { 8 },
+                "one IPv6 allocation gained {} places",
+                held.len()
+            );
             assert!(admission.admit("198.51.100.1".parse().unwrap()).is_some());
         }
     }
@@ -1441,7 +1459,10 @@ mod tests {
     fn network_admission_keeps_upgraded_slots_bounds_pending_and_releases_exact_owners() {
         let admission = super::NetworkAdmission::default();
         assert_eq!(admission.1.total, super::TCP_CONNECTIONS);
-        assert_eq!(admission.1.pending_per_network, super::TCP_PENDING_PER_NETWORK);
+        assert_eq!(
+            admission.1.pending_per_network,
+            super::TCP_PENDING_PER_NETWORK
+        );
         let ip = "192.0.2.8".parse().unwrap();
         let mut established = Vec::new();
         for _ in 0..super::TCP_PER_NETWORK {

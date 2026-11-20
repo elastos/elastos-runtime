@@ -61,44 +61,92 @@ pub(super) struct ClientSettings {
 }
 
 impl ClientSettings {
-    pub fn from_inputs(network: Option<&str>, url: Option<&str>, certificate: Option<&str>,
-                       release_url: Option<&str>, release_certificate: Option<&str>) -> Result<Self> {
-        anyhow::ensure!(release_url.is_some() == release_certificate.is_some(), "incomplete release meeting point");
+    pub fn from_inputs(
+        network: Option<&str>,
+        url: Option<&str>,
+        certificate: Option<&str>,
+        release_url: Option<&str>,
+        release_certificate: Option<&str>,
+    ) -> Result<Self> {
+        anyhow::ensure!(
+            release_url.is_some() == release_certificate.is_some(),
+            "incomplete release meeting point"
+        );
         let released = release_url.is_some();
         if let Some(release_url) = release_url {
-            anyhow::ensure!(network.is_none_or(|n| n == "relay") && url.is_none_or(|u| u == release_url)
-                && certificate.is_none_or(|p| Some(p) == release_certificate), "the signed release owns the meeting point");
+            anyhow::ensure!(
+                network.is_none_or(|n| n == "relay")
+                    && url.is_none_or(|u| u == release_url)
+                    && certificate.is_none_or(|p| Some(p) == release_certificate),
+                "the signed release owns the meeting point"
+            );
         } else {
-            anyhow::ensure!(matches!(network, None | Some("direct") | Some("relay")), "invalid Carrier network");
+            anyhow::ensure!(
+                matches!(network, None | Some("direct") | Some("relay")),
+                "invalid Carrier network"
+            );
             if network != Some("relay") {
-                anyhow::ensure!(url.is_none() && certificate.is_none(), "direct Carrier rejects relay settings");
-                return Ok(Self { relay: None, certificate: None });
+                anyhow::ensure!(
+                    url.is_none() && certificate.is_none(),
+                    "direct Carrier rejects relay settings"
+                );
+                return Ok(Self {
+                    relay: None,
+                    certificate: None,
+                });
             }
         }
-        let relay: url::Url = release_url.or(url).context("relay mode requires its address")?.parse()?;
+        let relay: url::Url = release_url
+            .or(url)
+            .context("relay mode requires its address")?
+            .parse()?;
         let raw = release_certificate.or(certificate);
-        let certificate = raw.map(|raw| {
-            anyhow::ensure!(raw.len() == 64 && raw.bytes().all(|b| b.is_ascii_hexdigit()), "relay identity must be 64 SHA-256 hex digits");
-            let mut pin = [0; 32];
-            for (i, byte) in pin.iter_mut().enumerate() { *byte = u8::from_str_radix(&raw[2*i..2*i+2], 16)?; }
-            Ok::<_, anyhow::Error>(pin)
-        }).transpose()?;
-        anyhow::ensure!(certificate.is_some() || (!released && cfg!(any(test, feature = "carrier-test-relay")) && relay.scheme() == "http"),
-            "relay mode requires its pinned certificate identity");
-        anyhow::ensure!(!released || relay.scheme() == "https", "released meeting points use HTTPS");
-        Ok(Self { relay: Some(relay), certificate })
+        let certificate = raw
+            .map(|raw| {
+                anyhow::ensure!(
+                    raw.len() == 64 && raw.bytes().all(|b| b.is_ascii_hexdigit()),
+                    "relay identity must be 64 SHA-256 hex digits"
+                );
+                let mut pin = [0; 32];
+                for (i, byte) in pin.iter_mut().enumerate() {
+                    *byte = u8::from_str_radix(&raw[2 * i..2 * i + 2], 16)?;
+                }
+                Ok::<_, anyhow::Error>(pin)
+            })
+            .transpose()?;
+        anyhow::ensure!(
+            certificate.is_some()
+                || (!released
+                    && cfg!(any(test, feature = "carrier-test-relay"))
+                    && relay.scheme() == "http"),
+            "relay mode requires its pinned certificate identity"
+        );
+        anyhow::ensure!(
+            !released || relay.scheme() == "https",
+            "released meeting points use HTTPS"
+        );
+        Ok(Self {
+            relay: Some(relay),
+            certificate,
+        })
     }
 
     pub fn configured() -> Result<Self> {
-        Self::from_inputs(std::env::var("ELASTOS_CARRIER_NETWORK").ok().as_deref(),
+        Self::from_inputs(
+            std::env::var("ELASTOS_CARRIER_NETWORK").ok().as_deref(),
             std::env::var("ELASTOS_RELAY_URL").ok().as_deref(),
             std::env::var("ELASTOS_RELAY_CERT_SHA256").ok().as_deref(),
-            option_env!("ELASTOS_RELEASE_RELAY_URL"), option_env!("ELASTOS_RELEASE_RELAY_CERT_SHA256"))
+            option_env!("ELASTOS_RELEASE_RELAY_URL"),
+            option_env!("ELASTOS_RELEASE_RELAY_CERT_SHA256"),
+        )
     }
 }
 
 #[cfg(test)]
-pub(super) fn apply_relay(builder: iroh::endpoint::Builder, relay: &url::Url) -> Result<iroh::endpoint::Builder> {
+pub(super) fn apply_relay(
+    builder: iroh::endpoint::Builder,
+    relay: &url::Url,
+) -> Result<iroh::endpoint::Builder> {
     apply_relay_pinned(builder, relay, None)
 }
 
@@ -117,11 +165,12 @@ pub(super) fn apply_relay_pinned(
             && relay.fragment().is_none(),
         "ELASTOS_RELAY_URL must be an HTTP(S) origin without credentials"
     );
-    let http_fixture = cfg!(any(test, feature = "carrier-test-relay")) && relay.host().is_some_and(|host| match host {
-        url::Host::Ipv4(ip) => ip.is_loopback() || ip.is_documentation(),
-        url::Host::Ipv6(ip) => ip.is_loopback(),
-        url::Host::Domain(_) => false,
-    });
+    let http_fixture = cfg!(any(test, feature = "carrier-test-relay"))
+        && relay.host().is_some_and(|host| match host {
+            url::Host::Ipv4(ip) => ip.is_loopback() || ip.is_documentation(),
+            url::Host::Ipv6(ip) => ip.is_loopback(),
+            url::Host::Domain(_) => false,
+        });
     anyhow::ensure!(relay.scheme() == "https" || http_fixture,
         "Carrier relay origins require HTTPS; HTTP is reserved for literal loopback and documentation-network fixtures");
     let relay = RelayUrl::from(relay.clone());
@@ -130,7 +179,11 @@ pub(super) fn apply_relay_pinned(
         .relay_mode(iroh::RelayMode::Custom(iroh::RelayMap::from_iter([
             iroh::RelayConfig::new(relay.clone(), quic),
         ])))
-        .ca_tls_config(pinned_relay_identity_tls(&relay, CaTlsConfig::embedded(), certificate))
+        .ca_tls_config(pinned_relay_identity_tls(
+            &relay,
+            CaTlsConfig::embedded(),
+            certificate,
+        ))
         .address_lookup(PinnedRelayLookup(relay)))
 }
 
@@ -265,7 +318,11 @@ fn pinned_relay_tls(relay: &RelayUrl, roots: CaTlsConfig) -> CaTlsConfig {
     pinned_relay_identity_tls(relay, roots, None)
 }
 
-fn pinned_relay_identity_tls(relay: &RelayUrl, roots: CaTlsConfig, certificate: Option<[u8; 32]>) -> CaTlsConfig {
+fn pinned_relay_identity_tls(
+    relay: &RelayUrl,
+    roots: CaTlsConfig,
+    certificate: Option<[u8; 32]>,
+) -> CaTlsConfig {
     let host = match relay.host() {
         Some(url::Host::Domain(name)) => name.to_string(),
         Some(url::Host::Ipv4(ip)) => ip.to_string(),
@@ -308,7 +365,11 @@ impl ServerCertVerifier for PinnedRelayHost {
         if let Some(pin) = self.certificate {
             use sha2::Digest as _;
             let actual: [u8; 32] = sha2::Sha256::digest(cert.as_ref()).into();
-            if actual != pin { return Err(rustls::Error::General("Carrier relay identity changed".into())); }
+            if actual != pin {
+                return Err(rustls::Error::General(
+                    "Carrier relay identity changed".into(),
+                ));
+            }
             // A pinned certificate is the trust anchor. TLS still verifies the
             // handshake signature through verify_tls12/13_signature below.
             return Ok(ServerCertVerified::assertion());
@@ -394,41 +455,93 @@ pub(super) async fn configured_server(
             let provider = Arc::new(rustls::crypto::ring::default_provider());
             let resolver = iroh_relay::server::reloading_resolver(
                 &provider,
-                cert.as_str().context("carrier_relay_tls_cert must be a PEM path")?.into(),
-                key.as_str().context("carrier_relay_tls_key must be a PEM path")?.into(),
+                cert.as_str()
+                    .context("carrier_relay_tls_cert must be a PEM path")?
+                    .into(),
+                key.as_str()
+                    .context("carrier_relay_tls_key must be a PEM path")?
+                    .into(),
                 iroh_relay::server::DEFAULT_CERT_RELOAD_INTERVAL,
-            ).await.map_err(|error| anyhow::anyhow!("Carrier TLS configuration failed: {error:#}"))?;
-            Some(rustls::ServerConfig::builder_with_provider(provider)
-                .with_safe_default_protocol_versions()?.with_no_client_auth().with_cert_resolver(resolver))
+            )
+            .await
+            .map_err(|error| anyhow::anyhow!("Carrier TLS configuration failed: {error:#}"))?;
+            Some(
+                rustls::ServerConfig::builder_with_provider(provider)
+                    .with_safe_default_protocol_versions()?
+                    .with_no_client_auth()
+                    .with_cert_resolver(resolver),
+            )
         }
-        (None, None) if cfg!(any(test, feature = "carrier-test-relay")) && discovery.is_none() => None,
-        _ => anyhow::bail!("Carrier relay needs its TLS certificate and key; it terminates TLS itself"),
+        (None, None) if cfg!(any(test, feature = "carrier-test-relay")) && discovery.is_none() => {
+            None
+        }
+        _ => anyhow::bail!(
+            "Carrier relay needs its TLS certificate and key; it terminates TLS itself"
+        ),
     };
     let mut server_config = iroh_relay::server::ServerConfig::default();
     if let Some(discovery) = discovery {
-        let bind: std::net::SocketAddr = discovery.as_str().context("invalid discovery address")?.parse()?;
-        anyhow::ensure!(cfg!(test) || bind.port() == iroh_relay::defaults::DEFAULT_RELAY_QUIC_PORT, "Carrier discovery uses the protocol discovery port");
+        let bind: std::net::SocketAddr = discovery
+            .as_str()
+            .context("invalid discovery address")?
+            .parse()?;
+        anyhow::ensure!(
+            cfg!(test) || bind.port() == iroh_relay::defaults::DEFAULT_RELAY_QUIC_PORT,
+            "Carrier discovery uses the protocol discovery port"
+        );
         let mut quic = iroh_relay::server::QuicConfig::new(bind);
         quic.server_config = tls.clone();
         server_config.quic = Some(quic);
     }
     let mut relay = iroh_relay::server::RelayConfig::new(bind);
-    if tls.is_some() { relay.http_bind_addr = "127.0.0.1:0".parse()?; }
-    relay.tls = tls.map(|server_config| iroh_relay::server::TlsConfig::new(bind,
-        iroh_relay::server::CertConfig::Manual { server_config }));
+    if tls.is_some() {
+        relay.http_bind_addr = "127.0.0.1:0".parse()?;
+    }
+    relay.tls = tls.map(|server_config| {
+        iroh_relay::server::TlsConfig::new(
+            bind,
+            iroh_relay::server::CertConfig::Manual { server_config },
+        )
+    });
     let mut connections = iroh_relay::server::ConnectionLimits::default();
-    connections.total = setting(&config, "carrier_relay_connections", connections.total as u32)? as usize;
-    connections.pending = setting(&config, "carrier_relay_pending", connections.pending as u32)? as usize;
-    connections.per_network = setting(&config, "carrier_relay_per_network", connections.per_network as u32)? as usize;
-    connections.pending_per_network = setting(&config, "carrier_relay_pending_per_network", connections.pending_per_network as u32)? as usize;
-    anyhow::ensure!(connections.validate(), "Carrier relay capacity must reserve places for 64 source networks");
+    connections.total = setting(
+        &config,
+        "carrier_relay_connections",
+        connections.total as u32,
+    )? as usize;
+    connections.pending =
+        setting(&config, "carrier_relay_pending", connections.pending as u32)? as usize;
+    connections.per_network = setting(
+        &config,
+        "carrier_relay_per_network",
+        connections.per_network as u32,
+    )? as usize;
+    connections.pending_per_network = setting(
+        &config,
+        "carrier_relay_pending_per_network",
+        connections.pending_per_network as u32,
+    )? as usize;
+    anyhow::ensure!(
+        connections.validate(),
+        "Carrier relay capacity must reserve places for 64 source networks"
+    );
     relay.limits.connections = connections;
     let home_rate = setting(&config, "carrier_relay_home_bytes_per_second", 64 * 1024)?;
     let home_burst = setting(&config, "carrier_relay_home_burst_bytes", 128 * 1024)?;
     apply_byte_limits(&mut relay, home_rate, home_burst);
-    let mut global = iroh_relay::server::ClientRateLimit::new(std::num::NonZeroU32::new(
-        setting(&config, "carrier_relay_bytes_per_second", 1024 * 1024)?).expect("validated rate"));
-    global.max_burst_bytes = std::num::NonZeroU32::new(setting(&config, "carrier_relay_burst_bytes", 2 * 1024 * 1024)?);
+    let mut global = iroh_relay::server::ClientRateLimit::new(
+        std::num::NonZeroU32::new(setting(
+            &config,
+            "carrier_relay_bytes_per_second",
+            1024 * 1024,
+        )?)
+        .expect("validated rate"),
+    );
+    global.max_burst_bytes = std::num::NonZeroU32::new(setting(
+        &config,
+        "carrier_relay_burst_bytes",
+        2 * 1024 * 1024,
+    )?);
     relay.limits.global_rx = Some(global);
     let admission = Arc::new(RelayAdmission::new(connections.total));
     relay.access = admission.clone();
@@ -445,10 +558,17 @@ pub(super) async fn configured_server(
 
 fn setting(config: &toml::Table, key: &str, default: u32) -> Result<u32> {
     let value = match config.get(key) {
-        Some(value) => u32::try_from(value.as_integer().context("relay capacity must be an integer")?)?,
+        Some(value) => u32::try_from(
+            value
+                .as_integer()
+                .context("relay capacity must be an integer")?,
+        )?,
         None => default,
     };
-    anyhow::ensure!(value > 0 && value <= 64 * 1024 * 1024, "{key} is outside its supported capacity range");
+    anyhow::ensure!(
+        value > 0 && value <= 64 * 1024 * 1024,
+        "{key} is outside its supported capacity range"
+    );
     Ok(value)
 }
 
@@ -685,15 +805,62 @@ mod tests {
     #[test]
     fn released_and_source_homes_have_one_explicit_trust_owner() {
         let pin = "ab".repeat(32);
-        let release = ClientSettings::from_inputs(None, None, None, Some("https://relay.example/"), Some(&pin)).unwrap();
+        let release = ClientSettings::from_inputs(
+            None,
+            None,
+            None,
+            Some("https://relay.example/"),
+            Some(&pin),
+        )
+        .unwrap();
         assert_eq!(release.relay.unwrap().as_str(), "https://relay.example/");
         assert_eq!(release.certificate, Some([0xab; 32]));
-        assert!(ClientSettings::from_inputs(Some("relay"), Some("https://other.example/"), Some(&pin), Some("https://relay.example/"), Some(&pin)).is_err());
-        assert!(ClientSettings::from_inputs(Some("direct"), None, None, Some("https://relay.example/"), Some(&pin)).is_err());
-        assert!(ClientSettings::from_inputs(None, None, None, None, None).unwrap().relay.is_none());
-        assert!(ClientSettings::from_inputs(Some("relay"), Some("https://relay.example/"), None, None, None).is_err());
-        assert!(ClientSettings::from_inputs(Some("relay"), Some("https://relay.example/"), Some(&pin), None, None).unwrap().relay.is_some());
-        assert!(ClientSettings::from_inputs(None, None, None, Some("http://127.0.0.1/"), Some(&pin)).is_err());
+        assert!(ClientSettings::from_inputs(
+            Some("relay"),
+            Some("https://other.example/"),
+            Some(&pin),
+            Some("https://relay.example/"),
+            Some(&pin)
+        )
+        .is_err());
+        assert!(ClientSettings::from_inputs(
+            Some("direct"),
+            None,
+            None,
+            Some("https://relay.example/"),
+            Some(&pin)
+        )
+        .is_err());
+        assert!(ClientSettings::from_inputs(None, None, None, None, None)
+            .unwrap()
+            .relay
+            .is_none());
+        assert!(ClientSettings::from_inputs(
+            Some("relay"),
+            Some("https://relay.example/"),
+            None,
+            None,
+            None
+        )
+        .is_err());
+        assert!(ClientSettings::from_inputs(
+            Some("relay"),
+            Some("https://relay.example/"),
+            Some(&pin),
+            None,
+            None
+        )
+        .unwrap()
+        .relay
+        .is_some());
+        assert!(ClientSettings::from_inputs(
+            None,
+            None,
+            None,
+            Some("http://127.0.0.1/"),
+            Some(&pin)
+        )
+        .is_err());
     }
 
     #[test]
