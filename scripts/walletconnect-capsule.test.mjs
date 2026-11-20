@@ -70,7 +70,7 @@ test('late send reports dismissal without claiming completion',async()=>{
   const r=await exerciseWalletConnect('dismissed-during-send');
   assert.equal(r.error,undefined);
   assert.equal(r.result.status,'sent_after_dismissal');
-  assert.equal(r.result.message,'Request dismissed. Transaction sent from wallet.');
+  assert.equal(r.result.message,'Request dismissed. Your wallet reported this transaction as sent.');
   assert.equal(completed(r).length,1);
 });
 

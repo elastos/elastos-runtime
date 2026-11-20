@@ -98,7 +98,7 @@ for (const presentation of ["window","rail"]) test(`fix1 Inbox background refres
 test("fix1 Wallet accounts remain visible when only requests are unavailable",async t=>{
   const r=await runtimeView(t,"wallet",{approvalsUnavailable:true,accounts:[{account_id:"external",chain_namespace:"eip155:20",address:request().address,
     connector_id:"wallet-walletconnect",proof_type:"siwe",wallet_display_name:"Trust Wallet",wallet_mark:"wallet"}]});
-  await r.frame.locator("#wallet-status").filter({hasText:"Wallet requests are unavailable."}).waitFor();
+  await r.frame.locator("#wallet-status").filter({hasText:"Wallet could not load your requests."}).waitFor();
   assert.equal(await r.frame.locator('.wallet-account .wallet-card-name').count(),1,"the independent account read is rendered before the request-read error");
   assert.equal(await r.frame.locator('.wallet-account .wallet-card-name').textContent(),"Trust Wallet");
   assert.equal(await r.frame.getByRole("button",{name:/Send/}).first().isEnabled(),true);
@@ -114,7 +114,7 @@ test("fix1 removal dialog names its row and uses the shared removal sentence",as
   assert.equal(await identity.textContent(),"Trust Wallet");
   assert.equal(await identity.evaluate(el=>el.dir),"auto");
   assert.equal(await identity.evaluate(el=>getComputedStyle(el).unicodeBidi),"isolate");
-  assert.equal(await r.frame.getByText("Remove this account from Home. Your wallet and funds stay unchanged. Passkey confirmation is required.",{exact:true}).count(),1);
+  assert.equal(await r.frame.getByText("Remove this account from your Home. Your funds stay unchanged. This does not cancel a transaction in your wallet. Removing the last account connected through WalletConnect also clears Home's saved connection. Confirm with your passkey to remove the account.",{exact:true}).count(),1);
 });
 
 test("fix1 passkey-begin consent conflict keeps the fixed Inbox sentence",async t=>{
@@ -141,12 +141,12 @@ test("fix1 account-name branches after the external fallback are managed-only",a
   assert(!body.includes('connectorId ==='),"unreachable external connector branches have been removed");
 });
 
-test("fix1 request-kind titles match the Inbox producer",async()=>{
+test("fix1 request-kind titles stay consistent across account proof types",async()=>{
   const {requestTitle}=await import("../capsules/wallet/browser/wallet-format.js");
-  const titles={auth_challenge:"Wallet sign-in request",capability_grant:"Wallet access request",credential:"Credential signing request",
-    publish_envelope:"Publish approval request",transaction_intent:"Send transaction",browser_account_access:"Browser account access request",
-    browser_personal_sign:"Sign a message",browser_typed_data_sign:"Sign typed data",bitcoin_bip322_proof:"Bitcoin proof request",
-    revocation:"Revocation approval request",unknown:"Wallet approval request"};
+  const titles={auth_challenge:"Review sign-in request",capability_grant:"Review access request",credential:"Sign a credential",
+    publish_envelope:"Review publishing request",transaction_intent:"Send transaction",browser_account_access:"Share your wallet address with this site",
+    browser_personal_sign:"Sign a message",browser_typed_data_sign:"Sign typed data",bitcoin_bip322_proof:"Confirm this Bitcoin account is yours",
+    revocation:"Review request",unknown:"Review request"};
   for(const [intent,title] of Object.entries(titles)) for(const proof_type of ["managed_evm","siwe"])
     assert.equal(requestTitle({intent,proof_type,connector_id:proof_type==="siwe"?"wallet-metamask":null}),title,intent);
 });

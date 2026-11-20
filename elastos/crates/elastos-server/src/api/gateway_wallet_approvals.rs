@@ -358,7 +358,7 @@ pub(in crate::api::gateway) async fn complete_external_wallet_approval(
             request_id,
             result: receipt_status,
             reason: if late_receipt {
-                "Request dismissed. Transaction sent from wallet."
+                "Request dismissed. Your wallet reported this transaction as sent."
             } else {
                 audit_reason
             },

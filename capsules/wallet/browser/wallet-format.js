@@ -273,17 +273,17 @@ export function requestTiming(request) {
 
 export function requestTitle(request) {
   return ({
-    auth_challenge: "Wallet sign-in request",
-    capability_grant: "Wallet access request",
-    credential: "Credential signing request",
-    publish_envelope: "Publish approval request",
+    auth_challenge: "Review sign-in request",
+    capability_grant: "Review access request",
+    credential: "Sign a credential",
+    publish_envelope: "Review publishing request",
     transaction_intent: "Send transaction",
-    browser_account_access: "Browser account access request",
+    browser_account_access: "Share your wallet address with this site",
     browser_personal_sign: "Sign a message",
     browser_typed_data_sign: "Sign typed data",
-    bitcoin_bip322_proof: "Bitcoin proof request",
-    revocation: "Revocation approval request",
-  })[request.intent] || "Wallet approval request";
+    bitcoin_bip322_proof: "Confirm this Bitcoin account is yours",
+    revocation: "Review request",
+  })[request.intent] || "Review request";
 }
 
 export function requestingAppName(request) {
@@ -397,4 +397,18 @@ export function cssEscape(value) {
     return window.CSS.escape(value);
   }
   return String(value).replace(/["\\]/g, "\\$&");
+}
+
+export function requestOutcomeName(request) {
+  return ({
+    auth_challenge: "sign-in request",
+    capability_grant: "access request",
+    credential: "credential signing request",
+    publish_envelope: "publishing request",
+    transaction_intent: "transaction request",
+    browser_account_access: "address sharing request",
+    browser_personal_sign: "message signing request",
+    browser_typed_data_sign: "typed data signing request",
+    bitcoin_bip322_proof: "Bitcoin account confirmation",
+  })[request.intent] || "request";
 }

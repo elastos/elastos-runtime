@@ -343,7 +343,7 @@ async function startServer() {
         assert(request.headers["x-elastos-home-token"] === "wallet-home-token", "dismissal carries Wallet authority");
         state.rejectBodies.push(await readBody(request));
         state.approvals[0].status = "rejected";
-        json(response, 200, { approval_requests: state.approvals, receipt_status: "dismissed", note: "Request dismissed. Check your connected wallet before sending again." });
+        json(response, 200, { approval_requests: state.approvals, receipt_status: "dismissed", note: "Request dismissed. This does not cancel a transaction in your wallet. Check your wallet before sending again." });
         return;
       }
       if (url.pathname === "/api/wallet/prices" && request.method === "GET") {
@@ -891,7 +891,7 @@ async function run() {
     await lateFrame.locator("#wallet-activity-open").click();
     const lateRow = lateFrame.locator(".wallet-activity-row");
     assert(await lateRow.count() === 1, "late receipt stays on one Activity line");
-    assert((await lateRow.textContent()).includes("Sent from wallet after request was dismissed"), "late receipt explains the dismissed send");
+    assert((await lateRow.textContent()).includes("Dismissed request. Your wallet reported this transaction as sent"), "late receipt explains the dismissed send");
     assert((await lateRow.textContent()).includes(server.state.approvals[0].transaction_hash), "late receipt keeps the full hash available");
     await railPage.setViewportSize({ width: 390, height: 844 });
     await lateFrame.locator("#wallet-activity-drawer").evaluate(async drawer => {

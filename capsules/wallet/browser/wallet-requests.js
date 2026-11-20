@@ -91,7 +91,7 @@ export function createWalletRequests({
     const main = document.createElement("div");
     main.className = "wallet-request-main";
     const purpose = requestTitle(request);
-    const detail = accountAccess ? "Browser requests account access." : readText(request.reason) || "Approval requested.";
+    const detail = accountAccess ? "A site in Browser asks to see your account address." : readText(request.reason) || "Approval requested.";
     main.append(
       textNode("strong", purpose),
       textNode("span", `${requestingAppName(request)} · ${shortAddress(request.address)} · ${chainLabel(readText(request.chain_namespace).slice(0, 64))}`),
@@ -104,7 +104,7 @@ export function createWalletRequests({
       main.append(accountAccessReview);
     }
     if (approvedTransaction && !answered) {
-      main.append(textNode("small", "Check your connected wallet before sending again. Dismiss closes this request; it does not cancel a transaction in your wallet."));
+      main.append(textNode("small", "This transaction may already have been sent. Check your wallet before sending again. Dismiss closes this request but does not cancel the transaction in your wallet."));
     }
     card.append(main);
 
@@ -264,7 +264,7 @@ export function createWalletRequests({
         body: JSON.stringify({ reason: button.dataset.walletApprovedTransaction === "true" ? "Dismissed in Wallet" : "Rejected in Wallet" }),
       });
       const message = result?.receipt_status === "dismissed"
-        ? "Request dismissed. Check your connected wallet before sending again."
+        ? "Request dismissed. This does not cancel a transaction in your wallet. Check your wallet before sending again."
         : "Request rejected.";
       if (request) {
         acknowledgement = { ...request, request_id: requestId, status:"rejected",

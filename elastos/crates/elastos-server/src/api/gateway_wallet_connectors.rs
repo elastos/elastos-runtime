@@ -239,7 +239,7 @@ pub(in crate::api::gateway) async fn wallet_connector_approval_complete(
         Ok(mut summary) => {
             summary.note = Some(
                 if summary.receipt_status.as_deref() == Some("sent_after_dismissal") {
-                    "Request dismissed. Transaction sent from wallet.".to_string()
+                    "Request dismissed. Your wallet reported this transaction as sent.".to_string()
                 } else {
                     format!("Signed by {connector_label}.")
                 },

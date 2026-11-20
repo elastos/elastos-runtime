@@ -542,7 +542,7 @@ async function loadWalletState() {
   pricesUnavailable = Boolean(prices.unavailable);
   currentBalanceRows = await loadBalanceRows(currentAccounts);
   renderAll();
-  if (requestsUnavailable) throw new Error("Wallet requests are unavailable.");
+  if (requestsUnavailable) throw new Error("Wallet could not load your requests.");
 }
 
 function renderAll() {
@@ -568,7 +568,7 @@ function renderWalletReviewRequests() {
   if (reviewWalletRequestId && focusedRequestVisible) {
     showStatus("Review this request.", "muted");
   } else if (reviewWalletRequestId) {
-    showStatus("This request is unavailable. Return to the app and ask for a new request.", "muted");
+    showStatus("This request is unavailable. Check Activity in Wallet and any connected wallet you used before trying again. If you still need to continue, return to the app for a new request.", "muted");
   }
 }
 
