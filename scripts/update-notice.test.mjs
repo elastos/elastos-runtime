@@ -348,6 +348,7 @@ test("System keeps repair paths and commands out of the setting hint", async () 
       const hint=await system.locator('#update-background-message').innerText();
       assert.ok(hint.trim(),stateName+' keeps a next step');
       assert.doesNotMatch(hint,/Local\/|notice\.json|\.notice\.lock|elastos update/);
+      if(stateName!=='UNREADABLE_TEXT')assert.match(hint,/Home's log/,'the helper can find the repair steps');
     }
     await page.close();
   } finally {await browser.close();await f.close();}

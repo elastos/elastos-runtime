@@ -2820,6 +2820,14 @@ async fn update_repair_details_go_only_to_home_log() {
             for view in views {
                 for field in ["message", "save_error", "error"] {
                     if let Some(text) = view[field].as_str() {
+                        if ["save_error", "error"].contains(&field)
+                            || (field == "message" && ["folder", "version"].contains(&fault))
+                        {
+                            assert!(
+                                text.contains("Home's log"),
+                                "missing repair handoff: {text}"
+                            );
+                        }
                         for detail in [
                             "Local/",
                             ".notice.lock",
