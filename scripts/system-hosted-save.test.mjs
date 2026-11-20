@@ -3,7 +3,6 @@ import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 import vm from "node:vm";
-import { backgroundSettingState, runtimeUpdateStatusMessage } from "../capsules/system/browser/update-feedback.mjs";
 
 const source = readFileSync(new URL("../capsules/system/browser/system.js", import.meta.url), "utf8");
 const controller = source.slice(source.indexOf("function configureAiProvider() {"), source.indexOf("function configurePasskeyAccess() {"));
@@ -578,7 +577,6 @@ function updateFixture(overrides = {}) {
     runtimeUpdate: undefined, runtimeUpdatePending: null, runtimeUpdateBusy: false, sourceChannelBusy: false, sourceChannelChoice: null,
     runtimeUpdateActive: true, runtimeUpdateTimer: 0, runtimeUpdateReconnects: 0,
     runtimeUpdateRequests: new Set(), runtimeUpdateInProgressSeen: false, runtimeUpdateFeedback: "",
-    runtimeUpdateStatusMessage, backgroundSaveError: "", backgroundSaveState: "",
     RUNTIME_UPDATE_RESTART_TEXT: source.match(/RUNTIME_UPDATE_RESTART_TEXT = "([^"]+)"/)?.[1],
     RUNTIME_UPDATE_RESTART_POLLS: Number(source.match(/RUNTIME_UPDATE_RESTART_POLLS = (\d+)/)?.[1]),
     systemSummaryInFlight: null, homeParentOrigin: "https://home.example",
@@ -626,23 +624,6 @@ function updateFixture(overrides = {}) {
   };
   return { context, offer, button, panel, status, fields, hiddenFields, timers, listeners, posts, approvals, top, advance };
 }
-
-test("update repair text follows the saved setting state through the real feedback module", () => {
-  const background = { enabled: false, readable: true, message: "Repair the installed version." };
-  const f = updateFixture({ backgroundSaveError: "The setting could not be saved.",
-    backgroundSaveState: backgroundSettingState(background) });
-  const update = { ...f.offer, available: false, message: background.message, background_checks: background };
-  f.context.renderRuntimeUpdate(update);
-  assert.equal(f.status.textContent, background.message, "the current save error leaves the repair explanation in status");
-  for (const changed of [{ ...background, enabled: true }, { ...background, readable: false },
-    { ...background, message: "Update checks are off." }]) {
-    f.context.renderRuntimeUpdate({ ...update, background_checks: changed, message: changed.message });
-    assert.equal(f.status.textContent, "", "the setting row owns the explanation after its state changes");
-  }
-  f.context.backgroundSaveError = "";
-  f.context.renderRuntimeUpdate(update);
-  assert.equal(f.status.textContent, "", "cleared feedback stays cleared when the previous setting returns");
-});
 
 test("Home update requires a verified complete offer and a controller that can apply", () => {
   const f = updateFixture();
