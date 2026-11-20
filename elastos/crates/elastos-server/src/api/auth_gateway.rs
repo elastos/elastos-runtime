@@ -1655,7 +1655,7 @@ impl std::fmt::Display for RecoveryKitPreparationRefused {
         write!(
             formatter,
             "Home could not prepare your Recovery Kit: {}. After that, select Download Recovery \
-             Kit again; you will confirm with your passkey again.",
+             Kit again; you will approve with your passkey again.",
             self.notice
         )
     }

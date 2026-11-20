@@ -933,7 +933,7 @@ async fn test_full_recovery_fresh_export_rejects_envelope_shaped_data_before_mut
         if expected_status == StatusCode::CONFLICT {
             assert!(body.starts_with("Home could not prepare your Recovery Kit: "));
             assert!(body.ends_with(
-                ". After that, select Download Recovery Kit again; you will confirm with your passkey again."
+                ". After that, select Download Recovery Kit again; you will approve with your passkey again."
             ));
         }
     }
@@ -1025,7 +1025,7 @@ async fn export_consumes_approval_before_scan_and_survives_long_scan() {
     );
     assert!(body.ends_with(
         "upload it again in Library. After that, select Download Recovery Kit again; you will \
-         confirm with your passkey again."
+         approve with your passkey again."
     ));
     let replay = post_full_recovery_export(&app, &authority, &intent, &token).await;
     assert_eq!(replay.status(), StatusCode::FORBIDDEN);

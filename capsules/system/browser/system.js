@@ -3296,10 +3296,9 @@ function showRecoveryNote(message, tone) {
   if (!recoveryNoteNode) {
     return;
   }
-  const refusal = tone === "error" ? recoveryKitSaveRefusal(message) : "";
-  const text = refusal || (tone === "error"
+  const text = tone === "error"
     ? publicSystemError(message, "Recovery action could not be completed.")
-    : readText(message));
+    : readText(message);
   recoveryNoteNode.hidden = text.length === 0;
   recoveryNoteNode.textContent = text;
   recoveryNoteNode.dataset.tone = tone;
@@ -4338,19 +4337,6 @@ const HOSTED_KEY_CHECK_OUTCOMES = [
   [/^request failed: 500 (OpenRouter|Venice) validation unavailable$/i, "The provider sent an unexpected response. Try again later."],
   [/^request failed: 403 (admin passkey required|proof-bound passkey session required|.*fresh passkey|.*passkey step-up)/i, "Sign in with an admin passkey to check keys."],
 ];
-
-const RECOVERY_KIT_SAVE_REFUSALS = [
-  / is not encrypted and is \d+ MiB\. Home encrypts existing files of up to 16 MiB in place\. Move it out of .+ and try again; once Home is running, upload it again in Library, which encrypts files of up to 100 MiB\./,
-  /\d+ files in protected Home folders are not encrypted \(first: .+\); Home encrypts up to 64 in one run\. Move some of them out of their folders and try again; then move them back and try again\./,
-  /Unencrypted files in protected Home folders add up to more than 64 MiB \(reached at .+\); Home encrypts up to 64 MiB in one run\. Move some of them out of their folders and try again; then move them back and try again\./,
-];
-
-function recoveryKitSaveRefusal(value) {
-  const message = readText(value && value.message ? value.message : value);
-  const detail = readText(value && value.detail);
-  const sentence = detail || message.replace(/^request failed: \d+ /, "");
-  return RECOVERY_KIT_SAVE_REFUSALS.some((pattern) => pattern.test(sentence)) ? sentence : "";
-}
 
 function hostedProviderValidationError(value) {
   const message = readText(value && value.message ? value.message : value);
