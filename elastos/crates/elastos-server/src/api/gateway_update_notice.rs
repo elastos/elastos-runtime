@@ -300,17 +300,16 @@ pub(super) async fn acknowledge(
     action: &str,
 ) -> anyhow::Result<String> {
     require_admin_principal(data_dir, context)?;
-    let (release, dismiss) = if let Some(release) =
-        action.strip_prefix("notification-read:home-update:")
-    {
-        (release, false)
-    } else if let Some(release) = action.strip_prefix("notification-dismiss:home-update:") {
-        (release, true)
-    } else {
-        anyhow::bail!(
+    let (release, dismiss) =
+        if let Some(release) = action.strip_prefix("notification-read:home-update:") {
+            (release, false)
+        } else if let Some(release) = action.strip_prefix("notification-dismiss:home-update:") {
+            (release, true)
+        } else {
+            anyhow::bail!(
             "Home could not save your choice for this update notice. Refresh Inbox and try again."
         );
-    };
+        };
     anyhow::ensure!(
         cid::Cid::try_from(release).is_ok(),
         "Home could not save your choice for this update notice. Refresh Inbox and try again."

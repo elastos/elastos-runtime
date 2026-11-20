@@ -849,7 +849,8 @@ pub(crate) fn installer_required<T>(
     }))
 }
 
-pub(crate) const DOWNLOAD_MESSAGE: &str = "Downloading the update. Home restarts when the update is ready.";
+pub(crate) const DOWNLOAD_MESSAGE: &str =
+    "Downloading the update. Home restarts when the update is ready.";
 
 pub(crate) trait RestartOwner: Send {
     fn progress(&self, phase: &str, message: &str) -> anyhow::Result<()>;
@@ -1586,9 +1587,9 @@ async fn run_upgrade_with_restart(
         )?;
         let records = crate::capsule_record::UpdateRecords::new(
             &previous.release,
-            next_admission
-                .take()
-                .context("Home could not prepare the update. Update verification details are missing.")?,
+            next_admission.take().context(
+                "Home could not prepare the update. Update verification details are missing.",
+            )?,
             &source.publisher_dids,
         );
         let old_components = std::fs::read(data_dir.join("components.json"))?;
@@ -1682,9 +1683,9 @@ async fn run_upgrade_with_restart(
         let old_components = std::fs::read(data_dir.join("components.json")).ok();
         let records = crate::capsule_record::UpdateRecords::new(
             &previous.release,
-            next_admission
-                .take()
-                .context("Home could not prepare the update. Update verification details are missing.")?,
+            next_admission.take().context(
+                "Home could not prepare the update. Update verification details are missing.",
+            )?,
             &source.publisher_dids,
         );
         let changed_capsules =
@@ -1889,7 +1890,8 @@ async fn run_upgrade_with_restart(
             download_total,
         )?;
         owner.progress("downloading", DOWNLOAD_MESSAGE)?;
-        let support_plan = support_plan.context("Home could not prepare the update because its download plan is missing.")?;
+        let support_plan = support_plan
+            .context("Home could not prepare the update because its download plan is missing.")?;
         Some(
             on_heap(|| {
                 crate::setup::stage_planned_update_support(
