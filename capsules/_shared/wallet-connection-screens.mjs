@@ -2289,6 +2289,7 @@ for(const window of ['walletconnect','metamask','unisat'])for(const stage of ['l
 definitions.metamask.linked.status='Account saved in Wallet.';
 definitions.metamask.linked.notice="To stop sharing with Home, remove this Home's connection in your wallet. Your account stays in Wallet.";
 
+definitions.walletconnect['network-unsupported'].notice='Choose Ethereum, Elastos Smart Chain, Base or Sepolia test network in {{wallet}}. Close this window.';
 definitions.walletconnect['add-account']={status:'Add an account.',notice:'To add an account, choose another account in {{wallet}}, then return here. To use another wallet app, disconnect here first. Your accounts stay in Wallet.',account:true,secondary:[{id:'back-to-connection',label:'Back to connection',quiet:true}]};
 
 definitions.walletconnect['checking-response']={status:'Your wallet has answered. Home is checking the answer.',notice:'If you stop waiting, Home disconnects from your wallet. Home may still save the answer.',optionalRequest:true,account:true,dispatched:true,primary:{id:'stop-waiting',label:'Stop waiting',quiet:false},secondary:[{id:'close-window',label:'Close window',quiet:false}],focus:'stop-waiting'};
