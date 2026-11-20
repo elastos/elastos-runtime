@@ -171,7 +171,7 @@ pub struct InvalidInstalledVersion;
 
 impl std::fmt::Display for InvalidInstalledVersion {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Installed release version is invalid. Run `elastos update --force` locally to install a verified signed release and repair it.")
+        f.write_str("Home cannot check for updates. The computer running Home needs attention. Check Home's log for repair details.")
     }
 }
 impl std::error::Error for InvalidInstalledVersion {}
@@ -849,7 +849,7 @@ pub(crate) fn installer_required<T>(
     }))
 }
 
-pub(crate) const DOWNLOAD_MESSAGE: &str = "Downloading the update. Home restarts when it is done.";
+pub(crate) const DOWNLOAD_MESSAGE: &str = "Downloading the update. Home restarts when the update is ready.";
 
 pub(crate) trait RestartOwner: Send {
     fn progress(&self, phase: &str, message: &str) -> anyhow::Result<()>;
@@ -1235,7 +1235,7 @@ async fn fetch_verified_update_binary(
     if let Some(owner) = restart_owner.as_ref() {
         owner.progress(
             "verifying",
-            "Checking the update. Home restarts when it is done.",
+            "Checking the update. Home restarts when the update is ready.",
         )?;
     }
     println!("  Downloaded {}.", format_bytes(binary_data.len()));
@@ -1471,14 +1471,14 @@ async fn run_upgrade_with_restart(
     if let Some(owner) = restart_owner.as_ref() {
         owner.progress(
             "downloading",
-            "Checking the update. Home restarts when it is done.",
+            "Checking the update. Home restarts when the update is ready.",
         )?;
     }
     let comp_data = fetch_fn(comp_cid.to_string()).await?;
     if let Some(owner) = restart_owner.as_ref() {
         owner.progress(
             "verifying",
-            "Checking the update. Home restarts when it is done.",
+            "Checking the update. Home restarts when the update is ready.",
         )?;
     }
     println!(
@@ -1631,7 +1631,7 @@ async fn run_upgrade_with_restart(
     if let Some(owner) = restart_owner.as_ref() {
         owner.progress(
             "verifying",
-            "Checking the update. Home restarts when it is done.",
+            "Checking the update. Home restarts when the update is ready.",
         )?;
     }
 

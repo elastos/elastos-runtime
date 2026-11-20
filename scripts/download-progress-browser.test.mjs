@@ -37,8 +37,8 @@ test("System, model and Library transfer states stay accessible in light and dar
   const manifest = JSON.parse(await readFile(resolve(root, "capsules/system/capsule.json"), "utf8"));
   let workspace = { schema: "elastos.assistant.workspace/v2", revision: 0, document: null };
   let assistantView = false;
-  const downloadMessage = "Downloading the update. Home restarts when it is done.";
-  const metadataMessage = "Checking the update. Home restarts when it is done.";
+  const downloadMessage = "Downloading the update. Home restarts when the update is ready.";
+  const metadataMessage = "Checking the update. Home restarts when the update is ready.";
   const changes = [
     "# Home improvements",
     "See download progress while Home prepares an update.",
@@ -123,7 +123,7 @@ test("System, model and Library transfer states stay accessible in light and dar
       const system = page.frameLocator("#system-frame");
       const card = system.locator("#runtime-update");
       const progress = system.locator("#runtime-update-progress");
-      await card.getByText("Update available: ElastOS 2.0.2", { exact: true }).waitFor();
+      await card.getByText("Update to ElastOS 2.0.2", { exact: true }).waitFor();
       await card.getByRole("button", { name: "Update and restart Home" }).waitFor();
       await system.locator("[data-field=runtime-status]").getByText("2.0.1", { exact: true }).waitFor();
       assert.equal(await progress.isVisible(), false, "an offer has no active download bar");
@@ -139,7 +139,7 @@ test("System, model and Library transfer states stay accessible in light and dar
       await assertOrder();
       await screenshot(`system-update-offer-${theme}`);
       phase = "downloading"; message = downloadMessage;
-      await card.getByText("Updating ElastOS 2.0.2", { exact: true }).waitFor({ timeout: 9000 });
+      await card.getByText("Updating to ElastOS 2.0.2", { exact: true }).waitFor({ timeout: 9000 });
       await card.getByRole("heading", { name: "What's new", exact: true }).waitFor();
       await card.getByText(changes.at(-1), { exact: true }).waitFor();
       await assertOrder();

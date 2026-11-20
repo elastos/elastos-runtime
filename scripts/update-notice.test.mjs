@@ -69,7 +69,7 @@ async function fixture() {
       if(summary.runtime_update && state.settings.message===copy("INVALID_VERSION_TEXT")) {
         summary.source.installed_version="broken";
         summary.runtime_update={configured:true,available:false,can_apply:false,checking:false,current_version:"broken",
-          message:"Ask an admin to check Home's log for the repair steps.",background_checks:state.settings};
+          message:"Home cannot check for updates. The computer running Home needs attention. Check Home's log for repair details.",background_checks:state.settings};
       }
       jsonResponse(response,summary);return true;
     }
@@ -264,7 +264,7 @@ test("update notice uses real Inbox, bell and System navigation; switch saves an
       f.state.failStatus=status;
       await system.locator("label.system-switch:has(#update-background-choice)").click();
       await system.locator('#update-background-choice:not(:disabled)').waitFor({state:'attached'});
-      await system.getByText('Home could not check if this setting was saved. Try again.',{exact:true}).waitFor();
+      await system.getByText('Home could not confirm your change. Try again.',{exact:true}).waitFor();
       assert.equal(await system.getByText(copy('SAVE_ERROR'),{exact:true}).count(),0,'storage guidance belongs only to 409');
       await screen(page,'phone-no-answer',true);
       if(status==='saved-drop') {
@@ -347,6 +347,7 @@ test("System keeps repair paths and commands out of the setting hint", async () 
       await system.getByRole('switch',{name:copy('SWITCH_LABEL')}).waitFor();
       const hint=await system.locator('#update-background-message').innerText();
       assert.ok(hint.trim(),stateName+' keeps a next step');
+      if(stateName==='FOLDER_TEXT') assert.match(hint,/free disk space/,'folder failure keeps the common repair on screen');
       assert.doesNotMatch(hint,/Local\/|notice\.json|\.notice\.lock|elastos update/);
       if(stateName!=='UNREADABLE_TEXT')assert.match(hint,/Home's log/,'the helper can find the repair steps');
     }

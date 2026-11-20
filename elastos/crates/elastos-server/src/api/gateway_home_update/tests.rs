@@ -754,7 +754,7 @@ async fn system_update_summary_refuses_invalid_installed_version_with_local_repa
     assert!(response["error"]
         .as_str()
         .unwrap()
-        .contains("Home's log has the repair steps"));
+        .contains("Home's log for repair details"));
     assert_update_stays_unqueued(dir.path());
 }
 
@@ -1519,7 +1519,7 @@ async fn system_update_failures_explain_the_cause_without_private_error_details(
             anyhow::Error::from(crate::update::InvalidInstalledVersion)
                 .context("private source detail"),
             StatusCode::CONFLICT,
-            "Home's log has the repair steps",
+            "Home's log for repair details",
         ),
         (
             anyhow::anyhow!("private verification detail"),
@@ -2827,22 +2827,30 @@ async fn update_repair_details_go_only_to_home_log() {
                 }
                 _ => unreachable!(),
             }
-            let mut views = (0..5).map(|_| notice::preference(dir.path())).collect::<Vec<_>>();
+            let mut views = (0..5)
+                .map(|_| notice::preference(dir.path()))
+                .collect::<Vec<_>>();
             if fault == "save" {
                 let app = gateway_router(test_state(dir.path()));
-                let (status, response) = home_test_post_json(
-                    &app,
-                    "/api/apps/system/update-background",
-                    &owner.system_token,
-                    "null",
-                    json!({"enabled":true}),
-                )
-                .await;
-                assert_eq!(status, StatusCode::CONFLICT);
-                views.push(response);
+                for _ in 0..5 {
+                    let (status, response) = home_test_post_json(
+                        &app,
+                        "/api/apps/system/update-background",
+                        &owner.system_token,
+                        "null",
+                        json!({"enabled":true}),
+                    )
+                    .await;
+                    assert_eq!(status, StatusCode::CONFLICT);
+                    views.push(response);
+                }
             }
             match fault {
-                "folder" => std::fs::set_permissions(path.parent().unwrap(), std::fs::Permissions::from_mode(0o700)).unwrap(),
+                "folder" => std::fs::set_permissions(
+                    path.parent().unwrap(),
+                    std::fs::Permissions::from_mode(0o700),
+                )
+                .unwrap(),
                 "unreadable" => std::fs::remove_file(&path).unwrap(),
                 "save" => std::fs::remove_dir(&path).unwrap(),
                 "version" => {
@@ -2852,7 +2860,23 @@ async fn update_repair_details_go_only_to_home_log() {
                 }
                 _ => unreachable!(),
             }
-            for _ in 0..5 { notice::preference(dir.path()); }
+            if fault == "save" {
+                let app = gateway_router(test_state(dir.path()));
+                for _ in 0..5 {
+                    let (status, _) = home_test_post_json(
+                        &app,
+                        "/api/apps/system/update-background",
+                        &owner.system_token,
+                        "null",
+                        json!({"enabled":true}),
+                    )
+                    .await;
+                    assert_eq!(status, StatusCode::OK);
+                }
+            }
+            for _ in 0..5 {
+                notice::preference(dir.path());
+            }
             for view in views {
                 for field in ["message", "save_error", "error"] {
                     if let Some(text) = view[field].as_str() {
@@ -2893,11 +2917,54 @@ async fn update_repair_details_go_only_to_home_log() {
             "repair detail missing from Home log: {detail}; captured log: {output}"
         );
     }
-    assert_eq!(output.matches("Update checks are off because Home cannot use Local/").count(), 1, "{output}");
-    assert_eq!(output.matches("Update checks are off because Home could not read its settings. On the device").count(), 2, "{output}");
-    assert_eq!(output.matches("Home cannot check for updates until you repair").count(), 1, "{output}");
-    assert_eq!(output.matches("Update settings are readable again.").count(), 4, "{output}");
-    assert!(output.contains("error="), "failure detail missing: {output}");
+    assert_eq!(
+        output
+            .matches("Update checks are off because Home cannot use Local/")
+            .count(),
+        1,
+        "{output}"
+    );
+    assert_eq!(
+        output
+            .matches(
+                "Update checks are off because Home could not read its settings. On the device"
+            )
+            .count(),
+        2,
+        "{output}"
+    );
+    assert_eq!(
+        output
+            .matches("Home cannot check for updates until you repair")
+            .count(),
+        1,
+        "{output}"
+    );
+    assert_eq!(
+        output
+            .matches("Update settings are readable again.")
+            .count(),
+        4,
+        "{output}"
+    );
+    assert_eq!(
+        output
+            .matches("Home could not save update checks. On the device")
+            .count(),
+        1,
+        "{output}"
+    );
+    assert_eq!(
+        output
+            .matches("Update settings can be saved again.")
+            .count(),
+        1,
+        "{output}"
+    );
+    assert!(
+        output.contains("error="),
+        "failure detail missing: {output}"
+    );
     assert!(!output.contains("private-path-sentinel"));
     assert!(!output.contains("private-content-sentinel"));
 }

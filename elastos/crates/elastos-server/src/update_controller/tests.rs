@@ -6597,7 +6597,7 @@ async fn restarting_network_update(symlinked_parent: bool) {
                     assert!(progress.completed_bytes <= payload_completed);
                     assert_eq!(
                         progress.message,
-                        "Checking the update. Home restarts when it is done."
+                        "Checking the update. Home restarts when the update is ready."
                     );
                     observed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     // The network comes with the other downloads, while the

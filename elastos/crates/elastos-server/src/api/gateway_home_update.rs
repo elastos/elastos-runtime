@@ -490,7 +490,7 @@ where
         return Some(serde_json::json!({
             "configured":true, "checking":false, "available":false, "can_apply":false,
             "current_version":source.installed_version,
-            "message":"Ask an admin to check Home's log for the repair steps.",
+            "message":gateway_update_notice::INVALID_VERSION_TEXT,
             "background_checks": gateway_update_notice::preference(data_dir),
         }));
     }

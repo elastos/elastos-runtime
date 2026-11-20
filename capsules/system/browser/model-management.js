@@ -8,13 +8,13 @@ import { createTransferProgress, announceTransferProgress } from "./transfer-pro
   const MEMORY_FIT_TEXT = Object.freeze({
     fits: "This device has enough memory for this model. Replies also need some of it free when the model runs.",
     insufficient: "This device has less memory than this model requires. Choose a smaller model.",
-    unavailable: "This Home could not check the device memory. Ask an admin to check the memory limits, then try again.",
+    unavailable: "This Home could not check the device memory. Ask an admin of this Home to check the memory limits, then try again.",
   });
   // The Marketplace detail shows one short memory line under the model's status.
   const COMPACT_MEMORY_FIT_TEXT = Object.freeze({
     fits: "Fits this device's memory. It needs some free memory to reply.",
     insufficient: "Needs more memory than this device has. Choose a smaller model.",
-    unavailable: "Couldn't check this device's memory. Ask an admin to check the memory limits.",
+    unavailable: "Couldn't check this device's memory. Ask an admin of this Home to check the memory limits.",
   });
   const FAILURE_TEXT = Object.freeze({
     authorization_unavailable: "Preparation stopped. Open Models again to check access.",

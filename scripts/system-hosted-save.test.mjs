@@ -628,7 +628,7 @@ function updateFixture(overrides = {}) {
 test("Home update requires a verified complete offer and a controller that can apply", () => {
   const f = updateFixture();
   assert.equal(f.button.hidden, false);
-  assert.equal(f.fields.get("update-heading"), "Update available: ElastOS 1.1.0");
+  assert.equal(f.fields.get("update-heading"), "Update to ElastOS 1.1.0");
   assert.equal(f.fields.get("update-publisher"), "did:key:verified");
   assert.equal(f.fields.get("update-changes"), "A signed change.\nAnother signed change.");
   for (const refusal of [null, { configured: false }, { available: false }, { can_apply: false },
@@ -649,7 +649,7 @@ test("Home update requires a verified complete offer and a controller that can a
   f.context.renderRuntimeUpdate({ configured: true, available: false, can_apply: false,
     controller: { phase: "restarting", current_version: "1.0.0", new_version: "1.1.0" } });
   assert.equal(f.hiddenFields.get("update-offer"), false, "reopened System keeps durable progress versions");
-  assert.equal(f.fields.get("update-heading"), "Updating ElastOS 1.1.0");
+  assert.equal(f.fields.get("update-heading"), "Updating to ElastOS 1.1.0");
   assert.equal(f.hiddenFields.get("update-publisher-row"), true, "progress does not invent a publisher");
   f.context.renderRuntimeUpdate(null);
   assert.equal(f.timers.size, 0, "source Home without an installed controller has no update polling");
@@ -660,13 +660,13 @@ test("Home update heading follows the real target through active and inactive st
   for (const phase of ["staging", "downloading", "verifying", "restarting"]) {
     f.context.renderRuntimeUpdate({ configured: true, available: false,
       controller: { phase, new_version: "2.0.2" } });
-    assert.equal(f.fields.get("update-heading"), "Updating ElastOS 2.0.2", phase);
+    assert.equal(f.fields.get("update-heading"), "Updating to ElastOS 2.0.2", phase);
   }
   f.context.renderRuntimeUpdate({ ...f.offer, new_version: "2.1.0",
     controller: { phase: "downloading", new_version: "2.0.2" } });
-  assert.equal(f.fields.get("update-heading"), "Updating ElastOS 2.0.2", "active controller owns the target");
+  assert.equal(f.fields.get("update-heading"), "Updating to ElastOS 2.0.2", "active controller owns the target");
   f.context.renderRuntimeUpdate({ ...f.offer, new_version: "2.1.0-rc.3" });
-  assert.equal(f.fields.get("update-heading"), "Update available: ElastOS 2.1.0-rc.3");
+  assert.equal(f.fields.get("update-heading"), "Update to ElastOS 2.1.0-rc.3");
   for (const phase of ["ready", "updated", "restored", "failed"]) {
     const inactive = updateFixture();
     inactive.context.renderRuntimeUpdate({ configured: true, available: false, controller: { phase } });
@@ -734,14 +734,14 @@ test("Home update heading waits for passkey approval and stays an offer after ca
       resolveApproval = resolve; rejectApproval = reject;
     }) });
     const applying = f.context.onRuntimeUpdateApply();
-    assert.equal(f.fields.get("update-heading"), "Update available: ElastOS 1.1.0", "passkey prompt is an offer");
+    assert.equal(f.fields.get("update-heading"), "Update to ElastOS 1.1.0", "passkey prompt is an offer");
     f.context.renderRuntimeUpdate({ ...f.offer, controller: { phase: "downloading", id: "another-page", new_version: "9.0.0" } });
-    assert.equal(f.fields.get("update-heading"), "Update available: ElastOS 1.1.0", "polling cannot approve this page's choice");
+    assert.equal(f.fields.get("update-heading"), "Update to ElastOS 1.1.0", "polling cannot approve this page's choice");
     f.context.renderRuntimeUpdate(f.offer);
     if (approved) resolveApproval("approved");
     else rejectApproval(new Error("passkey cancelled"));
     await applying;
-    assert.equal(f.fields.get("update-heading"), approved ? "Updating ElastOS 1.1.0" : "Update available: ElastOS 1.1.0");
+    assert.equal(f.fields.get("update-heading"), approved ? "Updating to ElastOS 1.1.0" : "Update to ElastOS 1.1.0");
     assert.equal(f.posts.length, approved ? 1 : 0);
   }
 });
@@ -794,7 +794,7 @@ test("Home update freezes one exact passkey intent and retries a lost response w
   assert.deepEqual(JSON.parse(f.posts[0].body), { ...intent, step_up_token: "approved-exact-choice" });
   assert.equal(intent.release_cid, "release-exact");
   assert.equal(intent.new_version, "1.1.0");
-  assert.equal(f.fields.get("update-heading"), "Updating ElastOS 1.1.0", "progress retains the approved choice");
+  assert.equal(f.fields.get("update-heading"), "Updating to ElastOS 1.1.0", "progress retains the approved choice");
   await f.context.onRuntimeUpdateApply();
   assert.equal(f.approvals.length, 1, "queued choice has one action");
   f.context.renderRuntimeUpdate({ ...f.offer, controller: { phase: "updated", id: "another-choice", message: "Other result" } });
