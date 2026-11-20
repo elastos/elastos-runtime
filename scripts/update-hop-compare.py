@@ -533,7 +533,7 @@ def run(config, output):
                                **update_evidence(config, before, after, host_text, command_text)}
                 write(output / (role + "-observation.json"), observation)
                 checks = compare(observation)
-                stages = ["Installing ", "Downloading ElastOS for", "Binary verified", "Downloading the update file list",
+                stages = ["Installing ", "Downloading binary", "Downloading ElastOS for", "Binary verified", "Downloading components", "Downloading the update file list",
                           "Components verified", "Installed binary:", "Installed binary verified",
                           "Installed components:", "support assets", "Capsule cache", "Principal-root readiness:",
                           "installed successfully!"]
@@ -2853,13 +2853,15 @@ def cli_install_gateway(home_path, present):
 def cli_refusal(case, command, stdout, stderr, unchanged):
     boundary = {"tampered-binary": "SHA-256", "wrong-platform": "platform", "wrong-version": "version",
                 CLI_INSTALLER_CASE: "installer"}.get(case, "sign")
+    binary_started = any(label in stdout for label in ("Downloading binary", "Downloading ElastOS for"))
+    components_started = any(label in stdout for label in ("Downloading components", "Downloading the update file list"))
     # An unavailable holder, invalid CID or an unrelated failure is not a refusal proof.
     if case == "tampered-binary":
-        evidence = "SHA-256 mismatch" in stderr and "Downloading ElastOS for" in stdout and "Downloading the update file list" not in stdout and "Binary verified" not in stdout
+        evidence = "SHA-256 mismatch" in stderr and binary_started and not components_started and "Binary verified" not in stdout
     elif case == "wrong-platform":
-        evidence = ("No release available for platform:" in stderr or "No binary CID for platform" in stderr) and "Downloading ElastOS for" not in stdout
+        evidence = ("No release available for platform:" in stderr or "No binary CID for platform" in stderr) and not binary_started
     elif case == "wrong-version":
-        evidence = ("Downloaded binary version mismatch" in stderr or "Installed binary version mismatch" in stderr) and "Downloading ElastOS for" in stdout
+        evidence = ("Downloaded binary version mismatch" in stderr or "Installed binary version mismatch" in stderr) and binary_started
     elif case == CLI_INSTALLER_CASE:
         evidence = (CLI_INSTALL_COMMAND in stderr
                     and "does not know: " + CLI_FUTURE_COMPONENT in stderr
@@ -2867,7 +2869,7 @@ def cli_refusal(case, command, stdout, stderr, unchanged):
     else:
         evidence = ("Signer DID mismatch" in stderr or "Envelope signer differs from the pinned maintainer DID" in stderr)
         release_reached = "Fetching release:" in stdout or "Verifying release signature" in stdout
-        evidence = evidence and release_reached == (case == "wrong-signer-release") and "Downloading ElastOS for" not in stdout
+        evidence = evidence and release_reached == (case == "wrong-signer-release") and not binary_started
     return {"status": "passed" if command["exit"] not in (0, 124) and evidence and unchanged else "failed",
             "boundary": boundary, "preserved": unchanged, **command}
 

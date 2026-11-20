@@ -1056,6 +1056,7 @@ class CliFixtureTests(unittest.TestCase):
             self.assertEqual(observer.cli_refusal("tampered-binary", {"exit": code}, "Downloading ElastOS for", "SHA-256 mismatch", unchanged)["status"], "failed")
         self.assertEqual(observer.cli_refusal("tampered-binary", failure, "Downloading ElastOS for\nDownloading the update file list", "SHA-256 mismatch", True)["status"], "failed")
         for case, stdout, stderr in (("wrong-platform", "Fetching release:", "No binary CID for platform aarch64-darwin"),
+                                     ("wrong-version", "Downloading binary\nDownloading components", "Downloaded binary version mismatch"),
                                      ("wrong-version", "Downloading ElastOS for\nDownloading the update file list", "Installed binary version mismatch")):
             self.assertEqual(observer.cli_refusal(case, failure, stdout, stderr, True)["status"], "passed")
             for changed_stdout, changed_stderr, unchanged in ((stdout, "Carrier connection failed", True), (stdout, stderr, False)):
@@ -2706,6 +2707,8 @@ class CliFixtureTests(unittest.TestCase):
                             stderr = "Envelope signer differs from the pinned maintainer DID" if argv[0] == "/bin/bash" else "Signer DID mismatch"
                             if argv[0] == "/bin/bash" and name == "wrong-signer-release":
                                 stdout = "Verifying release signature"
+                        if argv[0] == "/bin/bash":
+                            stdout = stdout.replace("Downloading ElastOS for", "Downloading binary").replace("Downloading the update file list", "Downloading components")
                     elif argv[0] == "/bin/bash":
                         copy_publication(self.home, name, first=True, gateway=kwargs["env"]["ELASTOS_PUBLISHER_GATEWAY"])
                         lock = self.home / observer.CLI_DATA / "host-process.lock"
