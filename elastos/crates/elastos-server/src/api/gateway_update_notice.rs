@@ -20,7 +20,8 @@ const FOLDER_TEXT: &str = "Update checks are off because Home cannot save its se
 const FOLDER_REPAIR: &str = "Update checks are off because Home cannot use Local/Shared/System/Updates inside this Home's data folder. On the device that runs Home, check free disk space and write access. Use a real folder and a regular .notice.lock file, both owned by and private to the account that runs Home, then turn this on.";
 pub(super) const INVALID_VERSION_TEXT: &str = "Home cannot check for updates. Ask an admin to repair ElastOS on the computer that runs Home. Home's log has the repair steps.";
 const INVALID_VERSION_REPAIR: &str = "Home cannot check for updates until you repair the installed version. On the device that runs Home, run elastos update --force.";
-const UNREADABLE_TEXT: &str = "Update checks are off because Home could not read this setting. Turn it on to try again.";
+const UNREADABLE_TEXT: &str =
+    "Update checks are off because Home could not read this setting. Turn it on to try again.";
 const UNREADABLE_REPAIR: &str = "Update checks are off because Home could not read its settings. On the device that runs Home, repair or move aside Local/Shared/System/Updates/notice.json inside this Home's data folder, then turn this on.";
 
 #[derive(Default, Serialize, Deserialize)]

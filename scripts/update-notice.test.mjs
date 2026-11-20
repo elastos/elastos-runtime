@@ -7,7 +7,7 @@ import { productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 const root = new URL("../", import.meta.url);
 // Wording belongs to the real summary. Fixtures and assertions read that source.
 const source = await readFile(new URL("elastos/crates/elastos-server/src/api/gateway_update_notice.rs", root), "utf8");
-const copy = name => JSON.parse(source.match(new RegExp(`const ${name}: &str = ("[^"\\n]*");`))[1]);
+const copy = name => JSON.parse(source.match(new RegExp(`const ${name}: &str =\\s*("[^"\\n]*");`))[1]);
 const preference = (enabled, readable = true) => ({ enabled, readable, label:copy("SWITCH_LABEL"), save_error:copy("SAVE_ERROR"), message:copy(!readable ? "UNREADABLE_TEXT" : enabled ? "ON_TEXT" : "OFF_TEXT") });
 const release = "bafkreiaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const notice = () => ({ id:`home-update:${release}`, kind:"home_update_available", source_app:"system", severity:"info", read:false,
