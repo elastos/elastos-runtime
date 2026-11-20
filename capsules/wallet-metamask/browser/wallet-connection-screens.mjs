@@ -811,7 +811,7 @@ const definitions = {
       "focus": "connect"
     },
     "request-unavailable": {
-      "status": "This request is unavailable here. To try again, start a new request in {{app}}.",
+      "status": "This request can't be used here. Start a new one in {{app}}.",
       "request": true,
       "account": true,
       "focusOutcome": true,

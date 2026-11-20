@@ -44,7 +44,7 @@ export function contractCopy(expected, row, view) {
       'request-internet-off':{status:'Internet access for WalletConnect is off.',notice:'Choose Back to connection and connect again to ask for internet access. Allow it in Inbox, then return to this request and send it.'},
       'request-internet-pending':{notice:'Allow internet access in Inbox to continue with this request.'},
       'guest-access':{status:'You cannot turn on internet access for WalletConnect.',notice:'Ask an admin of this Home to open WalletConnect, choose Connect wallet, then allow internet access in Inbox.'},
-      'request-unavailable':{status:`This request is unavailable here. To try again, start a new request in ${app}.`},
+      'request-unavailable':{status:`This request can't be used here. Start a new one in ${app}.`},
     }[row.stage];
     Object.assign(result,copy);
     result.status=result.status.replace('Internet access is off for WalletConnect.','Internet access for WalletConnect is off.').replace('Transaction result unknown.','Home could not confirm the transaction result.').replace('You stopped waiting. Result unknown.','You stopped waiting. The transaction may have been sent.');

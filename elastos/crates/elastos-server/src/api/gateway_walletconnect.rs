@@ -16,6 +16,15 @@ const MAX_SOCKETS: usize = 2;
 const RESOURCE: &str = "elastos://walletconnect/internet";
 
 #[derive(Debug)]
+struct AdminConsentRequired;
+impl std::fmt::Display for AdminConsentRequired {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Ask an admin of this Home to open WalletConnect, choose Connect wallet, then allow internet access in Inbox.")
+    }
+}
+impl std::error::Error for AdminConsentRequired {}
+
+#[derive(Debug)]
 pub(super) struct ConsentConflict;
 impl std::fmt::Display for ConsentConflict {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -380,6 +389,11 @@ pub(super) async fn internet(
     .await;
     match result {
         Ok(v) => Json(v).into_response(),
+        Err(e) if e.is::<AdminConsentRequired>() => (
+            StatusCode::FORBIDDEN,
+            Json(json!({"code": "walletconnect_admin_required", "message": e.to_string()})),
+        )
+            .into_response(),
         Err(e) => system_error_response(e),
     }
 }
@@ -397,7 +411,7 @@ fn ensure_consent_request(
     if current.as_ref().is_none_or(|c| {
         c.status != "granted" && (c.status != "requested" || c.at + 1800 <= now_ts())
     }) {
-        ensure_admin_context(&state.data_dir, context).map_err(|_| anyhow::anyhow!("Ask an admin of this Home to open WalletConnect, choose Connect wallet, then allow internet access in Inbox."))?;
+        ensure_admin_context(&state.data_dir, context).map_err(|_| AdminConsentRequired)?;
         anyhow::ensure!(
             inner.sockets.values().all(|s| *s.done.borrow()),
             "Finish stopping WalletConnect first"

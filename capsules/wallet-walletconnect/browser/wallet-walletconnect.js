@@ -328,7 +328,9 @@ async function fetchJson(url,init) {
   const response=await fetch(url,init);
   if (!response.ok) {
     const detail=await response.text().catch(()=>'');
-    if (detail.trim() === "Ask an admin of this Home to open WalletConnect, choose Connect wallet, then allow internet access in Inbox.") {
+    let code;
+    try {code=JSON.parse(detail).code;} catch {}
+    if (response.status === 403 && code === 'walletconnect_admin_required') {
       ownerConsentNeeded=true;permissionStatus='off';pendingEffect=undefined;draw();watchConnection();
       throw Object.assign(new Error('An admin of this Home can allow WalletConnect internet access in Inbox.'),{tone:'muted'});
     }

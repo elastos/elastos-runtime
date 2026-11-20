@@ -589,12 +589,12 @@ async fn n5_guest_request_creates_no_question() {
         .path()
         .join("ElastOS/SystemServices/WalletConnect/internet.json");
     assert!(!path.exists());
-    assert_ne!(
-        f.route(&token, INTERNET, Some(json!({"action":"request"})))
-            .await
-            .0,
-        StatusCode::OK
-    );
+    let (status, error) = f
+        .route(&token, INTERNET, Some(json!({"action":"request"})))
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(error["code"], "walletconnect_admin_required");
+    assert_eq!(error["message"], "Ask an admin of this Home to open WalletConnect, choose Connect wallet, then allow internet access in Inbox.");
     assert!(!path.exists(), "guest request creates no owner question");
     let (first, second) = tokio::join!(
         f.route(&f.connector, INTERNET, Some(json!({"action":"request"}))),
