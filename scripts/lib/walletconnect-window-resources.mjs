@@ -1,6 +1,4 @@
 import {existsSync} from 'node:fs';
-import {windowFixture} from './walletconnect-phone-window-fixture.mjs';
-import {scriptedPhoneWallet} from './walletconnect-phone-wallet.mjs';
 import {requireProductSmokePlaywright,productSmokeLaunchOptions} from '../product-smoke-browser.mjs';
 
 const engines=requireProductSmokePlaywright();
@@ -8,6 +6,8 @@ export function windowTestOptions(engine,timeout){
  return {timeout,skip:engine==='webkit'&&!existsSync(engines.webkit.executablePath())&&!process.env.ELASTOS_PLAYWRIGHT_MODULE?'WebKit is not installed on this machine':false};
 }
 export async function windowResources(t,engine,launch=()=>engines[engine].launch({headless:true,...(engine==='chromium'?productSmokeLaunchOptions():{})})){
+ const {windowFixture}=await import('./walletconnect-phone-window-fixture.mjs');
+ const {scriptedPhoneWallet}=await import('./walletconnect-phone-wallet.mjs');
  const cleanup=[];
  // Register before acquisition so a failed peer or engine launch also releases its predecessors.
  t.after(async()=>{

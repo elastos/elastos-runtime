@@ -1,11 +1,11 @@
+import {windowTestOptions} from './walletconnect-window-resources.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {existsSync} from 'node:fs';
 import {browserFixture,playwright} from './wallet-connection-browser-fixture.mjs';
 import {observeCopiedFeedback} from './wallet-copy-feedback.mjs';
 
 for(const engine of ['chromium','webkit'])test(`Copied observation survives expiry and requires both labels in ${engine}`,{
- skip:engine==='webkit'&&!existsSync(playwright.webkit.executablePath())&&!process.env.ELASTOS_PLAYWRIGHT_MODULE?'WebKit required in content-sandbox CI':false,
+ skip:windowTestOptions(engine).skip,
 },async()=>{
  const f=await browserFixture(engine);
  try{

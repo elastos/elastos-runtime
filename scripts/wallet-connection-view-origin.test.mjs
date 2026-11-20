@@ -1,6 +1,6 @@
+import {windowTestOptions} from './lib/walletconnect-window-resources.mjs';
 import test,{describe} from 'node:test';
 import assert from 'node:assert/strict';
-import {existsSync} from 'node:fs';
 import {writeFile} from 'node:fs/promises';
 import {browserFixture,playwright,temporaryProof,closeSmokeBrowsers} from './lib/wallet-connection-browser-fixture.mjs';
 import {observeApproval,assertApprovalGeometry,assertApprovalPaint,assertEverySiteLinePaint,approvalIds} from './lib/wallet-connection-approval-oracle.mjs';
@@ -77,9 +77,9 @@ async function activate(page,resize){
 // Independent engine journeys may overlap in the bounded combined smoke.
 describe('structural approval access and paint',{concurrency:process.env.WALLET_VIEW_BROWSER_SMOKE==='1'?2:false},()=>{
 for(const engine of ['chromium','webkit'])describe(engine+' approval journey',{concurrency:false},()=>{
- const optional=engine==='webkit'&&!existsSync(playwright.webkit.executablePath())&&!process.env.ELASTOS_PLAYWRIGHT_MODULE;
+ const skip=windowTestOptions(engine).skip;
  const receipts=[];
- for(const scale of [1,2])describe(`F1: origins in ${engine} at zoom ${scale}`,{skip:optional?'WebKit required in content-sandbox CI':false},()=>{
+ for(const scale of [1,2])describe(`F1: origins in ${engine} at zoom ${scale}`,{skip},()=>{
   let f;
   test.before(async()=>{f=await browserFixture(engine,{width:320/scale,height:182/scale,scale,delayFont:true});});
   test.after(async()=>{await f?.close();});
@@ -98,12 +98,12 @@ for(const engine of ['chromium','webkit'])describe(engine+' approval journey',{c
 
    });
  });
- test(`F1: matrix receipt and unnamed app in ${engine}`,{skip:optional?'WebKit required in content-sandbox CI':false},async()=>{
+ test(`F1: matrix receipt and unnamed app in ${engine}`,{skip},async()=>{
   assert.equal(receipts.length,ciSmoke?24:240);
   const f=await browserFixture(engine);try{await mount(f.page,{unnamed:true,long:false,compact:false});assert.equal(await f.page.locator('.connection-app').textContent(),'Requesting app');if(requested)await f.page.screenshot({path:`${proof.path}/unnamed-app-${engine}.png`});}finally{await f.close();}
   await writeFile(`${proof.path}/approval-${engine}.json`,JSON.stringify(receipts,null,2)+'\n');
  });
- test(`F1: six independent layout and paint breaks fail in ${engine}`,{skip:optional?'WebKit required in content-sandbox CI':false},async t=>{
+ test(`F1: six independent layout and paint breaks fail in ${engine}`,{skip},async t=>{
   const f=await browserFixture(engine,{width:320,height:182});
   try{
    await f.page.evaluate(()=>document.fonts.ready);

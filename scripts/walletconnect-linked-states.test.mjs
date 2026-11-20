@@ -1,3 +1,4 @@
+import {windowTestOptions} from './lib/walletconnect-window-resources.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {once} from 'node:events';
@@ -5,7 +6,7 @@ import {scriptedPhoneWallet} from './lib/walletconnect-phone-wallet.mjs';
 import {linkedWindow as fixtureWindow} from './lib/walletconnect-linked-window-fixture.mjs';
 const linkedWindow=(t,engine,options={})=>fixtureWindow(t,engine,{...options,sourceRef:process.env.WALLETCONNECT_LINKED_BEFORE==='original'?'0db7eb247c8d89f367d5458acb03339605cc216e':process.env.WALLETCONNECT_LINKED_BEFORE==='1'?'1c2dcb195f5ee294366627cd7dc7d2d2d21ad1f0':process.env.WALLETCONNECT_LINKED_BEFORE==='copy'?'adf517637d41dfa8a42849e97f494e8b05eea708':undefined});
 for(const engine of ['chromium','webkit']) {
- test(`linked window has true copy and useful controls in ${engine}`,{timeout:60000},async t=>{
+ test(`linked window has true copy and useful controls in ${engine}`,windowTestOptions(engine,60000),async t=>{
   const r=await linkedWindow(t,engine);await r.link();await r.capture('just-linked');
   assert.match(await r.frame.locator('main').innerText(),/Close this window with Home’s window controls/);
   assert.doesNotMatch(await r.frame.locator('main').innerText(),/review this request|Back to connection|Manage in Inbox/i);
@@ -19,14 +20,14 @@ for(const engine of ['chromium','webkit']) {
   await r.click('disconnect');await r.state('disconnected');await r.capture('all-linked-actions-walked');
   assert.equal(await r.wallet.locator('#wallet-account-state').innerText(),'1 account','walking every linked-window action retains the account in Wallet');
  });
- test(`linked window cannot loop to a highlighted reconnect in ${engine}`,{timeout:60000},async t=>{
+ test(`linked window cannot loop to a highlighted reconnect in ${engine}`,windowTestOptions(engine,60000),async t=>{
   const r=await linkedWindow(t,engine);await r.link();
   if(await r.frame.locator('[data-action=back-to-connection]').count())await r.click('back-to-connection');
   await r.capture('connection-after-navigation');
   assert.equal(await r.frame.locator('[data-action=connect]').count(),0,'a linked connection never offers a fresh connection as its next step');
   assert.equal(await r.frame.locator('[data-action=back-to-connection]').count(),0,'connection overview has no return to itself');
  });
- test(`two-network approval events preserve the linked selection in ${engine}`,{timeout:60000},async t=>{
+ test(`two-network approval events preserve the linked selection in ${engine}`,windowTestOptions(engine,60000),async t=>{
   const r=await linkedWindow(t,engine);await r.link();assert.equal(r.fixture.state.accounts.length,1);
   await r.peer.approvalEvents();await r.refresh();await r.state('linked');await r.capture('two-networks-unchanged');
   assert.doesNotMatch(await r.frame.locator('main').innerText(),/Wallet now shows|different account|different network/);
@@ -39,18 +40,18 @@ for(const engine of ['chromium','webkit']) {
   assert.equal(r.fixture.state.accounts.length,2,'both network proofs are stored');
   await r.wallet.locator('#wallet-account-state').filter({hasText:'1 account'}).waitFor();assert.equal(await r.wallet.locator('#wallet-accounts .wallet-account').count(),1);await r.capture('same-address-on-both-networks');
  });
- test(`open Wallet receives the new linked account in ${engine}`,{timeout:60000},async t=>{
+ test(`open Wallet receives the new linked account in ${engine}`,windowTestOptions(engine,60000),async t=>{
   const r=await linkedWindow(t,engine);await r.wallet.locator('#wallet-account-state').filter({hasText:'0 accounts'}).waitFor();await r.link();
   await r.wallet.locator('#wallet-account-state').filter({hasText:'1 account'}).waitFor({timeout:4000});
   await r.capture('wallet-live-account');
  });
- test(`Wallet refresh after linking follows an older in-flight read in ${engine}`,{timeout:60000},async t=>{
+ test(`Wallet refresh after linking follows an older in-flight read in ${engine}`,windowTestOptions(engine,60000),async t=>{
   const r=await linkedWindow(t,engine,{holdWalletRead:true});await r.waitWalletRead();await r.link();
   await r.page.waitForFunction(()=>window.events.some(e=>e.type==='home:refresh-summary'));
   r.releaseWalletRead();
   await r.wallet.locator('#wallet-account-state').filter({hasText:'1 account'}).waitFor({timeout:4000});await r.capture('wallet-refresh-after-older-read');
  });
- test(`Wallet add control explains and adds another phone account in ${engine}`,{timeout:60000},async t=>{
+ test(`Wallet add control explains and adds another phone account in ${engine}`,windowTestOptions(engine,60000),async t=>{
   const r=await linkedWindow(t,engine);await r.link();
   if(process.env.WALLETCONNECT_LINKED_BEFORE==='original')await r.reopenWallet();
   await r.wallet.locator('#wallet-account-state').filter({hasText:'1 account'}).waitFor();
@@ -70,7 +71,7 @@ for(const engine of ['chromium','webkit']) {
   assert.equal(await r.wallet.locator('#wallet-accounts .wallet-account').count(),2,'Wallet displays both account cards');
   await r.capture('two-phone-accounts');
  });
- test(`Wallet adds a second wallet after an explicit disconnect in ${engine}`,{timeout:60000},async t=>{
+ test(`Wallet adds a second wallet after an explicit disconnect in ${engine}`,windowTestOptions(engine,60000),async t=>{
   const r=await linkedWindow(t,engine);await r.link();
   if(process.env.WALLETCONNECT_LINKED_BEFORE==='original')await r.reopenWallet();
   await r.wallet.locator('#wallet-account-state').filter({hasText:'1 account'}).waitFor();

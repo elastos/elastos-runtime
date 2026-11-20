@@ -1,6 +1,6 @@
+import {windowTestOptions} from './lib/walletconnect-window-resources.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
 import { requireProductSmokePlaywright } from './product-smoke-browser.mjs';
 import { fixture } from './lib/wallet-extension-window-fixture.mjs';
 const playwright=requireProductSmokePlaywright();
@@ -30,7 +30,7 @@ async function consumed(f,kind) {
   assert.equal(record.status,'approved');assert.equal(record.receipts,0);
   assert.equal(record.calls.filter(c=>['personal_sign','signMessage','eth_sendTransaction'].includes(c.method)).length,0);
 }
-for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'])test(`${engine} ${kind}: pinned Home one-use handoff is not a retryable pending request`,{timeout:30000,skip:engine==='webkit'&&!existsSync(playwright.webkit.executablePath())?'WebKit required for explicit Mac acceptance':false},async t=>{
+for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'])test(`${engine} ${kind}: pinned Home one-use handoff is not a retryable pending request`,{timeout:30000,skip:windowTestOptions(engine).skip},async t=>{
   const browser=await playwright[engine].launch({headless:true});
   try{
     for(const oldHost of [true,false]) {
@@ -59,7 +59,7 @@ async function failedRead(f,kind,failure=503) {
   await f.state('request-consumed');
   assert.equal(await f.top.evaluate(()=>testState.effects.length),1,'reads never repeat the consumed effect');
 }
-for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'])test(`${engine} ${kind}: failed reads and wallet events retain the consumed cause`,{timeout:30000,skip:engine==='webkit'&&!existsSync(playwright.webkit.executablePath())?'WebKit required for explicit Mac acceptance':false},async()=>{
+for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'])test(`${engine} ${kind}: failed reads and wallet events retain the consumed cause`,{timeout:30000,skip:windowTestOptions(engine).skip},async()=>{
   const browser=await playwright[engine].launch({headless:true});try{
     for(const failure of [503,200]) {
       const good=await fixture(browser,kind,{saved:true,requests:true});try{await failedRead(good,kind,failure);}finally{await good.close();}
@@ -67,7 +67,7 @@ for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'
   }finally{await browser.close();}
 });
 
-for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'])test(`${engine} ${kind}: refusal is final before the pending-list answer and keeps its instructions`,{timeout:30000,skip:engine==='webkit'&&!existsSync(playwright.webkit.executablePath())?'WebKit required for explicit Mac acceptance':false},async()=>{
+for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'])test(`${engine} ${kind}: refusal is final before the pending-list answer and keeps its instructions`,{timeout:30000,skip:windowTestOptions(engine).skip},async()=>{
   const browser=await playwright[engine].launch({headless:true});try{
     for(const fault of ['account','network']) {
       const transaction=kind==='metamask';

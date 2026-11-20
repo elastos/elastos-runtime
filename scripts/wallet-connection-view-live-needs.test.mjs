@@ -1,7 +1,8 @@
+import {windowTestOptions} from './lib/walletconnect-window-resources.mjs';
 import {canonicalRequestTitles} from './lib/wallet-connection-title-oracle.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readFileSync,existsSync} from 'node:fs';
+import {readFileSync} from 'node:fs';
 import {writeFile} from 'node:fs/promises';
 import {connectionView,reduceConnection,reduceSummary,connectionKey,viewText,connectionActionIds,stageNames} from '../capsules/_shared/wallet-connection-view.mjs';
 import {shared,states,contractStates,fixtureArguments} from './wallet-connection-view-fixtures.mjs';
@@ -124,7 +125,7 @@ test('new WC needs: approved transaction recovery is separate from pending queue
 
 const proof=await temporaryProof('wallet-live-view-',process.env.WALLET_VIEW_PROOF_DIR);const receipts=[];
 test.after(async()=>{try{await writeFile(proof.path+'/live-needs.json',JSON.stringify(receipts,null,2)+'\n');}finally{await proof.cleanup();}});
-for(const engine of ['chromium','webkit'])test('live needs: rendering and QR card containment in '+engine,{skip:engine==='webkit'&&!existsSync(playwright.webkit.executablePath())&&!process.env.ELASTOS_PLAYWRIGHT_MODULE?'WebKit runs in content-sandbox CI':false},async()=>{
+for(const engine of ['chromium','webkit'])test('live needs: rendering and QR card containment in '+engine,{skip:windowTestOptions(engine).skip},async()=>{
  const f=await browserFixture(engine,{width:480,height:560});
  const mount=async args=>f.page.evaluate(async args=>{const m=await import('/capsules/_shared/wallet-connection-view.mjs');window.mounted?.dispose();window.mounted=m.mountConnection(document.querySelector('#mount'),m.reduceConnection(...args));await document.fonts.ready;},args);
  try{
