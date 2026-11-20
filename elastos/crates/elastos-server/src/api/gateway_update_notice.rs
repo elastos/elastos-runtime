@@ -123,9 +123,13 @@ fn log_repair_change(
     let mut faults = FAULTS.lock().unwrap_or_else(|error| error.into_inner());
     let key = (data_dir.to_owned(), operation);
     if let Some((kind, repair, error)) = fault {
-        // Compare the cause as well as the kind. Keep private Home paths out
-        // of the log and out of the retained fault identity.
-        let error = error.replace(data_dir.to_string_lossy().as_ref(), "[Home data]");
+        // tempfile appends a new path to each create/write error. Keep its
+        // underlying cause, so repeated attempts at the same fault log once.
+        let error = error
+            .split(" at path ")
+            .next()
+            .unwrap_or(&error)
+            .replace(data_dir.to_string_lossy().as_ref(), "[Home data]");
         let current = (kind, error.clone());
         if faults.insert(key, current.clone()) != Some(current) {
             tracing::warn!(operation, error = %error, "{repair}");

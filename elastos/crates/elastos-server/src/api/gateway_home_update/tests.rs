@@ -2808,7 +2808,7 @@ async fn update_repair_details_go_only_to_home_log() {
         .finish();
     tracing::subscriber::set_global_default(subscriber).unwrap();
     async {
-        for fault in ["folder", "unreadable", "save", "version"] {
+        for fault in ["folder", "unreadable", "save", "save-temp", "version"] {
             let dir = tempfile::Builder::new()
                 .prefix("private-path-sentinel-")
                 .tempdir()
@@ -2829,6 +2829,11 @@ async fn update_repair_details_go_only_to_home_log() {
                         .unwrap();
                 }
                 "save" => std::fs::create_dir(&path).unwrap(),
+                "save-temp" => std::fs::set_permissions(
+                    path.parent().unwrap(),
+                    std::fs::Permissions::from_mode(0o500),
+                )
+                .unwrap(),
                 "version" => {
                     let mut sources = crate::sources::load_trusted_sources(dir.path()).unwrap();
                     sources.sources[0].installed_version = "broken".into();
@@ -2850,7 +2855,7 @@ async fn update_repair_details_go_only_to_home_log() {
                     views.push(notice::preference(dir.path()));
                 }
             }
-            if fault == "save" {
+            if ["save", "save-temp"].contains(&fault) {
                 let app = gateway_router(test_state(dir.path()));
                 for _ in 0..5 {
                     let (status, response) = home_test_post_json(
@@ -2873,6 +2878,11 @@ async fn update_repair_details_go_only_to_home_log() {
                 .unwrap(),
                 "unreadable" => std::fs::remove_file(&path).unwrap(),
                 "save" => std::fs::remove_dir(&path).unwrap(),
+                "save-temp" => std::fs::set_permissions(
+                    path.parent().unwrap(),
+                    std::fs::Permissions::from_mode(0o700),
+                )
+                .unwrap(),
                 "version" => {
                     let mut sources = crate::sources::load_trusted_sources(dir.path()).unwrap();
                     sources.sources[0].installed_version = "2.0.1".into();
@@ -2880,7 +2890,7 @@ async fn update_repair_details_go_only_to_home_log() {
                 }
                 _ => unreachable!(),
             }
-            if fault == "save" {
+            if ["save", "save-temp"].contains(&fault) {
                 let app = gateway_router(test_state(dir.path()));
                 for _ in 0..5 {
                     let (status, _) = home_test_post_json(
@@ -2977,14 +2987,14 @@ async fn update_repair_details_go_only_to_home_log() {
         output
             .matches("Home could not save update checks. On the device")
             .count(),
-        1,
+        2,
         "{output}"
     );
     assert_eq!(
         output
             .matches("Update settings can be saved again.")
             .count(),
-        1,
+        2,
         "{output}"
     );
     assert!(
@@ -2995,6 +3005,7 @@ async fn update_repair_details_go_only_to_home_log() {
         "not owner-only",
         "expected value at line 1 column 1",
         "unknown update settings schema",
+        "Permission denied",
         "must be a regular non-symlink file",
     ] {
         assert!(
@@ -3002,6 +3013,7 @@ async fn update_repair_details_go_only_to_home_log() {
             "missing actual failure cause {cause}: {output}"
         );
     }
+    assert!(!output.contains(" at path "), "temporary paths must not split one fault: {output}");
     assert!(!output.contains("private-path-sentinel"));
     assert!(!output.contains("private-content-sentinel"));
 }
