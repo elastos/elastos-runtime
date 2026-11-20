@@ -182,8 +182,8 @@ export function connectionView(input) {
   requireValue(boolOrNull(safety), 'payment safety');
   const providerName=provider?.availability==='found'?providerCopy[provider.providerId]:null;
   const extension=window==='metamask'||window==='unisat';
-  const name = extension ? providerName||'your browser wallet' : account?.name || brands[window];
-  const title=extension?providerName||'Browser wallet':brands[window];
+  const name = extension ? providerName||(window==='metamask'?'your wallet':'UniSat') : account?.name || brands[window];
+  const title=extension?providerName||(window==='metamask'?'MetaMask or Brave Wallet':'UniSat'):brands[window];
   const headingMark=extension?(providerName&&provider.providerId==='io.metamask'?'metamask':providerName&&provider.providerId==='unisat'?'unisat':'wallet'):window;
   const home = displayOrigin(input.homeOrigin);
   requireValue(input.targetNetwork===undefined||bounded(input.targetNetwork,80),'requested network label');
@@ -217,7 +217,7 @@ export function connectionView(input) {
   }
   if(screen.requiresSafeRetry&&safety!==false){notice='Close this window. Check {{wallet}} and Activity in Wallet before trying again.';safetyNotice=notice;actions=actions.filter(a=>!approves(a.id)&&a.id!=='start-over');}
   const unknownLinkRecovery=safety===null&&stage==='link-error';
-  if(unknownLinkRecovery){notice='Close this window. Check your wallet and Activity in Wallet before trying again.';safetyNotice=notice;actions=[{id:'close-window',label:parts('Close window'),primary:true,quiet:false}];}
+  if(unknownLinkRecovery){notice=window==='metamask'?'Close this window. Before you try again, check your wallet, then open Wallet from Home and check Activity.':'Close this window. Check your wallet and Activity in Wallet before trying again.';safetyNotice=notice;actions=[{id:'close-window',label:parts('Close window'),primary:true,quiet:false}];}
   if(stage==='disconnecting')notice=window==='walletconnect'&&supported&&!supported.includes('close-window')?'Keep this window open until disconnecting finishes.':'Disconnecting continues after you close this window.';
   if(knownNotSent&&result.receipt==='recording_failed'){notice+=' Home cannot save that answer.';if(safetyNotice!==null)safetyNotice=notice;}
   const answered = !!(screen.afterAnswer || summary?.transaction&&result.disposition!==null&&result.receipt!==null || summary && /^(request-(done|declined|access-error|wallet-error|expired|late-ignored|sent-wallet-removed|unavailable)|transaction-(done|declined|access-error|late-result))$/.test(stage));
