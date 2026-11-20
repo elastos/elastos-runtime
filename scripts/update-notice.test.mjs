@@ -371,6 +371,11 @@ test("System preserves failed-update feedback when the installed version is unre
     await system.locator("#update-background-message").getByText(copy("INVALID_VERSION_TEXT"),{exact:true}).waitFor();
     assert.equal(await system.locator("#runtime-update-status").textContent(),f.state.updateController.message,
       "drawing the background setting keeps the failed-update message visible");
+    f.state.failWrite=true;f.state.failStatus=409;
+    await system.locator("label.system-switch:has(#update-background-choice)").click();
+    await system.locator('#update-background-message').getByText(copy('SAVE_ERROR'),{exact:true}).waitFor();
+    assert.equal(await system.locator("#runtime-update-status").textContent(),f.state.updateController.message,
+      "a failed setting save keeps the controller failure instead of replacing it with version repair text");
     assert.deepEqual(f.requestFailures,[]);
     await page.close();
   } finally {await browser?.close();await f.close();}
