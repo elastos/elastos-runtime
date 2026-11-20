@@ -66,7 +66,7 @@ export function contractCopy(expected, row, view) {
       if(row.stage==='linked'){result.status='Account saved in Wallet.';result.notice=`To stop sharing with Home, remove this Home's connection in ${name}. Your account stays in Wallet.`;}
       if(row.stage==='request-network-declined')result.status=`Home could not confirm the requested network in ${name}.`;
       if(row.stage==='transaction-extension')result.notice=`Check the transaction in ${name}. Stopping here does not cancel the request in ${name}.`;
-      if(row.stage==='transaction-timeout')result.status='Home does not know if the transaction was sent.';
+      if(['transaction-timeout','transaction-wallet-error'].includes(row.stage))result.status='Home does not know if the transaction was sent.';
       if(row.stage==='transaction-cancelled')result.status='You stopped waiting. The transaction may have been sent.';
       if(['transaction-timeout','transaction-cancelled','transaction-wallet-error'].includes(row.stage))result.notice=`Before you send again, check ${name}, then open Wallet from Home and check Activity. Closing this window does not cancel the request in ${name}.`;
       if(row.stage==='window-expired')result.notice='Close this window, then open Wallet from Home and choose MetaMask.';
