@@ -18,7 +18,7 @@ const OPAQUE_FRAME_TARGET = "*";
 const eip6963Providers = [];
 const walletChoiceOffers = new WeakMap();
 const WALLET_CHOICE_ID_PATTERN = /^wchoice-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
-const WALLET_LABEL_RESERVED = /^(?:wallet$|(?:home|inbox|elastos)(?:$| ))/i;
+const WALLET_LABEL_RESERVED = /^(?:(?:your wallet|activity|account|wallet)$|(?:home|inbox|elastos)(?:$| ))/i;
 // Only an already admitted effect can identify the recipient. The existing
 // clipboard lifetime binds this subscription to that same live document.
 const walletEventRecipients = new Map();
@@ -89,10 +89,7 @@ export function handleHomeWalletConnectorEffect(event, context, data) {
   }
   const requestId = readText(data.requestId);
   const connectorId = readText(data.connectorId);
-  // Current windows request display facts in their action. Legacy windows keep
-  // their exact terminal result shape; this adds no pre-click exchange.
-  const includeWallet = data.action?.includeWallet === true;
-  const action = includeWallet ? Object.fromEntries(Object.entries(data.action).filter(([key]) => key !== 'includeWallet')) : data.action;
+  const action = data.action;
   const state = context?.walletEffectState;
   if (
     context?.kind !== "app-frame"
@@ -112,7 +109,7 @@ export function handleHomeWalletConnectorEffect(event, context, data) {
     || data.connectorToken !== context.homeToken
     || !validRequestId(requestId)
     || !validAction(action)
-    || connectorId === UNISAT_CONNECTOR_ID && (includeWallet || action.walletChoiceId || action.linkedAddress)
+    || connectorId === UNISAT_CONNECTOR_ID && (action.walletChoiceId || action.linkedAddress)
     || connectorId === METAMASK_CONNECTOR_ID && action.kind === "approve" && !/^0x[0-9a-fA-F]{40}$/.test(action.linkedAddress)
     || !state
   ) {
@@ -138,8 +135,7 @@ export function handleHomeWalletConnectorEffect(event, context, data) {
   state.inFlight = true;
   performConnectorEffect(connectorId, context.homeToken, action, context)
     .then((result) => {
-      const {wallet, ...legacyResult} = result;
-      replyToConnector(event, requestId, connectorId, includeWallet ? result : legacyResult);
+      replyToConnector(event, requestId, connectorId, result);
     })
     .catch((error) => {
       replyToConnector(
@@ -174,11 +170,15 @@ function presentWalletName(value, rdns) {
   if (!name) return null;
   const normalized = name.normalize('NFKC').toLowerCase();
   const brands = {metamask:'io.metamask', 'brave wallet':'com.brave.wallet', unisat:'unisat', walletconnect:'walletconnect'};
-  return WALLET_LABEL_RESERVED.test(normalized) || brands[normalized] && brands[normalized] !== rdns ? null : name;
+  const scripts = [/\p{Script=Latin}/u, /\p{Script=Cyrillic}/u, /\p{Script=Greek}/u];
+  if (scripts.filter(script => script.test(normalized)).length > 1) return null;
+  const forgedBrand = Object.entries(brands).some(([brand, owner]) => owner !== rdns
+    && new RegExp(`(?:^|[^\\p{L}\\p{N}])${brand}(?=$|[^\\p{L}\\p{N}])`, 'u').test(normalized));
+  return WALLET_LABEL_RESERVED.test(normalized) || forgedBrand ? null : name;
 }
 
-function walletDisplayForEntry(entry) {
-  return entry ? Object.freeze({name:entry.name, rdns:entry.rdns, icon:entry.icon}) : null;
+function walletDisplayForEntry(entry, address) {
+  return entry ? Object.freeze({name:entry.name, rdns:entry.rdns, icon:entry.icon, address}) : null;
 }
 
 class WalletChoiceRequired extends Error {
@@ -255,7 +255,7 @@ async function walletForAccount(address) {
         Promise.resolve().then(() => entry.provider.request({method:'eth_accounts'})),
         new Promise(resolve => { timer = setTimeout(() => resolve([]), 1000); }),
       ]);
-      return Array.isArray(accounts) && accounts.length <= 32 && accounts.some(a => typeof a === 'string' && normalizeAddress(a) === normalizeAddress(address)) ? entry : null;
+      return Array.isArray(accounts) && accounts.length <= 32 && normalizeAddress(firstProviderAccount(accounts)) === normalizeAddress(address) ? entry : null;
     } catch { return null; } finally { clearTimeout(timer); }
   }));
   const matches = results.filter(Boolean);
@@ -265,6 +265,11 @@ async function walletForAccount(address) {
 }
 
 async function performConnectorEffect(connectorId, connectorToken, action, context) {
+  if (connectorId === METAMASK_CONNECTOR_ID && action.kind === "check-access") {
+    const selected = await walletForAccount(action.linkedAddress);
+    ensureWalletPresent(selected);
+    return Object.freeze({status:"available"});
+  }
   if (connectorId === METAMASK_CONNECTOR_ID && action.kind === "link") {
     return linkEvmWallet(connectorToken, action.walletChoiceId ?? null, context);
   }
@@ -308,7 +313,7 @@ async function linkEvmWallet(connectorToken, walletChoiceId, context) {
     }),
   );
   requireRuntimeCompletion(verified, "evm_link_complete", METAMASK_CONNECTOR_ID, "linked");
-  const wallet = walletDisplayForEntry(selected);
+  const wallet = walletDisplayForEntry(selected, address);
   return Object.freeze({ status: "linked", ...(wallet ? { wallet } : {}) });
 }
 
@@ -386,7 +391,7 @@ async function completeEvmApproval(provider, connectorToken, handoff, evmChains,
       transaction_hash: transactionHash,
     }));
     requireApprovalCompletion(completed, METAMASK_CONNECTOR_ID, handoff.request_id);
-    const wallet = walletDisplayForEntry(selected);
+    const wallet = walletDisplayForEntry(selected, currentSigner);
     return Object.freeze({ status: "completed", effect: "transaction", ...(wallet ? { wallet } : {}) });
   }
   const method = handoff.intent === "browser_typed_data_sign"
@@ -404,7 +409,7 @@ async function completeEvmApproval(provider, connectorToken, handoff, evmChains,
     signer,
   }));
   requireApprovalCompletion(completed, METAMASK_CONNECTOR_ID, handoff.request_id);
-  const wallet = walletDisplayForEntry(selected);
+  const wallet = walletDisplayForEntry(selected, signer);
   return Object.freeze({ status: "completed", effect: "signature", ...(wallet ? { wallet } : {}) });
 }
 
@@ -808,6 +813,10 @@ function validAction(action) {
       return true;
     }
     return hasExactKeys(action, ["kind", "walletChoiceId"]) && validWalletChoiceId(action.walletChoiceId);
+  }
+  if (action.kind === "check-access") {
+    return hasExactKeys(action, ["kind", "linkedAddress"])
+      && /^0x[0-9a-fA-F]{40}$/.test(action.linkedAddress);
   }
   if (action.kind === "approve") {
     if (hasExactKeys(action, ["kind", "approvalRequestId"])

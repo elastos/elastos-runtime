@@ -17,7 +17,7 @@ const breaks = {
   X3:s=>s.replace("'Switch to the linked account before approving.', ", ""),
   'stop-copy':s=>s.replaceAll('Closing this window does not cancel it.', 'Home will ignore a later answer.'),
   saved:s=>s.replace('const rows = address ? row ? [row] : [] : candidates;', 'const rows = address ? row ? [row] : [] : [];'),
-  read:s=>s.replace("else { if (preflightFailure === 'request-unsendable') preflightFailure = null; void refresh(); }", "else { void perform({kind:'link'}); }"),
+  read:s=>s.replace("else { if (['request-unsendable','link-error'].includes(preflightFailure)) preflightFailure = null; void refresh(); }", "else { void perform({kind:'link'}); }"),
   disconnect:s=>s.replace('if (data.value.length) disconnected = false;',''),
   'link-request':s=>s.replace('if (next?.id !== selected?.id) preflightFailure = null;',''),
   'read-event':s=>s.replace('stage = chooseStage(); }', "stage = 'wallet-unavailable'; }"),
@@ -96,7 +96,7 @@ async function neutralMetaMaskIdentity(f) {
   assert.equal(await visibleBrandMarkCount(f.frame, 'metamask'), 0, 'availability alone does not identify MetaMask');
   assert.equal(await f.frame.locator('img').count(), 0, 'the unidentified provider has no account mark');
 }
-for (const engine of ['chromium','webkit']) test(`${engine} MetaMask window: availability alone keeps the account mark generic`, {timeout:20000,skip:engineSkip(engine)}, async t => {
+for (const engine of ['chromium','webkit']) test(`${engine} MetaMask window: availability alone shows no account mark`, {timeout:20000,skip:engineSkip(engine)}, async t => {
   const browser=await playwright[engine].launch({headless:true});
   try {
     const good=await fixture(browser,'metamask',{saved:true});

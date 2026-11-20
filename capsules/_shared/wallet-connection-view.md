@@ -136,7 +136,7 @@ launch lifetime. The window sends the selected handle with the link action.
 For Send, the window includes the linked address with the approval request ID.
 Before taking the Runtime handoff, Home asks at most eight discovered wallets
 for `eth_accounts`, in parallel with a one-second timeout. Home uses a wallet
-that reports the linked address, preferring MetaMask among matches. If none
+that reports the linked address first, preferring MetaMask among matches. If none
 reports it, the request stays pending and the window offers Check again and
 Close window. Home retains the signer check after the handoff. Each selected
 wallet is checked again before dispatch. UniSat uses its own provider contract.

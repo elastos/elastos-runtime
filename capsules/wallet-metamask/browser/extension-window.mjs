@@ -23,7 +23,7 @@ export function startExtensionWindow(kind, homeClipboard) {
   let chosenWalletChoiceId = null;
   let walletChoicesFromHome = [];
   let operationWallet = null;
-  let pendingEffectAction = null;
+  let walletEventAddress = null;
   const requestNetworks = new Map();
   let presentation = null;
   const mount = document.querySelector('#connection-root');
@@ -51,6 +51,7 @@ export function startExtensionWindow(kind, homeClipboard) {
       return [networkName(chain)];
     };
     return { name: kind === 'metamask' ? (linkObserved && operationWallet?.name || 'Your wallet') : 'UniSat', mark: kind === 'metamask' ? 'wallet' : kind, connection: null,
+      ...(kind === 'metamask' && linkObserved && operationWallet?.address ? {walletAddress:operationWallet.address} : {}),
       accounts: rows.map(row => ({ address: row.address, networks: networks(row.chain_namespace) })) };
   }
 
@@ -120,7 +121,7 @@ export function startExtensionWindow(kind, homeClipboard) {
     if (!raw || typeof raw !== 'object' || !readText(raw.rdns) || !readText(raw.name)) return null;
     const name = boundedWalletLabel(raw.name);
     if (!name) return null;
-    return { rdns: readText(raw.rdns).toLowerCase(), name, icon: raw.icon ?? null };
+    return { rdns: readText(raw.rdns).toLowerCase(), name, icon: raw.icon ?? null, address:validAddress(raw.address) ? raw.address : null };
   }
 
   function buildProviderSnapshot() {
@@ -144,7 +145,6 @@ export function startExtensionWindow(kind, homeClipboard) {
   }
 
   function effectAction(action) {
-    if (kind === 'metamask') action = {...action,includeWallet:true};
     if (action.kind !== 'link' || !chosenWalletChoiceId) return action;
     return { ...action, walletChoiceId: chosenWalletChoiceId };
   }
@@ -164,7 +164,7 @@ export function startExtensionWindow(kind, homeClipboard) {
     presentation = mountConnection(mount, view, presentation);
     const root = presentation.root;
     for (const control of root.querySelectorAll('[data-action]')) {
-      if ((operation || uncertain) && !['stop-waiting', 'close-window', 'copy-address'].includes(control.dataset.action)) control.disabled = true;
+      control.disabled = Boolean((operation || uncertain) && !['stop-waiting', 'close-window', 'copy-address'].includes(control.dataset.action));
     }
     // R5 has no consumed-but-unsent state. Reuse its outcome/card/Close parts
     // once, with a closed local copy override. No control retries this request.
@@ -250,10 +250,9 @@ export function startExtensionWindow(kind, homeClipboard) {
     preflightFailure = null;
     const pending = { action, deadline: now() + HOST_EFFECT_TIMEOUT_MS / 1000 };
     operation = pending;
-    pendingEffectAction = action;
-    if (action.kind === 'approve') clearActionWallet();
+    if (['approve','check-access'].includes(action.kind)) clearActionWallet();
     if (action.kind === 'link') { linkObserved = false; if (!chosenWalletChoiceId) operationWallet = null; accountEvent = null; networkEvent = null; disconnected = false; fixedOutcome = false; selected = null; picked = false; walletChoicesFromHome = []; }
-    stage = action.kind === 'link' ? 'extension-wait' : selected?.transaction ? 'transaction-extension' : 'request-extension';
+    stage = action.kind === 'check-access' ? chooseStage() : action.kind === 'link' ? 'extension-wait' : selected?.transaction ? 'transaction-extension' : 'request-extension';
     draw();
     try {
       const result = await requestHomeWalletEffect(effectAction(action));
@@ -263,11 +262,16 @@ export function startExtensionWindow(kind, homeClipboard) {
       providerAvailability = 'found';
       revision += 1;
       operation = null;
-      pendingEffectAction = null;
       walletChoicesFromHome = [];
       chosenWalletChoiceId = null;
+      if (action.kind === 'check-access') {
+        if (refreshing) await refreshing;
+        await refresh();
+        return;
+      }
       const wallet = reduceOperationWallet(result.wallet);
       if (wallet) operationWallet = wallet;
+      walletEventAddress = wallet?.address ?? null;
       linkObserved = true;
       notifyHomeSummaryChanged();
       if (action.kind === 'link') {
@@ -315,10 +319,10 @@ export function startExtensionWindow(kind, homeClipboard) {
         } else { stage = preflightFailure; draw(); }
         return;
       }
-      if (action.kind === 'approve' && message !== 'Choose a browser wallet in the connection window.') fixedOutcome = true;
+      if (action.kind === 'approve') fixedOutcome = true;
       const prefix = action.kind === 'link' ? 'extension' : selected?.transaction ? 'transaction' : 'request';
       if (message === 'Wallet request timed out.') { uncertain = true; stage = `${prefix}-timeout`; }
-      else if (message === 'Choose a browser wallet in the connection window.') {
+      else if (action.kind === 'link' && message === 'Choose a browser wallet in the connection window.') {
         providerAvailability = 'found';
         walletChoicesFromHome = Array.isArray(error.walletChoices) ? error.walletChoices : [];
         stage = walletChoicesFromHome.length ? 'extension-choose-wallet' : 'link-error';
@@ -347,21 +351,16 @@ export function startExtensionWindow(kind, homeClipboard) {
       draw();
     } else if (operation && action !== 'copy-address') return;
     else if (action === 'refresh-status') {
-      if (kind === 'metamask' && ['extension-missing','extension-choose-wallet','link-error'].includes(stage)) { chosenWalletChoiceId = null; void perform(pendingEffectAction?.kind === 'approve' ? pendingEffectAction : {kind:'link'}); }
-      else { if (preflightFailure === 'request-unsendable') preflightFailure = null; void refresh(); }
+      if (kind === 'metamask' && selected && ['link-error','request-unsendable'].includes(preflightFailure)) { void perform({kind:'check-access',linkedAddress:selected.address}); }
+      else if (kind === 'metamask' && !selected && ['extension-missing','extension-choose-wallet','link-error'].includes(stage)) { chosenWalletChoiceId = null; void perform({kind:'link'}); }
+      else { if (['request-unsendable','link-error'].includes(preflightFailure)) preflightFailure = null; void refresh(); }
     }
     else if (action === 'select-wallet') {
       chosenWalletChoiceId = button.dataset.focusKey.slice('select-wallet:'.length);
       const choice = walletChoicesFromHome.find((row) => row.id === chosenWalletChoiceId);
       if (choice) operationWallet = { rdns: null, name: choice.name, icon: choice.icon };
       revision += 1;
-      if (pendingEffectAction) {
-        const retry = { ...pendingEffectAction, ...effectAction(pendingEffectAction) };
-        pendingEffectAction = null;
-        void perform(retry);
-        return;
-      }
-      stage = 'ready'; draw();
+      void perform({kind:'link'});
     } else if (['connect', 'restore-access', 'send-message'].includes(action)) {
       if (walletChoicesFromHome.length && !chosenWalletChoiceId) { stage = 'extension-choose-wallet'; draw(); return; }
       void perform({ kind: 'link' });
@@ -386,8 +385,10 @@ export function startExtensionWindow(kind, homeClipboard) {
     if (event.source !== window.top || event.origin !== homeOrigin || data?.type !== 'home:wallet-connector-event'
       || !hasExactKeys(data, ['type', 'connectorId', 'event', 'value']) || data.connectorId !== CONNECTOR_ID) return;
     // Home chooses the owner for each action. Earlier-wallet observations cannot
-    // prevent that selection for a new request. UniSat keeps its own discovery rule.
-    if (kind === 'metamask' && !operation && !operationWallet && !uncertain) {
+    // prevent selection for a different account. The last action still guards
+    // another request for that same account. UniSat keeps its own discovery rule.
+    if (kind === 'metamask' && !operation && !operationWallet && !uncertain
+      && !(walletEventAddress && selected && sameAccount(walletEventAddress, selected.address))) {
       if (!fixedOutcome && isRequestExpired()) { stage = 'request-expired'; fixedOutcome = true; draw(); }
       return;
     }
@@ -497,10 +498,10 @@ function requestHomeWalletEffect(action) {
       }
       const linkKeys = data.result?.wallet ? ["status", "wallet"] : ["status"];
       const approveKeys = data.result?.wallet ? ["status", "effect", "wallet"] : ["status", "effect"];
-      const expectedResultKeys = action.kind === "link" ? linkKeys : approveKeys;
+      const expectedResultKeys = action.kind === "check-access" ? ["status"] : action.kind === "link" ? linkKeys : approveKeys;
       if (
         !hasExactKeys(data.result, expectedResultKeys)
-        || data.result.status !== (action.kind === "link" ? "linked" : "completed")
+        || data.result.status !== (action.kind === "check-access" ? "available" : action.kind === "link" ? "linked" : "completed")
         || (
           action.kind === "approve"
           && !["signature", "transaction"].includes(data.result.effect)

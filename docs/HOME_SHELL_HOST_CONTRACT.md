@@ -247,16 +247,18 @@ launch lifetime. The window sends the selected handle with the link action.
 For Send, the window includes the linked address with the approval request ID.
 Before taking the Runtime handoff, Home asks at most eight discovered wallets
 for `eth_accounts`, in parallel with a one-second timeout. Home uses a wallet
-that reports the linked address, preferring MetaMask among matches. If none
+that reports the linked address first, preferring MetaMask among matches. If none
 reports it, the request stays pending and the window offers Check again and
 Close window. Home retains the signer check after the handoff. Each selected
 wallet is checked again before dispatch. UniSat uses its own provider contract.
+Check again for a pending approval sends `check-access` with the linked address.
+Home repeats discovery and the silent probe, then returns `available` without a
+Runtime handoff or wallet display identity. The person selects Send to approve.
 
-The window retains wallet identity only for its current action. A current MetaMask-option action includes `includeWallet:true` to request
-display facts in that same response. Legacy callers keep the exact terminal
-status shape. A successful
-link or approval returns the selected wallet's name, rdns and optional data-image
-icon. The account card shows that name and icon after success in this window;
+The window retains wallet identity only for its current action. A successful
+link or approval returns the selected wallet's name, rdns, address and optional
+data-image icon. The account card shows that name and icon only for the address
+used by that successful action in this window;
 a saved link starts as Your wallet with its address and network and an empty
 mark slot. Announced identity stays inside window content. Home's header, tab
 title and hidden page title remain MetaMask. Each window has a hidden page

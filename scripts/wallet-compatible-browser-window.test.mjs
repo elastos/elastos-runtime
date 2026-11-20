@@ -1,5 +1,5 @@
 import { windowTestOptions } from './lib/walletconnect-window-resources.mjs';
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { requireProductSmokePlaywright } from './product-smoke-browser.mjs';
 import { fixture } from './lib/wallet-extension-window-fixture.mjs';
@@ -40,9 +40,12 @@ const A = '0x' + '1'.repeat(40), B = '0x' + '2'.repeat(40);
 const mm = {rdns:'io.metamask',uuid:'mm',name:'MetaMask'};
 const rabby = {rdns:'io.rabby',uuid:'rabby',name:'Rabby Wallet'};
 const icon = 'data:image/svg+xml;base64,' + Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="#7355ef"/></svg>').toString('base64');
+let sharedBrowser;
+after(async()=>{if(sharedBrowser)await (await sharedBrowser).close();});
 async function windowCase(options, check, kind='metamask') {
-  const browser=await playwright.chromium.launch({headless:true});
-  try { const f=await fixture(browser,kind,options);try {await check(f);}finally{await f.close();} }finally{await browser.close();}
+  const browser=await (sharedBrowser ??= playwright.chromium.launch({headless:true}));
+  const f=await fixture(browser,kind,options);
+  try {await check(f);}finally{await f.close();}
 }
 async function click(f,action,state) {await f.action(action).click();await f.state(state);}
 async function namedCalls(f) {return f.top.evaluate(()=>testState.calls.filter(c=>c.wallet));}
@@ -63,7 +66,7 @@ test('V2-1 Home-only choice is a whole-row button and completes the chosen link'
 test('V2-2 MetaMask alone keeps the build request bytes and has no list',async()=>{
   const traces=[];
   for(const hostSource of [execFileSync('git',['show','9b855f6ca:capsules/home/browser/home-wallet-connector-host.js'],{encoding:'utf8'}),undefined]) {
-    await windowCase({hostSource,mutate:hostSource?source=>source.replace("if (kind === 'metamask') action = {...action,includeWallet:true};",''):undefined},async f=>{
+    await windowCase({hostSource},async f=>{
       await click(f,'connect','linked');
       traces.push(await f.top.evaluate(()=>({calls:testState.calls,receipts:testState.receipts,runtime:testState.runtimeCalls})));
       assert.equal(await f.frame.locator('.connection-wallet-choice').count(),0);
@@ -132,6 +135,12 @@ test('V2-6 saved cards have no mark; only a wallet linked in this window supplie
 
 test('V2-7 UniSat window has no Ethereum discovery or calls',async()=>windowCase({wallets:[rabby]},async f=>{
   await f.state('ready');await click(f,'connect','linked');
+  const denied = await f.frame.evaluate(()=>new Promise(resolve=>{
+    const receive=event=>{if(event.source===window.top&&event.data?.requestId==='unisat-check:denied'){removeEventListener('message',receive);resolve(event.data);}};
+    addEventListener('message',receive);
+    window.top.postMessage({type:'home:wallet-connector-effect',schema:'elastos.home.wallet-connector-effect/v1',requestId:'unisat-check:denied',connectorId:'wallet-unisat',connectorToken:'fixture-token',action:{kind:'check-access',linkedAddress:'0x'+'1'.repeat(40)}},'https://extensions.test');
+  }));
+  assert.match(denied.error,/Home denied/);
   assert.equal(await f.frame.evaluate(()=>window.__ethereumDiscoveryRequests),0);
   assert.equal(await f.top.evaluate(()=>testState.discoveryRequests||0),0);
   assert.equal(await f.top.evaluate(()=>testState.calls.some(c=>c.method.startsWith('eth_'))),false);
@@ -189,5 +198,87 @@ test('review: approval discovery failure offers Check again while its Runtime re
   assert.equal(await f.top.evaluate(()=>testState.calls.length),0);
   assert.equal(await f.frame.locator('.connection-status').innerText(),'Home could not confirm the connection.');
   await f.top.evaluate(()=>testState.wallets.length=1);
-  await click(f,'refresh-status','request-done');
+  await click(f,'refresh-status','request-waiting');
+  await click(f,'send-request','request-done');
+}));
+
+
+test('R4-1 only the first reported account qualifies before the handoff',async()=>{
+  await windowCase({saved:true,requests:true,wallets:[{...mm,accounts:[B,A]}]},async f=>{
+    await f.state('request-waiting');await f.action('send-request').click();
+    await f.frame.waitForFunction(()=>!['request-waiting','request-extension'].includes(document.querySelector('main').dataset.state));
+    assert.equal(await f.frame.locator('main').getAttribute('data-state'),'request-unsendable');
+    assert.equal(await f.top.evaluate(()=>testState.requests[0].status),'pending');
+    assert.equal(await f.top.evaluate(()=>testState.runtimeCalls?.filter(c=>c.url.endsWith('/handoff')).length||0),0);
+    assert((await namedCalls(f)).every(c=>c.method==='eth_accounts'));
+  });
+});
+test('R4-1 X reports B then A and Y reports A: only Y signs',async()=>windowCase({saved:true,requests:true,wallets:[{...mm,accounts:[B,A]},{...rabby,accounts:[A]}]},async f=>{
+  await f.state('request-waiting');await f.action('send-request').click();
+  await f.frame.waitForFunction(()=>!['request-waiting','request-extension'].includes(document.querySelector('main').dataset.state));
+  assert.equal(await f.frame.locator('main').getAttribute('data-state'),'request-done');
+  assert.deepEqual((await namedCalls(f)).filter(c=>c.method==='personal_sign').map(c=>c.wallet),['io.rabby']);
+  assert.equal(await f.top.evaluate(()=>testState.runtimeCalls.filter(c=>c.url.endsWith('/handoff')).length),1);
+  assert.equal(await f.top.evaluate(()=>testState.receipts.length),1,'only the successful signature consumes the request');
+}));
+test('R4-2 wallet rows own the choice; both recovery controls are secondary',async()=>windowCase({dualAlt:true},async f=>{
+  await click(f,'connect','extension-choose-wallet');
+  for(const id of ['close-window','refresh-status'])assert.equal(await f.action(id).evaluate(e=>e.classList.contains('el-button-primary')),false,id);
+}));
+for(const name of ['МetaMask','ΜetaMask','ＭetaМask','MetaMask Wallet','Use Brave Wallet','UniSat account','WalletConnect Wallet','Your wallet','Activity','Account','Wallet'])test('R4-3 refuses announced name '+name,async()=>windowCase({wallets:[{...rabby,name}]},async f=>{
+  await f.action('connect').click();
+  await f.frame.waitForFunction(()=>document.querySelector('main').dataset.state!=='extension-wait');
+  assert.equal(await f.frame.locator('main').getAttribute('data-state'),'link-error',name);
+  assert.equal(await f.top.evaluate(()=>testState.calls.length),0);
+}));
+test('R4-4 wallet identity belongs only to the account linked by this action',async()=>windowCase({extraHomeAccount:true,wallets:[{...rabby,icon}]},async f=>{
+  await click(f,'connect','linked');
+  const cards=f.frame.locator('.connection-account');
+  assert.equal(await cards.count(),2,'keep both saved accounts visible');
+  assert.equal(await cards.nth(0).locator('.connection-account-name').innerText(),'Rabby Wallet');
+  assert.equal(await cards.nth(0).locator('img').getAttribute('src'),icon);
+  assert.equal(await cards.nth(1).locator('.connection-account-name').innerText(),'Your wallet');
+  assert.equal(await cards.nth(1).locator('img').count(),0);
+}));
+test('R4-5 Check again after a wallet vanishes returns to review before Send',async()=>windowCase({saved:true,requests:true,wallets:[{...rabby,accounts:[A]}]},async f=>{
+  await f.top.evaluate(()=>{
+    const dispatch=window.dispatchEvent.bind(window);let scans=0;
+    window.dispatchEvent=event=>{if(event.type==='eip6963:requestProvider'&&++scans===2)testState.wallets=[];return dispatch(event);};
+  });
+  await f.state('request-waiting');await click(f,'send-request','link-error');
+  assert.equal(await f.top.evaluate(()=>testState.requests[0].status),'pending');
+  await f.top.evaluate(wallet=>testState.wallets=[wallet],{...rabby,accounts:[A]});
+  await f.action('refresh-status').click();
+  await f.frame.waitForFunction(()=>!['link-error','request-extension'].includes(document.querySelector('main').dataset.state));
+  await f.frame.waitForFunction(()=>document.querySelector('[data-action=send-request]')?.disabled===false);
+  assert.equal(await f.frame.locator('main').getAttribute('data-state'),'request-waiting');
+  assert.equal(await f.frame.locator('img').count(),0,'silent access checks supply no signing identity');
+  assert.equal(await f.top.evaluate(()=>testState.effects.length),2,'Check again asks Home for a fresh silent selection');
+  assert.equal(await f.top.evaluate(()=>testState.effects.at(-1).action.kind),'check-access');
+  assert.equal(await f.top.evaluate(()=>testState.requests[0].status),'pending');
+  assert.equal(await f.top.evaluate(()=>testState.runtimeCalls?.filter(c=>c.url.endsWith('/handoff')).length||0),0);
+  assert.equal((await namedCalls(f)).filter(c=>c.method==='eth_accounts').length,2,'Check again probes the newly discovered wallet');
+  assert.equal((await namedCalls(f)).filter(c=>c.method==='personal_sign').length,0);
+  await click(f,'send-request','request-done');
+  assert.equal((await namedCalls(f)).filter(c=>c.method==='personal_sign').length,1);
+}));
+test('R4-6 availability test names describe absence of a mark',async()=>{
+  const source=await readFile('scripts/wallet-extension-fix1.test.mjs','utf8');
+  assert.doesNotMatch(source,/availability alone keeps the account mark generic/);
+  assert.match(source,/availability alone shows no account mark/);
+});
+test('R4-7 shipped controller and host have no includeWallet or approval-list retry',async()=>{
+  const host=await readFile('capsules/home/browser/home-wallet-connector-host.js','utf8');
+  const controller=await readFile('capsules/wallet-metamask/browser/extension-window.mjs','utf8');
+  assert.doesNotMatch(host+controller,/includeWallet/);
+  assert.doesNotMatch(controller,/pendingEffectAction/);
+});
+
+test('R4-1 same-window account switch withdraws Send before any handoff',async()=>windowCase({},async f=>{
+  await click(f,'connect','linked');await addApproval(f,'same-account',A);await f.state('request-waiting');
+  await f.frame.evaluate(()=>addEventListener('message',e=>{if(e.data?.type==='fixture:account-barrier')window.accountBarrier=true;}));
+  await f.top.evaluate(B=>{emitWallet('accountsChanged',[B]);document.querySelector('iframe').contentWindow.postMessage({type:'fixture:account-barrier'},'*');},B);
+  await f.frame.waitForFunction(()=>window.accountBarrier);
+  assert.equal(await f.action('send-request').count(),0);
+  assert.equal(await f.top.evaluate(()=>testState.requests[0].status),'pending');
 }));

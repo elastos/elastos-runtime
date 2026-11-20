@@ -147,7 +147,8 @@ function accountDisplay(account, window, summary) {
     requireValue(bounded(row.address, 128) && Array.isArray(row.networks) && row.networks.length <= 8 && row.networks.every(n => bounded(n, 80)), 'account address/network');
     return { address: index === 0 && summary?.address ? summary.address : row.address, networks: [...row.networks] };
   });
-  return { name, mark, connection: account.connection === 'WalletConnect' ? 'WalletConnect' : null, accounts };
+  requireValue(account.walletAddress === undefined || bounded(account.walletAddress, 128), 'wallet account address');
+  return { name, mark, ...(account.walletAddress ? {walletAddress:account.walletAddress} : {}), connection: account.connection === 'WalletConnect' ? 'WalletConnect' : null, accounts };
 }
 
 function windowManualClose(window) {
@@ -265,7 +266,7 @@ export function connectionView(input) {
     if(window==='unisat'&&stage==='request-network-testnet'&&removed.some(a=>['check-access','check-status'].includes(a.id)))notice='Select Bitcoin mainnet in UniSat.';
     if(requestId&&removed.some(a=>['open-wallet','open-wallet-activity'].includes(a.id))&&!notice.includes('Open Wallet from Home'))notice+=window==='metamask'&&stage==='transaction-done'?' Open Wallet from Home and check Activity for this transaction.':' Open Wallet from Home to review this request.';
     if(removed.some(a=>a.id==='open-request-app')&&stage!=='request-unavailable'&&!notice.includes('{{app}}'))notice+=' Return to {{app}}.';
-    if(!actions.some(a=>a.primary)&&!screen.qr){const next=actions.find(a=>a.id==='close-window');if(next){next.primary=true;next.quiet=false;}}
+    if(!actions.some(a=>a.primary)&&!screen.qr&&!screen.walletPicker){const next=actions.find(a=>a.id==='close-window');if(next){next.primary=true;next.quiet=false;}}
   }
   let effectiveNotice = safetyNotice ?? notice;
   if(supported&&!supported.includes('close-window')&&!(window==='walletconnect'&&stage==='disconnecting')&&!actions.some(a=>['cancel','stop-waiting','back-to-connection'].includes(a.id))&&!((summary?.site||context?.site)&&actions.some(a=>approves(a.id)))){
@@ -370,13 +371,19 @@ export function renderConnection(document, view) {
   const wait = view.wait ? el('p',view.wait,'connection-note connection-wait') : null;
   const notice = view.notice.length ? el('p',view.notice,'connection-note connection-notice') : null;
   function accountCard(account, selected = false) {
+    if (view.window === 'metamask' && account.walletAddress && account.accounts.length > 1 && !selected) {
+      const cards = document.createDocumentFragment();
+      for (const row of account.accounts) cards.append(accountCard({...account, accounts:[row]}));
+      return cards;
+    }
+    const matchesAction = !account.walletAddress || account.accounts[0].address.toLowerCase() === account.walletAddress.toLowerCase();
     const card = el('article',null,`connection-card ${selected ? 'connection-selected' : 'connection-account'}`);
     const h = el('div',null,'connection-account-header');
     if (!selected) {
-      if (view.window === 'metamask') { if (view.walletIcon) { const img=el('img');img.src=view.walletIcon;img.alt='';h.append(img); } }
+      if (view.window === 'metamask') { if (view.walletIcon && matchesAction) { const img=el('img');img.src=view.walletIcon;img.alt='';h.append(img); } }
       else h.append(icon(view.accountMark));
     }
-    h.append(el('h2',selected ? (view.stage==='site-access-ended'?'Required account':'Account to confirm') : isolated(account.name,'wallet'),'connection-account-name'));
+    h.append(el('h2',selected ? (view.stage==='site-access-ended'?'Required account':'Account to confirm') : isolated(matchesAction ? account.name : 'Your wallet','wallet'),'connection-account-name'));
     if(view.panel&&supports('open-wallet'))h.append(button({id:'open-wallet',label:isolated('Manage','copy'),quiet:true}));
     card.append(h);
     if(account.connection && (view.panel||view.window!=='walletconnect'))card.append(el('p','via WalletConnect','connection-note connection-via'));

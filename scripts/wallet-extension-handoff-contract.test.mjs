@@ -33,7 +33,7 @@ async function consumed(f,kind,oldHost=false) {
 for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'])test(`${engine} ${kind}: pinned Home one-use handoff is not a retryable pending request`,{timeout:30000,skip:windowTestOptions(engine).skip},async t=>{
   const browser=await playwright[engine].launch({headless:true});
   try{
-    const oldAction = source => source.replace("if (kind === 'metamask') action = {...action,includeWallet:true};",'').replace(", ...(kind === 'metamask' ? {linkedAddress:selected.address} : {})", '');
+    const oldAction = source => source.replace(", ...(kind === 'metamask' ? {linkedAddress:selected.address} : {})", '');
     for(const oldHost of [true,false]) {
       const good=await fixture(browser,kind,{saved:true,requests:true,oldHost,mutate:oldHost?oldAction:undefined});try{await refuse(good,kind);await consumed(good,kind,oldHost);}finally{await good.close();}
       const bad=await fixture(browser,kind,{saved:true,requests:true,oldHost,pictures:false,mutate:oldHost?oldAction:undefined});try{
