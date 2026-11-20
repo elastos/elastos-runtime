@@ -93,10 +93,10 @@ test('every behaviour-suite WebKit entry uses the shared missing-engine rule',{t
 });
 
 for(const [form,acquisition,selection] of [
- ['static import',`import {webkit} from 'playwright';`,'await webkit.launch({});'],
- ['dynamic import',`const {webkit}=await import('playwright');`,'await webkit.launch({});'],
- ['core path import',`const {webkit}=await import(corePath);`,'await webkit.launch({});'],
- ['environment require',`const {webkit}=require(process.env.BROWSER_OPERATOR_PLAYWRIGHT_CORE);`,'await webkit.launch({});'],
+ ['static import',`import {webkit} from 'playwright';const engines=withBrowserLaunchRecovery({webkit});`,'await engines.webkit.launch({});'],
+ ['dynamic import',`const engines=withBrowserLaunchRecovery(await import('playwright'));`,'await engines.webkit.launch({});'],
+ ['core path import',`const engines=withBrowserLaunchRecovery(await import(corePath));`,'await engines.webkit.launch({});'],
+ ['environment require',`const engines=withBrowserLaunchRecovery(require(process.env.BROWSER_OPERATOR_PLAYWRIGHT_CORE));`,'await engines.webkit.launch({});'],
  ['one-line engine list',`import {engines} from './engines.mjs';`,`for(const name of ['chromium','firefox','webkit'])await engines[name].launch({});`],
  ['dynamic local helper',`const {engines}=await import('./engines.mjs');`,'await engines.webkit.launch({});'],
  ['child smoke',`import {spawnSync} from 'node:child_process';`,`spawnSync(process.execPath,['scripts/new-smoke.mjs'],{env:{BROWSER_ENGINE:'webkit'}});`],
@@ -104,7 +104,7 @@ for(const [form,acquisition,selection] of [
  const base=mkdtempSync(resolve(tmpdir(),'webkit-discovery-'));
  t.after(()=>rmSync(base,{recursive:true,force:true}));
  // These files are inspected, never imported: no fixture launches a browser.
- writeFileSync(resolve(base,'engines.mjs'),`import {engines} from './cycle.mjs';export {webkit} from 'playwright-core';`);
+ writeFileSync(resolve(base,'engines.mjs'),`import './cycle.mjs';import {webkit} from 'playwright-core';export const engines=withBrowserLaunchRecovery({webkit});`);
  writeFileSync(resolve(base,'cycle.mjs'),`export {engines} from './engines.mjs';`);
  if(form==='child smoke'){
   mkdirSync(resolve(base,'scripts'));
@@ -125,7 +125,7 @@ test('discovery distinguishes stand-in engines and source data from Playwright a
  writeFileSync(resolve(base,'fake.mjs'),`import {readFileSync} from 'node:fs';export const webkit={launch:async()=>({})};`);
  writeFileSync(resolve(base,'fake.test.mjs'),`import {webkit} from './fake.mjs';for(const name of ['chromium','firefox','webkit'])await webkit.launch({});`);
  writeFileSync(resolve(base,'data.test.mjs'),`import {readFileSync} from 'node:fs';readFileSync(new URL('./real-smoke.mjs',import.meta.url));for(const name of ['webkit']){};`);
- writeFileSync(resolve(base,'real-smoke.mjs'),`import {webkit} from 'playwright';await webkit.launch({});`);
+ writeFileSync(resolve(base,'real-smoke.mjs'),`import {webkit} from 'playwright';await withBrowserLaunchRecovery({webkit}).webkit.launch({});`);
  assert.deepEqual(webkitEntries(base,['fake.test.mjs','data.test.mjs']),[]);
  assert.equal(reachesPlaywright(resolve(root,'scripts/lib/browser-launch-recovery.test.mjs'),root),false);
 });
