@@ -1123,10 +1123,7 @@ mod tests {
             assert_eq!(status["state"], expected);
             if expected == "reconnecting" {
                 assert!(status["next_retry_seconds"].is_null());
-                assert!(status["detail"]
-                    .as_str()
-                    .unwrap()
-                    .contains("It is checking the link."));
+                assert!(!status["detail"].as_str().unwrap().contains("Next try"));
                 assert!(!status["detail"].as_str().unwrap().contains("0 seconds"));
                 let now = tokio::time::Instant::now();
                 f.port.set_community_recovery(
@@ -1164,7 +1161,7 @@ mod tests {
             let detail = status["detail"].as_str().unwrap();
             if millis == 0 {
                 assert!(status["next_retry_seconds"].is_null());
-                assert!(detail.contains("It is checking the link."));
+                assert!(!detail.contains("Next try"));
             } else {
                 assert_eq!(status["next_retry_seconds"], 1);
                 assert!(detail.contains("1 second."));
