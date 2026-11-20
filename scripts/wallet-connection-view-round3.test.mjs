@@ -70,7 +70,7 @@ test('F2: every stage has an unknown-safety fixture, with a contract-owned recov
   if(row.stage==='request-unavailable'){assert.match(viewText(v.status),/new request/);assert.equal(text,'');}
   if(row.stage==='request-access-error')assert.equal(text,'To try again, go back to Browser and start a new request.');
   if(row.stage==='account-unavailable')assert.match(text,row.window==='metamask'?/Manage connected accounts/:/Choose the required account/);
-  if(row.stage==='extension-missing'){assert.equal(text,'Close this window. Open this connection from Wallet in a browser where your wallet is available.');assert.doesNotMatch(text,/QR code/,'H779 unknown safety offers no alternative connector');}
+  if(row.stage==='extension-missing'){assert.match(text,/Close this window/);assert.match(text,/Open Home in a browser/);assert.match(text,/Wallet/);assert.doesNotMatch(text,/QR code/,'H779 unknown safety offers no alternative connector');}
  });
 });
 

@@ -17,7 +17,7 @@ test('live needs: all added stages have named window-local production fixtures',
 test('live needs: a supported-action projection withholds authority and keeps manual recovery',()=>{
  for(const row of states){
   const args=fixtureArguments(row),original=reduceConnection(...args);args[0].supportedActions=[];
-  const v=reduceConnection(...args);assert.deepEqual(v.actions,[],row.designState);assert.equal(viewText(v.status),viewText(original.status));if(row.window==='walletconnect'&&row.stage==='disconnecting')assert.equal(viewText(v.notice),'Keep this window open until disconnecting finishes.');else assert.match(viewText(v.notice),/Home’s window controls/);
+  const v=reduceConnection(...args);assert.deepEqual(v.actions,[],row.designState);assert.equal(viewText(v.status),viewText(original.status));if(row.window==='walletconnect'&&row.stage==='disconnecting')assert.equal(viewText(v.notice),'Keep this window open until disconnecting finishes.');else assert.match(viewText(v.notice),/Home['’]s window controls/);
  }
  assert(!connectionView({window:'unisat',stage:'ready',supportedActions:['use-walletconnect']}).actions.length,'an allow-list cannot invent a compatible connector');
  assert.throws(()=>connectionView({window:'metamask',stage:'ready',supportedActions:['invented-route']}),/closed supported actions/);
@@ -94,7 +94,7 @@ test('late needs: missing catalog labels use Requesting app for every actor ID',
 
 test('final needs: Home response checking keeps its local stop and never claims a recorded result',()=>{
  const plain=connectionView({window:'walletconnect',stage:'checking-response'});assert.equal(plain.request,null);assert.equal(plain.focus,'stop-waiting');assert.match(viewText(plain.status),/Home is checking the answer/);assert.equal(plain.walletResult.disposition,null);
- const args=fixtureArguments(states.find(r=>r.designState==='walletconnect/request-phone'));args[0].stage='checking-response';args[0].localReturn=true;args[0].showNextRequests=true;const v=reduceConnection(...args);assert(v.request);assert(!v.actions.some(a=>a.id==='back-to-connection'));assert.equal(v.queueCount,0);assert.match(viewText(v.notice),/Home may still record/);
+ const args=fixtureArguments(states.find(r=>r.designState==='walletconnect/request-phone'));args[0].stage='checking-response';args[0].localReturn=true;args[0].showNextRequests=true;const v=reduceConnection(...args);assert(v.request);assert(!v.actions.some(a=>a.id==='back-to-connection'));assert.equal(v.queueCount,0);assert.match(viewText(v.notice),/Home may still save/);
  const doneArgs=fixtureArguments(states.find(r=>r.designState==='walletconnect/request-done'));const done=reduceConnection(...doneArgs);assert.equal(done.stage,'request-done');
 });
 test('final needs: blocked and terminal cards retain their outcome with a local picker exit',()=>{
@@ -133,7 +133,7 @@ for(const engine of ['chromium','webkit'])test('live needs: rendering and QR car
   for(const row of [...states,...live]){
    const args=row.local?fixtureArguments(row):[{window:row.window,stage:row.stage}];args[0].supportedActions=[];await mount(args);assert.equal(await f.page.locator('button').count(),0,row.window+'/'+row.stage);
   }
-  const approvalArgs=fixtureArguments(states.find(r=>r.designState==='metamask/request-waiting'));approvalArgs[0].supportedActions=['send-request'];await mount(approvalArgs);assert.equal(await f.page.evaluate(()=>document.activeElement.dataset.focus),'dismissal');assert.equal(await f.page.locator('button').count(),1);assert.match(await f.page.locator('.connection-card-start').innerText(),/Home’s window controls/);
+  const approvalArgs=fixtureArguments(states.find(r=>r.designState==='metamask/request-waiting'));approvalArgs[0].supportedActions=['send-request'];await mount(approvalArgs);assert.equal(await f.page.evaluate(()=>document.activeElement.dataset.focus),'dismissal');assert.equal(await f.page.locator('button').count(),1);assert.match(await f.page.locator('.connection-card-start').innerText(),/Home['’]s window controls/);
   const qrArgs=fixtureArguments(states.find(r=>r.stage==='qr-shown'));qrArgs[0].copyFeedback='copy-failed';await mount(qrArgs);
   const box=await f.page.evaluate(()=>{const card=document.querySelector('.connection-dialog').getBoundingClientRect(),qr=document.querySelector('.connection-qr').getBoundingClientRect();return {card:{top:card.top,bottom:card.bottom},qr:{width:qr.width,height:qr.height},controls:[...document.querySelectorAll('button')].map(b=>({top:b.getBoundingClientRect().top,bottom:b.getBoundingClientRect().bottom})),feedback:document.querySelector('.connection-copy-feedback')?.textContent};});
   assert.equal(box.feedback,'Could not copy. Try again.');assert(box.qr.width>=128,'normal QR does not use compact 56px sizing');assert(box.controls.every(b=>b.top>=box.card.top&&b.bottom<=box.card.bottom&&b.bottom<=560),'QR border encloses both controls within the viewport');await f.page.screenshot({path:proof.path+'/qr-contained-'+engine+'.png'});
