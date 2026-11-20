@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -21,13 +21,13 @@ const exceptions = new Map([
   ["lib/browser-launch-recovery.test.mjs", "fake engines verify the recovery boundary"],
   ["lib/browser-launch-recovery.mjs", "the single native launch implementation"],
 ]);
-function checkLaunchCoverage(directory, prefix = "") {
+function checkLaunchCoverage(directory, prefix = "", testsOnly = false) {
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     const relative = prefix + entry.name;
     const path = new URL(entry.name, directory);
     if (entry.isDirectory() && entry.name !== "node_modules") {
-      checkLaunchCoverage(new URL(entry.name + "/", directory), relative + "/");
-    } else if (entry.isFile() && /\.[cm]?js$/.test(entry.name)) {
+      checkLaunchCoverage(new URL(entry.name + "/", directory), relative + "/", testsOnly);
+    } else if (entry.isFile() && /\.[cm]?js$/.test(entry.name) && (!testsOnly || entry.name.endsWith(".test.mjs"))) {
       const source = readFileSync(path, "utf8");
       if (launchCalls.test(source) && !exceptions.has(relative)) assert.match(source, boundaries, relative);
     }
@@ -36,6 +36,8 @@ function checkLaunchCoverage(directory, prefix = "") {
 
 test("native Playwright test launch imports use the shared recovery boundary", () => {
   checkLaunchCoverage(new URL("./", import.meta.url));
+  checkLaunchCoverage(new URL("../capsules/", import.meta.url), "capsules/", true);
+  checkLaunchCoverage(new URL("../elastos/esp/", import.meta.url), "elastos/esp/", true);
 });
 
 for (const [form, acquisition] of [
@@ -47,10 +49,11 @@ for (const [form, acquisition] of [
   const root = mkdtempSync(join(tmpdir(), "browser-launch-coverage-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const directory = pathToFileURL(root + "/");
+  mkdirSync(join(root, "nested"));
   for (const method of ["launch", "launchPersistentContext", "connectOverCDP"]) {
-    writeFileSync(join(root, "new-launch.mjs"), `${acquisition}\nawait chromium.${method}({});`);
+    writeFileSync(join(root, "nested/new-launch.mjs"), `${acquisition}\nawait chromium.${method}({});`);
     assert.throws(() => checkLaunchCoverage(directory), /new-launch\.mjs/);
-    writeFileSync(join(root, "new-launch.mjs"), `${acquisition}\nconst recovered = withBrowserLaunchRecovery({chromium});\nawait recovered.chromium.${method}({});`);
+    writeFileSync(join(root, "nested/new-launch.mjs"), `${acquisition}\nconst recovered = withBrowserLaunchRecovery({chromium});\nawait recovered.chromium.${method}({});`);
     assert.doesNotThrow(() => checkLaunchCoverage(directory));
   }
 });
