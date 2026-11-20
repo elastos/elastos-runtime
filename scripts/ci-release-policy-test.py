@@ -685,6 +685,7 @@ class ReleasePolicyTests(unittest.TestCase):
                 (tools / "cargo").chmod(0o755)
                 environment = {**os.environ, "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}",
                                "SEED_SOURCE_ROOT": str(seed), "PAIR_LOG": str(root / "pair.log"),
+                               "PYTHONDONTWRITEBYTECODE": "1",
                                "ELASTOS_RELEASE_RELAY_URL": "https://unapproved.fixture/",
                                "ELASTOS_RELEASE_RELAY_SPKI_SHA256": "cd" * 32}
                 for name in ("RELEASE_CARRIER_RELAY_URL", "RELEASE_CARRIER_RELAY_CERT_SHA256"):
