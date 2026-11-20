@@ -530,7 +530,9 @@ mod tests {
 
     #[test]
     fn failed_delivery_explains_only_fixed_reasons_and_keeps_retry_window() {
-        let uncertain = pending_delivery_note(true, true, None, Some(DirectDeliveryIssue::PeerUnreachable)).unwrap();
+        let uncertain =
+            pending_delivery_note(true, true, None, Some(DirectDeliveryIssue::PeerUnreachable))
+                .unwrap();
         assert!(!uncertain.contains("cannot reach"));
         assert!(!uncertain.contains("is off"));
         for (issue, text) in [
