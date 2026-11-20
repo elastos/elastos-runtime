@@ -240,7 +240,7 @@ function renderInternetConsent(consent) {
   const hint = document.querySelector("#browser-internet-hint");
   hint.hidden = (off || waiting) && !internetWaitingForStop && !internetRequestError;
   hint.textContent = internetWaitingForStop
-    ? "Browser is still turning off internet access. Your request opens in Inbox after that."
+    ? "Browser is turning off internet access. Your request will open in Inbox when this finishes."
     : internetRequestError || "Type a website address to open it.";
   const button = document.querySelector("#browser-internet-review");
   button.hidden = !off && !waiting;
@@ -2115,7 +2115,7 @@ async function commitBrowserAuthority(event) {
   let ok = false;
   try {
     if (unloadCleanupStarted || homeWindowCloseInFlight || homeWindowTerminalCloseConfirmed || unsettledRuntimeOpen) {
-      throw new Error("Browser is busy. Try again in a moment.");
+      throw new Error("Browser could not continue. Try again in a moment.");
     }
     // Old-launch observations cannot retire a page during credential renewal.
     stopPageStatusPolling();
@@ -2125,7 +2125,7 @@ async function commitBrowserAuthority(event) {
       { signal: AbortSignal.timeout(10000) });
     const previousSummary = browserSummary || await window.__elastosBrowserRestoreBoot?.summaryPromise;
     if (!previousSummary?.principal_id || summary?.principal_id !== previousSummary.principal_id) {
-      throw new Error("Home could not confirm who is signed in. Open Browser again from Home.");
+      throw new Error("Home could not confirm your account. Close Browser, then open it again from Home.");
     }
     const launchIdentity = token => {
       try {
@@ -2135,10 +2135,10 @@ async function commitBrowserAuthority(event) {
     };
     const previousIdentity = launchIdentity(launchToken);
     if (!previousIdentity || previousIdentity !== launchIdentity(data.freshHomeToken)) {
-      throw new Error("Home could not refresh this Browser session. Update Home, then try again.");
+      throw new Error("Home could not refresh Browser. Close it, then open it again from Home.");
     }
     if (unloadCleanupStarted || homeWindowCloseInFlight || homeWindowTerminalCloseConfirmed) {
-      throw new Error("Browser was closed.");
+      throw new Error("Browser is closing or has closed.");
     }
     launchToken = data.freshHomeToken;
     setLaunchToken(launchToken);
