@@ -10,7 +10,7 @@ export function contractCopy(expected, row, view) {
   const raw={...seed,...(!row.summary?row.provisionalSummary:{})};
   const app=raw?.requesting_app_name||({browser:'Browser',notes:'Notes'}[raw?.capsule_id])||'Browser',site=raw?.requesting_origin||'the requesting site';
   const network=row.provisionalInput?.targetNetwork||row.local.account?.accounts[0].networks[0]||'the requested network';
-  const replace=text=>text.replaceAll('MetaMask',name).replaceAll('UniSat',name).replaceAll('Browser',app).replaceAll('Notes',app).replaceAll('example.org',site)
+  const replace=text=>text.replaceAll('’',"'").replaceAll('MetaMask',name).replaceAll('UniSat',name).replaceAll('Browser',app).replaceAll('Notes',app).replaceAll('example.org',site)
     .replace(/You declined this (transaction|message) in ([^.]+)\./g,'$2 did not approve this $1.')
     .replaceAll(`return to ${site} in ${app}`,`return to ${app}`).replaceAll(`Start it again on ${site} in ${app}`,`Start it again in ${app}`)
     .replace(/^your wallet/,'Your wallet').replaceAll('Wallet activity','Activity in Wallet')
@@ -63,7 +63,7 @@ export function contractCopy(expected, row, view) {
     if(row.stage==='account-unavailable')result.status=metamask?`Home cannot confirm access to this account in ${name}.`:'Home cannot use this UniSat account right now.';
     if(row.stage==='request-unsendable')result.status=metamask?`Home cannot reach the account this request needs in ${name}.`:'Home cannot use the UniSat account this request needs.';
     if(metamask){
-      if(row.stage==='linked'){result.status='Account saved in Wallet.';result.notice=`To stop sharing with Home, remove this Home's connection in ${name}. Your account stays in Wallet.`;}
+      if(row.stage==='linked'){result.afterNote='';result.status='Account saved in Wallet.';result.notice=`To stop sharing with Home, remove this Home's connection in ${name}. Your account stays in Wallet.`;}
       if(row.stage==='request-network-declined')result.status=`Home could not confirm the requested network in ${name}.`;
       if(row.stage==='transaction-extension')result.notice=`Check the transaction in ${name}. Stopping here does not cancel the request in ${name}.`;
       if(['transaction-timeout','transaction-wallet-error'].includes(row.stage))result.status='Home does not know if the transaction was sent.';

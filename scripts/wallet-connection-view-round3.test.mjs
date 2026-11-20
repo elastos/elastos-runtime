@@ -11,7 +11,7 @@ const deepFreeze=value=>{if(value&&typeof value==='object'){Object.values(value)
 test('B5: W986 unavailable message and transaction preserve exact recovery and never offer Send',()=>{
   for(const intent of ['browser_personal_sign','transaction_intent']){
     const v=reduceConnection({window:'metamask',stage:intent==='transaction_intent'?'transaction-waiting':'request-waiting',waitSeconds:300},{message:packet('outcome-request_unavailable'),summary:{...seed,intent},nowSeconds:1800000001});
-    assert.equal(v.stage,'request-unavailable');assert.match(viewText(v.status),/new request/);
+    assert.equal(v.stage,'request-unavailable');assert.match(viewText(v.status),row.window==='walletconnect'?/Start a new one/:/new request/);
     assert.equal(viewText(v.notice),'');assert(!v.actions.some(a=>a.id==='send-request'));assert.equal(v.focus,'outcome');assert.equal(v.wait,null);
   }
 });
@@ -67,7 +67,7 @@ test('F2: every stage has an unknown-safety fixture, with a contract-owned recov
   assert.equal(text.includes('Home cannot tell'),expected,row.caseId);
   assert.doesNotMatch(text,/reload/i);if(row.window==='metamask')assert.doesNotMatch(text,/QR code|also available/,'H779 unknown safety offers no alternative in its copy');assert(!v.actions.some(a=>a.id==='use-walletconnect'));
   if(expected){assert.equal(v.actions.find(a=>a.primary)?.quiet,false,'primary Close has primary styling');assert.match(text,/Activity in Wallet/);assert.equal(v.actions.find(a=>a.primary)?.id,'close-window');assert.equal(v.focus,'close-window');}
-  if(row.stage==='request-unavailable'){assert.match(viewText(v.status),/new request/);assert.equal(text,'');}
+  if(row.stage==='request-unavailable'){assert.match(viewText(v.status),row.window==='walletconnect'?/Start a new one/:/new request/);assert.equal(text,'');}
   if(row.stage==='request-access-error')assert.equal(text,'To try again, go back to Browser and start a new request.');
   if(row.stage==='account-unavailable')assert.match(text,row.window==='metamask'?/Manage connected accounts/:/Choose the required account/);
   if(row.stage==='extension-missing'){assert.match(text,/Close this window/);assert.match(text,/Open Home in a browser/);assert.match(text,/Wallet/);assert.doesNotMatch(text,/QR code/,'H779 unknown safety offers no alternative connector');}

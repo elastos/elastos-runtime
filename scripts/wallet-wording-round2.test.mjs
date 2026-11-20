@@ -9,6 +9,7 @@ const qrData='data:image/png;base64,'+readFileSync(new URL('./fixtures/wallet-co
 export function wordingInputs(window){
   return stageNames[window].flatMap(stage=>[true,false].flatMap(close=>[false,true,null].map(localSafety=>({
     window,stage,localSafety,waitSeconds:300,qrData,
+    provider:{providerId:null,alternatives:[],availability:'unknown',firstAccount:null,requiredAccountAvailable:null,network:null,networkIssue:null,access:'unknown',busy:false,paymentPending:localSafety},
     summary:reduceSummary({...seed,connector_id:'wallet-'+window,intent:stage.startsWith('transaction-')?'transaction_intent':'browser_personal_sign'},{connector:'wallet-'+window}),
     supportedActions:connectionActionIds.filter(id=>close||id!=='close-window'),
   }))));
@@ -16,7 +17,7 @@ export function wordingInputs(window){
 for(const window of ['metamask','unisat','walletconnect'])test('wording R2: every '+window+' state keeps sentence case with and without Close',()=>{
   for(const input of wordingInputs(window)){
     const view=connectionView(input);
-    for(const field of ['status','notice','afterNote'])assert.doesNotMatch(viewText(view[field]),/,\s+(?:Then|Choose|Open|Return|Check|Start|Close)\b/,JSON.stringify(input));
+    for(const field of ['status','notice','afterNote'])assert.doesNotMatch(viewText(view[field]),/,\s+(?!(?:MetaMask|Brave|UniSat|Wallet|Home|Activity|Browser|Ethereum|Elastos|Base|Sepolia|Bitcoin)\b)[A-Z]/,JSON.stringify(input));
   }
 });
 test('wording R2: MetaMask has one stop-sharing instruction',()=>{
@@ -61,8 +62,21 @@ for(const engine of ['chromium','webkit'])test('wording R2: render all three win
           return {stage:input.stage,close:input.supportedActions.includes('close-window'),text:root.textContent};
         });
       },rows);
-      for(const row of result)assert.doesNotMatch(row.text,/,\s+(?:Then|Choose|Open|Return|Check|Start|Close)\b/,window+'/'+row.stage+'/'+row.close);
+      for(const row of result)assert.doesNotMatch(row.text,/,\s+(?!(?:MetaMask|Brave|UniSat|Wallet|Home|Activity|Browser|Ethereum|Elastos|Base|Sepolia|Bitcoin)\b)[A-Z]/,window+'/'+row.stage+'/'+row.close);
       t.diagnostic(window+': '+result.length+' rendered states');
     }
   }finally{await f.close();}
+});
+
+test('wording R2: strict title oracle rejects every old Inbox heading',async()=>{
+  const {assertTitleSources,canonicalRequestTitles,currentTitleSources,rustTitlePath}=await import('./lib/wallet-connection-title-oracle.mjs');
+  const sources=structuredClone(currentTitleSources);
+  sources[rustTitlePath].source='fn wallet_approval_title(intent: &str) -> String {\n    match intent {\n'+Object.entries(canonicalRequestTitles).map(([intent,title])=>'        '+(intent==='unknown_kind'?'_':JSON.stringify(intent))+' => '+JSON.stringify(title)+'.to_string(),').join('\n')+'\n    }\n}';
+  const reduce=intent=>reduceSummary({...seed,intent},{connector:'wallet-metamask'}).title;
+  await assertTitleSources(reduce,sources);
+  for(const [settled,old] of [['Review sign-in request','Wallet sign-in request'],['Review access request','Wallet access request'],['Sign a credential','Credential signing request'],['Review publishing request','Publish approval request'],['Share your wallet address with this site','Browser account access request'],['Confirm this Bitcoin account is yours','Bitcoin proof request'],['Review request','Wallet approval request']]){
+    const broken=structuredClone(sources);
+    broken[rustTitlePath].source=broken[rustTitlePath].source.replace(settled,old);
+    await assert.rejects(()=>assertTitleSources(reduce,broken),assert.AssertionError);
+  }
 });

@@ -2,7 +2,7 @@ import {windowTestOptions} from './lib/walletconnect-window-resources.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {titleSources as sourceFixture,rustTitlePath as rustPath,assertTitleSources,assertTitleSourceBlobs} from './lib/wallet-connection-title-oracle.mjs';
+import {currentTitleSources,rustTitlePath as rustPath,assertTitleSources,assertTitleSourceBlobs} from './lib/wallet-connection-title-oracle.mjs';
 import {writeFile} from 'node:fs/promises';
 import * as product from '../capsules/_shared/wallet-connection-view.mjs';
 import {shared,states,fixtureArguments} from './wallet-connection-view-fixtures.mjs';
@@ -44,10 +44,10 @@ function queueGuard(api=product){for(const window of ['walletconnect','metamask'
  const v=api.reduceConnection({window,stage:'request-list'},{summary:selected,otherSummaries:other,nowSeconds:1800000001});assert.equal(v.queueCount,4);assert.equal(v.queuePendingCount,1);assert.equal(v.queueRecoveryCount,1);assert.equal(v.queueRejectedCount,1);assert.equal(v.queueDismissedCount,1);assert.equal(v.queueOtherCount,0);assert.equal(v.choices.length,4);
 }}
 test('R5 K21: rejected and dismissed transactions have their own queue counts',()=>queueGuard());
-const titleGuard=(api=product,sources=sourceFixture.files)=>assertTitleSources(intent=>api.reduceSummary(raw('metamask',{intent}),{connector:'wallet-metamask'}).title,sources);
+const titleGuard=(api=product,sources=currentTitleSources)=>assertTitleSources(intent=>api.reduceSummary(raw('metamask',{intent}),{connector:'wallet-metamask'}).title,sources);
 test('R5: canonical titles equal both raw integration sources including the unknown kind',async()=>{
  assertTitleSourceBlobs();await titleGuard();
- const broken=structuredClone(sourceFixture.files);broken[rustPath].source=broken[rustPath].source.replace('Wallet approval request','Wrong unknown title');await assert.rejects(()=>titleGuard(product,broken),/Wallet and Inbox/);
+ const broken=structuredClone(currentTitleSources);broken[rustPath].source=broken[rustPath].source.replace(/(_\s*=>\s*")[^"]+(")/,'$1Wrong unknown title$2');await assert.rejects(()=>titleGuard(product,broken),/Wallet and Inbox/);
 });
 function commonGuard(api=product){for(const stage of ['request-expired','request-wallet-error']){const models=['metamask','unisat'].map(window=>reduce(window,{requesting_app_name:'Browser'}, {stage},api));assert.equal(api.viewText(models[0].notice),'To try again, go back to Browser and start a new request.');assert.equal(api.viewText(models[1].notice),'To try again, return to Browser and make a new request.');}}
 test('R5: extension recovery uses one common sentence',()=>commonGuard());

@@ -145,10 +145,8 @@ test("fix1 account-name branches after the external fallback are managed-only",a
 
 test("fix1 request-kind titles stay consistent across account proof types",async()=>{
   const {requestTitle}=await import("../capsules/wallet/browser/wallet-format.js");
-  const titles={auth_challenge:"Review sign-in request",capability_grant:"Review access request",credential:"Sign a credential",
-    publish_envelope:"Review publishing request",transaction_intent:"Send transaction",browser_account_access:"Share your wallet address with this site",
-    browser_personal_sign:"Sign a message",browser_typed_data_sign:"Sign typed data",bitcoin_bip322_proof:"Confirm this Bitcoin account is yours",
-    revocation:"Review request",unknown:"Review request"};
+  const {rustRequestTitles,rustTitlePath}=await import('./lib/wallet-connection-title-oracle.mjs');
+  const titles=rustRequestTitles(await readFile(new URL('../'+rustTitlePath,import.meta.url),'utf8'));
   for(const [intent,title] of Object.entries(titles)) for(const proof_type of ["managed_evm","siwe"])
     assert.equal(requestTitle({intent,proof_type,connector_id:proof_type==="siwe"?"wallet-metamask":null}),title,intent);
 });
