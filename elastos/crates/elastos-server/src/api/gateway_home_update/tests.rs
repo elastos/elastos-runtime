@@ -3013,7 +3013,10 @@ async fn update_repair_details_go_only_to_home_log() {
             "missing actual failure cause {cause}: {output}"
         );
     }
-    assert!(!output.contains(" at path "), "temporary paths must not split one fault: {output}");
+    assert!(
+        !output.contains(" at path "),
+        "temporary paths must not split one fault: {output}"
+    );
     assert!(!output.contains("private-path-sentinel"));
     assert!(!output.contains("private-content-sentinel"));
 }
