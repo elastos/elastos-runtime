@@ -337,7 +337,7 @@ test("System keeps repair paths and commands out of the setting hint", async () 
     const page=await browser.newPage({viewport:{width:390,height:844}});
     for(const stateName of ['FOLDER_TEXT','UNREADABLE_TEXT','INVALID_VERSION_TEXT']) {
       f.state.settings={...preference(false,false),message:copy(stateName)};
-      await page.goto(f.url+'?settings=about');
+      await page.goto(f.baseUrl+'/fixture?settings=about');
       const system=page.frameLocator('#system-frame');
       await system.getByRole('switch',{name:copy('SWITCH_LABEL')}).waitFor();
       const hint=await system.locator('#update-background-message').innerText();
