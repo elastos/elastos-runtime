@@ -93,6 +93,10 @@ for(const engine of ['chromium','webkit']){
     for(const [width,height]of (process.env.WALLET_VIEW_BROWSER_SMOKE==='1'?[[320,182]]:[[320,182],[480,522]])){
      await f.page.setViewportSize({width,height});const args=approvalArguments(row,{compact:width===320});const model=await mount(f.page,args);
      assert.equal(model.stage,row.stage,'the fixture exercises its named stage');
+     if(row.window==='metamask'&&['request-unsendable','link-error'].includes(row.stage)){
+      assert(!model.actions.some(a=>approvalIds.includes(a)));assert(model.actions.includes('refresh-status'));assert(model.actions.includes('close-window'));
+      evidence.push({engine,case:row.window+'/'+row.stage,width,height,kind:'compatible-wallet check without approval',result:'PASS'});continue;
+     }
      if(row.approving===false){
       assert(!model.actions.some(a=>approvalIds.includes(a)),'empty-account QR recovery grants no approval');assert(model.actions.includes('start-over'));
       assert.equal(await f.page.locator('.connection-site').textContent(),reviewOrigin);

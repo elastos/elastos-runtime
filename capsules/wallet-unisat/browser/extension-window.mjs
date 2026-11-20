@@ -140,7 +140,7 @@ export function startExtensionWindow(kind, homeClipboard) {
 
   function effectAction(action) {
     if (kind === 'metamask') action = {...action,includeWallet:true};
-    if (!chosenWalletChoiceId) return action;
+    if (action.kind !== 'link' || !chosenWalletChoiceId) return action;
     return { ...action, walletChoiceId: chosenWalletChoiceId };
   }
 
@@ -218,6 +218,7 @@ export function startExtensionWindow(kind, homeClipboard) {
             if (selected.status === 'pending') { stage = 'request-unavailable'; fixedOutcome = true; }
           } else {
             const next = reduceSummary(requests.find(r => r.request_id === selected?.id) || requests[0], { connector: CONNECTOR_ID });
+            if (next?.id !== selected?.id) { operationWallet = null; chosenWalletChoiceId = null; }
             if (next?.id !== selected?.id) preflightFailure = null;
             selected = next;
             stage = chooseStage();
@@ -245,6 +246,7 @@ export function startExtensionWindow(kind, homeClipboard) {
     const pending = { action, deadline: now() + HOST_EFFECT_TIMEOUT_MS / 1000 };
     operation = pending;
     pendingEffectAction = action;
+    if (action.kind === 'approve') { operationWallet = null; chosenWalletChoiceId = null; }
     if (action.kind === 'link') { linkObserved = false; if (!chosenWalletChoiceId) operationWallet = null; accountEvent = null; networkEvent = null; disconnected = false; fixedOutcome = false; selected = null; picked = false; walletChoicesFromHome = []; }
     stage = action.kind === 'link' ? 'extension-wait' : selected?.transaction ? 'transaction-extension' : 'request-extension';
     draw();
@@ -258,12 +260,12 @@ export function startExtensionWindow(kind, homeClipboard) {
       operation = null;
       pendingEffectAction = null;
       walletChoicesFromHome = [];
+      chosenWalletChoiceId = null;
       const wallet = reduceOperationWallet(result.wallet);
       if (wallet) operationWallet = wallet;
       linkObserved = true;
       notifyHomeSummaryChanged();
       if (action.kind === 'link') {
-        linkObserved = true;
         selected = null;
         if (refreshing) await refreshing;
         await refresh();
@@ -281,6 +283,10 @@ export function startExtensionWindow(kind, homeClipboard) {
       if (message === 'Home cannot confirm access to the account this request needs in your wallet.') {
         operationWallet = null; linkObserved = false; chosenWalletChoiceId = null;
         preflightFailure = 'request-unsendable'; stage = preflightFailure; draw(); return;
+      }
+      if (['Injected wallet provider discovery is ambiguous.', 'The selected browser wallet is not available.'].includes(message)) {
+        operationWallet = null; linkObserved = false; chosenWalletChoiceId = null;
+        walletChoicesFromHome = []; fixedOutcome = false; preflightFailure = 'link-error'; stage = preflightFailure; draw(); return;
       }
       // These are Home's existing pre-sign checks. No wallet signing call ran,
       // but the one-use Runtime handoff may already have consumed the request.
@@ -313,13 +319,8 @@ export function startExtensionWindow(kind, homeClipboard) {
         stage = walletChoicesFromHome.length ? 'extension-choose-wallet' : 'link-error';
         operation = null;
       }
-      else if (message === 'The selected browser wallet is not available.') {
-        operationWallet = null; linkObserved = false; chosenWalletChoiceId = null;
-        providerAvailability = 'absent';
-        fixedOutcome = false; preflightFailure = 'link-error'; stage = 'link-error';
-      }
       else if (/could not find a browser wallet|was not found in this browser profile/.test(message)) { operationWallet = null; linkObserved = false; providerAvailability = 'absent'; stage = 'extension-missing'; }
-      else if (action.kind === 'link') { stage = 'link-error'; if (message === 'Injected wallet provider discovery is ambiguous.') { fixedOutcome = false; preflightFailure = 'link-error'; } }
+      else if (action.kind === 'link') stage = 'link-error';
       else stage = `${prefix}-wallet-error`;
       draw();
     }
@@ -365,10 +366,11 @@ export function startExtensionWindow(kind, homeClipboard) {
       const address = button.dataset.focusKey.slice('copy-address:'.length);
       button.disabled = true;
       homeClipboard.writeText(address, { purpose: 'wallet.address' }).catch(() => { button.focus(); }).finally(() => { button.disabled = false; });
-    } else if (action === 'view-requests') { revision += 1; fixedOutcome = false; picked = false; selected = reduceSummary(requests[0], { connector: CONNECTOR_ID }); stage = 'request-list'; draw(); }
+    } else if (action === 'view-requests') { revision += 1; fixedOutcome = false; picked = false; operationWallet = null; chosenWalletChoiceId = null; selected = reduceSummary(requests[0], { connector: CONNECTOR_ID }); stage = 'request-list'; draw(); }
     else if (action === 'select-request') {
       const id = button.dataset.focusKey.slice('select-request:'.length);
       revision += 1; fixedOutcome = false; picked = true;
+      if (id !== selected?.id) { operationWallet = null; chosenWalletChoiceId = null; preflightFailure = null; }
       selected = reduceSummary(requests.find(r => r.request_id === id), { connector: CONNECTOR_ID });
       stage = chooseStage(); draw();
     }

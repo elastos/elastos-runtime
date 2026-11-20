@@ -57,7 +57,7 @@ function commonGuard(api=product){for(const window of ['metamask','unisat'])for(
 test('R5: extension recovery names the app and requires a new request',()=>commonGuard());
 function neutralGuard(api=product){
  for(const window of ['metamask','unisat'])for(const stage of ['extension-missing','extensions-unavailable','link-wait']){const v=api.connectionView({window,stage,waitSeconds:300});assert.doesNotMatch([api.viewText(v.status),api.viewText(v.notice)].join(' '),/Enable/);assert.equal(v.title,window==='metamask'?'MetaMask':'UniSat');}
- const provider=shared.messages.find(r=>r.id==='state-com.brave.wallet').message.snapshot;const v=api.connectionView({window:'metamask',stage:'link-wait',provider,waitSeconds:300});assert.equal(v.title,'Brave Wallet');assert.match(api.viewText(v.status)+api.viewText(v.notice),/Brave Wallet/);assert.doesNotMatch(api.viewText(v.status)+api.viewText(v.notice),/MetaMask/);
+ const provider=shared.messages.find(r=>r.id==='state-com.brave.wallet').message.snapshot;const v=api.connectionView({window:'metamask',stage:'link-wait',provider,waitSeconds:300});assert.equal(v.title,'MetaMask');assert.match(api.viewText(v.status)+api.viewText(v.notice),/Brave Wallet/);assert.doesNotMatch(api.viewText(v.status)+api.viewText(v.notice),/MetaMask/);
 }
 test('R5: absent or unidentified extensions use neutral copy and verified Brave keeps its name',()=>neutralGuard());
 const proof=await temporaryProof('wallet-view-r5-',process.env.WALLET_VIEW_PROOF_DIR),receipts=[];test.after(async()=>{try{await writeFile(proof.path+'/round5.json',JSON.stringify(receipts,null,2)+'\n');}finally{await proof.cleanup();}});

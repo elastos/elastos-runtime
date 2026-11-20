@@ -164,7 +164,7 @@ function boundedWalletName(value) {
 
 function boundedWalletIcon(value) {
   const icon = readText(value);
-  // 64 KiB allows larger wallet marks; the measured MetaMask mark is 3,687 chars.
+  // 64 KiB allows larger wallet marks; recorded marks are 3,686 chars (MetaMask) and 6,006 (Rabby).
   return icon.length <= 65536 && /^data:image\/(?:png|jpeg|webp|gif|svg\+xml);base64,(?=[A-Za-z0-9+/])(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/][AQgw]==|[A-Za-z0-9+/]{2}[AEIMQUYcgkosw048]=)?$/.test(icon) ? icon : null;
 }
 
@@ -374,7 +374,6 @@ async function completeEvmApproval(provider, connectorToken, handoff, evmChains,
       handoff.signer,
       "Switch to the linked account before approving.",
     );
-    ensureWalletPresent(selected);
     const transactionHash = requireProviderResult(await provider.request({
       method: "eth_sendTransaction",
       params: [handoff.transaction],
@@ -395,7 +394,6 @@ async function completeEvmApproval(provider, connectorToken, handoff, evmChains,
   const params = method === "eth_signTypedData_v4"
     ? [signer, handoff.message]
     : [handoff.message, signer];
-  ensureWalletPresent(selected);
   const signature = requireProviderResult(await provider.request({ method, params }), 16 * 1024,
     "Wallet returned an invalid signature.");
   const completed = await runtimePost(path, connectorBody(METAMASK_CONNECTOR_ID, connectorToken, {

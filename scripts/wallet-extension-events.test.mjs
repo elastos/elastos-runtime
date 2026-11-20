@@ -25,8 +25,8 @@ async function hostFixture(kind, mutate = s => s) {
     getAccounts() { calls.push('getAccounts'); }, getNetwork() { calls.push('getNetwork'); }, signMessage() { calls.push('signMessage'); } };
   const source = await readFile(new URL('../capsules/home/browser/home-wallet-connector-host.js', import.meta.url), 'utf8');
   const window = { unisat: provider,
-    addEventListener(name, callback) { windowListeners.set(name, callback); }, dispatchEvent() {} };
-  const context = vm.createContext({ window, Event, Set, Map, WeakSet, Number, Object });
+    addEventListener(name, callback) { windowListeners.set(name, callback); }, dispatchEvent() { announce(); } };
+  const context = vm.createContext({ window, Event, Set, Map, WeakSet, Number, Object, TextEncoder, crypto });
   const module = new vm.SourceTextModule(mutate(source), { context });
   await module.link(async () => {
     const dependency = new vm.SyntheticModule(['fetchJson'], function () {
@@ -35,7 +35,8 @@ async function hostFixture(kind, mutate = s => s) {
     return dependency;
   });
   await module.evaluate();
-  windowListeners.get('eip6963:announceProvider')({ detail: { info: { rdns: 'io.metamask', uuid: 'test' }, provider } });
+  function announce() { windowListeners.get('eip6963:announceProvider')({ detail: { info: { rdns: 'io.metamask', uuid: 'test', name:'MetaMask' }, provider } }); }
+  announce();
   const connectorId = `wallet-${kind}`;
   const frame = { postMessage(data) { messages.push(data); } };
   const lifetime = { retired: false, generation: 'document-1' };

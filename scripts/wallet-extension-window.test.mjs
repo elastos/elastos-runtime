@@ -284,7 +284,7 @@ test('fixture close retires an in-flight Home read', { timeout: 10000 }, async (
       try { return await evaluate(...args); }
       finally { finished.resolve(); }
     };
-    await f.frame.evaluate(() => { void fetch('http://extensions.test/api/fixture-close').catch(() => {}); });
+    await f.frame.evaluate(() => { void fetch('https://extensions.test/api/fixture-close').catch(() => {}); });
     await entered.promise;
     await f.close();
     await finished.promise;
@@ -299,7 +299,7 @@ test('live-window regression oracle rejects deliberate breaks', { timeout: 50000
         // Snapshot the first controller paint before any asynchronous refresh.
         assert.equal(await f.frame.locator('main').getAttribute('data-state'), 'ready');
       }],
-      ['control wired wrong', s => s.replace("void perform({ kind: 'approve', approvalRequestId: selected.id })", "void perform({ kind: 'link' })"), async f => {
+      ['control wired wrong', s => s.replace("void perform({ kind: 'approve', approvalRequestId: selected.id, ...(kind === 'metamask' ? {linkedAddress:selected.address} : {}) })", "void perform({ kind: 'link' })"), async f => {
         await f.action('send-request').click();
         await f.top.waitForFunction(() => testState.effects.length > 0);
         assert.equal(await f.top.evaluate(() => testState.effects[0].action.kind), 'approve');

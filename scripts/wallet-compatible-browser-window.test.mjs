@@ -140,3 +140,33 @@ test('V2-8 four shared copies and the switched extension controller are byte ide
   assert.deepEqual(await readFile('capsules/wallet-unisat/browser/extension-window.mjs'),await readFile('capsules/wallet-metamask/browser/extension-window.mjs'));
   assert.match(process.env.COMPAT_WALLET_PRODUCT_REF ? execFileSync('git',['show',process.env.COMPAT_WALLET_PRODUCT_REF+':capsules/wallet/browser/wallet-preferences.js'],{encoding:'utf8'}) : await readFile('capsules/wallet/browser/wallet-preferences.js','utf8'),/MetaMask or another wallet in this browser/);
 });
+
+async function addApproval(f,id,address) {
+  await f.top.evaluate(({id,address})=>testState.requests.push({request_id:id,status:'pending',intent:'browser_personal_sign',proof_type:'siwe',capsule_id:'browser',reason:'Test signing',requesting_origin:'https://shop.example.com',connector_id:'wallet-metamask',address,chain_namespace:'eip155:1',expires_at:Math.floor(Date.now()/1000)+300}),{id,address});
+  await f.frame.evaluate(()=>dispatchEvent(new Event('focus')));
+}
+test('review: a consumed chooser handle never accompanies a later approval in the same window',async()=>windowCase({dualAlt:true},async f=>{
+  await click(f,'connect','extension-choose-wallet');await f.frame.getByRole('button',{name:'Rabby Wallet',exact:true}).click();await f.state('linked');
+  await addApproval(f,'same-window',A);await f.state('request-waiting');
+  await click(f,'send-request','request-done');
+  const action=await f.top.evaluate(()=>testState.effects.at(-1).action);assert.equal(action.walletChoiceId,undefined);
+}));
+test('review: a new queued request clears the prior wallet identity and shows its actual signer on success',async()=>windowCase({saved:true,requests:true,wallets:[{...mm,accounts:[A]},{...rabby,icon,accounts:[B]}]},async f=>{
+  await f.state('request-waiting');await click(f,'send-request','request-done');
+  await addApproval(f,'second-wallet',B);
+  // A completed local outcome intentionally stays until the person selects the new request.
+  await f.action('select-request').click();await f.state('request-waiting');
+  assert.doesNotMatch(await f.action('send-request').innerText(),/MetaMask/);
+  await click(f,'send-request','request-done');
+  assert.equal((await namedCalls(f)).filter(c=>c.method==='personal_sign').at(-1).wallet,'io.rabby');
+  assert.equal(await f.frame.locator('.connection-request-account img').count(),1);
+  assert.equal(await f.frame.locator('.connection-request-account img').getAttribute('src'),icon);
+}));
+test('review: approval discovery failure offers Check again while its Runtime request stays pending',async()=>windowCase({saved:true,requests:true,wallets:Array.from({length:33},(_,i)=>({rdns:'io.wallet'+i,uuid:'wallet-'+i,name:'Test wallet '+i}))},async f=>{
+  await f.state('request-waiting');await click(f,'send-request','link-error');
+  assert.equal(await f.top.evaluate(()=>testState.requests[0].status),'pending');
+  assert.equal(await f.top.evaluate(()=>testState.calls.length),0);
+  assert.equal(await f.frame.locator('.connection-status').innerText(),'Home could not confirm the connection.');
+  await f.top.evaluate(()=>testState.wallets.length=1);
+  await click(f,'refresh-status','request-done');
+}));

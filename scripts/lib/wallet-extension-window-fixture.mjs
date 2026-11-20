@@ -69,7 +69,19 @@ export async function fixture(browser, kind, { saved = false, requests = false, 
   const firstCase = replay?.fixture.cases.find(c => c.id === replay.spec.calls[0]?.id);
   const peerElapsed = firstCase?.snapshots.filter(s => s.call).at(-1)?.call.elapsed_ms;
   if (recording) {
-    await context.addInitScript(({ source, input }) => { if (window === window.top) (0, eval)(`(${source})`)(input); }, { source: installScriptedExtension.toString(), input: replay });
+    await context.addInitScript(({ source, input, kind }) => {
+      if (window !== window.top) return;
+      // Replay keeps its finite recorded timeline. This fixture re-announces
+      // those observed identities for each fresh Home action; RPC replies stay
+      // entirely under the recorded peer's original queue and timing.
+      const observed = new Map();
+      if (kind === 'metamask') window.addEventListener('eip6963:announceProvider', event => observed.set(event.detail.info.uuid, event.detail));
+      (0, eval)(`(${source})`)(input);
+      if (kind === 'metamask') {
+        window.addEventListener('eip6963:requestProvider', () => { for (const detail of observed.values()) window.dispatchEvent(new CustomEvent('eip6963:announceProvider',{detail})); });
+        window.dispatchEvent(new Event('eip6963:requestProvider'));
+      }
+    }, { source: installScriptedExtension.toString(), input: replay, kind });
     await context.addInitScript(({ address }) => { if (window === window.top) window.testState = { address, linked: false, requests: [], receipts: [], effects: [], copies: [], calls: [] }; }, { address });
   } else await context.addInitScript(installProvider, { kind, address, dualAlt, wallets });
   const errors = [], reads = [];
@@ -97,6 +109,7 @@ window.runtimeFetch=async(url,init)=>{
  state.runtimeCalls||=[];state.runtimeCalls.push({url,body:JSON.parse(init.body)});
  if (${noHomeWallet} && url.includes('/link/challenge')) throw Error('Create a Home wallet first.');
  const requestId=decodeURIComponent(url.split('/approvals/')[1]?.split('/')[0]||'');
+ const signerAddress=state.requests.find(r=>r.request_id===requestId)?.address ?? state.address;
  const body=JSON.parse(init.body), schema='elastos.home.wallet-connector.effect.result/v1';
  if(url.endsWith('/handoff')){
    const pending=state.requests.find(request=>request.request_id===requestId && request.status==='pending');
@@ -108,8 +121,8 @@ window.runtimeFetch=async(url,init)=>{
  if(url.includes('/link/challenge') && state.accountDuringChallenge) state.walletAddress=state.accountDuringChallenge;
  if(url.includes('/link/challenge'))return {schema,action,connector_id:id,challenge:{schema:kind==='metamask'?'elastos.auth.challenge/v1':'elastos.wallet.bitcoin_challenge/v1',challenge_id:'fixture-challenge',message:'Isolated account proof',expires_at:Math.floor(Date.now()/1000)+300,resources:[],...(kind==='unisat'?{network:'bitcoin',address:state.address,proof_type:'bip322_simple'}:{})}};
  if(url.includes('/link/verify')){state.linked=true;state.receipts.push(body);return {schema,action,connector_id:id,status:'linked'};}
- if(url.endsWith('/handoff')&&${JSON.stringify(requests)}==='transaction') return {schema,action,connector_id:id,request_id:requestId,evm_chains:[{chainId:'0x14',chainName:'Elastos Smart Chain',nativeCurrency:{name:'ELA',symbol:'ELA',decimals:18},rpcUrls:['https://api.elastos.io/esc']}],handoff:{schema:'elastos.wallet.webconnect_handoff/v1',request_id:requestId,intent:'transaction_intent',payload_hash:'0x'+'ab'.repeat(32),signer:state.address,status:'awaiting_wallet_transaction',transaction:{from:state.address,to:'0x'+'2'.repeat(40),value:'0x1',data:'0x',gas:'0x5208',gasPrice:'0x1',nonce:'0x0',chainId:'0x14'}}};
- if(url.endsWith('/handoff'))return {schema,action,connector_id:id,request_id:requestId,evm_chains:[],handoff:{schema:'elastos.wallet.webconnect_handoff/v1',request_id:requestId,intent:${JSON.stringify(requests)}==='transaction'?'transaction_intent':${JSON.stringify(requests)}==='typed'?'browser_typed_data_sign':kind==='metamask'?'browser_personal_sign':'bitcoin_bip322_proof',payload_hash:'0x'+'ab'.repeat(32),signer:state.address,status:'awaiting_wallet_signature',message:'Isolated app request',signature_type:kind==='metamask'?'personal_sign':'bip322_simple'}};
+ if(url.endsWith('/handoff')&&${JSON.stringify(requests)}==='transaction') return {schema,action,connector_id:id,request_id:requestId,evm_chains:[{chainId:'0x14',chainName:'Elastos Smart Chain',nativeCurrency:{name:'ELA',symbol:'ELA',decimals:18},rpcUrls:['https://api.elastos.io/esc']}],handoff:{schema:'elastos.wallet.webconnect_handoff/v1',request_id:requestId,intent:'transaction_intent',payload_hash:'0x'+'ab'.repeat(32),signer:signerAddress,status:'awaiting_wallet_transaction',transaction:{from:signerAddress,to:'0x'+'2'.repeat(40),value:'0x1',data:'0x',gas:'0x5208',gasPrice:'0x1',nonce:'0x0',chainId:'0x14'}}};
+ if(url.endsWith('/handoff'))return {schema,action,connector_id:id,request_id:requestId,evm_chains:[],handoff:{schema:'elastos.wallet.webconnect_handoff/v1',request_id:requestId,intent:${JSON.stringify(requests)}==='transaction'?'transaction_intent':${JSON.stringify(requests)}==='typed'?'browser_typed_data_sign':kind==='metamask'?'browser_personal_sign':'bitcoin_bip322_proof',payload_hash:'0x'+'ab'.repeat(32),signer:signerAddress,status:'awaiting_wallet_signature',message:'Isolated app request',signature_type:kind==='metamask'?'personal_sign':'bip322_simple'}};
  state.receipts.push(body);state.requests=state.requests.filter(r=>r.request_id!==requestId);return {schema,action,connector_id:id,request_id:requestId,status:'completed'};
 };
 const frame=document.createElement('iframe');frame.style='width:480px;height:522px;border:0;display:block';frame.sandbox='allow-scripts';frame.src='/apps/'+id+'/?home_origin='+encodeURIComponent(location.origin)+${JSON.stringify(launch ? '#home_token=fixture-token' : '')};document.body.append(frame);

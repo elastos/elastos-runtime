@@ -129,6 +129,7 @@ for (const engine of ['chromium','webkit']) test(`extension_request_feedback_in_
           if(row.window==='walletconnect'&&row.stage==='internet-ready')expectedControls=expectedControls.filter(c=>c.label!=='Manage in Inbox');
           if(row.window==='walletconnect'&&row.stage==='internet-refused')expectedControls=[{label:'Connect wallet',primary:true}];
           if(row.window==='walletconnect'&&row.stage==='internet-off')expectedControls=[{label:'Connect wallet',primary:true},{label:'Open Inbox',primary:false}];
+          if(row.window==='metamask'&&['extension-missing','extensions-unavailable','other-ethereum-wallet','request-unsendable','link-error'].includes(row.stage))expectedControls=[{label:'Check again',primary:true},{label:'Close window',primary:false}];
           const fallbackClose=!expectedControls.length&&row.window==='metamask'&&expected?.inventory.some(s=>s.startsWith('WalletConnect [primary]'))&&(facts.payment||facts.capability);
           if(fallbackClose)expectedControls=[{label:'Close window',primary:true}];
           if(facts.approval){const main=expectedControls.filter(c=>c.primary),other=expectedControls.filter(c=>!c.primary&&c.label!=='Close window');expectedControls=[{label:'Close window',primary:false},...other.filter(c=>c.label.startsWith('View request')),...other.filter(c=>!c.label.startsWith('View request')),...main];}
@@ -214,7 +215,7 @@ for(const engine of ['chromium','webkit'])test(`isolated names share text baseli
     return {baselines,mark:mark&&{width:mark.width,height:mark.height},gapBeforeClose:note&&button?button.getBoundingClientRect().top-note.getBoundingClientRect().bottom:null,computed:[...document.querySelectorAll('.connection-computed-detail')].map(e=>({text:e.textContent,hasAppLabel:!!e.querySelector('.connection-detail-label')})),app:[...document.querySelectorAll('.connection-context')].map(e=>e.textContent)};
    });
    if(name.includes('/request-')||name==='walletconnect/link-wait'){assert(measured.baselines.length,name+': baseline samples');assert(measured.baselines.every(b=>b.delta<=.5),name+': '+JSON.stringify(measured.baselines));}
-   if(name.endsWith('/linked')){assert.deepEqual(measured.mark,{width:24,height:24});if(name==='metamask/linked')assert(measured.gapBeforeClose>=8,'the single stop-sharing notice has space before Close window');}
+   if(name.endsWith('/linked')){if(name==='metamask/linked')assert.equal(measured.mark,undefined);else assert.deepEqual(measured.mark,{width:24,height:24});if(name==='metamask/linked')assert(measured.gapBeforeClose>=8,'the single stop-sharing notice has space before Close window');}
    if(name==='walletconnect/transaction-declined'){assert.equal(measured.computed.length,1);assert.equal(measured.computed[0].hasAppLabel,false);assert(!measured.computed[0].text.includes('From app:'));}
    assert(measured.app.every(text=>!text.includes('BrowserSite reported by Browser:')&&!text.includes('Browser  Site reported')),'Browser shown once');
    checks.push({name,...measured});

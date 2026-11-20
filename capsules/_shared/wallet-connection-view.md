@@ -154,7 +154,8 @@ Names are trimmed, bounded to 80 UTF-16 units and 320 UTF-8 bytes, and rejected
 when they contain markup, control, private-use, surrogate or direction characters.
 Home reserves its own labels and known wallet brands for their connector identity.
 Icons are optional canonical base64 image data URIs up to 64 KiB; invalid icons
-leave the wallet selectable. The measured MetaMask mark is 3,687 characters.
+leave the wallet selectable. The replay fixture records 3,686 characters for MetaMask and 6,006 for Rabby;
+the 64 KiB cap admits those marks and bounds each image.
 
 When a same-card redraw removes the focused action, the mount uses the new view's focus target. A consumed approval focuses its outcome. Its card keeps the existing scroll surface; the outcome stays visible, and a small presentation spacer retains an offset that would otherwise disappear as controls are removed. A new request or stage discards this presentation state. Callers using their own mount logic must apply the same fallback and scroll rule.
 

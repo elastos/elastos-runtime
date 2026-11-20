@@ -70,7 +70,7 @@ test('F2: every stage has an unknown-safety fixture, with a contract-owned recov
   if(row.stage==='request-unavailable'){assert.match(viewText(v.status),/new request/);assert.equal(text,'');}
   if(row.stage==='request-access-error'){assert.match(text,/new request/);assert(v.notice.some(p=>p.kind==='app'&&p.text==='Browser'));}
   if(row.stage==='account-unavailable')assert.match(text,row.window==='metamask'?/Manage connected accounts/:/Choose the required account/);
-  if(row.stage==='extension-missing'){assert.match(text,/Close this window/);assert.match(text,/Open Home in a browser/);assert.match(text,/Wallet/);assert.doesNotMatch(text,/QR code/,'H779 unknown safety offers no alternative connector');}
+  if(row.stage==='extension-missing'){if(row.window==='metamask')assert(v.actions.some(a=>a.id==='close-window'));else assert.match(text,/Close this window/);assert.match(text,/Open Home in a browser/);assert.match(text,/Wallet/);assert.doesNotMatch(text,/QR code/,'H779 unknown safety offers no alternative connector');}
  });
 });
 

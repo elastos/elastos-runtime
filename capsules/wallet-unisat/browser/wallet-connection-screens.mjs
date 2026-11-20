@@ -846,6 +846,7 @@ const definitions = {
       "primary": {"id":"refresh-status","label":"Check again","quiet":true},
       "secondary": [{"id":"close-window","label":"Close window","quiet":true}],
       "walletPicker": true,
+      "account": true,
       "focus": "select-wallet"
     },
     "extension-missing": {
@@ -2322,6 +2323,6 @@ for (const stage of ['extension-missing','extensions-unavailable','other-ethereu
   Object.assign(definitions.metamask[stage], {account:true, primary:{id:'refresh-status',label:'Check again',quiet:false}, secondary:[{id:'close-window',label:'Close window',quiet:true}], focus:'refresh-status'});
 }
 Object.assign(definitions.metamask['request-unsendable'], {status:'Home cannot confirm access to the account this request needs in your wallet.',notice:'',primary:{id:'refresh-status',label:'Check again',quiet:false},secondary:[{id:'close-window',label:'Close window',quiet:true}],focus:'refresh-status'});
-Object.assign(definitions.metamask['link-error'], {primary:{id:'refresh-status',label:'Check again',quiet:false},secondary:[{id:'close-window',label:'Close window',quiet:true}]});
+Object.assign(definitions.metamask['link-error'], {focus:'refresh-status',primary:{id:'refresh-status',label:'Check again',quiet:false},secondary:[{id:'close-window',label:'Close window',quiet:true}]});
 const freeze = value => { if(value && typeof value==='object'){Object.values(value).forEach(freeze);Object.freeze(value);}return value;};
 export const screens = freeze(definitions);
