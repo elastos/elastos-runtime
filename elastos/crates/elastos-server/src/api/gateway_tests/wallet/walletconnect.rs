@@ -589,13 +589,28 @@ async fn n5_guest_request_creates_no_question() {
         .path()
         .join("ElastOS/SystemServices/WalletConnect/internet.json");
     assert!(!path.exists());
-    let (status, error) = f
-        .route(&token, INTERNET, Some(json!({"action":"request"})))
-        .await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
-    assert_eq!(error["code"], "walletconnect_admin_required");
+    let response = f
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .header(HOST, f.addr.as_str())
+                .header("origin", "null")
+                .uri(INTERNET)
+                .method("POST")
+                .header("x-elastos-home-token", token)
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({"action":"request"}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(response.headers()["x-elastos-error-code"], "walletconnect_admin_required");
+    assert_eq!(response.headers()["access-control-expose-headers"], "x-elastos-error-code");
+    let body = axum::body::to_bytes(response.into_body(), 2048).await.unwrap();
     assert_eq!(
-        error["message"],
+        std::str::from_utf8(&body).unwrap(),
         "Ask an admin of this Home to open WalletConnect, choose Connect wallet, then allow internet access in Inbox."
     );
     assert!(!path.exists(), "guest request creates no owner question");

@@ -391,7 +391,11 @@ pub(super) async fn internet(
         Ok(v) => Json(v).into_response(),
         Err(e) if e.is::<AdminConsentRequired>() => (
             StatusCode::FORBIDDEN,
-            Json(json!({"code": "walletconnect_admin_required", "message": e.to_string()})),
+            [
+                ("x-elastos-error-code", "walletconnect_admin_required"),
+                ("access-control-expose-headers", "x-elastos-error-code"),
+            ],
+            e.to_string(),
         )
             .into_response(),
         Err(e) => system_error_response(e),

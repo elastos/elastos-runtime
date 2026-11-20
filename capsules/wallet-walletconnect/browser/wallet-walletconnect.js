@@ -328,8 +328,7 @@ async function fetchJson(url,init) {
   const response=await fetch(url,init);
   if (!response.ok) {
     const detail=await response.text().catch(()=>'');
-    let code;
-    try {code=JSON.parse(detail).code;} catch {}
+    const code=response.headers.get('x-elastos-error-code');
     if (response.status === 403 && code === 'walletconnect_admin_required') {
       ownerConsentNeeded=true;permissionStatus='off';pendingEffect=undefined;draw();watchConnection();
       throw Object.assign(new Error('An admin of this Home can allow WalletConnect internet access in Inbox.'),{tone:'muted'});
