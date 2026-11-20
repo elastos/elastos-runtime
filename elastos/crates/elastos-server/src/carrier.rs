@@ -18887,9 +18887,17 @@ pub(crate) mod tests {
             restarted.relay_server.as_ref().unwrap().https_addr(),
             Some(http)
         );
-        let portal = restarted.relay_server.as_ref().unwrap().http_addr().unwrap();
+        let portal = restarted
+            .relay_server
+            .as_ref()
+            .unwrap()
+            .http_addr()
+            .unwrap();
         assert!(portal.ip().is_loopback());
-        assert_ne!(portal, http, "the captive portal owns a separate loopback socket");
+        assert_ne!(
+            portal, http,
+            "the captive portal owns a separate loopback socket"
+        );
         assert_eq!(
             restarted.relay_server.as_ref().unwrap().quic_addr(),
             Some(discovery)
