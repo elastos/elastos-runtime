@@ -17,9 +17,31 @@ ROOT = Path(__file__).resolve().parent.parent
 FIXTURE = runpy.run_path(str(ROOT / "scripts/ci-relay-journey.py"))
 INSTALL = runpy.run_path(str(ROOT / "scripts/install-source-home-runtime.py"))
 NETWORK = runpy.run_path(str(ROOT / "scripts/ci-two-nat-network.py"))
+JOURNEY = runpy.run_path(str(ROOT / "scripts/ci-installed-journeys.py"))
 
 
 class FixtureManifestTests(unittest.TestCase):
+    def test_model_holder_keeps_its_original_http_owner(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            data = home / "data"
+            data.mkdir()
+            (data / "gateway-runtime-coords.json").write_text(json.dumps({
+                "api_url": "http://localhost:1234", "attach_secret": "disposable-fixture"}))
+            child = mock.Mock()
+            post = mock.Mock(side_effect=[{"token": "fixture-token"}, {"data": {"ticket": "fixture-ticket"}}])
+            owner = JOURNEY["start_holder"]
+            with mock.patch.dict(owner.__globals__, {"wait_healthy": mock.Mock(), "post_json": post}), \
+                    mock.patch.object(JOURNEY["subprocess"], "Popen", return_value=child), \
+                    mock.patch.object(JOURNEY["subprocess"], "check_output", return_value='{"did":"did:fixture:holder"}'), \
+                    mock.patch.object(JOURNEY["subprocess"], "run"):
+                started, receipt = owner(home, data, home / "consumer", {})
+            self.assertIs(started, child)
+            self.assertEqual(receipt["holder_did"], "did:fixture:holder")
+            self.assertEqual(post.call_args_list, [
+                mock.call("http://localhost:1234/api/auth/attach", {"secret": "disposable-fixture", "scope": "shell"}),
+                mock.call("http://localhost:1234/api/provider/peer/get_ticket", {}, "fixture-token")])
+
     def test_success_requires_a_bounded_receipt(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "receipt.json"

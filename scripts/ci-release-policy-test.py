@@ -533,11 +533,21 @@ def validate_dependency_audit(source):
             '#!/bin/sh\nprintf \'%s|%s\\n\' "$(pwd -P)" "$*" >> "$AUDIT_LOG"\n'
             'case " $* " in *" ../$AUDIT_FAIL "*) exit 1 ;; esac\n')
         (tools / "cargo-audit").chmod(0o755)
-        for failing in (None, *locks):
+        (tools / "python3").write_text(
+            '#!/bin/sh\n'
+            '[ "$#" = 4 ] && [ "$1" = ../scripts/check-carrier-vendor.py ] && '
+            '[ "$2" = --audit ] && [ "$3" = --db ] || exit 97\n'
+            'printf \'%s|%s\\n\' "$(pwd -P)" "$*" >> "$VENDOR_AUDIT_LOG"\n'
+            '[ "$AUDIT_FAIL" != vendored ]\n')
+        (tools / "python3").chmod(0o755)
+        for failing in (None, *locks, "vendored"):
             log = Path(directory) / "audit.log"
             log.write_text("")
+            vendor_log = Path(directory) / "vendor-audit.log"
+            vendor_log.write_text("")
             env = {**os.environ, "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}",
-                   "RUNNER_TEMP": directory, "AUDIT_LOG": str(log), "AUDIT_FAIL": failing or "none"}
+                   "RUNNER_TEMP": directory, "AUDIT_LOG": str(log),
+                   "VENDOR_AUDIT_LOG": str(vendor_log), "AUDIT_FAIL": failing or "none"}
             result = subprocess.run(["/bin/bash", "-c", script], cwd=root / "elastos", env=env,
                                     capture_output=True, text=True, timeout=30)
             calls = [line.split("|", 1) for line in log.read_text().splitlines()]
@@ -547,6 +557,9 @@ def validate_dependency_audit(source):
                 raise AssertionError("cargo-audit runs where elastos/.cargo/audit.toml applies")
             if any("--no-fetch" in args for _, args in calls):
                 raise AssertionError("cargo-audit retains online yanked checks for every lockfile")
+            if vendor_log.read_text().splitlines() != [
+                    f"{(root / 'elastos').resolve()}|../scripts/check-carrier-vendor.py --audit --db {directory}/advisory-db"]:
+                raise AssertionError("cargo-audit checks vendored forks under the same exception policy")
             if (result.returncode != 0) != (failing is not None):
                 raise AssertionError(f"cargo-audit result ignores {failing or 'a clean run'}")
         # A lockfile listing that prints part of the list and then fails must fail the job.

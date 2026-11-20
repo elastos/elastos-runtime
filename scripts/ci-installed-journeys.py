@@ -1217,9 +1217,8 @@ def start_holder(home, data, consumer_data, consumer_environment):
             time.sleep(0.25)
         coords = json.loads((data / "gateway-runtime-coords.json").read_text())
         api = coords["api_url"].rstrip("/")
-        post = (lambda url, body, token=None: topology.http_json(name, url, body, token)) if topology else post_json
-    token = post(api + "/api/auth/attach", {"secret": coords["attach_secret"], "scope": "shell"})["token"]
-        ticket = post(api + "/api/provider/peer/get_ticket", {}, token)["data"]["ticket"]
+        token = post_json(api + "/api/auth/attach", {"secret": coords["attach_secret"], "scope": "shell"})["token"]
+        ticket = post_json(api + "/api/provider/peer/get_ticket", {}, token)["data"]["ticket"]
         did = json.loads(subprocess.check_output([installed, "node", "info", "--json"], env=environment,
                                                  text=True, timeout=60))["did"]
         subprocess.run([str(consumer_data / "bin/elastos"), "node", "peer", "add", "--did", did, "--ticket", ticket, "--json"],
