@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { Socket } from "node:net";
 import { writeSync } from "node:fs";
 import { inspect } from "./owned-test-worker.mjs";
+import { createBrowserLaunchRun } from "./browser-launch-recovery.mjs";
 
 // This is the group leader's entrypoint: Node --test defers --import preloads
 // to test-file children. A blocked test cannot block this lifetime watcher.
@@ -42,15 +43,17 @@ process.on("exit", () => {
   } catch (error) { stopOwnGroup(error); }
 });
 const env = { ...process.env };
+const browserRun = createBrowserLaunchRun();
+env.ELASTOS_BROWSER_LAUNCH_LEDGER = browserRun.ledger;
 const events = env.NODE_TEST_GUARD_EVENTS === "1" ? 3 : "ignore";
 delete env.NODE_TEST_GUARD_OWNER;
 delete env.NODE_TEST_GUARD_EVENTS;
 child = spawn(process.execPath, process.argv.slice(2), { env, stdio: ["ignore", "inherit", "inherit", events] });
 child.on("error", error => { console.error(error.message); process.exitCode = 1; });
-child.on("exit", (code, signal) => {
+child.on("close", (code, signal) => {
   if (signal && events === 3) {
     try { writeSync(3, `${JSON.stringify({ type: "worker:signal", data: { signal } })}\n`); }
     catch (error) { if (error.code !== "EPIPE") throw error; }
   }
-  process.exitCode = code ?? 1;
+  process.exitCode = browserRun.finish(code ?? 1);
 });

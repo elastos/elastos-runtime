@@ -1,6 +1,7 @@
+import {windowTestOptions} from './lib/walletconnect-window-resources.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readFileSync,existsSync} from 'node:fs';
+import {readFileSync} from 'node:fs';
 import {titleSources as sourceFixture,rustTitlePath as rustPath,assertTitleSources,assertTitleSourceBlobs} from './lib/wallet-connection-title-oracle.mjs';
 import {writeFile} from 'node:fs/promises';
 import * as product from '../capsules/_shared/wallet-connection-view.mjs';
@@ -76,7 +77,7 @@ async function focusGuard(f,engine,capture=false){const args=approvalArguments(a
  assert.equal(await f.page.locator('[data-action="send-request"]').evaluate(button=>button===document.activeElement),true,'Send owns focus before approval');
  assert.equal(await f.page.locator('main').evaluate(e=>e.scrollTop),40,'the before position exists');args[1].summary.status='approved';const got=await mount(args);assert.equal(got.focus,'outcome','replacement focuses the outcome');assert.equal(got.top,40,'replacement keeps the before scroll');const box=await f.page.locator('[data-focus="outcome"]').boundingBox();assert(box.y>=0&&box.y+box.height<=182,'replacement focus stays visible');if(capture)await f.page.screenshot({path:proof.path+'/approved-focus-'+engine+'.png'});return got;
 }
-for(const engine of ['chromium','webkit']){const skip=engine==='webkit'&&!existsSync(playwright.webkit.executablePath())&&!process.env.ELASTOS_PLAYWRIGHT_MODULE?'WebKit required in test-elastos content-sandbox job':false;
+for(const engine of ['chromium','webkit']){const skip=windowTestOptions(engine).skip;
  test('R5 K14: exact site label excludes its punctuation in '+engine,{skip},async()=>{
  await variant(engine,null,labelGuard);await assert.rejects(()=>variant(engine,s=>s.replace("el('span','Site reported by Browser')","el('span','Site reported by Browser:')"),labelGuard),assert.AssertionError);receipts.push({engine,case:'K14',result:'PASS / product colon break CAUGHT'});
  });

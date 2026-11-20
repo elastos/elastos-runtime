@@ -1,10 +1,10 @@
+import {windowTestOptions} from './lib/walletconnect-window-resources.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
 import { requireProductSmokePlaywright } from './product-smoke-browser.mjs';
 const playwright = requireProductSmokePlaywright();
-const engineSkip = engine => engine === 'webkit' && !existsSync(playwright.webkit.executablePath()) ? 'Install WebKit for the explicit acceptance run; behaviour inputs provide Chromium.' : false;
+const engineSkip = engine => windowTestOptions(engine).skip;
 const A = '0x' + '1'.repeat(40), B = '0x' + '2'.repeat(40);
 const U = 'bc1q' + 'a'.repeat(38), V = 'bc1q' + 'b'.repeat(38);
 

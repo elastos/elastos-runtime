@@ -1,14 +1,14 @@
+import {windowTestOptions} from './lib/walletconnect-window-resources.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
-import {existsSync} from 'node:fs';
 import {requireProductSmokePlaywright} from './product-smoke-browser.mjs';
 import {fixture} from './lib/wallet-extension-window-fixture.mjs';
 const playwright=requireProductSmokePlaywright();
 const recordings=JSON.parse(await readFile(new URL('./fixtures/wallet-extension-replay.json',import.meta.url),'utf8'));
 const recordedReject=recordings.cases.find(c=>c.id==='MM-7-known-reject').snapshots.find(s=>s.call?.error).call.error;
 assert.equal(recordedReject.code,4001);assert.equal(recordedReject.constructor,'Object');
-const skip=engine=>engine==='webkit'&&!existsSync(playwright.webkit.executablePath())?'WebKit required on Mac; Linux acceptance uses Chromium':false;
+const skip=engine=>windowTestOptions(engine).skip;
 for(const engine of ['chromium','webkit']) {
   test(`${engine} MetaMask: recorded plain-object switch rejection stays honestly unclassified by v1`,{skip:skip(engine)},async()=>{
     const browser=await playwright[engine].launch({headless:true});try{const f=await fixture(browser,'metamask',{saved:true,requests:'transaction'});try{

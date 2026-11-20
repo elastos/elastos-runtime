@@ -10,6 +10,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { withBrowserLaunchRecovery } from "./lib/browser-launch-recovery.mjs";
 
 export function behaviourInputsDir(env = process.env) {
   if (env.BEHAVIOUR_INPUTS) return env.BEHAVIOUR_INPUTS;
@@ -45,14 +46,14 @@ function loadPlaywrightPackage(env) {
 }
 
 export function requireProductSmokePlaywright(env = process.env) {
-  return withChromium(loadPlaywrightPackage(env));
+  return withBrowserLaunchRecovery(withChromium(loadPlaywrightPackage(env)));
 }
 
 export async function importProductSmokePlaywright(env = process.env) {
   if (env.ELASTOS_PLAYWRIGHT_MODULE) {
     const spec = env.ELASTOS_PLAYWRIGHT_MODULE;
     const href = spec.startsWith("file:") ? spec : pathToFileURL(spec).href;
-    return withChromium(await import(href));
+    return withBrowserLaunchRecovery(withChromium(await import(href)));
   }
   return requireProductSmokePlaywright(env);
 }
