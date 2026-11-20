@@ -3,8 +3,8 @@
   "schema": "elastos.test.wallet-connector-v2-messages/v1",
   "contractCommit": "c81a0c6db58dd13df1512e4bec43aca9941c2642",
   "contracts": {
-    "docs/HOME_SHELL_HOST_CONTRACT.md": "b7cfec9e36e869d8f8520dde3d490d2d44259756350e4bcdf5f7b4aa88233930",
-    "docs/WALLET_PROVIDER.md": "b80d910766080a5d4fd8a058dd547d954d632a5655b4e58dd8111e834639a89f"
+    "docs/HOME_SHELL_HOST_CONTRACT.md": "b3a641fe5786c5b6c787da6dccd81ea648dfca09cb614d87a1d4d942d74f8981",
+    "docs/WALLET_PROVIDER.md": "396012f2f7e3f632d73ce68df8748918e3f833f00e97eefb3e3a7c39744be73d"
   },
   "messages": [
     {
