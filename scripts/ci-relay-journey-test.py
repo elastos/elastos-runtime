@@ -20,6 +20,17 @@ NETWORK = runpy.run_path(str(ROOT / "scripts/ci-two-nat-network.py"))
 
 
 class FixtureManifestTests(unittest.TestCase):
+    def test_success_requires_a_bounded_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "receipt.json"
+            with self.assertRaisesRegex(RuntimeError, "no receipt"):
+                FIXTURE["require_message_receipt"](path)
+            path.write_text('{"status":"passed"}')
+            self.assertEqual(FIXTURE["require_message_receipt"](path), {"status":"passed"})
+            path.write_bytes(b"x" * (1024 * 1024 + 1))
+            with self.assertRaisesRegex(RuntimeError, "exceeds its bound"):
+                FIXTURE["require_message_receipt"](path)
+
     def test_management_socket_is_opened_inside_the_home_namespace_with_secret_on_stdin(self):
         topology = NETWORK["MessageNetwork"].__new__(NETWORK["MessageNetwork"])
         topology.names = {"a": "fixture-home-a"}

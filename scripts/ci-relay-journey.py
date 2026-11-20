@@ -48,6 +48,16 @@ def prepare_assets(root, data, binary):
                     "--managed-state", str(data / "receipts/source-home-capsules.json"), *capsule_args], check=True, timeout=60)
 
 
+def require_message_receipt(path):
+    if not path.is_file():
+        raise RuntimeError("installed message journey has no receipt")
+    with path.open("rb") as stream:
+        encoded = stream.read(1024 * 1024 + 1)
+    if len(encoded) > 1024 * 1024:
+        raise RuntimeError("installed message receipt exceeds its bound")
+    return json.loads(encoded)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--network-arrangement", choices=("same-host", "two-nat", "forced-relay", "relay-to-direct"), default="two-nat")
@@ -95,8 +105,8 @@ def main():
                        "--two-home-messages", "--network-arrangement", arrangement]
             result = subprocess.run(command, env=fixture_environment, timeout=1020, check=False)
             receipt_path = evidence / "installed-journeys.json"
-            if receipt_path.exists():
-                record = json.loads(receipt_path.read_text())
+            if result.returncode == 0 or receipt_path.exists():
+                record = require_message_receipt(receipt_path)
                 print(json.dumps({key: record.get(key) for key in (
                     "candidate", "source_tree", "installed_runtime_sha256", "network_arrangement", "relay_selection", "results",
                     "route_observations", "meeting_point", "discovery_packets", "automatic_direct", "transitions", "visible_failure",
