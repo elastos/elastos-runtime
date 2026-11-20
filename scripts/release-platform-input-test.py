@@ -68,6 +68,28 @@ guest_inputs = importlib.util.module_from_spec(_GUEST_SPEC)
 _GUEST_SPEC.loader.exec_module(guest_inputs)
 
 class PlatformInputTest(unittest.TestCase):
+    def test_meeting_point_build_identity_is_complete_and_retained(self):
+        self.assertIsNone(inputs.relay_build_identity({}))
+        environment = {"ELASTOS_RELEASE_RELAY_URL": "https://meeting.fixture:4433/",
+                       "ELASTOS_RELEASE_RELAY_CERT_SHA256": "AB" * 32}
+        expected = {"origin": environment["ELASTOS_RELEASE_RELAY_URL"], "certificate_sha256": "ab" * 32}
+        self.assertEqual(inputs.relay_build_identity(environment), expected)
+        for invalid in ({"ELASTOS_RELEASE_RELAY_URL": environment["ELASTOS_RELEASE_RELAY_URL"]},
+                        {"ELASTOS_RELEASE_RELAY_CERT_SHA256": "ab" * 32},
+                        {**environment, "ELASTOS_RELEASE_RELAY_URL": "http://meeting.fixture/"},
+                        {**environment, "ELASTOS_RELEASE_RELAY_URL": "https://user@meeting.fixture/"},
+                        {**environment, "ELASTOS_RELEASE_RELAY_URL": "https://meeting.fixture/other"},
+                        {**environment, "ELASTOS_RELEASE_RELAY_CERT_SHA256": "wrong"}):
+            with self.assertRaises(ValueError):
+                inputs.relay_build_identity(invalid)
+        for root in self.bundles.values():
+            receipt = json.loads((root / "platform-input.json").read_text())
+            receipt["carrier_relay"] = expected
+            inputs.verify_receipt_header(receipt)
+            receipt["carrier_relay"] = {**expected, "certificate_sha256": "wrong"}
+            with self.assertRaises(ValueError):
+                inputs.verify_receipt_header(receipt)
+
     def setUp(self):
         self.scratch = tempfile.TemporaryDirectory()
         self.addCleanup(self.scratch.cleanup)

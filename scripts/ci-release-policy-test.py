@@ -655,6 +655,45 @@ def validate_release_builds_are_hermetic(source):
 
 
 class ReleasePolicyTests(unittest.TestCase):
+    def test_seed_build_and_receipt_share_the_explicit_release_pair(self):
+        release = (WORKFLOW.parent / "release-package.yml").read_text()
+        seed_steps = steps("seed", jobs(release))
+        build, = [step for step in seed_steps if step.startswith("name: build Runtime N and the IPFS provider")]
+        shell = textwrap.dedent(build.split("        run: |\n", 1)[1])
+        seal, = [step for step in seed_steps if step.startswith("name: check and seal the seed package")]
+        receipt_code = textwrap.dedent(seal.split("<<'PYTHON'\n", 1)[1].split("          PYTHON", 1)[0])
+        for paired in (False, True):
+            with self.subTest(paired=paired), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                seed, tools, package = root / "seed", root / "tools", root / "package"
+                for path in (seed, tools, package):
+                    path.mkdir()
+                subprocess.run(["git", "init", "-q", str(seed)], check=True)
+                (tools / "cargo").write_text(
+                    '#!/bin/sh\nprintf \'%s|%s\\n\' "${ELASTOS_RELEASE_RELAY_URL-unset}" '
+                    '"${ELASTOS_RELEASE_RELAY_CERT_SHA256-unset}" >> "$PAIR_LOG"\n')
+                (tools / "cargo").chmod(0o755)
+                environment = {**os.environ, "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}",
+                               "SEED_SOURCE_ROOT": str(seed), "PAIR_LOG": str(root / "pair.log"),
+                               "ELASTOS_RELEASE_RELAY_URL": "https://unapproved.fixture/",
+                               "ELASTOS_RELEASE_RELAY_CERT_SHA256": "cd" * 32}
+                for name in ("RELEASE_CARRIER_RELAY_URL", "RELEASE_CARRIER_RELAY_CERT_SHA256"):
+                    environment.pop(name, None)
+                if paired:
+                    environment.update(RELEASE_CARRIER_RELAY_URL="https://meeting.fixture:4433/",
+                                       RELEASE_CARRIER_RELAY_CERT_SHA256="AB" * 32)
+                result = subprocess.run(["/bin/bash", "-c", shell], env=environment, capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                pair = "https://meeting.fixture:4433/|" + "AB" * 32 if paired else "unset|unset"
+                self.assertEqual((root / "pair.log").read_text().splitlines(), [pair, pair])
+                for name in ("elastos", "ipfs-provider", "source.tar.gz"):
+                    (package / name).write_bytes(b"checksum fixture only")
+                result = subprocess.run([sys.executable, "-", str(package), "a" * 40, "b" * 40, "2.0.2"],
+                                        input=receipt_code, env=environment, capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                expected = {"origin": "https://meeting.fixture:4433/", "certificate_sha256": "ab" * 32} if paired else None
+                self.assertEqual(json.loads((package / "seed-input.json").read_text())["carrier_relay"], expected)
+
     def test_musl_gate_covers_both_native_linux_release_sets(self):
         root = WORKFLOW.parents[2]
         for job in ("source-home-linux", "source-home-linux-arm64"):

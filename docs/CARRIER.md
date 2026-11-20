@@ -554,6 +554,9 @@ Pass the approved HTTPS origin and hex digest as `carrier_relay_url` and
 `carrier_relay_cert_sha256` to the release-package workflow. Its native builders
 embed both in each Runtime. Source builds use `ELASTOS_RELEASE_RELAY_URL` and
 `ELASTOS_RELEASE_RELAY_CERT_SHA256` as explicit build inputs. The release signer
+compares the `carrier_relay` pair in each `platform-input.json` and the seed's
+`seed-input.json`. The seed's own Carrier uses the same pair as released Homes;
+its public listener still owns incoming connections and source accounting. The signer
 verifies the resulting artifacts and signs their checksums through the existing
 release ceremony. The operator then restarts the approved seed service. The process loads its
 certificate once at startup, so automatic certificate-file renewal changes the

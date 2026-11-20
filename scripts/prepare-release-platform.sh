@@ -245,6 +245,7 @@ else
 fi
 [[ "$CARGO_TARGET_DIR" == /* ]] || die "Cargo target directory must resolve to an absolute path"
 export CARGO_TARGET_DIR ELASTOS_RELEASE_VERSION="$VERSION"
+unset ELASTOS_RELEASE_RELAY_URL ELASTOS_RELEASE_RELAY_CERT_SHA256
 if [[ -n "${RELEASE_CARRIER_RELAY_URL:-}${RELEASE_CARRIER_RELAY_CERT_SHA256:-}" ]]; then
   [[ -n "${RELEASE_CARRIER_RELAY_URL:-}" && "${RELEASE_CARRIER_RELAY_CERT_SHA256:-}" =~ ^[0-9a-fA-F]{64}$ ]] || die "Meeting point needs its address and certificate identity"
   export ELASTOS_RELEASE_RELAY_URL="$RELEASE_CARRIER_RELAY_URL"
