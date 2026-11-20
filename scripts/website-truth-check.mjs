@@ -7,8 +7,10 @@ import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { validHostedReceipt, validIsolationClaims } from "./website-claims.mjs";
 import {
+  checkExternalWalletLinksNotRestoredByKit,
   checkKitPromiseNotBroaderThanCode,
   checkRecoveryStolenDeviceStatements,
+  checkUninstallScopeHonest,
 } from "./storage-documentation.test.mjs";
 const HOME_PATH = "/home/";
 
@@ -109,7 +111,7 @@ check("isolation copy states the current boundary and proof scope", () => {
   for (const phrase of ["opaque sandboxed frames", "Home can currently obtain every app's capability",
     "operating-system processes", "Only the model provider is partly confined",
     "Keys are stored next to the data", "Full backups contain all keys", "seed operator can read",
-    "The Recovery Kit restores the same Profile signing seed and the same built-in Wallet private keys",
+    "The Recovery Kit restores the same Profile signing seed and the same built-in Wallet private keys that were in the export",
     "A new passkey does not replace them", "integrated and tested together",
     "Accepted installed proof binds the exact Runtime", "WASM Components", "Runtime user's rights",
     "Passkeys control sign-in", "while Home is locked", "Use hosted accounts only for public demos",
@@ -120,10 +122,12 @@ check("isolation copy states the current boundary and proof scope", () => {
 });
 
 check("public website matches storage recovery statements", () => {
-  checkRecoveryStolenDeviceStatements(["website/elastos/index.html"], (path) =>
-    readFileSync(resolve(repo, path), "utf8"));
-  checkKitPromiseNotBroaderThanCode(["website/elastos/index.html"], (path) =>
-    readFileSync(resolve(repo, path), "utf8"));
+  const readTracked = (path) => readFileSync(resolve(repo, path), "utf8");
+  const website = ["website/elastos/index.html"];
+  checkRecoveryStolenDeviceStatements(website, readTracked);
+  checkKitPromiseNotBroaderThanCode(website, readTracked);
+  checkExternalWalletLinksNotRestoredByKit(website, readTracked);
+  checkUninstallScopeHonest(website, readTracked);
 });
 
 check("copy and claims describe evidence honestly", () => {

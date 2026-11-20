@@ -102,6 +102,10 @@ const PASSKEY_DOES_NOT_REPLACE =
   /new passkey[\s\S]{0,120}does not[\s\S]{0,24}replace/i;
 const KIT_PROMISE_BROADER =
   /restores the encrypted user root and every|encrypted user root and every recoverable/i;
+const EXTERNAL_WALLET_LINK_RESTORE_FORBIDDEN =
+  /restore only their links\/metadata|restore only their links/i;
+const UNINSTALL_DELETES_ALL_ON_COMPUTER =
+  /deletes your identity, wallets and recovery material on this computer/i;
 
 function storageTable(document) {
   const table = document.split("| Data and storage path |", 2)[1].split("\n\n", 1)[0];
@@ -173,6 +177,34 @@ export function checkKitPromiseNotBroaderThanCode(
       document,
       KIT_PROMISE_BROADER,
       `${path}: Kit must not promise an encrypted user root or every recoverable key beyond export code`,
+    );
+  }
+}
+
+export function checkExternalWalletLinksNotRestoredByKit(
+  paths = trackedDocumentationPaths(),
+  readDocument = read,
+) {
+  for (const path of paths) {
+    const document = readDocument(path);
+    assert.doesNotMatch(
+      document,
+      EXTERNAL_WALLET_LINK_RESTORE_FORBIDDEN,
+      `${path}: Kit must not claim external wallet links restore from the Kit`,
+    );
+  }
+}
+
+export function checkUninstallScopeHonest(
+  paths = trackedDocumentationPaths(),
+  readDocument = read,
+) {
+  for (const path of paths) {
+    const document = readDocument(path);
+    assert.doesNotMatch(
+      document,
+      UNINSTALL_DELETES_ALL_ON_COMPUTER,
+      `${path}: uninstall docs must not claim every recovery file on the computer is deleted`,
     );
   }
 }
@@ -316,12 +348,14 @@ test("Security Recovery Kit export markers, product name, and storage table cell
   );
   assert.match(
     security,
-    /leave the password empty[\s\S]{0,80}plain JSON that includes Wallet private keys/,
+    /leave the password empty[\s\S]{0,120}plain JSON that includes Wallet private keys, the recovery phrase/,
   );
   checkStorageTableCells(security);
   checkPrincipalRootEncryptionLead(security);
   checkRecoveryStolenDeviceStatements();
   checkKitPromiseNotBroaderThanCode();
+  checkExternalWalletLinksNotRestoredByKit();
+  checkUninstallScopeHonest();
   for (const path of ["SECURITY.md", "docs/INSTALL.md", "docs/GLOSSARY.md", "docs/STORAGE_AND_ACCESS.md"]) {
     assert.doesNotMatch(read(path), /full (?:recovery )?bundle/i,
       `${path}: use System's Recovery Kit name for the recovery file`);
@@ -368,5 +402,28 @@ test("the Kit promise check rejects a broad user-root claim outside the original
   assert.throws(
     () => checkKitPromiseNotBroaderThanCode([probe], () => mutated),
     /Kit must not promise/,
+  );
+});
+
+test("the external-wallet link check rejects a Kit link-restore claim", () => {
+  checkExternalWalletLinksNotRestoredByKit();
+  const probe = "docs/WALLET_PROVIDER.md";
+  const mutated = `${read(probe)}\nExternal wallets such as MetaMask restore only their links/metadata because their private keys stay in those wallets.`;
+  assert.throws(
+    () => checkExternalWalletLinksNotRestoredByKit([probe], () => mutated),
+    /external wallet links restore/,
+  );
+});
+
+test("the uninstall scope check rejects a whole-computer deletion claim", () => {
+  checkUninstallScopeHonest();
+  const probe = "docs/INSTALL.md";
+  const mutated = read(probe).replace(
+    /This deletes the ElastOS data directory[\s\S]*?want it gone\./,
+    "This deletes your identity, wallets and recovery material on this computer.",
+  );
+  assert.throws(
+    () => checkUninstallScopeHonest([probe], () => mutated),
+    /every recovery file on the computer/,
   );
 });

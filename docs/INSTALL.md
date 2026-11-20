@@ -527,8 +527,10 @@ To delete your data as well, add `--remove-data`:
 curl -fsSL https://elastos.elacitylabs.com/install.sh | bash -s -- --uninstall --remove-data
 ```
 
-This deletes your identity, wallets and recovery material on this computer.
-Keep your Recovery Kit and separate data backups first; check the
+This deletes the ElastOS data directory, including the identity, wallets, and
+recovery material stored there. A Recovery Kit file saved outside that directory
+remains. Delete that file yourself if you want it gone. Keep your Recovery Kit
+and separate data backups first; check the
 [storage table](../SECURITY.md#stored-keys-and-recovery) for coverage.
 
 ## Data, keys and backups

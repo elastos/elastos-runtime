@@ -97,7 +97,8 @@ limits in any scanned root blocks Recovery Kit export until you fix it.
 
 System's **Download Recovery Kit** saves one recovery file for the signed-in
 person, with optional password protection. If you leave the password empty, Home
-writes plain JSON that includes Wallet private keys. Use a strong password and
+writes plain JSON that includes Wallet private keys, the recovery phrase, and
+the Profile signing seed when a Profile is present. Use a strong password and
 keep the file offline. Its coverage is listed below. Keys are stored next to
 the data they protect, in the same Home data folder; the person's data key is
 in the Auth archive above. `wallet-key.hex` beside the Wallet service stays
