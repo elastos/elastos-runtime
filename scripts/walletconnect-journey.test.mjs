@@ -292,13 +292,14 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
       const linking=['proposal','ownership'].includes(scope);
       const key=scope==='proposal'?'proposalFailure':'phoneFailure';
       const phoneError=scope==='proposal'&&ending==='timeout'?{message:'The QR code expired. Select Connect wallet for a new one.'}:error;
-      const message=scope==='proposal' ? ending==='timeout'?'QR code expired.':ending==='decline'?'Connection declined.':'Could not connect.' : scope==='ownership' ? ending==='decline'?'Your wallet declined to sign the message.':ending==='timeout'?'Time to connect ran out.':'Could not connect.' : scope==='signature' ? ending==='decline'?'your wallet did not approve this message.':ending==='timeout'?'Time to answer ran out.':'This request can\'t be used here. Start a new one in the app.' : ending==='decline'?'your wallet did not approve this transaction.':'Home could not confirm the transaction result.';
+      const message=scope==='proposal' ? ending==='timeout'?'QR code expired.':ending==='decline'?'Connection declined.':'Could not connect.' : scope==='ownership' ? ending==='decline'?'Your wallet declined to sign the message.':ending==='timeout'?'Time to connect ran out.':'Could not connect.' : scope==='signature' ? ending==='decline'?'your wallet did not approve this message.':ending==='timeout'?'Time to answer ran out.':/new request in the app\./ : ending==='decline'?'your wallet did not approve this transaction.':'Home could not confirm the transaction result.';
       approvalRequests=linking?[]:[freshRequest(scope==='transaction'?'transaction_intent':'browser_personal_sign')];
       await reload();
       await walletFrame.evaluate(({key,error,sdkError})=>{window[key]=sdkError?Object.assign(new Error(error.message),error.code===undefined?{}:{code:error.code}):error;},{key,error:phoneError,sdkError});
       const review=wallet.locator('[data-wallet-request-sign]');
       await invoke(linking?'connect':'send-request');
       await wallet.locator('[data-focus=outcome]').filter({hasText:message}).waitFor();
+      if(scope==='signature'&&!['decline','timeout'].includes(ending))await wallet.locator('[data-state=request-unavailable]').waitFor();
       assert.equal(await wallet.locator('[data-focus=outcome]').getAttribute('aria-live'),'polite');
       if(!linking)await walletFrame.waitForFunction(()=>!document.querySelector('[data-wallet-request-sign]'));
       for(const value of ['dark','light']){await theme(value);await shot(`r17-${scope}-${ending}-${value}`);}
