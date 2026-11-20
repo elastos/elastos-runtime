@@ -843,8 +843,7 @@ const definitions = {
     "extension-choose-wallet": {
       "status": "Home could not find MetaMask in this browser.",
       "notice": "Choose a wallet.",
-      "primary": {"id":"refresh-status","label":"Check again","quiet":true},
-      "secondary": [{"id":"close-window","label":"Close window","quiet":true}],
+      "secondary": [{"id":"refresh-status","label":"Check again","quiet":true},{"id":"close-window","label":"Close window","quiet":true}],
       "walletPicker": true,
       "account": true,
       "focus": "select-wallet"

@@ -210,5 +210,6 @@ h2 { font-size: var(--el-text-lg); font-weight: 600; }
 /* A consumed same-card request keeps its scroll surface and visible outcome. */
 .connection-retained-feedback > .connection-feedback { position:sticky; top:0; bottom:0; background:var(--el-bg); }
 
-.connection-wallet-choice { width:100%; display:flex; align-items:center; gap:12px; text-align:start; }
+.connection-wallet-choice { width:100%; display:flex; align-items:center; justify-content:flex-start; gap:12px; margin-top:8px; padding:12px 16px; text-align:start; }
+.connection-wallet-choice + .connection-actions { margin-top:16px; }
 .connection-wallet-choice img { width:32px; height:32px; object-fit:contain; }

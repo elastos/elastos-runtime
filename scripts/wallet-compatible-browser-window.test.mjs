@@ -53,6 +53,7 @@ test('V2-1 Home-only choice is a whole-row button and completes the chosen link'
   assert.match(await f.frame.evaluate(()=>document.activeElement.dataset.focusKey),/^select-wallet:/);
   assert.deepEqual(await f.frame.locator('.connection-wallet-choice').allTextContents(),['Brave Wallet','Rabby Wallet']);
   assert.equal(await f.action('close-window').count(),1);assert.equal(await f.action('refresh-status').count(),1);
+  assert.equal(await f.frame.evaluate(()=>!!(document.querySelector('.connection-wallet-choice').compareDocumentPosition(document.querySelector('[data-action=refresh-status]'))&Node.DOCUMENT_POSITION_FOLLOWING)),true,'wallet choices precede recovery controls');
   assert.deepEqual(await namedCalls(f),[]);
   await f.frame.getByRole('button',{name:'Rabby Wallet',exact:true}).click();await f.state('linked');
   assert.equal((await namedCalls(f))[0].wallet,'io.rabby');
