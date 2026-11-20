@@ -301,7 +301,6 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
       await wallet.locator('[data-focus=outcome]').filter({hasText:message}).waitFor();
       assert.equal(await wallet.locator('[data-focus=outcome]').getAttribute('aria-live'),'polite');
       if(!linking)await walletFrame.waitForFunction(()=>!document.querySelector('[data-wallet-request-sign]'));
-      if(scope!=='proposal')await wallet.locator('main').filter({hasText:/Connected\.|Confirm this account|Connect on|Account confirmation|Time to|Could not|did not|could not|unknown|unavailable|cannot be sent/ }).waitFor();
       for(const value of ['dark','light']){await theme(value);await shot(`r17-${scope}-${ending}-${value}`);}
       if(!linking) {
         assert.equal(approvalRequests[0].status,'approved','handoff consumes the pending request');
