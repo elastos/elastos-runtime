@@ -56,10 +56,10 @@ test("fix1 JB14 an older Inbox read cannot replace a newer permission decision",
   r.state.beforeInboxSummary=async()=>{r.state.beforeInboxSummary=null;entered();await gate;};
   await event(r); await held;
   await r.frame.getByRole("button",{name:"Allow",exact:true}).click();
-  await r.frame.getByRole("button",{name:"Turn Off",exact:true}).waitFor();
+  await r.frame.getByRole("button",{name:"Turn off internet access",exact:true}).waitFor();
   const response=r.page.waitForResponse(u=>u.url().endsWith("/api/apps/inbox/summary"));
   release(); await response; await settled(r);
-  assert.equal(await r.frame.getByRole("button",{name:"Turn Off",exact:true}).count(),1);
+  assert.equal(await r.frame.getByRole("button",{name:"Turn off internet access",exact:true}).count(),1);
   assert.equal(await r.frame.getByRole("button",{name:"Allow",exact:true}).count(),0);
 });
 

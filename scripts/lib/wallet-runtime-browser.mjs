@@ -194,7 +194,7 @@ export function permissionEntry(status, id = "consent:current") {
   const asked = status === "requested";
   return { id: "walletconnect-internet:permission", source_app: "wallet-walletconnect", kind: `walletconnect_internet_${asked ? "request" : "decision"}`,
     title: "WalletConnect internet access", body: asked ? consentText : status === "granted" ? "WalletConnect can use the internet."
-      : status === "cleanup" ? "WalletConnect is off. Select Turn Off again to finish clearing its saved session." : "Internet access for WalletConnect is off.",
+      : status === "cleanup" ? "Internet access for WalletConnect is off. Choose Finish disconnecting to remove the saved connection." : "Internet access for WalletConnect is off.",
     severity: asked ? "attention" : "info", read: !asked, created_at: Math.floor(Date.now() / 1000),
     action_ref: asked ? { app: "inbox", action_id: `walletconnect-internet-allow:${id}` }
       : ["granted", "cleanup"].includes(status) ? { app: "inbox", action_id: `walletconnect-internet-turn-off:${id}` } : null };

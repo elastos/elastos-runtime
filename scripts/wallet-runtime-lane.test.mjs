@@ -9,7 +9,7 @@ test("n5_permission_entry_all_states: Inbox existing routes", async t => {
   for (const status of ["requested", "granted", "refused", "revoked", "expired", "cleanup"]) await t.test(status, async t => {
     const r = await runtimeView(t, "inbox", { entries: [permissionEntry(status)], permission: status });
     const labels = await r.frame.locator("#entry-detail button").allTextContents();
-    assert.deepEqual(labels, status === "requested" ? ["Don't Allow", "Allow"] : status === "granted" ? ["Turn Off"] : status === "cleanup" ? ["Finish disconnecting"] : ["Allow"]);
+    assert.deepEqual(labels, status === "requested" ? ["Don't allow", "Allow"] : status === "granted" ? ["Turn off internet access"] : status === "cleanup" ? ["Finish disconnecting"] : ["Allow"]);
     await r.capture(`inbox-internet-${({requested:"asked",granted:"allowed",revoked:"off",cleanup:"clearing"})[status] || status}-light-window.png`);
     assert.deepEqual(r.errors, []);
   });
@@ -19,7 +19,7 @@ test("n5_allow_after_refusal_off_expiry: current question and proof", async t =>
   for (const permission of ["refused", "revoked", "expired"]) await t.test(permission, async t => {
     const r = await runtimeView(t, "inbox", { permission, entries: [permissionEntry(permission)] });
     await r.frame.getByRole("button", { name: "Allow", exact: true }).click();
-    await r.frame.getByRole("button", { name: "Turn Off", exact: true }).waitFor();
+    await r.frame.getByRole("button", { name: "Turn off internet access", exact: true }).waitFor();
     assert.deepEqual(r.calls.filter(c => c.path.endsWith("/internet") && c.method === "POST").map(c => c.input), [{ action: "request" }]);
     assert.deepEqual(r.calls.find(c => c.path.endsWith("/actions")).input, { action_id: "walletconnect-internet-allow:consent:new", step_up_token: "fixture-proof" });
     assert.equal(r.state.permission, "granted");
@@ -31,7 +31,7 @@ test("n5_inbox_action_by_kind_and_409: decision and conflict", async t => {
   await t.test("decision never offers Don't Allow", async t => {
     const entry = { ...permissionEntry("requested"), kind: "walletconnect_internet_decision" };
     const r = await runtimeView(t, "inbox", { entries: [entry], permission: "requested" });
-    assert.equal(await r.frame.getByRole("button", { name: "Don't Allow", exact: true }).count(), 0);
+    assert.equal(await r.frame.getByRole("button", { name: "Don't allow", exact: true }).count(), 0);
   });
   await t.test("409 refreshes once and retains fixed wording", async t => {
     const r = await runtimeView(t, "inbox", { entries: [permissionEntry("requested")], permission: "requested", conflict: true });
@@ -223,7 +223,7 @@ test("n5_cleanup_blocks_allow_until_complete: Inbox cases", async t => {
   for (const initial of ["cleanup", "granted"]) await t.test(initial === "cleanup" ? "already pending cleanup" : "failure after granted Turn Off", async t => {
     const r = await runtimeView(t, "inbox", { permission:initial, cleanupFailure:true, entries:[permissionEntry(initial)],
       accounts:[{ account_id:"account:kept" }] });
-    await r.frame.getByRole("button", { name:initial === "cleanup" ? "Finish disconnecting" : "Turn Off", exact:true }).click();
+    await r.frame.getByRole("button", { name:initial === "cleanup" ? "Finish disconnecting" : "Turn off internet access", exact:true }).click();
     await r.frame.locator('dialog[open] button[value="off"]').click();
     await r.frame.locator("#status-text").filter({ hasText:"cleanup could not finish" }).waitFor();
     assert.equal(await r.frame.locator("#status-text").textContent(), "cleanup could not finish", "Runtime failures are plain text");
