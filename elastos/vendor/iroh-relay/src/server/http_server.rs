@@ -1381,6 +1381,40 @@ struct Elapsed;
 #[cfg(test)]
 mod tests {
     #[test]
+    fn few_source_networks_leave_room_for_new_homes() {
+        for established in [false, true] {
+            let admission = super::NetworkAdmission::default();
+            let mut held = Vec::new();
+            for source in 1..=4 {
+                for _ in 0..32 {
+                    if let Some(permit) = admission.admit(std::net::Ipv4Addr::new(192, 0, 2, source).into()) {
+                        if established { permit.establish(); }
+                        held.push(permit);
+                    }
+                }
+            }
+            assert!(admission.admit("198.51.100.1".parse().unwrap()).is_some(), "four networks occupied every place; established={established}");
+        }
+    }
+
+    #[test]
+    fn ipv6_allocation_cannot_mint_network_budgets() {
+        for established in [false, true] {
+            let admission = super::NetworkAdmission::default();
+            let mut held = Vec::new();
+            for subnet in 0..256u16 {
+                let ip = std::net::Ipv6Addr::new(0x2001, 0xdb8, 1, subnet, 0, 0, 0, 1).into();
+                if let Some(permit) = admission.admit(ip) {
+                    if established { permit.establish(); }
+                    held.push(permit);
+                }
+            }
+            assert!(held.len() <= if established { 32 } else { 8 }, "one IPv6 allocation gained {} places", held.len());
+            assert!(admission.admit("198.51.100.1".parse().unwrap()).is_some());
+        }
+    }
+
+    #[test]
     fn network_admission_keeps_upgraded_slots_bounds_pending_and_releases_exact_owners() {
         let admission = super::NetworkAdmission::default();
         let ip = "192.0.2.8".parse().unwrap();
