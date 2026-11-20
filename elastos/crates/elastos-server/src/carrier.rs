@@ -9057,6 +9057,15 @@ pub(crate) mod tests {
     const NONCANONICAL_ALIAS_DID: &str = "did:key:z2DQYePVrytqCLfdq5VSDGtksAZC9NAt75iCed5WwSKKVXt";
 
     #[test]
+    fn relay_off_keeps_lan_vpn_and_routed_ticket_addresses() {
+        let id = iroh::SecretKey::from_bytes(&[201; 32]).public();
+        for address in ["192.168.4.5:5000", "100.64.1.5:5000", "10.21.5.6:5000", "[fd00::123]:5000"] {
+            let addr = iroh::EndpointAddr::new(id).with_ip_addr(address.parse().unwrap());
+            assert_eq!(exported_endpoint_addr(addr.clone()), addr, "relay off lost {address}");
+        }
+    }
+
+    #[test]
     fn authority_timeout_is_a_carrier_provider_decision() {
         let response = serde_json::json!({
             "ok": false,
