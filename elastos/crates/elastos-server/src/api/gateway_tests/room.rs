@@ -955,10 +955,7 @@ async fn test_chat_room_configured_send_uses_signed_home_authority_and_scoped_po
     let summary: serde_json::Value = serde_json::from_slice(&summary_body).unwrap();
     assert_eq!(summary["transport"]["configured"], true);
     assert_eq!(summary["transport"]["available"], false);
-    assert_eq!(
-        summary["transport"]["status"],
-        "Connecting to Community…"
-    );
+    assert_eq!(summary["transport"]["status"], "Connecting to Community…");
     assert!(summary["transport"].get("connected_peer_count").is_none());
     assert!(summary["transport"].get("topic").is_none());
     assert_eq!(summary["browser_access_allowed"], false);
