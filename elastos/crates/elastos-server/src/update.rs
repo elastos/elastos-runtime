@@ -849,8 +849,7 @@ pub(crate) fn installer_required<T>(
     }))
 }
 
-pub(crate) const DOWNLOAD_MESSAGE: &str =
-    "Downloading the update. Home restarts when it is done.";
+pub(crate) const DOWNLOAD_MESSAGE: &str = "Downloading the update. Home restarts when it is done.";
 
 pub(crate) trait RestartOwner: Send {
     fn progress(&self, phase: &str, message: &str) -> anyhow::Result<()>;

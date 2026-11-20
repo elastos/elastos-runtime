@@ -732,7 +732,10 @@ async fn system_update_summary_refuses_invalid_installed_version_with_local_repa
     }
     assert_eq!(summary["available"], false);
     assert_eq!(summary["can_apply"], false);
-    assert!(!summary["message"].as_str().unwrap().contains("elastos update"));
+    assert!(!summary["message"]
+        .as_str()
+        .unwrap()
+        .contains("elastos update"));
     assert_update_stays_unqueued(dir.path());
     let intent = update_intent();
     let approval = step_up_token_for_app_context(
@@ -2406,23 +2409,34 @@ async fn update_notice_first_confirmation_date_survives_rechecks_and_rejection()
 async fn update_notice_folder_failure_gives_action_that_can_work() {
     with_test_check_cache(async {
         use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().unwrap(); configure_update_summary(dir.path());
+        let dir = tempfile::tempdir().unwrap();
+        configure_update_summary(dir.path());
         let app = gateway_router(test_state(dir.path()));
         let owner = passkey_authority_with_name(dir.path(), Some("notice-folder"));
         let path = notice::state_path(dir.path()).unwrap();
         assert_eq!(notice::preference(dir.path())["enabled"], true);
-        for target in [path.parent().unwrap().to_path_buf(), path.parent().unwrap().join(".notice.lock")] {
+        for target in [
+            path.parent().unwrap().to_path_buf(),
+            path.parent().unwrap().join(".notice.lock"),
+        ] {
             std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)).unwrap();
             let settings = notice::preference(dir.path());
             assert_eq!(settings["enabled"], false);
             assert_eq!(settings["readable"], false);
-            let (status, _) = home_test_post_json(&app, "/api/apps/system/update-background",
-                &owner.system_token, "null", json!({"enabled":true})).await;
+            let (status, _) = home_test_post_json(
+                &app,
+                "/api/apps/system/update-background",
+                &owner.system_token,
+                "null",
+                json!({"enabled":true}),
+            )
+            .await;
             assert_eq!(status, StatusCode::CONFLICT);
             let mode = if target.is_dir() { 0o700 } else { 0o600 };
             std::fs::set_permissions(target, std::fs::Permissions::from_mode(mode)).unwrap();
         }
-    }).await;
+    })
+    .await;
 }
 
 #[tokio::test(start_paused = true)]
