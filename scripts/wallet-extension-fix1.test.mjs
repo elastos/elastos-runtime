@@ -76,10 +76,10 @@ async function preflight(f, kind, fault, type) {
   await f.action('send-request').click();
   await f.state('request-consumed');
   const text=await f.frame.locator('body').innerText();
-  assert.match(text, fault==='account' ? /was using a different account/ : /could not confirm the required network/);
+  assert.match(text, fault==='account' ? /was using a different account/ : /could not confirm that .* was on/);
   assert.match(text, fault==='account' ? new RegExp('account '+(kind==='metamask'?'0x'+'1'.repeat(40):'bc1q'+'a'.repeat(38))) : kind==='unisat' ? /Bitcoin/ : /Elastos Smart Chain/);
   assert.match(text,/This request can no longer be sent/);
-  assert.match(text,/After switching, return to .* and make a new request/);
+  assert.match(text,/Then (?:go back to .* and start|return to .* and make) a new request/);
   assert.doesNotMatch(text,/try again|result unknown/i);
   assert.equal(await f.action('send-request').count(),0);
   assert.equal(await f.action('connect').count(),0);

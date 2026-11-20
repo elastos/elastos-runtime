@@ -245,7 +245,7 @@ test("n5_cleanup_blocks_allow_until_complete: Inbox cases", async t => {
 test("n4_pending_requests_current_session_only: stale cards and counts", async t => {
   await t.test("Wallet", async t => {
   const r = await runtimeView(t, "wallet", { approvals: [], requestId: "request:previous-session" });
-  await r.frame.locator("#wallet-status").filter({ hasText: "This request is unavailable. Return to the app and ask for a new request." }).waitFor();
+  await r.frame.locator("#wallet-status").filter({ hasText: "This request is unavailable. Check Activity in Wallet and any connected wallet you used before trying again. If you still need to continue, return to the app for a new request." }).waitFor();
   assert.equal(await r.frame.locator(".wallet-request").count(), 0);
   assert.equal(await r.frame.locator("#wallet-approvals-badge").isVisible(), false);
   assert.equal(r.calls.filter(c => c.method === "POST" && /approve|handoff|complete/.test(c.path)).length, 0);

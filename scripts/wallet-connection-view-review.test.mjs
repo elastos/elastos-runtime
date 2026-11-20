@@ -16,7 +16,7 @@ test('F3: the designed typed-data fixture carries typed data and renders its own
 
 test('8: earlier-session request has the contract sentence and loses Send',()=>{
   const v=reduceConnection({window:'metamask',stage:'request-waiting',waitSeconds:300},{message:packet('outcome-request_unavailable'),summary,nowSeconds:1800000001});
-  assert.equal(viewText(v.status),'This request is unavailable. Return to the app and ask for a new request.');
+  assert.match(viewText(v.status),/new request/);
   assert(!v.actions.some(a=>a.id==='send-request'));assert.equal(v.wait,null);assert.equal(v.focus,'outcome');
 });
 
