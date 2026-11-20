@@ -8,7 +8,7 @@ import {importProductSmokePlaywright,productSmokeLaunchOptions} from './product-
 import {walletConnectRelayFixture} from './lib/walletconnect-relay-fixture.mjs';
 import {walletConnectMessages as messages} from '../capsules/wallet-walletconnect/browser/walletconnect-client.mjs';
 const permissionText = 'Allow WalletConnect to use the internet?';
-const turnedOff = 'Internet access is off for WalletConnect.';
+const turnedOff = 'Internet access for WalletConnect is off.';
 // API and passkey responses are fixtures. All app markup, scripts, CSS and SDK are real.
 test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{timeout:240000},async t=>{
   let permissionPosts=0,holdApprovalList=false,releaseApprovalList,approvalListHeld,holdConnectionStatus=false,releaseConnectionStatus,connectionStatusHeld;
@@ -517,7 +517,7 @@ for (const journey of ['A','B']) test(`round18 ${journey}: the open window recov
       await connectVisible();
       await wallet.locator('[data-focus=outcome]').filter({hasText:permissionText}).waitFor();
       status='refused';await nextPoll();
-      await t.test('refusal gives a true sentence and a working next step',async()=>assert.equal(await text(),'Internet access is off for WalletConnect.'));
+      await t.test('refusal gives a true sentence and a working next step',async()=>assert.equal(await text(),'Internet access for WalletConnect is off.'));
     } else {
       status='revoked';revision++;keys={};await wallet.locator('[data-focus=outcome]').filter({hasText:turnedOff}).waitFor({timeout:10000});
       assert.equal(await wallet.locator('[role=dialog]').count(),0,'Turn Off removes the QR');

@@ -93,7 +93,7 @@ test('late needs: missing catalog labels use Requesting app for every actor ID',
 });
 
 test('final needs: Home response checking keeps its local stop and never claims a recorded result',()=>{
- const plain=connectionView({window:'walletconnect',stage:'checking-response'});assert.equal(plain.request,null);assert.equal(plain.focus,'stop-waiting');assert.match(viewText(plain.status),/Home is checking the response/);assert.equal(plain.walletResult.disposition,null);
+ const plain=connectionView({window:'walletconnect',stage:'checking-response'});assert.equal(plain.request,null);assert.equal(plain.focus,'stop-waiting');assert.match(viewText(plain.status),/Home is checking the answer/);assert.equal(plain.walletResult.disposition,null);
  const args=fixtureArguments(states.find(r=>r.designState==='walletconnect/request-phone'));args[0].stage='checking-response';args[0].localReturn=true;args[0].showNextRequests=true;const v=reduceConnection(...args);assert(v.request);assert(!v.actions.some(a=>a.id==='back-to-connection'));assert.equal(v.queueCount,0);assert.match(viewText(v.notice),/Home may still record/);
  const doneArgs=fixtureArguments(states.find(r=>r.designState==='walletconnect/request-done'));const done=reduceConnection(...doneArgs);assert.equal(done.stage,'request-done');
 });

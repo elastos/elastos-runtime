@@ -564,7 +564,7 @@ for (const engine of ['chromium','webkit']) test(`${engine} MetaMask: typed data
         await f.action('send-request').click();
         if(mode==='decline'){
           await f.state('transaction-wallet-error');
-          assert.doesNotMatch(await f.frame.locator('body').innerText(), /Transaction result unknown/);
+          assert.doesNotMatch(await f.frame.locator('body').innerText(), /Home does not know if the transaction was sent/);
           await f.top.evaluate(value=>{emitWallet('chainChanged','0x1');emitWallet('accountsChanged',[value]);},B);
           await f.state('transaction-wallet-error');assert.equal(await f.action('send-request').count(),0);continue;
         }
