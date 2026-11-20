@@ -281,7 +281,7 @@ for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'
   try {
     const f=await fixture(browser,kind,{saved:true,requests:true});try{
       await f.state('request-waiting');await f.action('send-request').click();await f.state('request-done');
-      assert.equal(await f.frame.locator('h1').innerText(),kind==='metamask'?'MetaMask or Brave Wallet':'UniSat');
+      assert.equal(await f.frame.locator('h1').innerText(),kind==='metamask'?'Your wallet':'UniSat');
       assert.match(await f.frame.locator('.connection-heading img').getAttribute('src'),new RegExp('connection-'+(kind==='metamask'?'wallet':kind)));
       // Existing response schema permits these statuses. This is a projection
       // check: today's pending-only Runtime endpoint normally omits them.

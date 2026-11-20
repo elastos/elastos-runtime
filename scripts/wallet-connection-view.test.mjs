@@ -8,7 +8,7 @@ import { contractCopy } from './lib/wallet-connection-picture-oracle.mjs';
 
 test('closed view covers the three connector tables and Wallet connect panel', () => {
   assert.deepEqual(Object.fromEntries(Object.entries(stageNames).map(([key, rows]) => [key, rows.length])),
-    { walletconnect: 78, metamask: 65, unisat: 53, panel: 11 });
+    { walletconnect: 78, metamask: 66, unisat: 53, panel: 11 });
   assert.throws(() => connectionView({ window: 'metamask', stage: 'raw-wallet-error' }));
 });
 
@@ -190,7 +190,7 @@ test('import and model construction work with browser/effect globals forbidden',
     const {connectionView}=await import(process.argv[1]);
     const input=Object.freeze({window:'metamask',stage:'ready'});
     const view=connectionView(input);
-    if(view.title!=='MetaMask or Brave Wallet')throw new Error('view');
+    if(view.title!=='Your wallet')throw new Error('view');
   `,new URL('../capsules/_shared/wallet-connection-view.mjs',import.meta.url).href],{encoding:'utf8',timeout:10000});
   assert.equal(result.status,0,result.stderr);
 });

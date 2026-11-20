@@ -11,7 +11,7 @@ const METAMASK_CONNECTOR_ID = "wallet-metamask";
 const UNISAT_CONNECTOR_ID = "wallet-unisat";
 const CONNECTOR_IDS = new Set([METAMASK_CONNECTOR_ID, UNISAT_CONNECTOR_ID]);
 const METAMASK_RDNS = "io.metamask";
-const BRAVE_RDNS = "com.brave.wallet";
+const EIP6963_RDNS_PATTERN = /^[a-z0-9]+(?:\.[a-z0-9-]+)+$/;
 const MAX_EIP6963_PROVIDERS = 32;
 const MAX_EFFECT_REQUESTS_PER_FRAME = 64;
 const OPAQUE_FRAME_TARGET = "*";
@@ -144,14 +144,29 @@ export function handleHomeWalletConnectorEffect(event, context, data) {
   return true;
 }
 
+function boundedWalletName(value) {
+  const name = readText(value);
+  if (!name || name.length > 80) {
+    return null;
+  }
+  const bytes = new TextEncoder().encode(name);
+  if (bytes.length > 320 || /[<>&]/.test(name)) {
+    return null;
+  }
+  return name;
+}
+
 function installEip6963Discovery() {
   window.addEventListener("eip6963:announceProvider", (event) => {
     const info = event?.detail?.info;
     const provider = event?.detail?.provider;
     const rdns = readText(info?.rdns).toLowerCase();
     const uuid = readText(info?.uuid);
+    const name = boundedWalletName(info?.name);
     if (
-      ![METAMASK_RDNS, BRAVE_RDNS].includes(rdns)
+      !rdns
+      || rdns.length > 128
+      || !EIP6963_RDNS_PATTERN.test(rdns)
       || !uuid
       || uuid.length > 128
       || !provider
@@ -166,7 +181,7 @@ function installEip6963Discovery() {
     if (!eip6963Providers.some((entry) => (
       entry.provider === provider && entry.rdns === rdns && entry.uuid === uuid
     ))) {
-      eip6963Providers.push({ provider, rdns, uuid });
+      eip6963Providers.push({ provider, rdns, uuid, name });
     }
   });
   requestEip6963Providers();
@@ -179,62 +194,82 @@ function requestEip6963Providers() {
   window.dispatchEvent(new Event("eip6963:requestProvider"));
 }
 
-function selectMetaMaskCompatibleProvider() {
-  requestEip6963Providers();
-  if (eip6963Overflow) {
-    throw new Error("Injected wallet provider discovery is ambiguous.");
-  }
-  const matching = eip6963Providers.filter((entry) => (
-    entry.rdns === METAMASK_RDNS || entry.rdns === BRAVE_RDNS
-  ));
-  for (const entry of matching) {
-    const identities = new Set(
-      matching.filter((candidate) => candidate.provider === entry.provider)
-        .map((candidate) => candidate.rdns),
-    );
+function assertEip6963IdentityConsistency(entries) {
+  for (const entry of entries) {
+    const related = entries.filter((candidate) => candidate.provider === entry.provider);
+    const identities = new Set(related.map((candidate) => candidate.rdns));
     const uuids = new Set(
-      matching
-        .filter((candidate) => (
-          candidate.provider === entry.provider && candidate.rdns === entry.rdns
-        ))
+      related
+        .filter((candidate) => candidate.rdns === entry.rdns)
         .map((candidate) => candidate.uuid),
     );
     if (identities.size !== 1 || uuids.size !== 1) {
       throw new Error("Injected wallet provider identities conflict.");
     }
   }
-  const providersFor = (rdns) => [
-    ...new Set(matching.filter((entry) => entry.rdns === rdns).map((entry) => entry.provider)),
-  ];
-  const metamask = providersFor(METAMASK_RDNS);
-  const brave = providersFor(BRAVE_RDNS);
-  if (metamask.length > 1 || brave.length > 1) {
+}
+
+function uniqueProvidersForRdns(entries, rdns) {
+  return [...new Set(entries.filter((entry) => entry.rdns === rdns).map((entry) => entry.provider))];
+}
+
+function selectMetaMaskCompatibleProvider(walletUuid) {
+  requestEip6963Providers();
+  if (eip6963Overflow) {
     throw new Error("Injected wallet provider discovery is ambiguous.");
   }
-  if (metamask.length === 1) {
-    return metamask[0];
+  const entries = eip6963Providers;
+  assertEip6963IdentityConsistency(entries);
+  const chosenUuid = walletUuid ? readText(walletUuid) : "";
+  if (chosenUuid) {
+    if (!boundedText(chosenUuid, 128)) {
+      throw new Error("The selected browser wallet is not available.");
+    }
+    const selected = entries.find((entry) => entry.uuid === chosenUuid);
+    if (!selected) {
+      throw new Error("The selected browser wallet is not available.");
+    }
+    return selected.provider;
   }
-  if (brave.length === 1) {
-    return brave[0];
+  const metamaskProviders = uniqueProvidersForRdns(entries, METAMASK_RDNS);
+  if (metamaskProviders.length > 1) {
+    throw new Error("Injected wallet provider discovery is ambiguous.");
   }
-  throw new Error("MetaMask or Brave Wallet was not found in this browser profile.");
+  if (metamaskProviders.length === 1) {
+    return metamaskProviders[0];
+  }
+  const nonMetamask = entries.filter((entry) => entry.rdns !== METAMASK_RDNS);
+  const byProvider = new Map();
+  for (const entry of nonMetamask) {
+    if (!byProvider.has(entry.provider)) {
+      byProvider.set(entry.provider, entry);
+    }
+  }
+  const candidates = [...byProvider.values()];
+  if (candidates.length === 1) {
+    return candidates[0].provider;
+  }
+  if (candidates.length > 1) {
+    throw new Error("Choose a browser wallet in the connection window.");
+  }
+  throw new Error("Home could not find a browser wallet in this browser.");
 }
 
 async function performConnectorEffect(connectorId, connectorToken, action) {
   if (connectorId === METAMASK_CONNECTOR_ID && action.kind === "link") {
-    return linkEvmWallet(connectorToken);
+    return linkEvmWallet(connectorToken, action.walletUuid ?? null);
   }
   if (connectorId === UNISAT_CONNECTOR_ID && action.kind === "link") {
     return linkBitcoinWallet(connectorToken);
   }
   if (action.kind === "approve") {
-    return completeApproval(connectorId, connectorToken, action.approvalRequestId);
+    return completeApproval(connectorId, connectorToken, action.approvalRequestId, action.walletUuid ?? null);
   }
   throw new Error("Unsupported wallet request.");
 }
 
-async function linkEvmWallet(connectorToken) {
-  const provider = selectMetaMaskCompatibleProvider();
+async function linkEvmWallet(connectorToken, walletUuid) {
+  const provider = selectMetaMaskCompatibleProvider(walletUuid);
   observeWalletProvider(provider, METAMASK_CONNECTOR_ID);
   const accounts = await provider.request({ method: "eth_requestAccounts" });
   const address = requireEvmAddress(firstProviderAccount(accounts));
@@ -292,9 +327,9 @@ async function linkBitcoinWallet(connectorToken) {
   return Object.freeze({ status: "linked" });
 }
 
-async function completeApproval(connectorId, connectorToken, approvalRequestId) {
+async function completeApproval(connectorId, connectorToken, approvalRequestId, walletUuid) {
   const provider = connectorId === METAMASK_CONNECTOR_ID
-    ? selectMetaMaskCompatibleProvider()
+    ? selectMetaMaskCompatibleProvider(walletUuid)
     : requireUniSatProvider();
   observeWalletProvider(provider, connectorId);
   const encodedRequestId = encodeURIComponent(approvalRequestId);
@@ -743,16 +778,30 @@ async function runtimePost(url, body) {
   });
 }
 
+function validWalletUuid(value) {
+  return typeof value === "string" && boundedText(value, 128) && readText(value) === value;
+}
+
 function validAction(action) {
   if (!action || typeof action !== "object" || Array.isArray(action)) {
     return false;
   }
   if (action.kind === "link") {
-    return hasExactKeys(action, ["kind"]);
+    if (hasExactKeys(action, ["kind"])) {
+      return true;
+    }
+    return hasExactKeys(action, ["kind", "walletUuid"]) && validWalletUuid(action.walletUuid);
   }
-  return action.kind === "approve"
-    && hasExactKeys(action, ["kind", "approvalRequestId"])
-    && validApprovalRequestId(action.approvalRequestId);
+  if (action.kind === "approve") {
+    if (hasExactKeys(action, ["kind", "approvalRequestId"])
+      && validApprovalRequestId(action.approvalRequestId)) {
+      return true;
+    }
+    return hasExactKeys(action, ["kind", "approvalRequestId", "walletUuid"])
+      && validApprovalRequestId(action.approvalRequestId)
+      && validWalletUuid(action.walletUuid);
+  }
+  return false;
 }
 
 function validRequestId(value) {

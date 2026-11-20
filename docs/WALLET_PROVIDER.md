@@ -221,7 +221,7 @@ The default wallet path is now:
 
 The optional injected-wallet path is:
 
-`passkey unlock -> open opaque approval-method connector capsule -> send one closed link intent to trusted Home -> Home discovers exact MetaMask or Brave fallback -> Runtime validates matching Home + connector launch-token v4 authority -> Runtime issues SIWE challenge -> Home signs only that challenge -> wallet-provider verifies and links account + connector_id to the existing principal -> audit -> revoke -> prove replay/expiry/wrong-chain/wrong-origin/wrong-connector fail closed`
+`passkey unlock -> open opaque approval-method connector capsule -> send one closed link intent to trusted Home -> Home discovers announced EIP-6963 Ethereum providers (MetaMask preferred when exactly one is announced; otherwise a single announced wallet or an explicit person choice) -> Runtime validates matching Home + connector launch-token v4 authority -> Runtime issues SIWE challenge -> Home signs only that challenge -> wallet-provider verifies and links account + connector_id to the existing principal -> audit -> revoke -> prove replay/expiry/wrong-chain/wrong-origin/wrong-connector fail closed`
 
 The built-in Bitcoin proof path is now:
 

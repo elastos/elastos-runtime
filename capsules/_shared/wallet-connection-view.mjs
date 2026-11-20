@@ -24,19 +24,27 @@ const brands = { walletconnect: 'WalletConnect', metamask: 'MetaMask', unisat: '
 const unknownRecoveryStages = new Set(['extension-busy','link-busy','request-busy']);
 const approves = id => ['connect','restore-access','send-request','send-message','finish'].includes(id);
 const providerCopy = { 'io.metamask': 'MetaMask', 'com.brave.wallet': 'Brave Wallet', unisat: 'UniSat' };
-const providerKeys = ['providerId', 'alternatives', 'availability', 'firstAccount', 'requiredAccountAvailable', 'network', 'networkIssue', 'access', 'busy', 'paymentPending'];
+const providerKeys = ['providerId', 'displayName', 'alternatives', 'availability', 'firstAccount', 'requiredAccountAvailable', 'network', 'networkIssue', 'access', 'busy', 'paymentPending'];
 const providers = new Set(['io.metamask', 'com.brave.wallet', 'unisat', null]);
+const extensionRdns = (value) => typeof value === 'string' && value.length <= 128 && /^[a-z0-9]+(?:\.[a-z0-9-]+)+$/.test(value);
+const plainWalletName = (value) => typeof value === 'string' && value.length > 0 && value.length <= 80
+  && new TextEncoder().encode(value).length <= 320 && !/[<>&]/.test(value);
+const dataWalletIcon = (value) => value === null || (typeof value === 'string' && value.length <= 4096
+  && /^data:image\/(?:png|jpeg|webp|gif|svg\+xml);base64,[A-Za-z0-9+/]+=*$/.test(value));
 const bounded = (value, max) => typeof value === 'string' && [...value].length <= max;
 const plain = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const requireValue = (valid, message) => { if (!valid) throw new TypeError(message); };
 const boolOrNull = (value) => value === null || typeof value === 'boolean';
 const clone = (value) => structuredClone(value);
-export const connectionActionIds=Object.freeze([...new Set([...Object.values(screens).flatMap(window=>Object.values(window).flatMap(screen=>[screen.primary,...(screen.secondary||[]),screen.requestAction,screen.reviewAction].filter(Boolean).map(a=>a.id))),'copy-address','disconnect','copy-link','select-request','view-requests','create','import','use-metamask','use-unisat','back-to-connection'])]);
+export const connectionActionIds=Object.freeze([...new Set([...Object.values(screens).flatMap(window=>Object.values(window).flatMap(screen=>[screen.primary,...(screen.secondary||[]),screen.requestAction,screen.reviewAction].filter(Boolean).map(a=>a.id))),'copy-address','disconnect','copy-link','select-request','select-wallet','view-requests','create','import','use-metamask','use-unisat','back-to-connection'])]);
 export const stageNames = Object.freeze(Object.fromEntries(Object.entries(screens).map(([key, value]) => [key, Object.freeze(Object.keys(value))])));
 
 export function reduceProvider(snapshot) {
   requireValue(plain(snapshot) && Object.keys(snapshot).length === providerKeys.length && providerKeys.every(key => Object.hasOwn(snapshot, key)), 'closed provider snapshot');
-  requireValue(providers.has(snapshot.providerId) && Array.isArray(snapshot.alternatives) && snapshot.alternatives.length <= 1 && snapshot.alternatives.every(p => p !== null && p !== snapshot.providerId && providers.has(p)), 'provider enum');
+  requireValue((snapshot.providerId === null || snapshot.providerId === 'unisat' || extensionRdns(snapshot.providerId))
+    && (snapshot.displayName === null || plainWalletName(snapshot.displayName)), 'provider enum');
+  requireValue(Array.isArray(snapshot.alternatives) && snapshot.alternatives.length <= 1
+    && snapshot.alternatives.every(p => p !== null && p !== snapshot.providerId && (p === 'unisat' || extensionRdns(p))), 'provider enum');
   requireValue(['unknown', 'found', 'absent', 'unavailable'].includes(snapshot.availability) && ['unknown', 'available', 'empty', 'lost'].includes(snapshot.access), 'provider facts');
   requireValue(typeof snapshot.busy === 'boolean' && boolOrNull(snapshot.paymentPending) && boolOrNull(snapshot.requiredAccountAvailable), 'provider safety');
   requireValue(snapshot.firstAccount === null || bounded(snapshot.firstAccount, 128) && (/^0x[0-9a-f]{40}$/.test(snapshot.firstAccount) || /^(bc1|[13])[A-Za-z0-9]+$/.test(snapshot.firstAccount)), 'first account');
@@ -123,7 +131,7 @@ export function reduceConnection(input, { message, safetyMessage, summary, other
   let account=input.account;
   if(!account && screens[input.window]?.[stage]?.selectedAccount && provider?.firstAccount){
     const networks={'eip155:1':'Ethereum','eip155:8453':'Base','eip155:20':'Elastos Smart Chain','bip122:000000000019d6689c085ae165831e93':'Bitcoin'};
-    account={name:providerCopy[provider.providerId]||'Your wallet',mark:provider.providerId==='unisat'?'unisat':provider.providerId==='io.metamask'?'metamask':'wallet',connection:null,accounts:[{address:provider.firstAccount,networks:[networks[provider.network]||'Selected network']}]};
+    account={name:provider.displayName||providerCopy[provider.providerId]||'Your wallet',mark:provider.providerId==='unisat'?'unisat':provider.providerId==='io.metamask'?'metamask':'wallet',connection:null,accounts:[{address:provider.firstAccount,networks:[networks[provider.network]||'Selected network']}]};
   }
   return connectionView({ ...input, stage, provider, summary: request, requestContext, account, waitSeconds, walletResult, alternativeAllowed: reduceAlternative(alternative),
     otherRequests: otherSummaries.map(s => reduceSummary(s, { connector, audience })).filter(Boolean) });
@@ -148,8 +156,13 @@ function windowManualClose(window) {
     : "Close this window with Home's window controls.";
 }
 
+function reduceWalletChoice(row) {
+  requireValue(plain(row) && Object.keys(row).length === 3 && bounded(row.id, 128) && plainWalletName(row.name) && dataWalletIcon(row.icon), 'closed wallet choice');
+  return { id: row.id, name: row.name, icon: row.icon };
+}
+
 export function connectionView(input) {
-  const allowed = ['window', 'stage', 'provider', 'summary', 'otherRequests', 'account', 'waitSeconds', 'qrData', 'homeOrigin', 'localSafety', 'compact', 'alternativeAllowed', 'previousFocus', 'targetNetwork', 'walletResult', 'transactionDisplay', 'requestContext','supportedActions','copyFeedback','connectionNotice','currentSelection','localReturn','transactionHash','showNextRequests','linkedConnection'];
+  const allowed = ['window', 'stage', 'provider', 'summary', 'otherRequests', 'account', 'waitSeconds', 'qrData', 'homeOrigin', 'localSafety', 'compact', 'alternativeAllowed', 'previousFocus', 'targetNetwork', 'walletResult', 'transactionDisplay', 'requestContext','supportedActions','copyFeedback','connectionNotice','currentSelection','localReturn','transactionHash','showNextRequests','linkedConnection','walletChoices'];
   requireValue(plain(input) && Object.keys(input).every(key => allowed.includes(key)), 'closed view input');
   const { window, stage } = input;
   requireValue(Object.hasOwn(screens, window) && Object.hasOwn(screens[window], stage), 'closed window/stage');
@@ -164,7 +177,7 @@ export function connectionView(input) {
   const currentSelection=input.currentSelection?clone(input.currentSelection):null;
   requireValue(!currentSelection||plain(currentSelection)&&Object.keys(currentSelection).length===2&&bounded(currentSelection.address,128)&&bounded(currentSelection.network,80),'closed current selection');
   const provider = input.provider ? reduceProvider(input.provider) : null;
-  requireValue(!provider?.providerId || (window === 'unisat' ? provider.providerId === 'unisat' : window === 'metamask' ? provider.providerId !== 'unisat' : true), 'provider belongs to window');
+  requireValue(!provider?.providerId || (window === 'unisat' ? provider.providerId === 'unisat' : window === 'metamask' ? provider.providerId === null || extensionRdns(provider.providerId) : providers.has(provider.providerId)), 'provider belongs to window');
   requireValue(!provider || (window === 'unisat' ? provider.alternatives.length === 0 : provider.alternatives.every(p=>p!=='unisat')), 'provider alternatives belong to window');
   const summary = input.summary ? summaryProjection(input.summary) : null;
   const requestScreen=!!screen.request||!!screen.optionalRequest&&!!summary;
@@ -180,11 +193,13 @@ export function connectionView(input) {
   const account = accountDisplay(input.account, window, requestScreen?summary:null);
   const safety = window === 'walletconnect' ? input.localSafety ?? null : provider?.paymentPending ?? null;
   requireValue(boolOrNull(safety), 'payment safety');
-  const providerName=provider?.availability==='found'?providerCopy[provider.providerId]:null;
+  const knownWallet=provider?.availability==='found'?(provider.displayName||providerCopy[provider.providerId]||null):null;
   const extension=window==='metamask'||window==='unisat';
-  const name = extension ? providerName||(window==='metamask'?'your wallet':'UniSat') : account?.name || (window==='walletconnect'?'your wallet':brands[window]);
-  const title=extension?providerName||(window==='metamask'?'MetaMask or Brave Wallet':'UniSat'):brands[window];
-  const headingMark=extension?(providerName&&provider.providerId==='io.metamask'?'metamask':providerName&&provider.providerId==='unisat'?'unisat':'wallet'):window;
+  const name = extension
+    ? (knownWallet || (window === 'metamask' ? 'your wallet' : 'UniSat'))
+    : account?.name || (window === 'walletconnect' ? 'your wallet' : brands[window]);
+  const title=extension?(knownWallet||(window==='unisat'?'UniSat':'Your wallet')):brands[window];
+  const headingMark=extension?(provider?.providerId==='io.metamask'?'metamask':provider?.providerId==='unisat'?'unisat':'wallet'):window;
   const home = displayOrigin(input.homeOrigin);
   requireValue(input.targetNetwork===undefined||bounded(input.targetNetwork,80),'requested network label');
   const values = { wallet: name, network: input.targetNetwork || account?.accounts[0].networks[0] || 'the requested network', alternative: providerCopy[provider?.alternatives[0]] || 'another wallet', app: !summary && !context || (summary?.app || context?.app) === 'Requesting app' ? 'the app' : summary?.app || context?.app || 'the app', site: summary?.site || context?.site || 'the requesting site', home: home ? new URL(home).host : 'this Home' };
@@ -206,9 +221,11 @@ export function connectionView(input) {
   const transactionRisk = transactionHash!==null || safety !== false || (!knownNotSent && summary?.transaction && (screen.dispatched || /timeout|cancelled|reopened|error|removed/.test(stage)));
   if (transactionRisk) notice = notice.replace(/If .*?Reload control\./g, '').replace(', then reload Home using the browser\'s Reload control.', '.').trim();
   if(transactionRisk&&screen.paymentSafeNotice!==undefined)notice=screen.paymentSafeNotice;
-  let actions = screen.requestPicker ? [] : [screen.primary, ...(screen.secondary || []), screen.requestAction, screen.reviewAction].filter(Boolean).map(action);
+  requireValue(input.walletChoices===undefined||Array.isArray(input.walletChoices)&&input.walletChoices.length<=32,'wallet choices');
+  const walletChoices = screen.walletPicker ? (input.walletChoices || []).map(reduceWalletChoice) : [];
+  let actions = screen.walletPicker || screen.requestPicker ? [] : [screen.primary, ...(screen.secondary || []), screen.requestAction, screen.reviewAction].filter(Boolean).map(action);
   if (window !== 'metamask' || input.alternativeAllowed !== true || requestScreen || screen.account || screen.selectedAccount || transactionRisk) actions = actions.filter(a => a.id !== 'use-walletconnect');
-  if (!screen.qr && !screen.requestPicker && !actions.length && !screen.afterAnswer && window !== 'panel') actions.push({id:'close-window',label:parts('Close window'),primary:true,quiet:false});
+  if (!screen.qr && !screen.requestPicker && !screen.walletPicker && !actions.length && !screen.afterAnswer && window !== 'panel') actions.push({id:'close-window',label:parts('Close window'),primary:true,quiet:false});
   if(!['linked','linked-multiple'].includes(stage)&&actions.some(a=>a.primary&&a.id==='close-window')&&!notice.includes('{{close')&&!/close (this )?window/i.test(`${screen.status||''} ${notice}`))notice=`{{close}} ${notice}`.trim();
   const unknownRecovery=safety===null && !knownNotSent && unknownRecoveryStages.has(stage);
   let safetyNotice=transactionRisk&&screen.paymentSafeNotice!==undefined?notice:null;
@@ -255,9 +272,9 @@ export function connectionView(input) {
   if(supported&&!supported.includes('close-window')&&!(window==='walletconnect'&&stage==='disconnecting')&&!actions.some(a=>['cancel','stop-waiting','back-to-connection'].includes(a.id))&&!((summary?.site||context?.site)&&actions.some(a=>approves(a.id)))){
     if(!effectiveNotice.includes('{{close'))effectiveNotice+=' {{close}}';
   }
-  const approvalSite = !screen.requestPicker && (summary?.site||context?.site) && actions.some(a=>approves(a.id));
+  const approvalSite = !screen.requestPicker && !screen.walletPicker && (summary?.site||context?.site) && actions.some(a=>approves(a.id));
   if(approvalSite&&(!supported||supported.includes('close-window'))&&!actions.some(a=>a.id==='close-window'))actions.unshift({id:'close-window',label:parts('Close window'),primary:false,quiet:true});
-  let focus = approvalSite || unknownRecovery || unknownLinkRecovery || screen.requiresSafeRetry&&safety!==false ? 'close-window' : screen.focusOutcome || answered ? 'outcome' : screen.returnFocus ? 'accounts' : screen.qr ? 'copy-link' : screen.requestPicker ? 'select-request' : actions.some(a => a.id === screen.focus) ? screen.focus : screen.focus&&actions.find(a=>a.primary&&a.id==='close-window')?.id||null;
+  let focus = approvalSite || unknownRecovery || unknownLinkRecovery || screen.requiresSafeRetry&&safety!==false ? 'close-window' : screen.focusOutcome || answered ? 'outcome' : screen.returnFocus ? 'accounts' : screen.qr ? 'copy-link' : screen.walletPicker ? 'select-wallet' : screen.requestPicker ? 'select-request' : actions.some(a => a.id === screen.focus) ? screen.focus : screen.focus&&actions.find(a=>a.primary&&a.id==='close-window')?.id||null;
   if(consumedSend)focus='outcome';
   if(approvalSite&&supported&&!supported.includes('close-window'))focus='dismissal';
   if(focus&&!['outcome','accounts','dismissal'].includes(focus)&&!actions.some(a=>a.id===focus)&&!( ['select-request','copy-address'].includes(focus)&&(!supported||supported.includes(focus))))focus=actions.find(a=>a.primary)?.id||actions[0]?.id|| (outcome.length?'outcome':null);
@@ -267,10 +284,10 @@ export function connectionView(input) {
   const legacyFocus=previous?.stage===stage&&!approvalSite&&!answered&&!screen.qr;
   if((sameCard||legacyFocus)&&!screen.qr){
     if(sameCard&&previous.action===null)focus=null;
-    else if((!supported||supported.includes(previous.action))&&bounded(previous.action,40)&&bounded(previous.key,512)&&['copy-address','select-request',...actions.map(a=>a.id)].includes(previous.action)){focus=previous.action;focusKey=previous.key;}
+    else if((!supported||supported.includes(previous.action))&&bounded(previous.action,40)&&bounded(previous.key,512)&&['copy-address','select-request','select-wallet',...actions.map(a=>a.id)].includes(previous.action)){focus=previous.action;focusKey=previous.key;}
     else if(sameCard&&['outcome','accounts','dismissal'].includes(previous.action))focus=previous.action;
   }
-  const wait = screen.wait && !answered && !screen.requestPicker && !consumedSend ? input.waitSeconds : null;
+  const wait = screen.wait && !answered && !screen.requestPicker && !screen.walletPicker && !consumedSend ? input.waitSeconds : null;
   requireValue(wait === null || Number.isSafeInteger(wait) && wait >= 0 && wait <= 86400, 'wait seconds supplied by owner');
   requireValue(!screen.qr || bounded(input.qrData, 200000) && /^data:image\/png;base64,[A-Za-z0-9+/]+=*$/.test(input.qrData), 'local PNG QR data');
   requireValue(input.otherRequests===undefined||Array.isArray(input.otherRequests)&&input.otherRequests.length<=100,'bounded request choices');
@@ -284,7 +301,7 @@ export function connectionView(input) {
   const view = {
     window, stage, requestId, context, supportedActions:supported?clone(supported):null, copyFeedback:parts(copyFeedbacks[input.copyFeedback]), connectionNotice:parts(connectionNotices[input.connectionNotice]), currentSelection, transactionHash, localReturn:input.localReturn===true, title, headingMark, account, selectedAccount: !!screen.selectedAccount,
     showAccount: !!screen.account, requiredAccount: !!screen.requiredAccount||!!(summary&&currentSelection&&(summary.address&&summary.address!==currentSelection.address||account?.accounts[0].networks[0]!==currentSelection.network)), disconnect: screen.disconnect !== false && window === 'walletconnect',
-    request: requestScreen ? summary : null, transactionDisplay, choices, picker: !!screen.requestPicker,
+    request: requestScreen ? summary : null, transactionDisplay, choices, walletChoices, picker: !!(screen.requestPicker || screen.walletPicker),
     queueCount:queued.length, queuePendingCount, queueRecoveryCount, queueRejectedCount, queueDismissedCount, queueOtherCount:queued.length-queuePendingCount-queueRecoveryCount-queueRejectedCount-queueDismissedCount, queueOthers:!!(input.showNextRequests&&!screen.queueCount), status: outcome, notice: parts(effectiveNotice.trim()), afterNote: parts(screen.afterActionsNote),
     wait: wait === null ? null : `Time left: ${Math.floor(wait / 60)}:${String(wait % 60).padStart(2, '0')}`,
     actions, focus, focusKey, answered, walletResult:result, paymentRisk: transactionRisk, compact: input.compact === true,
@@ -422,6 +439,15 @@ export function renderConnection(document, view) {
     }else if(!view.compact){if(view.status.length&&!status.parentNode){if(view.request)destination.prepend(status);else root.append(status);}if(wait)destination.append(wait);if(notice)destination.append(notice);destination.append(controls);}
     else{if(notice)destination.append(notice);if(view.status.length)feedback.append(status);if(wait)feedback.append(wait);feedback.append(controls);}
     for(const request of view.choices){const card=el('article',null,'connection-card connection-request connection-request-choice');const text=el('div');requestIdentity(request,text);card.append(text);if(supports('select-request'))card.append(button({id:'select-request',label:isolated('View request','copy'),quiet:true,key:`select-request:${request.id}`}));if(approvalSite)content.insertBefore(card,destination);else content.append(card);}
+    for (const choice of view.walletChoices || []) {
+      const card = el('article', null, 'connection-card connection-wallet-choice');
+      const header = el('div', null, 'connection-account-header');
+      if (choice.icon) { const img = el('img'); img.src = choice.icon; img.alt = ''; header.append(img); }
+      header.append(el('h2', choice.name, 'connection-account-name'));
+      card.append(header);
+      if (supports('select-wallet')) card.append(button({ id: 'select-wallet', label: isolated('Connect wallet', 'copy'), quiet: false, key: `select-wallet:${choice.id}` }));
+      content.append(card);
+    }
     if(view.afterNote.length){const note=el('p',view.afterNote,'connection-note');if(approvalSite)destination.insertBefore(note,destination.querySelector('.connection-approval-unit'));else content.append(note);}
   }
   root.append(content);

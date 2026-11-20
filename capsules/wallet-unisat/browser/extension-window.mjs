@@ -20,6 +20,12 @@ export function startExtensionWindow(kind, homeClipboard) {
   let accountEvent = null, networkEvent = null, disconnected = false;
   let preflightFailure = null, refusal = null;
   let providerAvailability = 'unknown';
+  const METAMASK_RDNS = 'io.metamask';
+  const EIP6963_RDNS_PATTERN = /^[a-z0-9]+(?:\.[a-z0-9-]+)+$/;
+  const MAX_EIP6963_PROVIDERS = 32;
+  const announcedWallets = [];
+  let eip6963Overflow = false;
+  let chosenWalletUuid = null;
   const requestNetworks = new Map();
   let presentation = null;
   const mount = document.querySelector('#connection-root');
@@ -76,6 +82,7 @@ export function startExtensionWindow(kind, homeClipboard) {
     if (kind === 'unisat' && networkEvent !== null && networkEvent !== 'livenet') return networkEvent === 'testnet' ? 'network-changed' : 'network-unknown';
     if (requests.length > 1 && !picked) return 'request-list';
     if (selected) return requests.length > 1 ? 'request-multiple' : selected.transaction ? 'transaction-waiting' : requests.find(request => request.request_id === selected.id)?.intent === 'browser_typed_data_sign' ? 'request-typed-data' : 'request-waiting';
+    if (kind === 'metamask' && needsWalletChoice()) return 'extension-choose-wallet';
     return accountView() ? 'linked' : 'ready';
   }
 
@@ -102,14 +109,116 @@ export function startExtensionWindow(kind, homeClipboard) {
 
   // Home owns every effect. These are the intents this v1 window can perform.
   const supported = ['connect', 'restore-access', 'send-message', 'send-request',
-    'stop-waiting', 'close-window', 'copy-address', 'select-request', 'view-requests', 'refresh-status'];
+    'stop-waiting', 'close-window', 'copy-address', 'select-request', 'select-wallet', 'view-requests', 'refresh-status'];
+
+  function boundedWalletLabel(value) {
+    const name = readText(value);
+    if (!name || name.length > 80 || /[<>&]/.test(name)) return null;
+    if (new TextEncoder().encode(name).length > 320) return null;
+    return name;
+  }
+
+  function boundedWalletIcon(value) {
+    const icon = readText(value);
+    if (!icon || icon.length > 4096) return null;
+    if (!/^data:image\/(?:png|jpeg|webp|gif|svg\+xml);base64,[A-Za-z0-9+/]+=*$/.test(icon)) return null;
+    return icon;
+  }
+
+  function installEip6963Discovery() {
+    window.addEventListener('eip6963:announceProvider', (event) => {
+      const info = event?.detail?.info;
+      const provider = event?.detail?.provider;
+      const rdns = readText(info?.rdns).toLowerCase();
+      const uuid = readText(info?.uuid);
+      const name = boundedWalletLabel(info?.name);
+      const icon = boundedWalletIcon(info?.icon);
+      if (!rdns || rdns.length > 128 || !EIP6963_RDNS_PATTERN.test(rdns) || !uuid || uuid.length > 128
+        || !provider || typeof provider.request !== 'function') return;
+      if (announcedWallets.length >= MAX_EIP6963_PROVIDERS) { eip6963Overflow = true; return; }
+      if (!announcedWallets.some((entry) => entry.provider === provider && entry.rdns === rdns && entry.uuid === uuid)) {
+        announcedWallets.push({ provider, rdns, uuid, name, icon });
+      }
+    });
+    if (typeof window.dispatchEvent === 'function') window.dispatchEvent(new Event('eip6963:requestProvider'));
+  }
+  installEip6963Discovery();
+
+  function autoWalletEntry() {
+    if (eip6963Overflow) return null;
+    const metamask = announcedWallets.filter((entry) => entry.rdns === METAMASK_RDNS);
+    const metamaskProviders = [...new Set(metamask.map((entry) => entry.provider))];
+    if (metamaskProviders.length === 1) return metamask.find((entry) => entry.provider === metamaskProviders[0]);
+    const nonMetamask = announcedWallets.filter((entry) => entry.rdns !== METAMASK_RDNS);
+    const byProvider = new Map();
+    for (const entry of nonMetamask) {
+      if (!byProvider.has(entry.provider)) byProvider.set(entry.provider, entry);
+    }
+    const candidates = [...byProvider.values()];
+    return candidates.length === 1 ? candidates[0] : null;
+  }
+
+  function activeWalletEntry() {
+    if (chosenWalletUuid) return announcedWallets.find((entry) => entry.uuid === chosenWalletUuid) || null;
+    return autoWalletEntry();
+  }
+
+  function needsWalletChoice() {
+    if (kind !== 'metamask' || eip6963Overflow || chosenWalletUuid) return false;
+    if (autoWalletEntry()) return false;
+    const metamask = announcedWallets.filter((entry) => entry.rdns === METAMASK_RDNS);
+    if ([...new Set(metamask.map((entry) => entry.provider))].length === 1) return false;
+    const byProvider = new Map();
+    for (const entry of announcedWallets.filter((entry) => entry.rdns !== METAMASK_RDNS)) {
+      byProvider.set(entry.provider, entry);
+    }
+    return byProvider.size > 1;
+  }
+
+  function walletChoicesList() {
+    const byProvider = new Map();
+    for (const entry of announcedWallets.filter((entry) => entry.rdns !== METAMASK_RDNS)) {
+      if (!byProvider.has(entry.provider)) byProvider.set(entry.provider, entry);
+    }
+    return [...byProvider.values()].map((entry) => ({
+      id: entry.uuid,
+      name: entry.name || entry.rdns,
+      icon: entry.icon,
+    }));
+  }
+
+  function buildProviderSnapshot() {
+    const entry = kind === 'metamask' ? activeWalletEntry() : null;
+    const availability = providerAvailability === 'found' || announcedWallets.length
+      ? 'found' : providerAvailability;
+    if (!entry) {
+      return {
+        providerId: kind === 'unisat' ? 'unisat' : null, displayName: null, alternatives: [], availability,
+        firstAccount: null, requiredAccountAvailable: null, network: null, networkIssue: null, access: 'unknown',
+        busy: false, paymentPending: null,
+      };
+    }
+    return {
+      providerId: entry.rdns, displayName: entry.name, alternatives: [], availability: 'found',
+      firstAccount: null, requiredAccountAvailable: null, network: null, networkIssue: null, access: 'unknown',
+      busy: false, paymentPending: null,
+    };
+  }
+
+  function effectAction(action) {
+    const entry = activeWalletEntry();
+    const walletUuid = chosenWalletUuid || entry?.uuid || null;
+    if (!walletUuid) return action;
+    return { ...action, walletUuid };
+  }
+
   function draw() {
     if (disposed) return;
     const changedDuringRequest = selected && (disconnected || accountEvent && !sameAccount(accountEvent[0], selected.address));
-    const provider = { providerId: kind === 'metamask' ? null : 'unisat', alternatives: [], availability: providerAvailability,
-      firstAccount: null, requiredAccountAvailable: null, network: null, networkIssue: null, access: 'unknown', busy: false, paymentPending: null };
+    const provider = buildProviderSnapshot();
+    const walletChoices = stage === 'extension-choose-wallet' ? walletChoicesList() : [];
     const viewStage = refusal ? 'request-dismissed' : stage;
-    const view = connectionView({ window: kind, stage: viewStage, provider,
+    const view = connectionView({ window: kind, stage: viewStage, provider, walletChoices,
       previousFocus: !document.hasFocus() ? {window:kind,stage:viewStage,requestId:selected?.id || null,action:null,key:null} : undefined,
       account: changedDuringRequest && !refusal && (operation || uncertain || fixedOutcome || selected.status === 'completed') ? null : accountView(), summary: selected,
       otherRequests: requests.map(r => reduceSummary(r, { connector: CONNECTOR_ID })).filter(r => r && r.id !== selected?.id),
@@ -207,7 +316,7 @@ export function startExtensionWindow(kind, homeClipboard) {
     stage = action.kind === 'link' ? 'extension-wait' : selected?.transaction ? 'transaction-extension' : 'request-extension';
     draw();
     try {
-      const result = await requestHomeWalletEffect(action);
+      const result = await requestHomeWalletEffect(effectAction(action));
       // The existing host may finish after Stop waiting. Its real answer wins;
       // stopping the local wait grants neither cancellation nor another send.
       if (disposed) return;
@@ -256,7 +365,8 @@ export function startExtensionWindow(kind, homeClipboard) {
       if (action.kind === 'approve') fixedOutcome = true;
       const prefix = action.kind === 'link' ? 'extension' : selected?.transaction ? 'transaction' : 'request';
       if (message === 'Wallet request timed out.') { uncertain = true; stage = `${prefix}-timeout`; }
-      else if (/was not found in this browser profile/.test(message)) { providerAvailability = 'absent'; stage = 'extension-missing'; }
+      else if (message === 'Choose a browser wallet in the connection window.') { providerAvailability = 'found'; stage = 'extension-choose-wallet'; }
+      else if (/could not find a browser wallet|was not found in this browser profile/.test(message)) { providerAvailability = 'absent'; stage = 'extension-missing'; }
       else if (action.kind === 'link') stage = 'link-error';
       else stage = `${prefix}-wallet-error`;
       draw();
@@ -279,7 +389,13 @@ export function startExtensionWindow(kind, homeClipboard) {
       draw();
     } else if (operation && action !== 'copy-address') return;
     else if (action === 'refresh-status') void refresh();
-    else if (['connect', 'restore-access', 'send-message'].includes(action)) void perform({ kind: 'link' });
+    else if (action === 'select-wallet') {
+      chosenWalletUuid = button.dataset.focusKey.slice('select-wallet:'.length);
+      revision += 1; stage = 'ready'; draw();
+    } else if (['connect', 'restore-access', 'send-message'].includes(action)) {
+      if (needsWalletChoice()) { stage = 'extension-choose-wallet'; draw(); return; }
+      void perform({ kind: 'link' });
+    }
     else if (action === 'send-request' && selected) void perform({ kind: 'approve', approvalRequestId: selected.id });
     else if (action === 'copy-address') {
       const address = button.dataset.focusKey.slice('copy-address:'.length);

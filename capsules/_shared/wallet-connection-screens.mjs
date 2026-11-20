@@ -840,6 +840,12 @@ const definitions = {
         "quiet": false
       }
     },
+    "extension-choose-wallet": {
+      "status": "Choose a browser wallet.",
+      "notice": "Several browser wallets are available in this browser. Choose one to connect through the MetaMask option.",
+      "walletPicker": true,
+      "focus": "select-wallet"
+    },
     "extension-missing": {
       "status": "{{wallet}} was not found here.",
       "notice": "Connect a wallet app with a QR code. If you enable {{wallet}} in this browser, reload Home using your browser's Reload control.",
@@ -2300,8 +2306,8 @@ const requestRecovery='To try again, go back to {{app}} and start a new request.
 for(const window of ['metamask','unisat']){
   for(const screen of Object.values(definitions[window]))if(['To try again, return to {{app}}.','Start a new request in {{app}} to try again.'].includes(screen.notice))screen.notice=requestRecovery;
   for(const stage of ['extension-missing','extensions-unavailable',...(window==='metamask'?['other-ethereum-wallet']:[])]){
-    const screen=definitions[window][stage];screen.status=window==='metamask'?'Home could not find MetaMask or Brave Wallet in this browser.':'Home could not find UniSat in this browser.';
-    screen.notice=window==='metamask'?'{{close}} Open Home in a browser with MetaMask or Brave Wallet, then choose MetaMask in Wallet.':'{{close}} Open Home in a browser where UniSat is available, then open this connection from Wallet.';screen.paymentSafeNotice=screen.notice;
+    const screen=definitions[window][stage];screen.status=window==='metamask'?'Home could not find a browser wallet for the MetaMask option in this browser.':'Home could not find UniSat in this browser.';
+    screen.notice=window==='metamask'?'{{close}} Open Home in a browser where a compatible wallet is available, then choose MetaMask in Wallet.':'{{close}} Open Home in a browser where UniSat is available, then open this connection from Wallet.';screen.paymentSafeNotice=screen.notice;
   }
 }
 for(const window of ['walletconnect','metamask','unisat']){

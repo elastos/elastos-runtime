@@ -92,7 +92,7 @@ test('wording R2: strict title oracle rejects every old Inbox heading',async()=>
 test('wording R2: the view document uses the settled headings and fallback',async()=>{
   const {canonicalRequestTitles}=await import('./lib/wallet-connection-title-oracle.mjs');
   const text=readFileSync(new URL('../capsules/_shared/wallet-connection-view.md',import.meta.url),'utf8').replace(/\s+/g,' ');
-  for(const title of [...Object.values(canonicalRequestTitles),'MetaMask or Brave Wallet','UniSat','Activity in Wallet'])assert.ok(text.includes(title),title);
+  for(const title of [...Object.values(canonicalRequestTitles),'Your wallet','UniSat','Activity in Wallet'])assert.ok(text.includes(title),title);
   assert.doesNotMatch(text,/Wallet approval request|headings and instructions use Browser wallet/);
   assert.match(text,/“Requesting app” as its label and “the app” in instructions/);
 });

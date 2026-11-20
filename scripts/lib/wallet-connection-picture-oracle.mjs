@@ -55,8 +55,8 @@ export function contractCopy(expected, row, view) {
     const metamask=row.window==='metamask';
     if(['ready','focus'].includes(row.stage))result.notice=metamask?`Choose an account in ${name}, then sign the message.`:'Choose an account in UniSat, then sign a message.';
     if(['extension-missing','extensions-unavailable','other-ethereum-wallet'].includes(row.stage)){
-      result.status=metamask?'Home could not find MetaMask or Brave Wallet in this browser.':'Home could not find UniSat in this browser.';
-      result.notice=metamask?'Close this window. Open Home in a browser with MetaMask or Brave Wallet, then choose MetaMask in Wallet.':'Close this window. Open Home in a browser where UniSat is available, then open this connection from Wallet.';
+      result.status=metamask?'Home could not find a browser wallet for the MetaMask option in this browser.':'Home could not find UniSat in this browser.';
+      result.notice=metamask?'Close this window. Open Home in a browser where a compatible wallet is available, then choose MetaMask in Wallet.':'Close this window. Open Home in a browser where UniSat is available, then open this connection from Wallet.';
     }
     if(['extension-wait','link-wait'].includes(row.stage))result.notice=`Find ${name} in your browser's extensions menu. Unlock it if asked. Stopping here does not cancel the request in ${name}.`;
     if(row.stage==='request-extension')result.notice=`Open ${name} from your browser's extensions menu. Stopping here does not cancel the request in ${name}.`;
