@@ -187,7 +187,8 @@ pub(super) async fn step_up_request(
         "Open Inbox from Home, then try again."
     );
     let _guard = state.walletconnect.inner.lock().await;
-    let c = load(&state.data_dir)?.ok_or_else(|| anyhow::anyhow!("Start a WalletConnect connection in Wallet first."))?;
+    let c = load(&state.data_dir)?
+        .ok_or_else(|| anyhow::anyhow!("Start a WalletConnect connection in Wallet first."))?;
     if !((op == GRANT && c.status == "requested") || (op == REVOKE && c.status == "granted")) {
         return Err(ConsentConflict.into());
     }
@@ -205,12 +206,14 @@ pub(super) async fn answer(
         "Open Inbox from Home, then try again."
     );
     let mut inner = state.walletconnect.inner.lock().await;
-    let mut c =
-        load(&state.data_dir)?.ok_or_else(|| anyhow::anyhow!("Start a WalletConnect connection in Wallet first."))?;
+    let mut c = load(&state.data_dir)?
+        .ok_or_else(|| anyhow::anyhow!("Start a WalletConnect connection in Wallet first."))?;
     let (verb, id) = action
         .strip_prefix("walletconnect-internet-")
         .and_then(|v| v.split_once(':'))
-        .ok_or_else(|| anyhow::anyhow!("Home could not complete this WalletConnect request. Try again."))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!("Home could not complete this WalletConnect request. Try again.")
+        })?;
     if id != c.id {
         return Err(ConsentConflict.into());
     }

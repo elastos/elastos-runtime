@@ -8832,7 +8832,10 @@ async fn test_browser_account_access_creates_review_only_inbox_handoff_without_d
         .iter()
         .find(|entry| entry["kind"] == "wallet_approval_request")
         .unwrap();
-    assert_eq!(notification["title"], "Share your wallet address with this site");
+    assert_eq!(
+        notification["title"],
+        "Share your wallet address with this site"
+    );
     assert_eq!(
         notification["action_ref"]["action_id"],
         format!("wallet-review-request:{request_id}")
