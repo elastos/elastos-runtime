@@ -58,7 +58,7 @@ async function fixture() {
         if(state.entry)state.entry.read=true;
       } else if(action.action_id.startsWith("notification-dismiss:"))state.entry=null;
       else throw new Error("Notice attempted an approval");
-      jsonResponse(response,{message:"Saved."});return true;
+      jsonResponse(response,{message:"Done."});return true;
     }
     if (url.pathname === "/api/apps/system/summary") {
       const summary=makeSystemSummary(makeAppearanceRecord());summary.access.role=state.guest?"guest":"admin";
