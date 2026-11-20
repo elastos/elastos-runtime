@@ -606,8 +606,14 @@ async fn n5_guest_request_creates_no_question() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    assert_eq!(response.headers()["x-elastos-error-code"], "walletconnect_admin_required");
-    assert_eq!(response.headers()["access-control-expose-headers"], "x-elastos-error-code");
+    assert_eq!(
+        response.headers()["x-elastos-error-code"],
+        "walletconnect_admin_required"
+    );
+    assert_eq!(
+        response.headers()["access-control-expose-headers"],
+        "x-elastos-error-code"
+    );
     let body = axum::body::to_bytes(response.into_body(), 2048).await.unwrap();
     assert_eq!(
         std::str::from_utf8(&body).unwrap(),
