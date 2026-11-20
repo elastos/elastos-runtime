@@ -2967,15 +2967,16 @@ fn write_home_state_probe(
         .as_ref()
         .and_then(|status| status["detail"].as_str())
     {
-        let detail = if let Some(wait) = detail.strip_prefix("Reconnecting to Community. Next try in ") {
-            format!("reconnecting, next try in {}", wait.trim_end_matches('.'))
-        } else if detail == "Reconnecting to Community" {
-            "reconnecting".to_string()
-        } else if let Some(detail) = detail.strip_prefix("Community is ") {
-            detail.trim_end_matches('.').to_string()
-        } else {
-            detail.to_string()
-        };
+        let detail =
+            if let Some(wait) = detail.strip_prefix("Reconnecting to Community. Next try in ") {
+                format!("reconnecting, next try in {}", wait.trim_end_matches('.'))
+            } else if detail == "Reconnecting to Community" {
+                "reconnecting".to_string()
+            } else if let Some(detail) = detail.strip_prefix("Community is ") {
+                detail.trim_end_matches('.').to_string()
+            } else {
+                detail.to_string()
+            };
         writeln!(out, "  Community: {detail}")?;
     }
     if snapshot.room.pending_count > 0 {
@@ -3458,6 +3459,27 @@ mod tests {
         assert!(text.contains("2 Carrier peers known"));
         assert!(!text.contains("peers reachable"));
         assert!(!text.contains("2 reachable"));
+        for (state, detail, expected) in [
+            (
+                "unconfigured",
+                "Community is not set up on this Home.",
+                "not set up on this Home",
+            ),
+            ("connected", "Community is connected.", "connected"),
+            (
+                "reconnecting",
+                "Reconnecting to Community. Next try in 1 second.",
+                "reconnecting, next try in 1 second",
+            ),
+            ("reconnecting", "Reconnecting to Community", "reconnecting"),
+        ] {
+            snapshot.runtime.community = Some(serde_json::json!({"state":state, "detail":detail}));
+            let mut output = Vec::new();
+            write_home_state_probe(&mut output, &snapshot).unwrap();
+            let text = String::from_utf8(output).unwrap();
+            assert!(text.contains(&format!("  Community: {expected}\n")));
+            assert!(text.contains("2 Carrier peers known"));
+        }
     }
 
     #[test]
