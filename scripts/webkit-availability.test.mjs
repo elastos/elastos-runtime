@@ -27,7 +27,8 @@ function webkitEntries(){
   // This helper's regression deliberately injects an invalid executable to
   // prove cleanup after failed acquisition; it is not an optional engine run.
   if(path.endsWith('/walletconnect-window-resources.test.mjs'))continue;
-  if(/(?:\.test|-smoke)\.mjs$/.test(path)&&/["']webkit["']/.test(source))entries.push({path,source});
+  const selectsWebKit=/\[[^\]\n]*["']webkit["'][^\]\n]*\]|\bwebkit\.launch\s*\(|\b\w*ENGINE\w*\s*:\s*["']webkit["']/.test(source);
+  if(/(?:\.test|-smoke)\.mjs$/.test(path)&&selectsWebKit)entries.push({path,source});
  }
  return entries.sort((a,b)=>a.path.localeCompare(b.path));
 }
