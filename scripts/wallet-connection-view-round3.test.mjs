@@ -11,7 +11,7 @@ const deepFreeze=value=>{if(value&&typeof value==='object'){Object.values(value)
 test('B5: W986 unavailable message and transaction preserve exact recovery and never offer Send',()=>{
   for(const intent of ['browser_personal_sign','transaction_intent']){
     const v=reduceConnection({window:'metamask',stage:intent==='transaction_intent'?'transaction-waiting':'request-waiting',waitSeconds:300},{message:packet('outcome-request_unavailable'),summary:{...seed,intent},nowSeconds:1800000001});
-    assert.equal(v.stage,'request-unavailable');assert.match(viewText(v.status),row.window==='walletconnect'?/Start a new one/:/new request/);
+    assert.equal(v.stage,'request-unavailable');assert.match(viewText(v.status),/new request/);
     assert.equal(viewText(v.notice),'');assert(!v.actions.some(a=>a.id==='send-request'));assert.equal(v.focus,'outcome');assert.equal(v.wait,null);
   }
 });

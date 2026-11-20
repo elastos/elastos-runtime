@@ -891,7 +891,7 @@ async function run() {
     await lateFrame.locator("#wallet-activity-open").click();
     const lateRow = lateFrame.locator(".wallet-activity-row");
     assert(await lateRow.count() === 1, "late receipt stays on one Activity line");
-    assert((await lateRow.textContent()).includes("Dismissed request. Your wallet reported this transaction as sent"), "late receipt explains the dismissed send");
+    assert((await lateRow.textContent()).includes("Dismissed, but your wallet reported it as sent"), "late receipt explains the dismissed send");
     assert((await lateRow.textContent()).includes(server.state.approvals[0].transaction_hash), "late receipt keeps the full hash available");
     await railPage.setViewportSize({ width: 390, height: 844 });
     await lateFrame.locator("#wallet-activity-drawer").evaluate(async drawer => {

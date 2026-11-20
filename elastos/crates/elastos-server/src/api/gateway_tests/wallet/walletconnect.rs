@@ -594,7 +594,10 @@ async fn n5_guest_request_creates_no_question() {
         .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert_eq!(error["code"], "walletconnect_admin_required");
-    assert_eq!(error["message"], "Ask an admin of this Home to open WalletConnect, choose Connect wallet, then allow internet access in Inbox.");
+    assert_eq!(
+        error["message"],
+        "Ask an admin of this Home to open WalletConnect, choose Connect wallet, then allow internet access in Inbox."
+    );
     assert!(!path.exists(), "guest request creates no owner question");
     let (first, second) = tokio::join!(
         f.route(&f.connector, INTERNET, Some(json!({"action":"request"}))),

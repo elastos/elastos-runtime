@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {windowTestOptions} from './lib/walletconnect-window-resources.mjs';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {connectionView, reduceSummary, stageNames, connectionActionIds, viewText} from '../capsules/_shared/wallet-connection-view.mjs';
@@ -45,10 +46,7 @@ test('wording R2: shared copy uses straight apostrophes',()=>{
   }
 });
 
-for(const engine of ['chromium','webkit'])test('wording R2: render all three windows in '+engine,async t=>{
-  const {windowTestOptions}=await import('./lib/walletconnect-window-resources.mjs');
-  const options=windowTestOptions(engine);
-  if(options.skip){t.skip(options.skip);return;}
+for(const engine of ['chromium','webkit'])test('wording R2: render all three windows in '+engine,windowTestOptions(engine),async t=>{
   const {browserFixture}=await import('./lib/wallet-connection-browser-fixture.mjs');
   const f=await browserFixture(engine);
   try{
@@ -74,9 +72,9 @@ test('wording R2: strict title oracle rejects every old Inbox heading',async()=>
   sources[rustTitlePath].source='fn wallet_approval_title(intent: &str) -> String {\n    match intent {\n'+Object.entries(canonicalRequestTitles).map(([intent,title])=>'        '+(intent==='unknown_kind'?'_':JSON.stringify(intent))+' => '+JSON.stringify(title)+'.to_string(),').join('\n')+'\n    }\n}';
   const reduce=intent=>reduceSummary({...seed,intent},{connector:'wallet-metamask'}).title;
   await assertTitleSources(reduce,sources);
-  for(const [settled,old] of [['Review sign-in request','Wallet sign-in request'],['Review access request','Wallet access request'],['Sign a credential','Credential signing request'],['Review publishing request','Publish approval request'],['Share your wallet address with this site','Browser account access request'],['Confirm this Bitcoin account is yours','Bitcoin proof request'],['Review request','Wallet approval request']]){
+  for(const [settled,old] of [['Review sign-in request','Wallet sign-in request'],['Review access request','Wallet access request'],['Sign a credential','Credential signing request'],['Review publishing request','Publish approval request'],['Share your wallet address with this site','Browser account access request'],['Confirm this Bitcoin account is yours','Bitcoin proof request'],['Review request','Revocation approval request'],['Review request','Wallet approval request']]){
     const broken=structuredClone(sources);
-    broken[rustTitlePath].source=broken[rustTitlePath].source.replace(settled,old);
+    broken[rustTitlePath].source=old==='Wallet approval request'?broken[rustTitlePath].source.replace(/(_\s*=>\s*")[^"]+(")/,'$1'+old+'$2'):broken[rustTitlePath].source.replace(settled,old);
     await assert.rejects(()=>assertTitleSources(reduce,broken),assert.AssertionError);
   }
 });
