@@ -288,7 +288,8 @@ test("update notice uses real Inbox, bell and System navigation; switch saves an
       await page.evaluate(()=>document.querySelector('#system-frame').contentWindow.postMessage({
         type:'elastos:runtime-events',schema:'elastos.home.runtime-events/v1',events:[],
       },'*'));
-      await system.getByText(f.state.settings.message,{exact:true}).waitFor({timeout:5000});
+      await system.locator('#update-background-message').getByText(f.state.settings.message,{exact:true}).waitFor({timeout:5000});
+      assert.equal(await system.getByText(f.state.settings.message,{exact:true}).count(),1,field+' change shows the repair text once');
       assert.equal(await system.getByText(copy('SAVE_ERROR'),{exact:true}).count(),0,field+' change clears old feedback');
     }
     f.state.failWrite=false;f.state.settings=preference(false,false);await page.reload();

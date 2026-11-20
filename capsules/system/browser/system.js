@@ -3860,6 +3860,7 @@ async function onBackgroundChange() {
       : error.status === 409
         ? runtimeUpdate.background_checks.save_error
         : "Home could not confirm your change. Try again.";
+    renderRuntimeUpdate(runtimeUpdate);
     renderUpdateNotice();
   } finally {
     backgroundBusy = false;
@@ -3874,7 +3875,6 @@ function configureUpdateNotice() {
 
 function renderUpdateNotice() {
   const background = runtimeUpdate?.background_checks;
-  if (backgroundSettingState(background) !== backgroundSaveState) backgroundSaveError = "";
   const backgroundNode = document.querySelector("#update-background");
   if (backgroundNode) backgroundNode.hidden = runtimeUpdateNode.hidden || !background;
   if (background && backgroundChoice) {
@@ -3882,7 +3882,6 @@ function renderUpdateNotice() {
     backgroundChoice.disabled = backgroundBusy;
     document.querySelector("#update-background-label").textContent = background.label;
     document.querySelector("#update-background-message").textContent = backgroundSaveError || background.message;
-    if (backgroundSaveError && runtimeUpdate?.message === background.message) showRuntimeUpdateStatus(runtimeUpdate.message);
   }
   if (focusUpdateRequested && !runtimeUpdateNode.hidden) focusUpdateCard();
 }
@@ -3945,6 +3944,7 @@ function runtimeUpdateControllerBusy() {
 function renderRuntimeUpdate(update) {
   const previous = runtimeUpdate?.controller;
   runtimeUpdate = update && typeof update === "object" ? update : null;
+  if (backgroundSettingState(runtimeUpdate?.background_checks) !== backgroundSaveState) backgroundSaveError = "";
   const current = runtimeUpdate?.controller;
   // An atomic advisory-file replacement can leave one poll without counters.
   // Keep this update's received count; the latest poll owns its total.
