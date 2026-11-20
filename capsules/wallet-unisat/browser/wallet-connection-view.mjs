@@ -184,6 +184,7 @@ export function connectionView(input) {
   const extension=window==='metamask'||window==='unisat';
   const name = extension ? providerName||(window==='metamask'?'your wallet':'UniSat') : account?.name || (window==='walletconnect'?'your wallet':brands[window]);
   const title=extension?providerName||(window==='metamask'?'MetaMask or Brave Wallet':'UniSat'):brands[window];
+  const accountMark=extension?(providerName&&provider.providerId==='io.metamask'?'metamask':providerName&&provider.providerId==='unisat'?'unisat':'wallet'):account?.mark;
   const home = displayOrigin(input.homeOrigin);
   requireValue(input.targetNetwork===undefined||bounded(input.targetNetwork,80),'requested network label');
   const values = { wallet: name, network: input.targetNetwork || account?.accounts[0].networks[0] || 'the requested network', alternative: providerCopy[provider?.alternatives[0]] || 'another wallet', app: !summary && !context || (summary?.app || context?.app) === 'Requesting app' ? 'the app' : summary?.app || context?.app || 'the app', site: summary?.site || context?.site || 'the requesting site', home: home ? new URL(home).host : 'this Home' };
@@ -281,7 +282,7 @@ export function connectionView(input) {
   const queueRejectedCount=queued.filter(r=>r.status==='rejected').length;
   const queueDismissedCount=queued.filter(r=>r.status==='dismissed').length;
   const view = {
-    window, stage, requestId, context, supportedActions:supported?clone(supported):null, copyFeedback:parts(copyFeedbacks[input.copyFeedback]), connectionNotice:parts(connectionNotices[input.connectionNotice]), currentSelection, transactionHash, localReturn:input.localReturn===true, title, account, selectedAccount: !!screen.selectedAccount,
+    window, stage, requestId, context, supportedActions:supported?clone(supported):null, copyFeedback:parts(copyFeedbacks[input.copyFeedback]), connectionNotice:parts(connectionNotices[input.connectionNotice]), currentSelection, transactionHash, localReturn:input.localReturn===true, title, account, accountMark, selectedAccount: !!screen.selectedAccount,
     showAccount: !!screen.account, requiredAccount: !!screen.requiredAccount||!!(summary&&currentSelection&&(summary.address&&summary.address!==currentSelection.address||account?.accounts[0].networks[0]!==currentSelection.network)), disconnect: screen.disconnect !== false && window === 'walletconnect',
     request: requestScreen ? summary : null, transactionDisplay, choices, picker: !!screen.requestPicker,
     queueCount:queued.length, queuePendingCount, queueRecoveryCount, queueRejectedCount, queueDismissedCount, queueOtherCount:queued.length-queuePendingCount-queueRecoveryCount-queueRejectedCount-queueDismissedCount, queueOthers:!!(input.showNextRequests&&!screen.queueCount), status: outcome, notice: parts(effectiveNotice.trim()), afterNote: parts(screen.afterActionsNote),
@@ -355,7 +356,7 @@ export function renderConnection(document, view) {
   function accountCard(account, selected = false) {
     const card = el('article',null,`connection-card ${selected ? 'connection-selected' : 'connection-account'}`);
     const h = el('div',null,'connection-account-header');
-    if (!selected) h.append(icon(account.mark));
+    if (!selected) h.append(icon(view.accountMark));
     h.append(el('h2',selected ? (view.stage==='site-access-ended'?'Required account':'Account to confirm') : isolated(account.name,'wallet'),'connection-account-name'));
     if(view.panel&&supports('open-wallet'))h.append(button({id:'open-wallet',label:isolated('Manage','copy'),quiet:true}));
     card.append(h);

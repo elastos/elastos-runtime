@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { connectionView, connectionKey, reduceProvider, reduceSummary, reduceConnection, reduceAlternative, stageNames, viewText, renderConnection } from '../capsules/_shared/wallet-connection-view.mjs';
-import { states, shared, pictures, fixtureView } from './wallet-connection-view-fixtures.mjs';
+import { states, shared, pictures, fixtureView, fixtureArguments } from './wallet-connection-view-fixtures.mjs';
 import { ruleFailures } from './lib/wallet-connection-view-rules.mjs';
 import { contractCopy } from './lib/wallet-connection-picture-oracle.mjs';
 
@@ -24,6 +24,19 @@ test('wallet_windows_state_producers_and_controls: render-only matrix', async t 
     assert(['window-local: produced by the window lane','reducer over shared fixture','provisional'].includes(row.origin));
     if(row.origin === 'provisional')assert(row.provisional.every(p=>p.startsWith('needs an example from the foundation lane:')));
   });
+});
+
+test('extension account marks follow fresh provider identity in every fixture state', () => {
+  const snapshot=shared.messages.find(row=>row.valid&&row.message.snapshot).message.snapshot;
+  for(const row of states.filter(row=>['unisat','metamask'].includes(row.window))){
+    const base=fixtureView(row),[input]=fixtureArguments(row);
+    for(const availability of ['unknown','absent','found'])for(const providerId of row.window==='unisat'?['unisat']:[null,'io.metamask','com.brave.wallet']){
+      const provider={...snapshot,providerId,alternatives:[],availability,firstAccount:null,requiredAccountAvailable:null,network:null,networkIssue:null,access:'unknown',busy:false,paymentPending:null};
+      const view=connectionView({...input,stage:base.stage,account:base.account,summary:base.request||undefined,provider});
+      const expected=availability==='found'&&providerId==='unisat'?'unisat':availability==='found'&&providerId==='io.metamask'?'metamask':'wallet';
+      assert.equal(view.accountMark,expected,`${row.designState}/${availability}/${providerId}`);
+    }
+  }
 });
 
 test('rule oracles reject deliberate broken states, one mutation per rule', () => {
