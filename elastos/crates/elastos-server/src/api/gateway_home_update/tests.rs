@@ -732,10 +732,7 @@ async fn system_update_summary_refuses_invalid_installed_version_with_local_repa
     }
     assert_eq!(summary["available"], false);
     assert_eq!(summary["can_apply"], false);
-    assert!(summary["message"]
-        .as_str()
-        .unwrap()
-        .contains("Home's log has the repair steps"));
+    assert!(!summary["message"].as_str().unwrap().contains("elastos update"));
     assert_update_stays_unqueued(dir.path());
     let intent = update_intent();
     let approval = step_up_token_for_app_context(
@@ -2757,8 +2754,8 @@ async fn update_notice_settings_directory_reports_failed_repair_and_stays_off() 
 
 #[tokio::test]
 async fn update_repair_details_go_only_to_home_log() {
-    use tracing::instrument::WithSubscriber;
     use std::os::unix::fs::PermissionsExt;
+    use tracing::instrument::WithSubscriber;
 
     let log = tempfile::NamedTempFile::new().unwrap();
     let writer = log.reopen().unwrap();
@@ -2769,13 +2766,20 @@ async fn update_repair_details_go_only_to_home_log() {
         .finish();
     async {
         for fault in ["folder", "unreadable", "save", "version"] {
-            let dir = tempfile::Builder::new().prefix("private-path-sentinel-").tempdir().unwrap();
+            let dir = tempfile::Builder::new()
+                .prefix("private-path-sentinel-")
+                .tempdir()
+                .unwrap();
             configure_update_summary(dir.path());
             let owner = passkey_authority_with_name(dir.path(), Some("repair-log"));
             let path = notice::state_path(dir.path()).unwrap();
             notice::preference(dir.path());
             match fault {
-                "folder" => std::fs::set_permissions(path.parent().unwrap(), std::fs::Permissions::from_mode(0o755)).unwrap(),
+                "folder" => std::fs::set_permissions(
+                    path.parent().unwrap(),
+                    std::fs::Permissions::from_mode(0o755),
+                )
+                .unwrap(),
                 "unreadable" => std::fs::write(&path, "private-content-sentinel").unwrap(),
                 "save" => std::fs::create_dir(&path).unwrap(),
                 "version" => {
@@ -2788,25 +2792,49 @@ async fn update_repair_details_go_only_to_home_log() {
             let mut views = vec![notice::preference(dir.path())];
             if fault == "save" {
                 let app = gateway_router(test_state(dir.path()));
-                let (status, response) = home_test_post_json(&app, "/api/apps/system/update-background",
-                    &owner.system_token, "null", json!({"enabled":true})).await;
+                let (status, response) = home_test_post_json(
+                    &app,
+                    "/api/apps/system/update-background",
+                    &owner.system_token,
+                    "null",
+                    json!({"enabled":true}),
+                )
+                .await;
                 assert_eq!(status, StatusCode::CONFLICT);
                 views.push(response);
             }
             for view in views {
                 for field in ["message", "save_error", "error"] {
                     if let Some(text) = view[field].as_str() {
-                        for detail in ["Local/", ".notice.lock", "notice.json", "elastos update", "private-"] {
+                        for detail in [
+                            "Local/",
+                            ".notice.lock",
+                            "notice.json",
+                            "elastos update",
+                            "private-",
+                        ] {
                             assert!(!text.contains(detail), "repair detail on screen: {text}");
                         }
                     }
                 }
             }
         }
-    }.with_subscriber(subscriber).await;
+    }
+    .with_subscriber(subscriber)
+    .await;
     let output = std::fs::read_to_string(log.path()).unwrap();
-    for detail in ["Local/Shared/System/Updates", ".notice.lock", "notice.json", "elastos update --force", "write access", "Move notice.json aside"] {
-        assert!(output.contains(detail), "repair detail missing from Home log: {detail}");
+    for detail in [
+        "Local/Shared/System/Updates",
+        ".notice.lock",
+        "notice.json",
+        "elastos update --force",
+        "write access",
+        "Move notice.json aside",
+    ] {
+        assert!(
+            output.contains(detail),
+            "repair detail missing from Home log: {detail}"
+        );
     }
     assert!(!output.contains("private-path-sentinel"));
     assert!(!output.contains("private-content-sentinel"));

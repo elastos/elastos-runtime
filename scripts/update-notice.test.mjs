@@ -69,7 +69,7 @@ async function fixture() {
       if(summary.runtime_update && state.settings.message===copy("INVALID_VERSION_TEXT")) {
         summary.source.installed_version="broken";
         summary.runtime_update={configured:true,available:false,can_apply:false,checking:false,current_version:"broken",
-          message:copy("INVALID_VERSION_TEXT"),background_checks:state.settings};
+          message:"Ask an admin to check Home's log for the repair steps.",background_checks:state.settings};
       }
       jsonResponse(response,summary);return true;
     }
