@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { withBrowserLaunchRecovery } from './lib/browser-launch-recovery.mjs';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
@@ -6,8 +7,8 @@ import { join } from 'node:path';
 import { installScriptedExtension, replayInput } from './wallet-extension-test/index.mjs';
 
 const require = createRequire(import.meta.url);
-const { chromium } = require(process.env.BROWSER_OPERATOR_PLAYWRIGHT_CORE
-  || join(homedir(), '.cache/elastos-runtime/behaviour/core/node_modules/playwright-core'));
+const { chromium } = withBrowserLaunchRecovery(require(process.env.BROWSER_OPERATOR_PLAYWRIGHT_CORE
+  || join(homedir(), '.cache/elastos-runtime/behaviour/core/node_modules/playwright-core')));
 
 test('headless page installs the scripted provider before its first page script', async () => {
   const browser = await chromium.launch({ headless: true });
