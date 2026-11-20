@@ -1498,7 +1498,6 @@ enum CarrierNodeNetwork {
 /// Shared network selector. Unset and `direct` are Isolated/Minimal.
 /// `public` is an error so configuration cannot restore N0 defaults.
 /// An empty or unknown value is an error.
-#[cfg(test)]
 fn parse_elastos_carrier_network(raw: Option<&str>) -> anyhow::Result<CarrierNodeNetwork> {
     let Some(raw) = raw else {
         return Ok(CarrierNodeNetwork::Isolated);
@@ -1515,7 +1514,6 @@ fn parse_elastos_carrier_network(raw: Option<&str>) -> anyhow::Result<CarrierNod
 
 /// Operator-approved ElastOS relay URL. Empty or invalid is an error.
 /// Direct endpoints reject a present relay URL.
-#[cfg(test)]
 fn parse_elastos_relay_url(raw: Option<&str>) -> anyhow::Result<Option<url::Url>> {
     let Some(raw) = raw else {
         return Ok(None);

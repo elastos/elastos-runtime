@@ -509,7 +509,7 @@ directly; its socket peer address owns source accounting.
 
 ```toml
 gateway_public_publisher_bootstrap = true
-carrier_relay_bind_addr = "0.0.0.0:443"
+carrier_relay_bind_addr = "0.0.0.0:4433"
 carrier_relay_tls_cert = "/etc/elastos/meeting-point.crt"
 carrier_relay_tls_key = "/etc/elastos/meeting-point.key"
 carrier_relay_discovery_bind_addr = "0.0.0.0:7842"
@@ -523,9 +523,11 @@ carrier_relay_bytes_per_second = 1048576
 carrier_relay_burst_bytes = 2097152
 ```
 
-The OS grants the service permission to bind TCP 443. The firewall admits TCP
-443 and UDP 7842 directly to this process. Existing Home gateway routes retain
-their own listener. Discovery uses the protocol's fixed UDP port. Clear HTTP is
+The operator selects a free TLS listener before signing its origin. This example
+uses TCP 4433 so the public Home can retain TCP 443. A dedicated public address
+can instead give the meeting point TCP 443. The firewall admits the selected TCP
+port and UDP 7842 directly to this process. Existing Home gateway routes retain
+their listener and origin. Discovery uses the protocol's fixed UDP port. Clear HTTP is
 available only in unit tests. Installed fixtures use HTTPS with a disposable
 certificate pin; the release builder uses default features. TLS mode keeps
 its captive-portal helper on an ephemeral loopback port.

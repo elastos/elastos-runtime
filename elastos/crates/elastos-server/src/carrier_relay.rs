@@ -68,6 +68,10 @@ impl ClientSettings {
         release_url: Option<&str>,
         release_certificate: Option<&str>,
     ) -> Result<Self> {
+        let network = network.map(str::trim);
+        super::parse_elastos_carrier_network(network)?;
+        let url = url.map(str::trim);
+        let explicit_url = super::parse_elastos_relay_url(url)?;
         anyhow::ensure!(
             release_url.is_some() == release_certificate.is_some(),
             "incomplete release meeting point"
@@ -100,10 +104,10 @@ impl ClientSettings {
                 });
             }
         }
-        let relay: url::Url = release_url
-            .or(url)
-            .context("relay mode requires its address")?
-            .parse()?;
+        let relay: url::Url = match release_url {
+            Some(url) => url.parse()?,
+            None => explicit_url.context("relay mode requires its address")?,
+        };
         let raw = release_certificate.or(certificate);
         let certificate = raw
             .map(|raw| {
