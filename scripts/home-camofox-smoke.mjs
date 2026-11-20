@@ -673,7 +673,7 @@ async function main() {
       assert(prompted, "unsigned Home launch did not prompt for passkey", state);
       assert(state.windows.length === 0, "unsigned Home launch should not open System before passkey approval", state);
       assert(
-        state.unlockCopy === "Use your passkey to unlock your data, apps and desktop.",
+        state.unlockCopy === "Use your passkey to sign in to your apps and desktop.",
         "unsigned Home launch prompt copy drifted",
         state,
       );

@@ -2831,11 +2831,11 @@ const RECOVERY_ROOT_CHECKED_SENTENCE = "No unencrypted file was found in your pr
 function recoveryAttentionNote(status) {
   const notes = [];
   if (status?.required_actions?.includes("finish_interrupted_principal_root_migration")) {
-    notes.push("An earlier encryption step did not finish. Home will not start again until it is finished or undone; reinstalling ElastOS does that, and your files are kept.");
+    notes.push('An earlier encryption step did not finish. Home will not start again until it is finished or undone. Reinstalling ElastOS does that and keeps your files. If the installer stops with "recovered an incomplete principal-root migration", run it once more.');
   }
   if (status?.required_actions?.includes("migrate_declared_plaintext_objects")) {
     const notStarting = status.protection_configured === true ? "; until they are, Home will not start again" : "";
-    notes.push(`Some files in your protected Home folders are not encrypted yet${notStarting}. Saving your Recovery Kit encrypts files of up to 16 MiB after you approve with your passkey; a larger file is named so you can move it out of your protected folders (Library takes uploads up to 100 MiB).`);
+    notes.push(`Some files in your protected Home folders are not encrypted yet${notStarting}. Save your Recovery Kit and confirm with your passkey to encrypt them. One save takes at most 64 files and 64 MiB in total, each file up to 16 MiB. If more are waiting, move some out of your protected Home folders, save, then move them back and save again. Move a file over 16 MiB out and upload it again in Library (up to 100 MiB).`);
   }
   const count = Number(status?.objects_needing_attention_count) || 0;
   const first = Array.isArray(status?.objects_needing_attention) ? status.objects_needing_attention[0] : null;
@@ -2895,7 +2895,7 @@ function setRecoveryStatus(status) {
     showRecoveryNote("Create or import a verified Recovery Kit before allowing public guests.", "muted");
   } else {
     showRecoveryStatus("Not set", "muted");
-    showRecoveryNote("Create a Recovery Kit before storing important data or funds.", "muted");
+    showRecoveryNote("Create a Recovery Kit before you keep funds here. Keep copies of important files elsewhere.", "muted");
   }
   setRecoveryButton("Create Recovery Kit", false);
 }
@@ -2926,7 +2926,7 @@ async function onRecoveryDownload(options = {}) {
     const peopleIdentity = bundle && bundle.included && bundle.included.people_identity;
     showRecoveryNote(
       peopleIdentity
-        ? `Recovery Kit downloaded as ${fileName}. Store it offline; it includes your signed People identity.`
+        ? `Recovery Kit downloaded as ${fileName}. Store it offline. It includes your Profile.`
         : `Recovery Kit downloaded as ${fileName}. Store it offline.`,
       "success"
     );
@@ -3154,8 +3154,8 @@ function recoveryImportSuccessMessage(response) {
   const people = response && response.people_identity_restore;
   if (people && readText(people.status) === "restored") {
     parts.push(people.contact_store_restored
-      ? "Restored your signed People identity and contacts."
-      : "Restored your signed People identity.");
+      ? "Restored your Profile and contacts."
+      : "Restored your Profile.");
     if (people.rebound_device === true) {
       parts.push("This device is now authorized for your Profile; contacts learn it automatically.");
     }

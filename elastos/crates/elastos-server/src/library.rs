@@ -4500,7 +4500,7 @@ fn compress_library_archive(
     let uri = uri.ok_or_else(|| anyhow!("library compress_archive requires uri or uris"))?;
     let target = library_target(data_dir, principal_id, uri)?;
     if target.uri == target.localhost_root {
-        bail!("library root compress is not supported; use Recovery Kit for full backups");
+        bail!("Library cannot download or compress all of Library at once. Choose the folders you want. A Recovery Kit does not contain your files.");
     }
     if is_runtime_private_uri(&target.localhost_root, &target.uri) {
         bail!("runtime-private Library folders cannot be compressed");
@@ -4573,7 +4573,7 @@ fn archive_library_directory(
     archive_format: LibraryArchiveFormat,
 ) -> anyhow::Result<Vec<u8>> {
     if target.uri == target.localhost_root {
-        bail!("library root download is not supported; use Recovery Kit for full backups");
+        bail!("Library cannot download or compress all of Library at once. Choose the folders you want. A Recovery Kit does not contain your files.");
     }
     if is_runtime_private_uri(&target.localhost_root, &target.uri) {
         bail!("runtime-private Library folders cannot be downloaded");
@@ -4789,7 +4789,7 @@ fn library_selection_archive_targets(
             continue;
         }
         if target.uri == target.localhost_root {
-            bail!("library root download is not supported; use Recovery Kit for full backups");
+            bail!("Library cannot download or compress all of Library at once. Choose the folders you want. A Recovery Kit does not contain your files.");
         }
         if is_runtime_private_uri(&target.localhost_root, &target.uri) {
             bail!("runtime-private Library folders cannot be downloaded");

@@ -1839,8 +1839,8 @@ async fn full_recovery_bundle_export_inner(
         },
         "created_at": now,
         "instructions": [
-            "Keep this Full Recovery Bundle offline. Anyone with it can recover this ElastOS user root, included built-in Wallet accounts, and the signed People identity with its contacts.",
-            "Import it only through ElastOS System recovery on a runtime you control."
+            "Keep this Recovery Kit private and offline. It restores the included keys and any saved Profile and contacts. Keep copies of your files elsewhere.",
+            "To use it on a Home you cannot sign in to, use the recovery option on Home's sign-in screen. When signed in, choose Import Recovery Kit in System."
         ]
     });
     if let Some(people_identity) = people_identity {
@@ -2259,12 +2259,8 @@ fn recovery_kit_get_or_create_for_principal(
             return Ok(kit);
         }
     }
-    let kit = create_recovery_kit_for_principal(
-        &principal.principal_id,
-        &principal.localhost_root,
-        label,
-        now,
-    )?;
+    let kit =
+        create_recovery_kit_for_principal(&principal.principal_id, &principal.localhost_root, now)?;
     let archive = crate::auth::recovery_archive_from_kit(&state.data_dir, &kit)?;
     let protection = protection_from_recovery_kit(&kit, label, delivery, now, Some(archive))?;
     crate::auth::store_principal_root_protection(&state.data_dir, protection)?;
@@ -3232,7 +3228,6 @@ async fn recovery_kit_import_inner(
 fn create_recovery_kit_for_principal(
     principal_id: &str,
     localhost_root: &str,
-    label: Option<&str>,
     created_at: u64,
 ) -> anyhow::Result<RecoveryKitV1> {
     let mut data_key = [0u8; 32];
@@ -3288,10 +3283,6 @@ fn create_recovery_kit_for_principal(
         "protector:recovery:{}",
         hex::encode(&Sha256::digest(format!("{kit_id}:{data_key_id}").as_bytes())[..16])
     );
-    let label = label
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("Recovery Kit");
     Ok(RecoveryKitV1 {
         schema: elastos_runtime::auth::RECOVERY_KIT_SCHEMA.to_string(),
         kit_id,
@@ -3307,10 +3298,8 @@ fn create_recovery_kit_for_principal(
         crypto,
         created_at,
         instructions: vec![
-            format!(
-                "Keep this {label} offline. Anyone with it can recover this ElastOS user root."
-            ),
-            "Import it only through ElastOS System recovery on a runtime you control.".to_string(),
+            "Keep this Recovery Kit private and offline. It restores access to encrypted files that you kept separately.".to_string(),
+            "To use it on a Home you cannot sign in to, use the recovery option on Home's sign-in screen. When signed in, choose Import Recovery Kit in System.".to_string(),
         ],
     })
 }
@@ -7564,7 +7553,6 @@ mod tests {
         let mut kit = create_recovery_kit_for_principal(
             &grant.principal_id,
             &principal.localhost_root,
-            Some("test"),
             1_800_000_000,
         )
         .unwrap();
@@ -7618,7 +7606,6 @@ mod tests {
         let kit = create_recovery_kit_for_principal(
             &grant.principal_id,
             &principal.localhost_root,
-            Some("test"),
             1_800_000_000,
         )
         .unwrap();
@@ -7713,7 +7700,6 @@ mod tests {
         let exact_kit = create_recovery_kit_for_principal(
             &grant.principal_id,
             &principal.localhost_root,
-            Some("exact"),
             1_800_000_000,
         )
         .unwrap();
@@ -7745,7 +7731,6 @@ mod tests {
         let wrong_kit = create_recovery_kit_for_principal(
             &grant.principal_id,
             &principal.localhost_root,
-            Some("wrong"),
             1_800_000_001,
         )
         .unwrap();
@@ -7823,7 +7808,6 @@ mod tests {
         let kit = create_recovery_kit_for_principal(
             &grant.principal_id,
             &principal.localhost_root,
-            Some("test"),
             1_800_000_000,
         )
         .unwrap();
@@ -7934,7 +7918,6 @@ mod tests {
         let kit = create_recovery_kit_for_principal(
             &grant.principal_id,
             &principal.localhost_root,
-            Some("DID protected"),
             1_800_000_000,
         )
         .unwrap();
@@ -8005,7 +7988,6 @@ mod tests {
         let kit = create_recovery_kit_for_principal(
             &grant.principal_id,
             &principal.localhost_root,
-            Some("DID protected"),
             1_800_000_000,
         )
         .unwrap();
@@ -8072,7 +8054,6 @@ mod tests {
         let kit = create_recovery_kit_for_principal(
             &old_principal.principal_id,
             &old_principal.localhost_root,
-            Some("orphaned root"),
             1_800_000_000,
         )
         .unwrap();
@@ -8234,7 +8215,6 @@ mod tests {
             let kit = create_recovery_kit_for_principal(
                 &recovered_principal.principal_id,
                 &recovered_principal.localhost_root,
-                Some("fault-injected recovered root"),
                 1_800_000_000,
             )
             .unwrap();
@@ -8369,7 +8349,6 @@ mod tests {
         let kit = create_recovery_kit_for_principal(
             &old_principal.principal_id,
             &old_principal.localhost_root,
-            Some("orphaned root"),
             1_800_000_000,
         )
         .unwrap();
@@ -8482,7 +8461,6 @@ mod tests {
         let kit = create_recovery_kit_for_principal(
             &active_principal.principal_id,
             &active_principal.localhost_root,
-            Some("active root"),
             1_800_000_000,
         )
         .unwrap();
@@ -8607,7 +8585,6 @@ mod tests {
         let fabricated = create_recovery_kit_for_principal(
             &admin_principal.principal_id,
             &admin_principal.localhost_root,
-            Some("fabricated"),
             1_800_000_000,
         )
         .unwrap();
@@ -8616,7 +8593,6 @@ mod tests {
                 let genuine = create_recovery_kit_for_principal(
                     &admin_principal.principal_id,
                     &admin_principal.localhost_root,
-                    Some("genuine"),
                     1_800_000_000,
                 )
                 .unwrap();

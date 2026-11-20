@@ -1928,7 +1928,7 @@ class UninstallTests(unittest.TestCase):
             result, requests = sandbox.run("--uninstall", "--remove-data")
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual(requests, [])
-            self.assertIn("Only your Recovery Kit can restore this identity", result.stdout + result.stderr)
+            self.assertIn("A Recovery Kit restores only the keys saved in that file, and the Profile if the file has one", result.stdout + result.stderr)
             # Uninstall never edits the profile; it names the install's PATH line to delete.
             line = b'export PATH="$HOME/.local/bin:$PATH" # Added by the ElastOS installer\n'
             self.assertEqual(self.files(sandbox), {".profile": line})
