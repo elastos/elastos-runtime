@@ -1,10 +1,11 @@
+import { withBrowserLaunchRecovery } from "./lib/browser-launch-recovery.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import http from "node:http";
 import { readFileSync, mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
 const require = createRequire(new URL("../elastos/tools/browser-playwright-engine/package.json", import.meta.url));
-const engines = require("playwright");
+const engines = withBrowserLaunchRecovery(require("playwright"));
 const bundle = readFileSync(new URL("../capsules/wallet-walletconnect/vendor/reown-appkit.js", import.meta.url));
 
 const fixture = readFileSync(new URL("./lib/walletconnect-browser-fixture.mjs", import.meta.url));

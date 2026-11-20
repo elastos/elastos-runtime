@@ -5,7 +5,7 @@ import {walletConnectFixtureRequire as require} from './walletconnect-relay-fixt
 const {SignClient} = require('@walletconnect/sign-client');
 const {generatePrivateKey,privateKeyToAccount} = require('viem/accounts');
 const {keccak256} = require('viem');
-export async function scriptedPhoneWallet({projectId,relayUrl,chains=['eip155:8453'],storage=new Map(),name='Scripted phone wallet'}={}) {
+export async function scriptedPhoneWallet({projectId,relayUrl,chains=['eip155:8453'],storage=new Map(),name='Scripted phone wallet',emitApprovalEvents=false}={}) {
   const accounts=[privateKeyToAccount(generatePrivateKey()),privateKeyToAccount(generatePrivateKey())];
   let account=accounts[0];
   const events=new EventEmitter(), trace=[], pending=[];
@@ -20,6 +20,7 @@ export async function scriptedPhoneWallet({projectId,relayUrl,chains=['eip155:84
     if(connection==='reject'){await client.reject({id:event.id,reason:{code:5000,message:'User rejected.'}});return;}
     const {acknowledged}=await client.approve({id:event.id,namespaces:{eip155:{chains:approvedChains,accounts:approvedChains.map(chain=>`${chain}:${account.address}`),methods:['personal_sign','eth_sendTransaction'],events:['accountsChanged','chainChanged']}}});
     await acknowledged();trace.push({kind:'session',chains:approvedChains});events.emit('session');
+    if(emitApprovalEvents)await approvalEvents();
   }));
   async function answer(event,choice) {
     const {request}=event.params;
@@ -42,6 +43,13 @@ export async function scriptedPhoneWallet({projectId,relayUrl,chains=['eip155:84
     await client.respond({topic:event.topic,response:{jsonrpc:'2.0',id:event.id,...(choice==='reject'?{error:{code:4001,message:'User rejected.'}}:{result})}});
     const index=pending.findIndex(item=>item.id===event.id);if(index>=0)pending.splice(index,1);trace.push({kind:'response',method:request.method,decision:choice});events.emit('response');
   }
+  async function approvalEvents(){
+      for(const session of client.session.getAll()){
+        const {acknowledged}=await client.update({topic:session.topic,namespaces:session.namespaces});await acknowledged();
+        await client.emit({topic:session.topic,chainId:approvedChains[0],event:{name:'accountsChanged',data:[account.address]}});
+        await client.emit({topic:session.topic,chainId:approvedChains[0],event:{name:'chainChanged',data:Number(approvedChains[0].split(':')[1])}});
+      }
+  }
   client.on('session_request',run(async event=>{pending.push(event);trace.push({kind:'request',method:event.params.request.method,chain:event.params.chainId,decision:response});events.emit('request');await answer(event,response);}));
   client.on('session_delete',event=>{for(let i=pending.length-1;i>=0;i--)if(pending[i].topic===event.topic)pending.splice(i,1);trace.push({kind:'deleted'});events.emit('deleted');});
   client.on('session_request_expire',event=>{const i=pending.findIndex(item=>item.id===event.id);if(i>=0)pending.splice(i,1);trace.push({kind:'request-expired'});});
@@ -54,6 +62,7 @@ export async function scriptedPhoneWallet({projectId,relayUrl,chains=['eip155:84
         if(notify)await client.emit({topic:session.topic,chainId:approvedChains[0],event:{name:'accountsChanged',data:[account.address]}});
       }
     },
+    approvalEvents,
     async emptyAccounts(){for(const session of client.session.getAll())await client.emit({topic:session.topic,chainId:approvedChains[0],event:{name:'accountsChanged',data:[]}});},
     async changeChain(chain){for(const session of client.session.getAll())await client.emit({topic:session.topic,chainId:approvedChains[0],event:{name:'chainChanged',data:Number(chain.split(':')[1])}});},
     async updateSession(){for(const session of client.session.getAll()){const {acknowledged}=await client.update({topic:session.topic,namespaces:session.namespaces});await acknowledged();}},

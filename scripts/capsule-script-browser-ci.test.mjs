@@ -22,8 +22,10 @@ test('capsule browser CI and recipe reuse the workspace test build', () => {
   assertWorkspaceSelection(recipe);
   const unit = job.indexOf('run: cargo test --workspace --no-fail-fast');
   const install = job.indexOf('- name: install content boundary browser fixture');
-  const browser = job.indexOf('run: cargo test --workspace content_sandbox_browser -- --ignored --nocapture');
+  const browser = job.indexOf('run: node ../scripts/run-browser-launch-harness.mjs cargo test --workspace content_sandbox_browser -- --ignored --nocapture');
   assert.ok(unit >= 0 && install > unit && browser > install, 'unit build, engine install, then cached browser tests');
+  assert.match(recipe, /node \.\.\/scripts\/run-browser-launch-harness\.mjs cargo test --workspace content_sandbox_browser_capsule_scripts -- --ignored --nocapture/,
+    'the recipe also shares one visible relaunch budget');
 });
 
 test('a package-only browser invocation changes the feature graph', () => {

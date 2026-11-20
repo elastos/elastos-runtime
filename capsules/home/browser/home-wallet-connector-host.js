@@ -74,6 +74,12 @@ let eip6963Overflow = false;
 
 installEip6963Discovery();
 
+// This is a read hint. Each Wallet frame reads its own scoped account summary.
+export function notifyOpenWallets(context, broadcast) {
+  if (context?.kind !== "app-frame" || !["wallet", "wallet-walletconnect", ...CONNECTOR_IDS].includes(context.targetId)) return;
+  broadcast([{kind:"wallet.accounts.changed",scope:"wallet",at:Math.floor(Date.now()/1000)}]);
+}
+
 export function handleHomeWalletConnectorEffect(event, context, data) {
   if (data?.type !== WALLET_CONNECTOR_EFFECT_TYPE) {
     return false;

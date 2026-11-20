@@ -16,7 +16,8 @@ export function ruleFacts(row, shared, expected) {
   const answered=receipts.has(row.stage)||message?.outcome==='request_unavailable'||request?.intent==='transaction_intent'&&!!message?.settled?.receipt;
   const guardedAccount=!!row.local.account && (['site-access-ended','account-unavailable','link-wait','linked'].includes(row.stage)||expected?.inventory.some(text=>['Account to confirm','Required account'].includes(text)));
   const approval=approvalStages[row.window].includes(row.stage)&&request?.capsule_id==='browser'&&!!request.requesting_origin;
-  return {approval,wait:!!expected?.wait&&!answered&&!approval&&row.stage!=='request-list',payment,answered,notSent,capability:row.window!=='metamask'||!!request||guardedAccount,needsExit:stopped.has(row.stage),focus:approval?'close-window':answered?'outcome':expected?.focus};
+  const linkedFocus=['walletconnect','metamask','unisat'].includes(row.window)&&['linked','linked-multiple'].includes(row.stage)?row.window==='walletconnect'?'outcome':'close-window':undefined;
+  return {approval,wait:!!expected?.wait&&!answered&&!approval&&row.stage!=='request-list',payment,answered,notSent,capability:row.window!=='metamask'||!!request||guardedAccount,needsExit:stopped.has(row.stage),focus:linkedFocus??(approval?'close-window':answered?'outcome':expected?.focus)};
 }
 export function ruleFailures(view, {row,shared,expected,facts}={}) {
   const f=facts || (row ? ruleFacts(row,shared,expected) : {});
@@ -30,7 +31,7 @@ export function ruleFailures(view, {row,shared,expected,facts}={}) {
   if(f.notSent&&/result unknown|still waiting|has not answered/i.test(text))failures.push('known-result');
   if(f.capability&&ids.includes('use-walletconnect'))failures.push('capability');
   if(ids.includes('check-access')&&text.includes('has not answered')&&view.actions.some(a=>a.primary&&a.id==='start-over')&&!text.includes('new QR code'))failures.push('sentence');
-  if(view.actions.some(a=>a.primary&&a.id==='close-window')&&!/close (this )?window/i.test(text))failures.push('sentence');
+  if(!['linked','linked-multiple'].includes(view.stage)&&view.actions.some(a=>a.primary&&a.id==='close-window')&&!/close (this )?window/i.test(text))failures.push('sentence');
   if(f.answered&&(!view.request?.id||!view.request?.app||!view.status.length||view.wait!==null||ids.includes('send-request')||view.focus!=='outcome'))failures.push('answered');
   if(/home:|fixture-carried-token|wallet-connector-effect|invalid_request|0xdeadbeef|\bN[1-7]\b/.test(text))failures.push('internal');
   if([...view.status,...view.notice,...view.afterNote].some(p=>!['copy','wallet','app','site','home','network'].includes(p.kind)))failures.push('isolation');

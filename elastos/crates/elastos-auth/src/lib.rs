@@ -154,7 +154,7 @@ impl AuthChallengeV1 {
             challenge_id: input.challenge_id,
             domain: input.domain,
             uri: input.uri,
-            statement: "Sign in to ElastOS Runtime.".to_string(),
+            statement: "Sign in to ElastOS.".to_string(),
             address,
             chain_id: input.chain_id,
             nonce: input.nonce,
@@ -1374,10 +1374,7 @@ mod tests {
     fn rejects_modified_statement() {
         let (signing_key, challenge) = challenge();
         let mut message = challenge.siwe_message();
-        message = message.replace(
-            "Sign in to ElastOS Runtime.",
-            "Sign this harmless demo message.",
-        );
+        message = message.replace("Sign in to ElastOS.", "Sign this harmless demo message.");
         let signature = sign_message(&signing_key, &message);
         let err = verify_siwe_challenge(&challenge, &message, &signature, 1_800_000_010)
             .expect_err("statement tampering should fail");

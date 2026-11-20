@@ -28,10 +28,10 @@ const definitions = {
     },
     "internet-refused": {
       "status": "Internet access is off for WalletConnect.",
-      "notice": "Allow access in Inbox, then return here to connect.",
+      "notice": "Connect a wallet to ask Home for internet access again.",
       "primary": {
-        "id": "inbox",
-        "label": "Open Inbox",
+        "id": "connect",
+        "label": "Connect wallet",
         "quiet": false
       }
     },
@@ -39,10 +39,11 @@ const definitions = {
       "status": "Internet access is off for WalletConnect.",
       "notice": "Allow access in Inbox when you want to connect again.",
       "primary": {
-        "id": "inbox",
-        "label": "Open Inbox",
+        "id": "connect",
+        "label": "Connect wallet",
         "quiet": false
-      }
+      },
+      "secondary": [{"id":"inbox","label":"Open Inbox","quiet":true}]
     },
     "internet-expired": {
       "status": "The access request expired.",
@@ -69,14 +70,7 @@ const definitions = {
         "id": "connect",
         "label": "Connect wallet",
         "quiet": false
-      },
-      "secondary": [
-        {
-          "id": "inbox",
-          "label": "Manage in Inbox",
-          "quiet": true
-        }
-      ]
+      }
     },
     "preparing-qr": {
       "status": "Getting your QR code…",
@@ -648,7 +642,6 @@ const definitions = {
     },
     "disconnected": {
       "status": "Disconnected. Your accounts remain in Wallet.",
-      "notice": "To remove this account from Home, open Wallet, choose Manage, then Remove account. Your wallet and funds stay unchanged.",
       "primary": {
         "id": "connect",
         "label": "Connect wallet",
@@ -2284,10 +2277,21 @@ for(const window of ['walletconnect','metamask','unisat']){
   });
 }
 
+// A completed link needs only dismissal; adding another account is a separate choice.
+for(const window of ['walletconnect','metamask','unisat'])for(const stage of ['linked',...(window==='walletconnect'?['linked-multiple']:[])]){
+  definitions[window][stage].primary={id:'close-window',label:'Close window',quiet:false};
+  definitions[window][stage].focus='close-window';
+  if(window==='walletconnect'){
+    definitions[window][stage].focusOutcome=true;
+    definitions[window][stage].secondary=[{id:'add-account',label:'Add account',quiet:true}];
+  }
+}
+definitions.walletconnect['add-account']={status:'Add an account.',notice:'To add an account, select another account in {{wallet}}, then return here. To use another wallet, disconnect this connection first. Your linked accounts stay in Wallet.',account:true,secondary:[{id:'back-to-connection',label:'Back to connection',quiet:true}]};
+
 definitions.walletconnect['checking-response']={status:'Your wallet has answered. Home is checking the response.',notice:'Stopping here ends this wait. Home may still record the response.',optionalRequest:true,account:true,dispatched:true,primary:{id:'stop-waiting',label:'Stop waiting',quiet:false},secondary:[{id:'close-window',label:'Close window',quiet:false}],focus:'stop-waiting'};
-definitions.walletconnect['home-read-unavailable']={status:'Home could not load your wallet requests.',notice:'Check again to load them.',primary:{id:'refresh-status',label:'Check again',quiet:false},secondary:[{id:'close-window',label:'Close window',quiet:false}],focus:'refresh-status'};
+definitions.walletconnect['home-read-unavailable']={status:'Home could not load the wallet details.',notice:'Check again to load them.',primary:{id:'refresh-status',label:'Check again',quiet:false},secondary:[{id:'close-window',label:'Close window',quiet:false}],focus:'refresh-status'};
 definitions.walletconnect['disconnect-error']={status:'Home could not finish disconnecting this wallet.',notice:'Try disconnecting again. Closing this window does not finish disconnecting.',primary:{id:'disconnect',label:'Disconnect',quiet:false},secondary:[{id:'close-window',label:'Close window',quiet:false}],focus:'disconnect'};
-definitions.walletconnect['account-unavailable-unknown']={requiresSafeRetry:true,status:'Your wallet is not showing an account.',notice:'Choose an account in your wallet, then get a new QR code.',primary:{id:'start-over',label:'Get new QR code',quiet:false},secondary:[{id:'close-window',label:'Close window',quiet:false}],focus:'start-over'};
+definitions.walletconnect['account-unavailable-unknown']={requiresSafeRetry:true,status:'Your wallet is not showing an account.',notice:'Choose an account in your wallet, then return here.',primary:{id:'start-over',label:'Get new QR code',quiet:false},secondary:[{id:'close-window',label:'Close window',quiet:false}],focus:'start-over'};
 
 const requestRecovery='To try again, return to {{app}} and make a new request.';
 for(const window of ['metamask','unisat']){

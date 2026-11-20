@@ -13,7 +13,7 @@ const request={request_id:'request-1',connector_id:'wallet-walletconnect',capsul
 const initial={permission:'granted',connection:{session},accounts:[account]};
 const cases=[
  ['nothing-saved',{}],['nothing-saved',{permission:'off',connection:{}}],['internet-ready',{permission:'granted'}],
- ['internet-pending',{permission:'requested',pending:{}}],['internet-refused',{permission:'refused'}],['internet-off',{permission:'revoked',connection:{}}],
+ ['internet-pending',{permission:'requested',pending:{}}],['internet-refused',{permission:'refused'}],['internet-refused',{permission:'revoked',connection:{}}],
  ['guest-access',{ownerNeeded:true,permission:'off'}],['window-expired',{expired:true}],
  ['preparing-qr',{busy:true,phase:'starting'}],['qr-shown',{qrData:'data:image/png;base64,AAAA'}],
  ['link-wait',{...initial,busy:true,phase:'ownership'}],
@@ -145,7 +145,7 @@ for (const status of ['rejected','dismissed']) test(`final view maps the explici
 });
 for (const blocked of [{status:'approved',intent:'transaction_intent'},{intent:'browser_typed_data_sign'},{expires_at:now-1}])test(`F1 default skips a lone blocked record ${JSON.stringify(blocked)}`,()=>{
  const view=walletConnectView(windowPresentation({...initial,requests:[{...request,...blocked}]},now));
- assert.equal(view.stage,'linked');assert.ok(view.actions.some(a=>a.id==='back-to-connection'));assert.equal(view.queueCount,1);
+ assert.equal(view.stage,'linked');assert.ok(view.actions.every(a=>a.id!=='back-to-connection'));assert.equal(view.queueCount,1);
 });
 test('safe account retry uses explicit false safety and the supported-actions interface',()=>{
  const p=windowPresentation({...initial,outcome:'link-error'},now);assert.equal(p.input.localSafety,false);

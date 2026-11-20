@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { resolve, extname } from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
+import { withBrowserLaunchRecovery } from "./lib/browser-launch-recovery.mjs";
 import { checkArtifacts } from "./check-chat-ui-artifacts.mjs";
 
 const root = resolve(new URL("..", import.meta.url).pathname);
@@ -14,7 +15,7 @@ const sdkPath = resolve(process.env.BROWSER_OPERATOR_PLAYWRIGHT_CORE);
 const metadata = JSON.parse(readFileSync(resolve(sdkPath, "package.json"), "utf8"));
 assert.equal(metadata.name, "playwright-core");
 assert.equal(metadata.version, "1.59.1");
-const { chromium } = await import(pathToFileURL(resolve(sdkPath, "index.mjs")).href);
+const { chromium } = withBrowserLaunchRecovery(await import(pathToFileURL(resolve(sdkPath, "index.mjs")).href));
 const serverSecret = "provider-secret-sk-session-start-fixture";
 const boundedStartFailure = "Chat session bootstrap failed. Reopen Chat from Home.";
 async function fixture(t, direct = false, { startFault = null, communityHistory = false } = {}) {

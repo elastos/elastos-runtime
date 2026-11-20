@@ -1,6 +1,6 @@
+import {windowTestOptions} from './lib/walletconnect-window-resources.mjs';
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { extname } from "node:path";
@@ -58,14 +58,7 @@ async function close(server) {
 }
 
 for (const engine of ['webkit', 'chromium']) {
-  const missingWebKit = engine === 'webkit' && !existsSync(playwright.webkit.executablePath());
-  test(`Home shell and nested app fullscreen in ${engine}`, {
-    // The behaviour job installs Chromium. The content-sandbox job imports this
-    // test with ELASTOS_PLAYWRIGHT_MODULE and installs both engines: require it.
-    skip: missingWebKit && !process.env.ELASTOS_PLAYWRIGHT_MODULE
-      ? 'WebKit is installed and required by the content-sandbox CI job' : false,
-    timeout: 45000,
-  }, async t => {
+  test(`Home shell and nested app fullscreen in ${engine}`, windowTestOptions(engine, 45000), async t => {
     let foreignRequests = 0;
     const foreign = createServer((_request, response) => {
       foreignRequests++;

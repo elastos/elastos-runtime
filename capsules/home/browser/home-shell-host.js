@@ -33,6 +33,7 @@ import {
 } from "./shell-auth.js?v=home-wallpaper-20261030b";
 import {
   handleHomeWalletConnectorEffect,
+  notifyOpenWallets,
   WALLET_CONNECTOR_EFFECT_TYPE,
 } from "./home-wallet-connector-host.js?v=home-wallpaper-20261030b";
 import {
@@ -1954,6 +1955,7 @@ window.addEventListener("message", (event) => {
     return;
   }
   if (data.type === "home:refresh-summary") {
+    notifyOpenWallets(context, broadcastHomeRuntimeEvents);
     requestShellSummaryRefresh({ reason: "child-message" });
     return;
   }

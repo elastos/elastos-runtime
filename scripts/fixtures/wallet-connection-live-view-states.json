@@ -179,6 +179,12 @@
       "stage": "disconnect-error",
       "origin": "window-local: produced by the window lane",
       "source": "sharedview-needs-walletconnect 19; existing read/cleanup actions only"
+    },
+    {
+      "window": "walletconnect",
+      "stage": "add-account",
+      "origin": "window-local: produced by the window lane",
+      "source": "Explicit Add account action on the linked connection; phone selection remains user-owned."
     }
   ]
 }

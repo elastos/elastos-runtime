@@ -1,5 +1,5 @@
+import {windowTestOptions} from './lib/walletconnect-window-resources.mjs';
 import { fileURLToPath } from 'node:url';
-import { existsSync } from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, writeFile } from 'node:fs/promises';
@@ -25,7 +25,7 @@ const frameGeometry = {};
 const interactionChecks = [];
 test.after(()=>proofDirectory.cleanup());
 
-for (const engine of ['chromium','webkit']) test(`extension_request_feedback_in_view: render-only ${engine}, both themes and all states`, {skip:engine==='webkit'&&!existsSync(playwright.webkit.executablePath())&&!process.env.ELASTOS_PLAYWRIGHT_MODULE?'WebKit required in test-elastos content-sandbox browser job':false}, async () => {
+for (const engine of ['chromium','webkit']) test(`extension_request_feedback_in_view: render-only ${engine}, both themes and all states`, {skip:windowTestOptions(engine).skip}, async () => {
   const browser = await playwright[engine].launch({headless:true});
   try {
     const context = await browser.newContext({serviceWorkers:'block'});
@@ -120,6 +120,13 @@ for (const engine of ['chromium','webkit']) test(`extension_request_feedback_in_
             return row.window==='panel'?text:text.replaceAll('MetaMask',view.account?.name||'MetaMask').replaceAll('UniSat',view.account?.name||'UniSat').replaceAll('Browser',view.request?.app||'Browser').replaceAll('Notes',view.request?.app||'Notes');
           };
           let expectedControls=labels.map(s=>({label:normalized(s.replace(/ \[(primary|quiet secondary|bordered secondary)\]$/,'')),primary:s.endsWith('[primary]')}));
+          if(['walletconnect','metamask','unisat'].includes(row.window)&&['linked','linked-multiple'].includes(row.stage)){
+            expectedControls=expectedControls.map(c=>c.label==='Open Wallet'?{label:'Close window',primary:true}:c);
+            if(row.window==='walletconnect')expectedControls.push({label:'Add account',primary:false});
+          }
+          if(row.window==='walletconnect'&&row.stage==='internet-ready')expectedControls=expectedControls.filter(c=>c.label!=='Manage in Inbox');
+          if(row.window==='walletconnect'&&row.stage==='internet-refused')expectedControls=[{label:'Connect wallet',primary:true}];
+          if(row.window==='walletconnect'&&row.stage==='internet-off')expectedControls=[{label:'Connect wallet',primary:true},{label:'Open Inbox',primary:false}];
           const fallbackClose=!expectedControls.length&&row.window==='metamask'&&expected?.inventory.some(s=>s.startsWith('WalletConnect [primary]'))&&(facts.payment||facts.capability);
           if(fallbackClose)expectedControls=[{label:'Close window',primary:true}];
           if(facts.approval){const main=expectedControls.filter(c=>c.primary),other=expectedControls.filter(c=>!c.primary&&c.label!=='Close window');expectedControls=[{label:'Close window',primary:false},...other.filter(c=>c.label.startsWith('View request')),...other.filter(c=>!c.label.startsWith('View request')),...main];}
@@ -182,7 +189,7 @@ for (const engine of ['chromium','webkit']) test(`extension_request_feedback_in_
   }
 });
 
-for(const engine of ['chromium','webkit'])test(`isolated names share text baselines and linked screens retain their design spacing in ${engine}`,{skip:engine==='webkit'&&!existsSync(playwright.webkit.executablePath())&&!process.env.ELASTOS_PLAYWRIGHT_MODULE?'WebKit required in test-elastos content-sandbox browser job':false},async()=>{
+for(const engine of ['chromium','webkit'])test(`isolated names share text baselines and linked screens retain their design spacing in ${engine}`,{skip:windowTestOptions(engine).skip},async()=>{
  const {browserFixture}=await import('./lib/wallet-connection-browser-fixture.mjs');
  const f=await browserFixture(engine);
  try{
@@ -201,11 +208,11 @@ for(const engine of ['chromium','webkit'])test(`isolated names share text baseli
      }
     }
     const mark=document.querySelector('.connection-account-header .connection-heading img')?.getBoundingClientRect();
-    const note=[...document.querySelectorAll('.connection-content > .connection-note')].at(-1),button=document.querySelector('.connection-content > .connection-actions [data-action="open-wallet"]');
+    const note=[...document.querySelectorAll('.connection-content > .connection-note')].at(-1),button=document.querySelector('.connection-content > .connection-actions [data-action="close-window"]');
     return {baselines,mark:mark&&{width:mark.width,height:mark.height},gap:note&&button?note.getBoundingClientRect().top-button.getBoundingClientRect().bottom:null,computed:[...document.querySelectorAll('.connection-computed-detail')].map(e=>({text:e.textContent,hasAppLabel:!!e.querySelector('.connection-detail-label')})),app:[...document.querySelectorAll('.connection-context')].map(e=>e.textContent)};
    });
    if(name.includes('/request-')||name==='walletconnect/link-wait'){assert(measured.baselines.length,name+': baseline samples');assert(measured.baselines.every(b=>b.delta<=.5),name+': '+JSON.stringify(measured.baselines));}
-   if(name.endsWith('/linked')){assert.deepEqual(measured.mark,{width:36,height:36});if(name==='metamask/linked')assert(measured.gap>=8,'stop-sharing note has space after Open Wallet');}
+   if(name.endsWith('/linked')){assert.deepEqual(measured.mark,{width:36,height:36});if(name==='metamask/linked')assert(measured.gap>=8,'stop-sharing note has space after Close window');}
    if(name==='walletconnect/transaction-declined'){assert.equal(measured.computed.length,1);assert.equal(measured.computed[0].hasAppLabel,false);assert(!measured.computed[0].text.includes('From app:'));}
    assert(measured.app.every(text=>!text.includes('BrowserSite reported by Browser:')&&!text.includes('Browser  Site reported')),'Browser shown once');
    checks.push({name,...measured});

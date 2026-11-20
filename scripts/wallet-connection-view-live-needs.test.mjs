@@ -1,7 +1,8 @@
+import {windowTestOptions} from './lib/walletconnect-window-resources.mjs';
 import {canonicalRequestTitles} from './lib/wallet-connection-title-oracle.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readFileSync,existsSync} from 'node:fs';
+import {readFileSync} from 'node:fs';
 import {writeFile} from 'node:fs/promises';
 import {connectionView,reduceConnection,reduceSummary,connectionKey,viewText,connectionActionIds,stageNames} from '../capsules/_shared/wallet-connection-view.mjs';
 import {shared,states,contractStates,fixtureArguments} from './wallet-connection-view-fixtures.mjs';
@@ -17,7 +18,7 @@ test('live needs: all added stages have named window-local production fixtures',
 test('live needs: a supported-action projection withholds authority and keeps manual recovery',()=>{
  for(const row of states){
   const args=fixtureArguments(row),original=reduceConnection(...args);args[0].supportedActions=[];
-  const v=reduceConnection(...args);assert.deepEqual(v.actions,[],row.designState);assert.equal(viewText(v.status),viewText(original.status));assert.match(viewText(v.notice),/Home’s window controls/);
+  const v=reduceConnection(...args);assert.deepEqual(v.actions,[],row.designState);assert.equal(viewText(v.status),viewText(original.status));if(row.window==='walletconnect'&&row.stage==='disconnecting')assert.equal(viewText(v.notice),'Keep this window open until disconnecting finishes.');else assert.match(viewText(v.notice),/Home’s window controls/);
  }
  assert(!connectionView({window:'unisat',stage:'ready',supportedActions:['use-walletconnect']}).actions.length,'an allow-list cannot invent a compatible connector');
  assert.throws(()=>connectionView({window:'metamask',stage:'ready',supportedActions:['invented-route']}),/closed supported actions/);
@@ -109,7 +110,7 @@ test('final needs: network-only notices keep the proof wait without inventing an
  }
 });
 test('new WC needs: read and cleanup failures keep their existing recovery actions',()=>{
- const read=connectionView({window:'walletconnect',stage:'home-read-unavailable'});assert.match(viewText(read.status),/Home could not load your wallet requests/);assert.equal(read.focus,'refresh-status');assert(read.actions.some(a=>a.id==='refresh-status'));
+ const read=connectionView({window:'walletconnect',stage:'home-read-unavailable'});assert.match(viewText(read.status),/Home could not load the wallet details/);assert.equal(read.focus,'refresh-status');assert(read.actions.some(a=>a.id==='refresh-status'));
  const cleanup=connectionView({window:'walletconnect',stage:'disconnect-error'});assert.match(viewText(cleanup.status),/Home could not finish disconnecting/);assert.equal(cleanup.focus,'disconnect');assert(cleanup.actions.some(a=>a.id==='disconnect'));
  const empty=connectionView({window:'walletconnect',stage:'account-unavailable-unknown',localSafety:false});assert.match(viewText(empty.status),/not showing an account/);assert.doesNotMatch(viewText(empty.notice),/Confirm this account/);assert.equal(empty.actions.find(a=>a.primary).id,'start-over');
  const unknown=connectionView({window:'walletconnect',stage:'account-unavailable-unknown',localSafety:null});assert(!unknown.actions.some(a=>a.id==='start-over'));assert.equal(unknown.focus,'close-window');
@@ -124,7 +125,7 @@ test('new WC needs: approved transaction recovery is separate from pending queue
 
 const proof=await temporaryProof('wallet-live-view-',process.env.WALLET_VIEW_PROOF_DIR);const receipts=[];
 test.after(async()=>{try{await writeFile(proof.path+'/live-needs.json',JSON.stringify(receipts,null,2)+'\n');}finally{await proof.cleanup();}});
-for(const engine of ['chromium','webkit'])test('live needs: rendering and QR card containment in '+engine,{skip:engine==='webkit'&&!existsSync(playwright.webkit.executablePath())&&!process.env.ELASTOS_PLAYWRIGHT_MODULE?'WebKit runs in content-sandbox CI':false},async()=>{
+for(const engine of ['chromium','webkit'])test('live needs: rendering and QR card containment in '+engine,{skip:windowTestOptions(engine).skip},async()=>{
  const f=await browserFixture(engine,{width:480,height:560});
  const mount=async args=>f.page.evaluate(async args=>{const m=await import('/capsules/_shared/wallet-connection-view.mjs');window.mounted?.dispose();window.mounted=m.mountConnection(document.querySelector('#mount'),m.reduceConnection(...args));await document.fonts.ready;},args);
  try{

@@ -143,7 +143,7 @@ function accountDisplay(account, window, summary) {
 }
 
 export function connectionView(input) {
-  const allowed = ['window', 'stage', 'provider', 'summary', 'otherRequests', 'account', 'waitSeconds', 'qrData', 'homeOrigin', 'localSafety', 'compact', 'alternativeAllowed', 'previousFocus', 'targetNetwork', 'walletResult', 'transactionDisplay', 'requestContext','supportedActions','copyFeedback','connectionNotice','currentSelection','localReturn','transactionHash','showNextRequests'];
+  const allowed = ['window', 'stage', 'provider', 'summary', 'otherRequests', 'account', 'waitSeconds', 'qrData', 'homeOrigin', 'localSafety', 'compact', 'alternativeAllowed', 'previousFocus', 'targetNetwork', 'walletResult', 'transactionDisplay', 'requestContext','supportedActions','copyFeedback','connectionNotice','currentSelection','localReturn','transactionHash','showNextRequests','linkedConnection'];
   requireValue(plain(input) && Object.keys(input).every(key => allowed.includes(key)), 'closed view input');
   const { window, stage } = input;
   requireValue(Object.hasOwn(screens, window) && Object.hasOwn(screens[window], stage), 'closed window/stage');
@@ -153,6 +153,7 @@ export function connectionView(input) {
   requireValue(input.copyFeedback===undefined||Object.hasOwn(copyFeedbacks,input.copyFeedback),'closed copy feedback');
   requireValue(input.connectionNotice===undefined||Object.hasOwn(connectionNotices,input.connectionNotice),'closed connection notice');
   requireValue(input.showNextRequests===undefined||typeof input.showNextRequests==='boolean','next requests flag');
+  requireValue(input.linkedConnection===undefined||typeof input.linkedConnection==='boolean','linked connection flag');
   requireValue(input.localReturn===undefined||typeof input.localReturn==='boolean','local return flag');
   const currentSelection=input.currentSelection?clone(input.currentSelection):null;
   requireValue(!currentSelection||plain(currentSelection)&&Object.keys(currentSelection).length===2&&bounded(currentSelection.address,128)&&bounded(currentSelection.network,80),'closed current selection');
@@ -198,7 +199,7 @@ export function connectionView(input) {
   let actions = screen.requestPicker ? [] : [screen.primary, ...(screen.secondary || []), screen.requestAction, screen.reviewAction].filter(Boolean).map(action);
   if (window !== 'metamask' || input.alternativeAllowed !== true || requestScreen || screen.account || screen.selectedAccount || transactionRisk) actions = actions.filter(a => a.id !== 'use-walletconnect');
   if (!screen.qr && !screen.requestPicker && !actions.length && !screen.afterAnswer && window !== 'panel') actions.push({id:'close-window',label:parts('Close window'),primary:true,quiet:false});
-  if(actions.some(a=>a.primary&&a.id==='close-window')&&!/close (this )?window/i.test(`${screen.status||''} ${notice}`))notice=`Close this window. ${notice}`.trim();
+  if(!['linked','linked-multiple'].includes(stage)&&actions.some(a=>a.primary&&a.id==='close-window')&&!/close (this )?window/i.test(`${screen.status||''} ${notice}`))notice=`Close this window. ${notice}`.trim();
   const unknownRecovery=safety===null && !knownNotSent && unknownRecoveryStages.has(stage);
   let safetyNotice=transactionRisk&&screen.paymentSafeNotice!==undefined?notice:null;
   if(unknownRecovery){
@@ -211,7 +212,7 @@ export function connectionView(input) {
   if(screen.requiresSafeRetry&&safety!==false){notice='Close this window. Check {{wallet}} and Wallet activity before trying again.';safetyNotice=notice;actions=actions.filter(a=>!approves(a.id)&&a.id!=='start-over');}
   const unknownLinkRecovery=safety===null&&stage==='link-error';
   if(unknownLinkRecovery){notice='Close this window. Check your wallet and Wallet activity before trying again.';safetyNotice=notice;actions=[{id:'close-window',label:parts('Close window'),primary:true,quiet:false}];}
-  if(stage==='disconnecting')notice='Disconnecting continues after you close this window.';
+  if(stage==='disconnecting')notice=window==='walletconnect'&&supported&&!supported.includes('close-window')?'Keep this window open until disconnecting finishes.':'Disconnecting continues after you close this window.';
   if(knownNotSent&&result.receipt==='recording_failed'){notice+=' Home cannot save that answer.';if(safetyNotice!==null)safetyNotice=notice;}
   const answered = !!(screen.afterAnswer || summary?.transaction&&result.disposition!==null&&result.receipt!==null || summary && /^(request-(done|declined|access-error|wallet-error|expired|late-ignored|sent-wallet-removed|unavailable)|transaction-(done|declined|access-error|late-result))$/.test(stage));
   let outcome = parts(screen.status);
@@ -226,6 +227,7 @@ export function connectionView(input) {
   if (screen.qr) actions = [{id:'copy-link',label:parts('Copy link'),primary:false,quiet:false},{id:'cancel',label:parts('Cancel'),primary:false,quiet:false}];
   if(screen.requiresSafeRetry&&safety!==false){const close=actions.find(a=>a.id==='close-window');if(close){close.primary=true;close.quiet=false;}}
   if(transactionHash)actions=actions.filter(a=>!approves(a.id)&&a.id!=='start-over'&&a.id!=='use-walletconnect');
+  if(input.linkedConnection)actions=actions.map(a=>['connect','start-over'].includes(a.id)?{...a,label:parts('Replace connection'),primary:false,quiet:true}:a);
   const localNavigationAllowed=!screen.qr&&!actions.some(a=>['stop-waiting','cancel'].includes(a.id));
   if(input.localReturn&&localNavigationAllowed)actions.push({id:'back-to-connection',label:parts('Back to connection'),primary:false,quiet:true});
   if(supported){
@@ -234,12 +236,15 @@ export function connectionView(input) {
       notice=answered?'Return to {{app}} to make a new request.':screen.dispatched||/timeout|cancelled/.test(stage)?'An operation may still be waiting in {{wallet}}. Closing this window does not cancel it. Home will ignore a later answer.':'Open {{wallet}} to check its account and connection.';
       if(summary?.transaction&&!knownNotSent)notice='The transaction may still be waiting in {{wallet}}. Check {{wallet}} and Wallet activity before trying again.';
     }
-    if(removed.some(a=>['open-wallet','open-wallet-activity'].includes(a.id))&&!notice.includes('Open Wallet from Home'))notice+=' Open Wallet from Home to review this request.';
+    if(requestId&&removed.some(a=>['open-wallet','open-wallet-activity'].includes(a.id))&&!notice.includes('Open Wallet from Home'))notice+=' Open Wallet from Home to review this request.';
     if(removed.some(a=>a.id==='open-request-app')&&stage!=='request-unavailable'&&!notice.includes('{{app}}'))notice+=' Return to {{app}}.';
-    if(!actions.some(a=>a.primary)&&!screen.qr){const next=actions.find(a=>a.id==='close-window')||actions.find(a=>a.id==='back-to-connection');if(next){next.primary=true;next.quiet=false;}}
+    if(!actions.some(a=>a.primary)&&!screen.qr){const next=actions.find(a=>a.id==='close-window');if(next){next.primary=true;next.quiet=false;}}
   }
   let effectiveNotice = safetyNotice ?? notice;
-  if(supported&&!supported.includes('close-window')&&!((summary?.site||context?.site)&&actions.some(a=>approves(a.id))))effectiveNotice=/Close this window\./.test(effectiveNotice)?effectiveNotice.replace('Close this window.','Close this window with Home’s window controls.'):effectiveNotice+' Close this window with Home’s window controls.';
+  if(supported&&!supported.includes('close-window')&&!(window==='walletconnect'&&stage==='disconnecting')&&!actions.some(a=>['cancel','stop-waiting','back-to-connection'].includes(a.id))&&!((summary?.site||context?.site)&&actions.some(a=>approves(a.id)))){
+    const manualClose='Close this window with Home’s window controls';
+    effectiveNotice=/Close this window(?=[.,])/.test(effectiveNotice)?effectiveNotice.replace(/Close this window(?=[.,])/,manualClose):effectiveNotice+' '+manualClose+'.';
+  }
   const approvalSite = !screen.requestPicker && (summary?.site||context?.site) && actions.some(a=>approves(a.id));
   if(approvalSite&&(!supported||supported.includes('close-window'))&&!actions.some(a=>a.id==='close-window'))actions.unshift({id:'close-window',label:parts('Close window'),primary:false,quiet:true});
   let focus = approvalSite || unknownRecovery || unknownLinkRecovery || screen.requiresSafeRetry&&safety!==false ? 'close-window' : screen.focusOutcome || answered ? 'outcome' : screen.returnFocus ? 'accounts' : screen.qr ? 'copy-link' : screen.requestPicker ? 'select-request' : actions.some(a => a.id === screen.focus) ? screen.focus : screen.focus&&actions.find(a=>a.primary&&a.id==='close-window')?.id||null;

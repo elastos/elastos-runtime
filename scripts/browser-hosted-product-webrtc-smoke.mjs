@@ -3,7 +3,9 @@ import { browserStageSize } from "../capsules/browser/browser/browser-resize.js"
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import process from "node:process";
-import playwright from "../elastos/tools/browser-playwright-engine/node_modules/playwright/index.js";
+import rawPlaywright from "../elastos/tools/browser-playwright-engine/node_modules/playwright/index.js";
+import { withBrowserLaunchRecovery } from "./lib/browser-launch-recovery.mjs";
+const playwright = withBrowserLaunchRecovery(rawPlaywright);
 import { productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 
 function usage() {
