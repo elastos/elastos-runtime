@@ -97,9 +97,9 @@ impl CommunityState {
         match self {
             Self::NotJoined => "Not joined",
             Self::Left => "Left Community",
-            Self::Reconnecting => "Reconnecting to Community",
+            Self::Reconnecting => "Reconnecting to Community…",
             Self::Starting => "Connecting to Community…",
-            Self::Waiting => "Waiting for another Home to come online.",
+            Self::Waiting => "Community is waiting for another Home.",
             Self::Live => "Live",
         }
     }

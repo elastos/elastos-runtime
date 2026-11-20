@@ -79,7 +79,7 @@ test("Leave keeps Community history and draft, and leaves Direct controls alone"
 test("joined but unreachable shows the failure and blocks Community Send", () => {
   const chat = loadChat();
   chat.render("reconnecting", true, true);
-  checkState(chat, "reconnecting", "Reconnecting to Community", false);
+  checkState(chat, "reconnecting", "Reconnecting to Community…", false);
   chat.pressEnter();
   assert.deepEqual(chat.submits, []);
 });
@@ -102,7 +102,7 @@ test("startup shows what Home waits for and keeps Direct controls", () => {
 
 test("reconnecting shows Runtime's retry time and preserves the draft", () => {
   const chat = loadChat();
-  const detail = "Reconnecting to Community. Next try in 60 seconds.";
+  const detail = "Reconnecting to Community. Next check in 60 seconds.";
   chat.render("reconnecting", true, true, detail);
   checkState(chat, "reconnecting", detail, false);
   chat.pressEnter();
@@ -112,7 +112,7 @@ test("reconnecting shows Runtime's retry time and preserves the draft", () => {
 test("a Community node waiting for a Home keeps history and Direct controls", () => {
   const chat = loadChat();
   chat.render("waiting_for_peers", true, true);
-  checkState(chat, "waiting_for_peers", "Waiting for another Home to come online.", false);
+  checkState(chat, "waiting_for_peers", "Community is waiting for another Home.", false);
   chat.pressEnter();
   assert.deepEqual(chat.submits, []);
 });

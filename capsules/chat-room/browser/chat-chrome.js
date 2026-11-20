@@ -18,9 +18,9 @@
         const labels = {
           not_joined: "Community not joined",
           left: "Left Community",
-          reconnecting: "Reconnecting to Community",
+          reconnecting: "Reconnecting to Community…",
           starting: "Connecting to Community…",
-          waiting_for_peers: "Waiting for another Home to come online.",
+          waiting_for_peers: "Community is waiting for another Home.",
           live: "Community live",
         };
         if (communityStatus) {

@@ -809,13 +809,13 @@ impl CommunityRecoveryView {
         let detail = match state {
             "connected" => "Community is connected.".to_string(),
             "starting" => "Connecting to Community…".to_string(),
-            "waiting_for_peers" => "Waiting for another Home to come online.".to_string(),
+            "waiting_for_peers" => "Community is waiting for another Home.".to_string(),
             _ => match next_retry_seconds {
                 Some(wait) => {
                     let unit = if wait == 1 { "second" } else { "seconds" };
-                    format!("Reconnecting to Community. Next try in {wait} {unit}.")
+                    format!("Reconnecting to Community. Next check in {wait} {unit}.")
                 }
-                None => "Reconnecting to Community".to_string(),
+                None => "Reconnecting to Community…".to_string(),
             },
         };
         CommunityRecoverySnapshot {

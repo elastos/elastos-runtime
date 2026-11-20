@@ -59,7 +59,7 @@ impl elastos_runtime::provider::Provider for CommunityStatusProvider {
             Self::Active(port) => port.community_status(),
             Self::WaitingForGrant => serde_json::json!({
                 "state":"waiting_for_grant", "connected":false,
-                "detail":"Waiting for permission to join Community.",
+                "detail":"This Home needs permission from the Community network to join.",
                 "next_retry_seconds":null,
             }),
         })
@@ -1085,7 +1085,7 @@ mod tests {
         assert!(!reconnecting.available);
         assert_eq!(
             reconnecting.status.as_deref(),
-            Some("Reconnecting to Community. Next try in 60 seconds.")
+            Some("Reconnecting to Community. Next check in 60 seconds.")
         );
         fixture.port.set_community_connected(true);
         assert!(other.conversation_transport_view().available);
@@ -1123,7 +1123,7 @@ mod tests {
             assert_eq!(status["state"], expected);
             if expected == "reconnecting" {
                 assert!(status["next_retry_seconds"].is_null());
-                assert!(!status["detail"].as_str().unwrap().contains("Next try"));
+                assert!(status["detail"].as_str().unwrap().contains("Reconnecting"));
                 assert!(!status["detail"].as_str().unwrap().contains("0 seconds"));
                 let now = tokio::time::Instant::now();
                 f.port.set_community_recovery(
@@ -1161,7 +1161,7 @@ mod tests {
             let detail = status["detail"].as_str().unwrap();
             if millis == 0 {
                 assert!(status["next_retry_seconds"].is_null());
-                assert!(!detail.contains("Next try"));
+                assert!(detail.contains("Reconnecting"));
             } else {
                 assert_eq!(status["next_retry_seconds"], 1);
                 assert!(detail.contains("1 second."));
@@ -1296,7 +1296,7 @@ mod tests {
         assert_eq!(waiting["state"], "waiting_for_peers");
         assert_eq!(
             waiting["detail"],
-            "Waiting for another Home to come online."
+            "Community is waiting for another Home."
         );
         assert!(waiting["next_retry_seconds"].is_null());
         fixture.port.set_community_joined(false).unwrap();
@@ -1320,7 +1320,7 @@ mod tests {
         assert_eq!(waiting["state"], "waiting_for_grant");
         assert_eq!(
             waiting["detail"],
-            "Waiting for permission to join Community."
+            "This Home needs permission from the Community network to join."
         );
         assert_eq!(waiting["connected"], false);
         assert!(waiting["next_retry_seconds"].is_null());

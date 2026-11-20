@@ -105,7 +105,7 @@ The release availability contract while this node is unreachable is:
   24 hours, then shows **Expired**.
 - Homes keep all messages they already received.
 
-Chat shows **Reconnecting to Community** while Runtime repairs a locally
+Chat shows **Reconnecting to Community…** while Runtime repairs a locally
 failed link. Runtime continues paced repairs for the life of Home. See
 [Community recovery](TROUBLESHOOTING.md#community-reconnects-after-a-local-link-failure)
 for the local failure checks, startup states and the silent-neighbour case
