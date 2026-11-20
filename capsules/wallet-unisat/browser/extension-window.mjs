@@ -138,6 +138,11 @@ export function startExtensionWindow(kind, homeClipboard) {
     };
   }
 
+  function clearActionWallet() {
+    operationWallet = null; chosenWalletChoiceId = null;
+    accountEvent = null; networkEvent = null; disconnected = false;
+  }
+
   function effectAction(action) {
     if (kind === 'metamask') action = {...action,includeWallet:true};
     if (action.kind !== 'link' || !chosenWalletChoiceId) return action;
@@ -218,7 +223,7 @@ export function startExtensionWindow(kind, homeClipboard) {
             if (selected.status === 'pending') { stage = 'request-unavailable'; fixedOutcome = true; }
           } else {
             const next = reduceSummary(requests.find(r => r.request_id === selected?.id) || requests[0], { connector: CONNECTOR_ID });
-            if (next?.id !== selected?.id) { operationWallet = null; chosenWalletChoiceId = null; }
+            if (next?.id !== selected?.id) clearActionWallet();
             if (next?.id !== selected?.id) preflightFailure = null;
             selected = next;
             stage = chooseStage();
@@ -246,7 +251,7 @@ export function startExtensionWindow(kind, homeClipboard) {
     const pending = { action, deadline: now() + HOST_EFFECT_TIMEOUT_MS / 1000 };
     operation = pending;
     pendingEffectAction = action;
-    if (action.kind === 'approve') { operationWallet = null; chosenWalletChoiceId = null; }
+    if (action.kind === 'approve') clearActionWallet();
     if (action.kind === 'link') { linkObserved = false; if (!chosenWalletChoiceId) operationWallet = null; accountEvent = null; networkEvent = null; disconnected = false; fixedOutcome = false; selected = null; picked = false; walletChoicesFromHome = []; }
     stage = action.kind === 'link' ? 'extension-wait' : selected?.transaction ? 'transaction-extension' : 'request-extension';
     draw();
@@ -366,11 +371,11 @@ export function startExtensionWindow(kind, homeClipboard) {
       const address = button.dataset.focusKey.slice('copy-address:'.length);
       button.disabled = true;
       homeClipboard.writeText(address, { purpose: 'wallet.address' }).catch(() => { button.focus(); }).finally(() => { button.disabled = false; });
-    } else if (action === 'view-requests') { revision += 1; fixedOutcome = false; picked = false; operationWallet = null; chosenWalletChoiceId = null; selected = reduceSummary(requests[0], { connector: CONNECTOR_ID }); stage = 'request-list'; draw(); }
+    } else if (action === 'view-requests') { revision += 1; fixedOutcome = false; picked = false; clearActionWallet(); selected = reduceSummary(requests[0], { connector: CONNECTOR_ID }); stage = 'request-list'; draw(); }
     else if (action === 'select-request') {
       const id = button.dataset.focusKey.slice('select-request:'.length);
       revision += 1; fixedOutcome = false; picked = true;
-      if (id !== selected?.id) { operationWallet = null; chosenWalletChoiceId = null; preflightFailure = null; }
+      if (id !== selected?.id) { clearActionWallet(); preflightFailure = null; }
       selected = reduceSummary(requests.find(r => r.request_id === id), { connector: CONNECTOR_ID });
       stage = chooseStage(); draw();
     }
@@ -380,6 +385,9 @@ export function startExtensionWindow(kind, homeClipboard) {
     const data = event.data;
     if (event.source !== window.top || event.origin !== homeOrigin || data?.type !== 'home:wallet-connector-event'
       || !hasExactKeys(data, ['type', 'connectorId', 'event', 'value']) || data.connectorId !== CONNECTOR_ID) return;
+    // Home chooses the owner for each action. Earlier-wallet observations cannot
+    // prevent that selection for a new request. UniSat keeps its own discovery rule.
+    if (kind === 'metamask' && !operation && !operationWallet) return;
     if (data.event === 'accountsChanged') {
       const pattern = kind === 'metamask' ? /^0x[0-9a-fA-F]{40}$/ : /^(?:bc1|[13])[A-Za-z0-9]{20,100}$/;
       if (!Array.isArray(data.value) || data.value.length > 8 || data.value.some(a => typeof a !== 'string' || !pattern.test(a))) return;

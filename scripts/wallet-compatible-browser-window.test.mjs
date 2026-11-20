@@ -153,9 +153,12 @@ test('review: a consumed chooser handle never accompanies a later approval in th
 }));
 test('review: a new queued request clears the prior wallet identity and shows its actual signer on success',async()=>windowCase({saved:true,requests:true,wallets:[{...mm,accounts:[A]},{...rabby,icon,accounts:[B]}]},async f=>{
   await f.state('request-waiting');await click(f,'send-request','request-done');
+  await f.top.evaluate(A=>emitWallet('accountsChanged',[A]),A);
   await addApproval(f,'second-wallet',B);
   // A completed local outcome intentionally stays until the person selects the new request.
   await f.action('select-request').click();await f.state('request-waiting');
+  await f.top.evaluate(A=>emitWallet('accountsChanged',[A]),A);
+  await f.state('request-waiting');
   assert.doesNotMatch(await f.action('send-request').innerText(),/MetaMask/);
   await click(f,'send-request','request-done');
   assert.equal((await namedCalls(f)).filter(c=>c.method==='personal_sign').at(-1).wallet,'io.rabby');

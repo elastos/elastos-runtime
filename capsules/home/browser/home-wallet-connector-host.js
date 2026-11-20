@@ -133,6 +133,7 @@ export function handleHomeWalletConnectorEffect(event, context, data) {
     state.requestIds.delete(state.requestIds.values().next().value);
   }
   rememberWalletEventRecipient(event, context);
+  walletEventProviders.delete(connectorId);
   state.requestIds.add(requestId);
   state.inFlight = true;
   performConnectorEffect(connectorId, context.homeToken, action, context)
