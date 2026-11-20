@@ -2798,7 +2798,7 @@ async fn update_repair_details_go_only_to_home_log() {
     let subscriber = tracing_subscriber::fmt()
         .with_ansi(false)
         .without_time()
-        .with_env_filter("off,elastos_server::api::gateway::gateway_update_notice=warn,elastos_server::api::gateway::gateway_home_update=warn")
+        .with_env_filter("off,elastos_server::api::gateway::gateway_update_notice=info,elastos_server::api::gateway::gateway_home_update=warn")
         .with_writer(move || writer.try_clone().unwrap())
         .finish();
     tracing::subscriber::set_global_default(subscriber).unwrap();
@@ -2827,7 +2827,7 @@ async fn update_repair_details_go_only_to_home_log() {
                 }
                 _ => unreachable!(),
             }
-            let mut views = vec![notice::preference(dir.path())];
+            let mut views = (0..5).map(|_| notice::preference(dir.path())).collect::<Vec<_>>();
             if fault == "save" {
                 let app = gateway_router(test_state(dir.path()));
                 let (status, response) = home_test_post_json(
@@ -2841,6 +2841,18 @@ async fn update_repair_details_go_only_to_home_log() {
                 assert_eq!(status, StatusCode::CONFLICT);
                 views.push(response);
             }
+            match fault {
+                "folder" => std::fs::set_permissions(path.parent().unwrap(), std::fs::Permissions::from_mode(0o700)).unwrap(),
+                "unreadable" => std::fs::remove_file(&path).unwrap(),
+                "save" => std::fs::remove_dir(&path).unwrap(),
+                "version" => {
+                    let mut sources = crate::sources::load_trusted_sources(dir.path()).unwrap();
+                    sources.sources[0].installed_version = "2.0.1".into();
+                    crate::sources::save_trusted_sources(dir.path(), &sources).unwrap();
+                }
+                _ => unreachable!(),
+            }
+            for _ in 0..5 { notice::preference(dir.path()); }
             for view in views {
                 for field in ["message", "save_error", "error"] {
                     if let Some(text) = view[field].as_str() {
@@ -2881,6 +2893,11 @@ async fn update_repair_details_go_only_to_home_log() {
             "repair detail missing from Home log: {detail}; captured log: {output}"
         );
     }
+    assert_eq!(output.matches("Update checks are off because Home cannot use Local/").count(), 1, "{output}");
+    assert_eq!(output.matches("Update checks are off because Home could not read its settings. On the device").count(), 2, "{output}");
+    assert_eq!(output.matches("Home cannot check for updates until you repair").count(), 1, "{output}");
+    assert_eq!(output.matches("Update settings are readable again.").count(), 4, "{output}");
+    assert!(output.contains("error="), "failure detail missing: {output}");
     assert!(!output.contains("private-path-sentinel"));
     assert!(!output.contains("private-content-sentinel"));
 }
