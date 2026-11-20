@@ -141,7 +141,7 @@ export function createWalletCreateAccountFlow({
         <textarea name="recovery_key" rows="8" spellcheck="false" placeholder="Paste your Wallet recovery key"></textarea>
       </label>
       <label>Name <input name="label" autocomplete="off" maxlength="40" placeholder="Recovered account"></label>
-      <p class="wallet-flow-hint">Paste an individual Wallet recovery key. A System Recovery Kit from System restores your recovery authority, data key, Profile, contacts, and included built-in Wallet accounts. It does not restore your files. Keep separate copies of your files.</p>
+      <p class="wallet-flow-hint">Paste an individual Wallet recovery key. To restore from a Recovery Kit, open System and choose Import Recovery Kit. A Recovery Kit does not contain your files.</p>
     `;
     form.addEventListener("submit", (event) => {
       event.preventDefault();
