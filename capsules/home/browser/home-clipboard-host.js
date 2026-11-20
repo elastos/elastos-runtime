@@ -210,7 +210,7 @@ export function createHomeClipboardPrompt({
     ],
     "wallet:wallet.address:write": [
       "Copy Wallet address?",
-      "Continue to copy this Wallet address to this device clipboard.",
+      "Home copies this wallet address to the clipboard on this device.",
       "Copy",
     ],
     "wallet:wallet.recovery-key:write": [
