@@ -79,6 +79,10 @@ class TwoHomeReceiptTests(unittest.TestCase):
         shell = (ROOT / 'scripts/ci-installed-journeys.sh').read_text()
         self.assertIn('if [[ "${CI_TWO_HOME_NETWORK_MATRIX:-false}" == true ]]', shell)
         self.assertIn('matrix_required = os.environ.get("CI_TWO_HOME_NETWORK_MATRIX") == "true"', shell)
+        matrix = shell.split('    two-home-messages)', 1)[1].split('    home)', 1)[0]
+        self.assertLess(matrix.index('scripts/test-behaviour.sh inputs'), matrix.index('--two-home-matrix'))
+        self.assertIn('export NODE_PATH=', matrix)
+        self.assertIn('export BROWSER_OPERATOR_PLAYWRIGHT_CORE=', matrix)
 
     def identity(self):
         return {'candidate':'c'*40, 'source_tree':'d'*40, 'installed_runtime_sha256':'a'*64,

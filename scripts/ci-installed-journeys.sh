@@ -41,6 +41,10 @@ PY
         ;;
     two-home-messages)
         if [[ "${CI_TWO_HOME_NETWORK_MATRIX:-false}" == true ]]; then
+            scripts/test-behaviour.sh inputs
+            inputs="${BEHAVIOUR_INPUTS:-${RUNNER_TEMP:-${HOME}/.cache/elastos-runtime}/behaviour}"
+            export NODE_PATH="$inputs/browser/node_modules"
+            export BROWSER_OPERATOR_PLAYWRIGHT_CORE="$inputs/core/node_modules/playwright-core"
             python3 scripts/ci-installed-journeys.py --two-home-matrix --evidence-dir "$EVIDENCE/two-home-messages"
         else
             python3 scripts/ci-installed-journeys.py "$CI_HOME" "$DATA" "$EVIDENCE/two-home-messages" --two-home-messages
