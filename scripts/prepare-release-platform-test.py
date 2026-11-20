@@ -161,6 +161,8 @@ class PrepareWorkerTest(unittest.TestCase):
             self.assertEqual(json.loads((output / "platform-input.json").read_text())["carrier_relay"], expected)
             builds = [json.loads(line) for line in (self.root / "cargo.log").read_text().splitlines()
                       if json.loads(line)["args"][0] == "build"]
+            self.assertTrue(any("elastos-server" in build["args"] and "--bin" in build["args"]
+                                and "elastos" in build["args"] for build in builds), "Runtime build must be observed")
             for build in builds:
                 self.assertEqual(build["carrier_relay"], {
                     "ELASTOS_RELEASE_RELAY_URL": pair.get("RELEASE_CARRIER_RELAY_URL"),
