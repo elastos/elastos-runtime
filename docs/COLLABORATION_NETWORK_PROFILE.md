@@ -90,7 +90,7 @@ person chooses isolation.
 The release network lists one bootstrap peer: the Community node on the seed
 host. This node runs its own Runtime with its own account, data root, Carrier
 port and resource limits, apart from the release and update service. The default
-Carrier policy uses direct paths. With the meeting point off, bootstrap
+Carrier policy uses direct paths. With the meeting point off, local bootstrap
 receipts carry the endpoint ID and the Home's direct addresses, including LAN,
 VPN and public IP addresses. With a meeting point selected, receipts carry
 public IP hints or the endpoint ID alone; Runtime supplies the approved meeting

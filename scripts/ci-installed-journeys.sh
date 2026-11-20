@@ -179,6 +179,8 @@ if repair:
 }, indent=2) + "\n")
 with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
     summary.write(f"### Installed journeys\n\nCandidate: `{commit}`\n\nSource tree: `{tree}`\n\nInstalled Runtime SHA-256: `{sha}`\n\n")
+    if matrix_required and matrix:
+        summary.write(f"Message-journey fixture Runtime SHA-256: `{matrix['identity']['installed_runtime_sha256']}`. Its compiled meeting point uses disposable test pins.\n\n")
     summary.write("| Journey | Result |\n| --- | --- |\n")
     for name, result in results.items():
         summary.write(f"| {name} | {result} |\n")

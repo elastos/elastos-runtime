@@ -210,7 +210,10 @@ async function run() {
         return message?.delivery_issue==='peer_unreachable' && await detail(blockedText)==='Unconfirmed' && message;
       },85000);
       const row=direct.locator('#message-list li.message.self-message').filter({has:direct.locator('.message-body').filter({hasText:blockedText})});
-      assert.match(await row.innerText(),/Your Home is still trying to deliver this message/);
+      const explanation=await row.innerText();
+      assert.match(explanation,/Check that both Homes and their networks are on/);
+      assert.match(explanation,/Your Home keeps trying while it is on, for up to 24 hours/);
+      assert.equal(explanation.match(/\btrying\b/g)?.length,1,'one retry claim');
       await direct.screenshot({path:join(evidence,'direct-unconfirmed-desktop.png'),fullPage:true});
       await direct.setViewportSize({width:375,height:812});
       assert(await direct.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'phone delivery view fits its viewport');
