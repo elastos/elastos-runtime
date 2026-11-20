@@ -61,7 +61,7 @@ test("a pending encryption step is explained", () => {
 });
 
 test("plaintext that arrived while Home runs is explained", () => {
-  const encrypts = "Save your Recovery Kit and confirm with your passkey to encrypt them. If the save is refused, Home names the files and says what to move. Follow that message and save again.";
+  const encrypts = "Save your Recovery Kit and confirm with your passkey to encrypt them. One save takes at most 64 files and 64 MiB in total, each file up to 16 MiB. If more are waiting, move some out of your protected Home folders, save, then move them back and save again. Move a file over 16 MiB out and upload it again in Library (up to 100 MiB).";
   const shown = render({ ...ready, root_encrypted: false, required_actions: ["migrate_declared_plaintext_objects"] });
   assert.equal(shown.status, "Needs attention");
   assert.equal(shown.note, `Some files in your protected Home folders are not encrypted yet; until they are, Home will not start again. ${encrypts}`);

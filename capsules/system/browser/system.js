@@ -2833,7 +2833,7 @@ function recoveryAttentionNote(status) {
   }
   if (status?.required_actions?.includes("migrate_declared_plaintext_objects")) {
     const notStarting = status.protection_configured === true ? "; until they are, Home will not start again" : "";
-    notes.push(`Some files in your protected Home folders are not encrypted yet${notStarting}. Save your Recovery Kit and confirm with your passkey to encrypt them. If the save is refused, Home names the files and says what to move. Follow that message and save again.`);
+    notes.push(`Some files in your protected Home folders are not encrypted yet${notStarting}. Save your Recovery Kit and confirm with your passkey to encrypt them. One save takes at most 64 files and 64 MiB in total, each file up to 16 MiB. If more are waiting, move some out of your protected Home folders, save, then move them back and save again. Move a file over 16 MiB out and upload it again in Library (up to 100 MiB).`);
   }
   const count = Number(status?.objects_needing_attention_count) || 0;
   const first = Array.isArray(status?.objects_needing_attention) ? status.objects_needing_attention[0] : null;
