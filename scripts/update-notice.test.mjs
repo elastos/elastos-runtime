@@ -69,7 +69,7 @@ async function fixture() {
       if(summary.runtime_update && state.settings.message===copy("INVALID_VERSION_TEXT")) {
         summary.source.installed_version="broken";
         summary.runtime_update={configured:true,available:false,can_apply:false,checking:false,current_version:"broken",
-          message:copy("INVALID_VERSION_TEXT"),background_checks:state.settings};
+          message:copy("INVALID_VERSION_TEXT"),background_checks:state.settings,controller:state.updateController};
       }
       jsonResponse(response,summary);return true;
     }
@@ -354,6 +354,23 @@ test("System keeps repair paths and commands out of the setting hint", async () 
       assert.doesNotMatch(hint,/Local\/|notice\.json|\.notice\.lock|elastos update/);
       if(stateName!=='UNREADABLE_TEXT')assert.match(hint,/Home's log/,'the helper can find the repair steps');
     }
+    await page.close();
+  } finally {await browser.close();await f.close();}
+});
+
+
+test("System preserves failed-update feedback when the installed version is unreadable", async () => {
+  const f=await fixture();const browser=await chromium.launch(productSmokeLaunchOptions());
+  try {
+    f.state.settings={...preference(false),message:copy("INVALID_VERSION_TEXT")};
+    f.state.updateController={phase:"failed",message:"Home could not finish the update. Open System again to check its status."};
+    const page=await browser.newPage({viewport:{width:390,height:844}});
+    await page.goto(f.baseUrl+"/fixture?settings=about");
+    const system=page.frameLocator("#system-frame");
+    await system.locator("#update-background-message").getByText(copy("INVALID_VERSION_TEXT"),{exact:true}).waitFor();
+    assert.equal(await system.locator("#runtime-update-status").textContent(),f.state.updateController.message,
+      "drawing the background setting keeps the failed-update message visible");
+    assert.deepEqual(f.requestFailures,[]);
     await page.close();
   } finally {await browser.close();await f.close();}
 });
