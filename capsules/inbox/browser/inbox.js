@@ -1,4 +1,4 @@
-    const WALLET_REQUEST_UNAVAILABLE = "This request is unavailable. Return to the app and make a new request.";
+    const WALLET_REQUEST_UNAVAILABLE = "This request is unavailable. Go back to the app and start a new request.";
     const INBOX_SAFETY_REFRESH_MS = 5 * 60 * 1000;
     const launchParams = new URLSearchParams(window.location.search);
     const homeParentOrigin = launchParams.get("home_origin") || "";
