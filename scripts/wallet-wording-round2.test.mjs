@@ -46,8 +46,6 @@ test('wording R2: unknown app names stay labels outside sentences',()=>{
       assert.doesNotMatch(status+viewText(v.notice),/in Requesting app|to Requesting app/);
       if(status)assert.match(status,/^[A-Z]/,window+'/'+input.stage);
     }
-    const transaction=reduceSummary({...seed,connector_id:'wallet-'+window,intent:'transaction_intent',requesting_app_name},{connector:'wallet-'+window});
-    assert.equal(viewText(connectionView({window,stage:'request-next',summary:transaction}).status),'Transaction sent.');
     assert.equal(viewText(connectionView({window,stage:'request-next',summary}).status),'Message signed.');
   }
 });

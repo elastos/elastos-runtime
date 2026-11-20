@@ -76,7 +76,7 @@ export function contractCopy(expected, row, view) {
     if([`To try again, return to ${app}.`,`Start a new request in ${app} to try again.`,`To try again, return to ${app} and make a new request.`].includes(result.notice))result.notice=metamask?`To try again, go back to ${app} and start a new request.`:`To try again, return to ${app} and make a new request.`;
   }
   if(!['linked','linked-multiple'].includes(row.stage)&&view.actions.some(a=>a.primary&&a.id==='close-window')&&!/close (this )?window/i.test(`${result.status} ${result.notice}`))result.notice=`Close this window. ${result.notice}`.trim();
-  if(row.stage==='request-next')result.status=raw.intent==='transaction_intent'?'Transaction sent.':'Message signed.';
+  if(row.stage==='request-next')result.status='Message signed.';
   if(row.stage==='disconnecting')result.notice='Disconnecting continues after you close this window.';
   return result;
 }

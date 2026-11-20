@@ -225,7 +225,7 @@ export function connectionView(input) {
   if(stage==='disconnecting')notice=window==='walletconnect'&&supported&&!supported.includes('close-window')?'Keep this window open until disconnecting finishes.':'Disconnecting continues after you close this window.';
   if(knownNotSent&&result.receipt==='recording_failed'){notice+=' Home cannot save that answer.';if(safetyNotice!==null)safetyNotice=notice;}
   const answered = !!(screen.afterAnswer || summary?.transaction&&result.disposition!==null&&result.receipt!==null || summary && /^(request-(done|declined|access-error|wallet-error|expired|late-ignored|sent-wallet-removed|unavailable)|transaction-(done|declined|access-error|late-result))$/.test(stage));
-  let outcome = parts(stage === 'request-next' && summary?.transaction ? 'Transaction sent.' : screen.status);
+  let outcome = parts(screen.status);
   if(summary?.transaction&&result.disposition==='answered'&&result.receipt!=='recorded'){
     outcome=parts('The wallet returned a transaction result. Home cannot save it.');
     notice='Check {{wallet}} and Activity in Wallet before sending again.';

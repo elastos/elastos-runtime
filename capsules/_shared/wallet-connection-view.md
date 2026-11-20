@@ -85,7 +85,7 @@ Computed transaction display values are supplied as their own bounded fields; th
 
 ## Presentation recovery copy
 
-For unknown-safety busy recovery, H:754 and H:763-780 govern Close and Wallet activity. A selected transaction on request-busy says that this transaction may still be waiting in the named wallet, once (H:772-775); it does not attribute that work to another window. Other busy cards describe the unanswered operation and uncertainty about other-window payment work. link-error with unknown safety conservatively withholds Connect pending the contract owner's retry decision. This presentation choice supplies no producer, payment settlement or new authority.
+For unknown-safety busy recovery, H:754 and H:763-780 govern Close and Activity in Wallet. A selected transaction on request-busy says that this transaction may still be waiting in the named wallet, once (H:772-775); it does not attribute that work to another window. Other busy cards describe the unanswered request and uncertainty about transactions in other windows. link-error with unknown safety conservatively withholds Connect pending the contract owner's retry decision. This presentation choice supplies no producer, payment settlement or new authority.
 
 
 ## Existing-plumbing inputs
@@ -122,7 +122,7 @@ WalletConnect also supplies `home-read-unavailable` for a failed existing Home-s
 
 `queueCount` remains the total number of displayed queue records. The added `queuePendingCount`, `queueRecoveryCount` and `queueOtherCount` distinguish pending requests, approved transaction records and other non-pending records from the reduced Runtime summaries. Only pending records are called requests waiting; approved transactions are transactions to review. All supplied records remain in the picker, including recovery records. These labels imply no new result or permission to send again.
 
-Safety recovery has final precedence over capability adaptation. `supportedActions` only removes controls; copy may replace an unavailable control with manual steps, but it preserves the unanswered-operation, uncertainty and Wallet activity warning. Unknown busy, unknown link-error, unsafe account retry and returned-transaction recording failures retain that recovery. A missing Close action changes its one dismissal sentence to Home's frame controls.
+Safety recovery has final precedence over capability adaptation. `supportedActions` only removes controls; copy may replace an unavailable control with manual steps, but it preserves the unanswered-operation, uncertainty and Activity in Wallet warning. Unknown busy, unknown link-error, unsafe account retry and returned-transaction recording failures retain that recovery. A missing Close action changes its one dismissal sentence to Home's frame controls.
 
 Runtime `rejected` plus a numeric approval time reduces to `dismissed`. The added `request-rejected` and `request-dismissed` cards preserve identity, focus their non-action outcome and offer no Send. Their queue counts are `queueRejectedCount` and `queueDismissedCount`; these records stay selectable and are not work to review. A present requesting-app label wins over actor IDs. The shared request-title table is checked against the current raw Inbox and Wallet sources with exact equality; the fallback is Review request. Historical source blobs remain provenance only. Legacy reduced input titled Approval request is accepted and normalized.
 
@@ -140,8 +140,7 @@ Activity in Wallet is the external name; inside Wallet the list is Activity.
 The connected MetaMask screen gives one instruction to remove Home's connection
 in the wallet. Home cannot confirm access to the required account describes an
 access failure without claiming the account was deleted or locked. A completed
-message says Message signed. A completed transaction says Transaction sent.
-The app's name remains in the request identity.
+message says Message signed. The app's name remains in the request identity.
 
 Dismissal templates use `{{close}}` for a sentence and `{{closeThen}}` for a
 sequence. The available controls and window choose those fragments before text
