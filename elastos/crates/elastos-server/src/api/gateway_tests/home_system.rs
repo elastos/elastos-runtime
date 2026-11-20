@@ -9248,7 +9248,7 @@ async fn test_home_launch_starts_chat_room_capsule_and_reports_runtime_activity(
     assert!(payload["runtime_log"]["total_in_memory"].is_null());
     assert_eq!(
         payload["runtime_log"]["note"],
-        "Only the Home owner can see Runtime activity."
+        "Only an admin can see Home activity."
     );
 }
 
