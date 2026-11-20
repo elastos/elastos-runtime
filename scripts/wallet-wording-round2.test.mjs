@@ -108,3 +108,17 @@ test('wording R2: every return-and-request instruction uses the settled form',()
     }
   }
 });
+
+
+test('wording R2: request recovery uses one form across all windows',()=>{
+  for(const window of ['metamask','unisat','walletconnect'])for(const input of wordingInputs(window)){
+    for(const supportedActions of [input.supportedActions,[]]){
+      const v=connectionView({...input,supportedActions});
+      const text=viewText(v.status)+' '+viewText(v.notice);
+      assert.doesNotMatch(text,/start a new request in|return to .*? and make a new request|To continue, return/i,
+        window+'/'+input.stage+'/'+supportedActions.length);
+    }
+    if(input.stage==='request-rejected')assert.match(viewText(connectionView(input).notice),
+      /go back to .* and start a new request\./,window);
+  }
+});
