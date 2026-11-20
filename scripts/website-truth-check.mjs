@@ -6,6 +6,10 @@ import { dirname, resolve, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { validHostedReceipt, validIsolationClaims } from "./website-claims.mjs";
+import {
+  checkKitPromiseNotBroaderThanCode,
+  checkRecoveryStolenDeviceStatements,
+} from "./storage-documentation.test.mjs";
 const HOME_PATH = "/home/";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -105,11 +109,21 @@ check("isolation copy states the current boundary and proof scope", () => {
   for (const phrase of ["opaque sandboxed frames", "Home can currently obtain every app's capability",
     "operating-system processes", "Only the model provider is partly confined",
     "Keys are stored next to the data", "Full backups contain all keys", "seed operator can read",
-    "stolen device or profile key requires a new identity", "integrated and tested together",
+    "The Recovery Kit restores the same Profile signing seed and the same built-in Wallet private keys",
+    "A new passkey does not replace them", "integrated and tested together",
     "Accepted installed proof binds the exact Runtime", "WASM Components", "Runtime user's rights",
     "Passkeys control sign-in", "while Home is locked", "Use hosted accounts only for public demos",
     "other software or OS users while a self-hosted Home is locked"]) assert.ok(html.includes(phrase), phrase);
+  assert.ok(!/stolen device or profile key requires a new identity/i.test(html),
+    "stolen-device recovery must not require a new identity");
   assert.ok(!/zero ambient authority|every app runs as a sandboxed capsule|fully isolated providers/i.test(html));
+});
+
+check("public website matches storage recovery statements", () => {
+  checkRecoveryStolenDeviceStatements(["website/elastos/index.html"], (path) =>
+    readFileSync(resolve(repo, path), "utf8"));
+  checkKitPromiseNotBroaderThanCode(["website/elastos/index.html"], (path) =>
+    readFileSync(resolve(repo, path), "utf8"));
 });
 
 check("copy and claims describe evidence honestly", () => {

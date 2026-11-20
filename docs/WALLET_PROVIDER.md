@@ -104,10 +104,11 @@ shape, but the final signature is completed by the connector capsule that owns
 the linked account.
 
 Full Recovery Kits and individual Wallet recovery keys are intentionally
-different. `elastos.recovery-kit/v1` restores the encrypted user root and every
-recoverable built-in Wallet key included in the exported bundle. External
-wallets such as MetaMask, WalletConnect, Ledger, Essentials, and UniSat restore
-only their links/metadata because their private keys stay in those wallets.
+different. System's Recovery Kit restores recovery authority, the data key,
+included Profile and contacts, and exported built-in Wallet keys. User files and
+external-wallet links need separate backups. External wallets such as MetaMask,
+WalletConnect, Ledger, Essentials, and UniSat restore only their links/metadata
+because their private keys stay in those wallets.
 `elastos.wallet.recovery-key/v1` remains an advanced per-account escape hatch
 for one built-in wallet key. An old managed account whose key cannot decrypt on
 the current Runtime must remain fail-closed until a full bundle or that account's

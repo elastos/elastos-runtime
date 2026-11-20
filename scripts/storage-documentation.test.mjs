@@ -1,8 +1,24 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const read = (path) => readFileSync(resolve(repo, path), "utf8");
+
+export function trackedDocumentationPaths() {
+  const tracked = execFileSync("git", ["ls-files", "-z"], { cwd: repo })
+    .toString()
+    .split("\0")
+    .filter(Boolean);
+  return tracked.filter(
+    (path) =>
+      (path.endsWith(".md") && path !== "elastos/CHANGELOG.md")
+      || path.startsWith("website/"),
+  );
+}
 const security = read("SECURITY.md");
 const browser = read("elastos/crates/elastos-server/src/api/gateway_browser.rs");
 
@@ -38,13 +54,13 @@ const STORAGE_TABLE_ROWS = [
   {
     name: "Documents:",
     encrypted:
-      "Bodies Home writes after protection exists use principal-root protection; existing files over 16 MiB and over batch limits stay plain until re-written; a file left plain for these reasons also blocks Recovery Kit export; metadata and published bytes are plain",
+      "Bodies Home writes after protection exists use principal-root protection; existing files stay plain if over 16 MiB or if the batch is over 64 files or 64 MiB until re-written; only plain files inside scanned roots for these reasons block Kit export; metadata and published bytes are plain",
     recovery: "Data key; files separate",
   },
   {
     name: "Library files",
     encrypted:
-      "Private files and records Library writes after protection exists use principal-root protection; an earlier plain file stays plain if it is over 16 MiB, if its batch is over 64 files or 64 MiB, or if it is outside the migration folders; a file left plain for one of these reasons also blocks Recovery Kit export; published bytes and shared index are plain",
+      "Private files and records Library writes after protection exists use principal-root protection; an earlier plain file stays plain if it is over 16 MiB, if its batch is over 64 files or 64 MiB, or if it is outside the migration folders; only plain files inside scanned roots block Kit export; files outside those roots remain unchecked and may stay plain; published bytes and shared index are plain",
     recovery: "Data key; files separate",
   },
   {
@@ -81,16 +97,11 @@ const STORAGE_TABLE_ROWS = [
   },
 ];
 
-const RECOVERY_STOLEN_DEVICE_PATHS = [
-  "SECURITY.md",
-  "docs/INSTALL.md",
-  "docs/GLOSSARY.md",
-  "docs/STORAGE_AND_ACCESS.md",
-  "docs/ARCHITECTURE.md",
-  "docs/CAPSULE_MODEL.md",
-  "docs/CAPSULE_AUTHORING.md",
-  "README.md",
-];
+const STOLEN_DEVICE_FORBIDDEN = /stolen device or profile key requires a new identity/i;
+const PASSKEY_DOES_NOT_REPLACE =
+  /new passkey[\s\S]{0,120}does not[\s\S]{0,24}replace/i;
+const KIT_PROMISE_BROADER =
+  /restores the encrypted user root and every|encrypted user root and every recoverable/i;
 
 function storageTable(document) {
   const table = document.split("| Data and storage path |", 2)[1].split("\n\n", 1)[0];
@@ -127,20 +138,41 @@ export function checkPrincipalRootEncryptionLead(document) {
 }
 
 export function checkRecoveryStolenDeviceStatements(
-  paths = RECOVERY_STOLEN_DEVICE_PATHS,
+  paths = trackedDocumentationPaths(),
   readDocument = read,
 ) {
   for (const path of paths) {
     const document = readDocument(path);
     assert.doesNotMatch(
       document,
-      /stolen device or profile key requires a new identity/i,
+      STOLEN_DEVICE_FORBIDDEN,
       `${path}: stolen-device recovery must not require a new identity`,
     );
+    if (
+      !/Recovery Kit restores the same Profile|a Recovery Kit copy was stolen|stolen device or profile key/i.test(
+        document,
+      )
+    ) {
+      continue;
+    }
     assert.match(
       document,
-      /new passkey[\s\S]{0,120}does not[\s\S]{0,24}replace/i,
+      PASSKEY_DOES_NOT_REPLACE,
       `${path}: passkey does not rotate Profile or Wallet keys restored from the Kit`,
+    );
+  }
+}
+
+export function checkKitPromiseNotBroaderThanCode(
+  paths = trackedDocumentationPaths(),
+  readDocument = read,
+) {
+  for (const path of paths) {
+    const document = readDocument(path);
+    assert.doesNotMatch(
+      document,
+      KIT_PROMISE_BROADER,
+      `${path}: Kit must not promise an encrypted user root or every recoverable key beyond export code`,
     );
   }
 }
@@ -289,6 +321,7 @@ test("Security Recovery Kit export markers, product name, and storage table cell
   checkStorageTableCells(security);
   checkPrincipalRootEncryptionLead(security);
   checkRecoveryStolenDeviceStatements();
+  checkKitPromiseNotBroaderThanCode();
   for (const path of ["SECURITY.md", "docs/INSTALL.md", "docs/GLOSSARY.md", "docs/STORAGE_AND_ACCESS.md"]) {
     assert.doesNotMatch(read(path), /full (?:recovery )?bundle/i,
       `${path}: use System's Recovery Kit name for the recovery file`);
@@ -307,5 +340,33 @@ test("the recovery stolen-device check rejects a restored new-identity claim", (
   assert.throws(
     () => checkRecoveryStolenDeviceStatements([path], () => mutated),
     /stolen-device recovery/,
+  );
+});
+
+test("the recovery stolen-device check scans every tracked doc and website file", () => {
+  checkRecoveryStolenDeviceStatements();
+  const outsideEight = trackedDocumentationPaths().find(
+    (path) => !["SECURITY.md", "docs/INSTALL.md", "docs/GLOSSARY.md", "docs/STORAGE_AND_ACCESS.md",
+      "docs/ARCHITECTURE.md", "docs/CAPSULE_MODEL.md", "docs/CAPSULE_AUTHORING.md", "README.md"].includes(path)
+      && path.endsWith(".md"),
+  );
+  assert.ok(outsideEight, "find a tracked markdown file outside the original eight");
+  const mutated = `${read(outsideEight)}\nRecovery from a stolen device or profile key requires a new identity.`;
+  assert.throws(
+    () => checkRecoveryStolenDeviceStatements([outsideEight], () => mutated),
+    /stolen-device recovery/,
+  );
+});
+
+test("the Kit promise check rejects a broad user-root claim outside the original eight", () => {
+  checkKitPromiseNotBroaderThanCode();
+  const probe = "docs/WALLET_PROVIDER.md";
+  const mutated = read(probe).replace(
+    /System's Recovery Kit restores[\s\S]*?separate backups\./,
+    "`elastos.recovery-kit/v1` restores the encrypted user root and every recoverable built-in Wallet key included in the exported bundle.",
+  );
+  assert.throws(
+    () => checkKitPromiseNotBroaderThanCode([probe], () => mutated),
+    /Kit must not promise/,
   );
 });
