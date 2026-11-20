@@ -136,14 +136,14 @@ export function startExtensionWindow(kind, homeClipboard) {
     } else if (['request-wallet-error', 'transaction-wallet-error'].includes(stage)) {
       root.dataset.extensionFeedback = 'unknown-error';
       feedbackText(root.querySelector('.connection-status'), [selected.transaction ? 'Home could not confirm the result. The transaction may have been sent.' : 'Home could not confirm the result.']);
-      feedbackText(root.querySelector('.connection-notice'), [kind === 'metamask' ? 'Before you make another request, check your wallet, then open Wallet from Home and check Activity.' : 'Check your wallet and Wallet activity before making another request.']);
+      feedbackText(root.querySelector('.connection-notice'), [kind === 'metamask' ? 'Before you make another request, check your wallet, then open Wallet from Home and check Activity.' : 'Before you try again, check UniSat and Activity in Wallet.']);
     }
     // v1 keeps the admitted Home operation alive after local Stop/timeout.
     // R5's filtered Check action assumes a terminal wait, which v1 cannot claim.
     const notice = root.querySelector('.connection-notice');
     if (notice && ['extension-timeout','extension-cancelled','link-timeout','link-cancelled','request-timeout','request-cancelled'].includes(stage)) {
       root.dataset.extensionFeedback = 'local-wait';
-      feedbackText(notice, [kind === 'metamask' ? 'This request may still be in progress in your wallet. Closing this window does not cancel it. Check your wallet and Activity in Wallet before making another request. Open Wallet from Home to see Activity.' : 'An operation may still be waiting in your wallet. Closing this window does not cancel it. Check your wallet and Wallet activity.']);
+      feedbackText(notice, [kind === 'metamask' ? 'This request may still be in progress in your wallet. Closing this window does not cancel it. Check your wallet and Activity in Wallet before making another request. Open Wallet from Home to see Activity.' : 'A request may still be waiting in UniSat. Closing this window does not cancel it. Check UniSat and Activity in Wallet.']);
     }
     // Some R5 outcome tables still offer only navigation that v1 cannot do.
     // Until the shared capability fallback covers them, reuse its Close part.

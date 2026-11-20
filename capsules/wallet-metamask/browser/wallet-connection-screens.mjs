@@ -1625,7 +1625,7 @@ const definitions = {
   },
   "unisat": {
     "ready": {
-      "notice": "Choose an account in the extension, then sign a message.",
+      "notice": "Choose an account in UniSat, then sign a message.",
       "primary": {
         "id": "connect",
         "label": "Connect wallet",
@@ -1653,7 +1653,7 @@ const definitions = {
     },
     "extension-wait": {
       "status": "Open {{wallet}} to continue.",
-      "notice": "Find {{wallet}} in your browser’s extensions menu. Unlock it if asked. Stopping here leaves its prompt open.",
+      "notice": "Find UniSat in your browser's extensions menu. Unlock it if asked. Stopping here does not cancel the request in UniSat.",
       "wait": true,
       "dispatched": true,
       "secondary": [
@@ -1700,7 +1700,7 @@ const definitions = {
     },
     "link-wait": {
       "status": "Open {{wallet}} and sign the message to confirm this account is yours.",
-      "notice": "Find {{wallet}} in your browser’s extensions menu. Unlock it if asked. Stopping here leaves the request open in {{wallet}}.",
+      "notice": "Find UniSat in your browser's extensions menu. Unlock it if asked. Stopping here does not cancel the request in UniSat.",
       "selectedAccount": true,
       "wait": true,
       "dispatched": true,
@@ -1780,7 +1780,7 @@ const definitions = {
       "focus": "connect"
     },
     "account-unavailable": {
-      "status": "{{wallet}} is not providing this account to Home.",
+      "status": "Home cannot use this UniSat account right now.",
       "notice": "Choose the required account in {{wallet}}, then choose Connect wallet.",
       "selectedAccount": true,
       "primary": {
@@ -1868,7 +1868,7 @@ const definitions = {
       "choices": 0
     },
     "request-unsendable": {
-      "status": "{{wallet}} is not providing the account this request needs.",
+      "status": "Home cannot use the UniSat account this request needs.",
       "notice": "Choose the required account in {{wallet}}, then choose Connect wallet.",
       "account": true,
       "request": true,
@@ -1908,7 +1908,7 @@ const definitions = {
     },
     "request-extension": {
       "status": "Waiting for {{wallet}}.",
-      "notice": "Open {{wallet}} from your browser’s extensions menu. Stopping here leaves it open in {{wallet}}.",
+      "notice": "Open UniSat from your browser's extensions menu. Stopping here does not cancel the request in UniSat.",
       "account": true,
       "request": true,
       "wait": true,
@@ -2204,7 +2204,7 @@ const definitions = {
       "focus": "connect"
     },
     "focus": {
-      "notice": "Choose an account in the extension, then sign a message.",
+      "notice": "Choose an account in UniSat, then sign a message.",
       "primary": {
         "id": "connect",
         "label": "Connect wallet",
@@ -2213,7 +2213,7 @@ const definitions = {
       "focus": "connect"
     },
     "request-unavailable": {
-      "status": "This request is unavailable. Return to the app and ask for a new request.",
+      "status": "This request is unavailable. Return to the app and make a new request.",
       "request": true,
       "account": true,
       "focusOutcome": true,
@@ -2300,8 +2300,8 @@ const requestRecovery='To try again, go back to {{app}} and start a new request.
 for(const window of ['metamask','unisat']){
   for(const screen of Object.values(definitions[window]))if(['To try again, return to {{app}}.','Start a new request in {{app}} to try again.'].includes(screen.notice))screen.notice=requestRecovery;
   for(const stage of ['extension-missing','extensions-unavailable',...(window==='metamask'?['other-ethereum-wallet']:[])]){
-    const screen=definitions[window][stage];screen.status=window==='metamask'?'Home could not find MetaMask or Brave Wallet in this browser.':'Your browser wallet was not found here.';
-    screen.notice=window==='metamask'?'Close this window. Open Home in a browser with MetaMask or Brave Wallet, then choose MetaMask in Wallet.':'Open this connection from Wallet in a browser where your wallet is available.';screen.paymentSafeNotice=screen.notice;
+    const screen=definitions[window][stage];screen.status=window==='metamask'?'Home could not find MetaMask or Brave Wallet in this browser.':'Home could not find UniSat in this browser.';
+    screen.notice=window==='metamask'?'Close this window. Open Home in a browser with MetaMask or Brave Wallet, then choose MetaMask in Wallet.':'Close this window. Open Home in a browser where UniSat is available, then open this connection from Wallet.';screen.paymentSafeNotice=screen.notice;
   }
 }
 for(const window of ['walletconnect','metamask','unisat']){
@@ -2309,5 +2309,10 @@ for(const window of ['walletconnect','metamask','unisat']){
   definitions[window]['request-dismissed']={status:'This request was dismissed.',notice:'This request may still be in progress in {{wallet}}. Closing this window does not cancel it. Before making a new request in {{app}}, check {{wallet}} and Activity in Wallet. Open Wallet from Home to see Activity.',request:true,account:true,afterAnswer:true,focusOutcome:true,primary:{id:'open-wallet-activity',label:'Open Activity in Wallet',quiet:false},secondary:[{id:'close-window',label:'Close window',quiet:false}]};
 }
 
+for(const [stage,screen] of Object.entries(definitions.unisat)){
+  if(screen.notice===requestRecovery)screen.notice='To try again, return to {{app}} and make a new request.';
+}
+definitions.walletconnect['request-rejected'].notice='To try again, start a new request in {{app}}.';
+definitions.unisat['request-dismissed'].notice='A request may still be waiting in UniSat. Before trying again, check UniSat and Activity in Wallet. Open Wallet from Home to review this request.';
 const freeze = value => { if(value && typeof value==='object'){Object.values(value).forEach(freeze);Object.freeze(value);}return value;};
 export const screens = freeze(definitions);

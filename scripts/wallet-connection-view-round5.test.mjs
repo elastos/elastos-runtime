@@ -48,7 +48,7 @@ test('R5: canonical titles equal both raw integration sources including the unkn
  assertTitleSourceBlobs();await titleGuard();
  const broken=structuredClone(sourceFixture.files);broken[rustPath].source=broken[rustPath].source.replace('Wallet approval request','Wrong unknown title');await assert.rejects(()=>titleGuard(product,broken),/Wallet and Inbox/);
 });
-function commonGuard(api=product){for(const stage of ['request-expired','request-wallet-error']){const models=['metamask','unisat'].map(window=>reduce(window,{requesting_app_name:'Browser'}, {stage},api));assert.equal(api.viewText(models[0].notice),api.viewText(models[1].notice));assert.equal(api.viewText(models[0].notice),'To try again, go back to Browser and start a new request.');}}
+function commonGuard(api=product){for(const stage of ['request-expired','request-wallet-error']){const models=['metamask','unisat'].map(window=>reduce(window,{requesting_app_name:'Browser'}, {stage},api));assert.equal(api.viewText(models[0].notice),'To try again, go back to Browser and start a new request.');assert.equal(api.viewText(models[1].notice),'To try again, return to Browser and make a new request.');}}
 test('R5: extension recovery uses one common sentence',()=>commonGuard());
 function neutralGuard(api=product){
  for(const window of ['metamask','unisat'])for(const stage of ['extension-missing','extensions-unavailable','link-wait']){const v=api.connectionView({window,stage,waitSeconds:300});assert.doesNotMatch([api.viewText(v.status),api.viewText(v.notice)].join(' '),/Enable/);assert.equal(v.title,window==='metamask'?'MetaMask or Brave Wallet':'UniSat');}

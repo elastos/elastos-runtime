@@ -32,7 +32,7 @@ const other = kind => kind === 'metamask' ? '0x'+'2'.repeat(40) : 'bc1q'+'b'.rep
 
 async function unisatIdentity(f, saved) {
   await f.state(saved ? 'linked' : 'ready');
-  assert.equal(await f.frame.locator('h1').innerText(), 'Browser wallet');
+  assert.equal(await f.frame.locator('h1').innerText(), 'UniSat');
   assert.match(await f.frame.locator('.connection-heading img').getAttribute('src'), /connection-wallet/);
   assert.equal(await f.top.evaluate(() => testState.calls.length), 0, 'a saved link is not fresh discovery');
   if (saved) return;

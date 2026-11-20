@@ -217,7 +217,7 @@ export function connectionView(input) {
   }
   if(screen.requiresSafeRetry&&safety!==false){notice='Close this window. Check {{wallet}} and Activity in Wallet before trying again.';safetyNotice=notice;actions=actions.filter(a=>!approves(a.id)&&a.id!=='start-over');}
   const unknownLinkRecovery=safety===null&&stage==='link-error';
-  if(unknownLinkRecovery){notice=window==='metamask'?'Close this window. Before you try again, check your wallet, then open Wallet from Home and check Activity.':'Close this window. Check your wallet and Activity in Wallet before trying again.';safetyNotice=notice;actions=[{id:'close-window',label:parts('Close window'),primary:true,quiet:false}];}
+  if(unknownLinkRecovery){notice=window==='metamask'?'Close this window. Before you try again, check your wallet, then open Wallet from Home and check Activity.':window==='unisat'?'Close this window. Before you try again, check UniSat and Activity in Wallet.':'Close this window. Check your wallet and Activity in Wallet before trying again.';safetyNotice=notice;actions=[{id:'close-window',label:parts('Close window'),primary:true,quiet:false}];}
   if(stage==='disconnecting')notice=window==='walletconnect'&&supported&&!supported.includes('close-window')?'Keep this window open until disconnecting finishes.':'Disconnecting continues after you close this window.';
   if(knownNotSent&&result.receipt==='recording_failed'){notice+=' Home cannot save that answer.';if(safetyNotice!==null)safetyNotice=notice;}
   const answered = !!(screen.afterAnswer || summary?.transaction&&result.disposition!==null&&result.receipt!==null || summary && /^(request-(done|declined|access-error|wallet-error|expired|late-ignored|sent-wallet-removed|unavailable)|transaction-(done|declined|access-error|late-result))$/.test(stage));
@@ -239,9 +239,10 @@ export function connectionView(input) {
   if(supported){
     const removed=actions.filter(a=>!supported.includes(a.id));actions=actions.filter(a=>supported.includes(a.id));
     if(removed.some(a=>['check-access','check-status'].includes(a.id))){
-      notice=answered?'Return to {{app}} to make a new request.':screen.dispatched||/timeout|cancelled/.test(stage)?'An operation may still be waiting in {{wallet}}. Closing this window does not cancel it. Home will ignore a later answer.':'Open {{wallet}} to check its account and connection.';
+      notice=answered?(window==='unisat'?'To try again, return to {{app}} and make a new request.':'To try again, go back to {{app}} and start a new request.'):screen.dispatched||/timeout|cancelled/.test(stage)?'An operation may still be waiting in {{wallet}}. Closing this window does not cancel it. Home will ignore a later answer.':'Open {{wallet}} to check its account and connection.';
       if(summary?.transaction&&!knownNotSent)notice='The transaction may still be waiting in {{wallet}}. Check {{wallet}} and Activity in Wallet before trying again.';
     }
+    if(window==='unisat'&&stage==='request-network-testnet'&&removed.some(a=>['check-access','check-status'].includes(a.id)))notice='Select Bitcoin mainnet in UniSat.';
     if(requestId&&removed.some(a=>['open-wallet','open-wallet-activity'].includes(a.id))&&!notice.includes('Open Wallet from Home'))notice+=' Open Wallet from Home to review this request.';
     if(removed.some(a=>a.id==='open-request-app')&&stage!=='request-unavailable'&&!notice.includes('{{app}}'))notice+=' Return to {{app}}.';
     if(!actions.some(a=>a.primary)&&!screen.qr){const next=actions.find(a=>a.id==='close-window');if(next){next.primary=true;next.quiet=false;}}
