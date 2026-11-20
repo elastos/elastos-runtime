@@ -92,8 +92,10 @@ intent and returns no signature. Runtime resolves and supplies the exact
 principal-owned account, chain namespace, intent, resource, reason, payload, and
 expiry before invoking the private adapter.
 
-Built-in wallet keys are provider-owned and encrypted at rest under
-`localhost://ElastOS/SystemServices/Wallet/wallet-key.hex`. They are
+Built-in wallet signing keys are provider-owned and encrypted at rest in
+`localhost://ElastOS/SystemServices/Wallet/wallet-state.json`. The nearby
+`wallet-key.hex` file is plain hex on disk and names the provider storage key.
+They are
 passkey-controlled, not passkey-derived: a long-lived Wallet/System/Inbox launch
 token may list and review requests, but every built-in signature, transaction
 send, account deletion, and Wallet recovery-key export/import must include a
@@ -109,7 +111,10 @@ included Profile and contacts, and exported built-in Wallet keys. User files and
 external-wallet links need separate backups. The Recovery Kit does not restore
 MetaMask, WalletConnect, Ledger, Essentials, or UniSat links. Their private
 keys stay in those wallets. Link them again, or restore `wallet-state.json` from
-a separate copy of the data folder.
+a separate copy of the data folder. After Kit import, Home may write a new
+`wallet-key.hex`. A lone `wallet-state.json` from an older copy may not open
+managed accounts until you import the Recovery Kit again or export the affected
+Wallet recovery keys before removal.
 `elastos.wallet.recovery-key/v1` remains an advanced per-account escape hatch
 for one built-in wallet key. An old managed account whose key cannot decrypt on
 the current Runtime must remain fail-closed until a full bundle or that account's

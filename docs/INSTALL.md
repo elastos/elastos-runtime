@@ -73,7 +73,8 @@ adds one line ending in `# Added by the ElastOS installer` to your login profile
 on Ubuntu, or `~/.bash_profile` if you have one). It does this only when the
 install folder is not already on PATH and the line is not there yet, and it
 prints the file it changed. Set `ELASTOS_NO_MODIFY_PATH=1` to skip it. To undo,
-delete that line; `--uninstall` removes it too.
+delete that line yourself. Uninstall does not edit your profile; it prints the
+same line for you to delete.
 
 For automated provisioning, use `--install-only`:
 
@@ -508,8 +509,8 @@ The installer stops this installation's Runtime the same way an install does:
 it stops only processes whose ownership records and command match this
 installation, and removes nothing if another process holds them. It then
 removes the binary, the components (including the release scripts and the
-Browser image), the trusted sources, the verified release and the PATH line the
-installer added to your login profile. Your data
+Browser image), the trusted sources, and the verified release, then prints the
+PATH line the installer added so you can delete it from your login profile. Your data
 directory stays, including Browser profiles, so installing again continues with
 the same identity. Pass the same `--install-dir` you installed with. An install
 or update that is running or was interrupted stops the removal; finish it first.

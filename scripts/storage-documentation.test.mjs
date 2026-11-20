@@ -102,8 +102,10 @@ const PASSKEY_DOES_NOT_REPLACE =
   /new passkey[\s\S]{0,120}does not[\s\S]{0,24}replace/i;
 const KIT_PROMISE_BROADER =
   /restores the encrypted user root and every|encrypted user root and every recoverable/i;
-const EXTERNAL_WALLET_LINK_RESTORE_FORBIDDEN =
-  /restore only their links\/metadata|restore only their links/i;
+const KIT_MUST_NOT_CLAIM_USER_FILE_RESTORE =
+  /(?:Recovery Kit|The Recovery Kit)\s+restores\s+(?:all\s+)?(?:your\s+)?(?:(?:Library|library)\s+)?files\b|(?:Recovery Kit|The Recovery Kit)\s+restores\s+(?:your\s+)?(?:documents|files|everything|the\s+Library|the\s+whole\s+Home)\b/i;
+const KIT_MUST_NOT_CLAIM_EXTERNAL_WALLET_LINK_RESTORE =
+  /(?:Recovery Kit|The Recovery Kit)\s+restores[^.\n]{0,160}\b(?:MetaMask|WalletConnect|Ledger|Essentials|UniSat)[^.\n]{0,80}\blinks?\b|restore only their links(?:\/metadata)?/i;
 const UNINSTALL_DELETES_ALL_ON_COMPUTER =
   /deletes your identity, wallets and recovery material on this computer/i;
 
@@ -176,12 +178,12 @@ export function checkKitPromiseNotBroaderThanCode(
     assert.doesNotMatch(
       document,
       KIT_PROMISE_BROADER,
-      `${path}: Kit must not promise an encrypted user root or every recoverable key beyond export code`,
+      `${path}: Kit must not promise an encrypted user root or every recoverable key beyond what export code includes`,
     );
   }
 }
 
-export function checkExternalWalletLinksNotRestoredByKit(
+export function checkKitMustNotClaimUserFileRestore(
   paths = trackedDocumentationPaths(),
   readDocument = read,
 ) {
@@ -189,11 +191,28 @@ export function checkExternalWalletLinksNotRestoredByKit(
     const document = readDocument(path);
     assert.doesNotMatch(
       document,
-      EXTERNAL_WALLET_LINK_RESTORE_FORBIDDEN,
-      `${path}: Kit must not claim external wallet links restore from the Kit`,
+      KIT_MUST_NOT_CLAIM_USER_FILE_RESTORE,
+      `${path}: docs must not claim the Recovery Kit restores user files, Library files, or a whole-Home file backup`,
     );
   }
 }
+
+export function checkKitMustNotClaimExternalWalletLinkRestore(
+  paths = trackedDocumentationPaths(),
+  readDocument = read,
+) {
+  for (const path of paths) {
+    const document = readDocument(path);
+    assert.doesNotMatch(
+      document,
+      KIT_MUST_NOT_CLAIM_EXTERNAL_WALLET_LINK_RESTORE,
+      `${path}: docs must not claim the Recovery Kit restores external-wallet links`,
+    );
+  }
+}
+
+/** @deprecated use checkKitMustNotClaimExternalWalletLinkRestore */
+export const checkExternalWalletLinksNotRestoredByKit = checkKitMustNotClaimExternalWalletLinkRestore;
 
 export function checkUninstallScopeHonest(
   paths = trackedDocumentationPaths(),
@@ -354,7 +373,8 @@ test("Security Recovery Kit export markers, product name, and storage table cell
   checkPrincipalRootEncryptionLead(security);
   checkRecoveryStolenDeviceStatements();
   checkKitPromiseNotBroaderThanCode();
-  checkExternalWalletLinksNotRestoredByKit();
+  checkKitMustNotClaimUserFileRestore();
+  checkKitMustNotClaimExternalWalletLinkRestore();
   checkUninstallScopeHonest();
   for (const path of ["SECURITY.md", "docs/INSTALL.md", "docs/GLOSSARY.md", "docs/STORAGE_AND_ACCESS.md"]) {
     assert.doesNotMatch(read(path), /full (?:recovery )?bundle/i,
@@ -392,7 +412,7 @@ test("the recovery stolen-device check scans every tracked doc and website file"
   );
 });
 
-test("the Kit promise check rejects a broad user-root claim outside the original eight", () => {
+test("the Kit user-root promise check rejects an encrypted-user-root claim outside the original eight", () => {
   checkKitPromiseNotBroaderThanCode();
   const probe = "docs/WALLET_PROVIDER.md";
   const mutated = read(probe).replace(
@@ -401,18 +421,52 @@ test("the Kit promise check rejects a broad user-root claim outside the original
   );
   assert.throws(
     () => checkKitPromiseNotBroaderThanCode([probe], () => mutated),
-    /Kit must not promise/,
+    /Kit must not promise an encrypted user root/,
   );
 });
 
-test("the external-wallet link check rejects a Kit link-restore claim", () => {
-  checkExternalWalletLinksNotRestoredByKit();
+test("the Kit user-file restore check rejects a Library-files sentence", () => {
   const probe = "docs/WALLET_PROVIDER.md";
-  const mutated = `${read(probe)}\nExternal wallets such as MetaMask restore only their links/metadata because their private keys stay in those wallets.`;
+  const mutated = `${read(probe)}\nThe Recovery Kit restores all your Library files.`;
   assert.throws(
-    () => checkExternalWalletLinksNotRestoredByKit([probe], () => mutated),
-    /external wallet links restore/,
+    () => checkKitMustNotClaimUserFileRestore([probe], () => mutated),
+    /must not claim the Recovery Kit restores user files/,
   );
+  checkKitMustNotClaimUserFileRestore();
+});
+
+test("the Kit user-file restore check rejects documents, Library, and whole-Home variants", () => {
+  const probe = "docs/STORAGE_AND_ACCESS.md";
+  const variants = [
+    "The Recovery Kit restores your documents.",
+    "The Recovery Kit restores the Library.",
+    "The Recovery Kit restores everything.",
+    "The Recovery Kit restores the whole Home.",
+    "The Recovery Kit restores your files.",
+  ];
+  for (const sentence of variants) {
+    const mutated = `${read(probe)}\n${sentence}`;
+    assert.throws(
+      () => checkKitMustNotClaimUserFileRestore([probe], () => mutated),
+      /must not claim the Recovery Kit restores user files/,
+      sentence,
+    );
+  }
+});
+
+test("the Kit external-wallet link check rejects MetaMask and WalletConnect link sentences", () => {
+  const probe = "docs/WALLET_PROVIDER.md";
+  const mutated = `${read(probe)}\nThe Recovery Kit restores your MetaMask and WalletConnect links.`;
+  assert.throws(
+    () => checkKitMustNotClaimExternalWalletLinkRestore([probe], () => mutated),
+    /must not claim the Recovery Kit restores external-wallet links/,
+  );
+  const legacy = `${read(probe)}\nExternal wallets such as MetaMask restore only their links/metadata because their private keys stay in those wallets.`;
+  assert.throws(
+    () => checkKitMustNotClaimExternalWalletLinkRestore([probe], () => legacy),
+    /must not claim the Recovery Kit restores external-wallet links/,
+  );
+  checkKitMustNotClaimExternalWalletLinkRestore();
 });
 
 test("the uninstall scope check rejects a whole-computer deletion claim", () => {

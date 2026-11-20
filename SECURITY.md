@@ -92,7 +92,10 @@ it. Migration and
 Recovery Kit export scan Library folders under each person (Desktop,
 Documents, Pictures, Videos, Downloads, Public, Trash, and Library under
 AppData) and also Assistant, Home, Profile, Home Agent, transaction effects,
-GBA, and declared capsule storage roots. A plain file over the size or batch
+GBA, and declared capsule storage roots. Chat and People folders are not in
+that declared inventory; only their service writers use principal-root
+protection for new saves, and a plain file copied into those folders stays
+plain without blocking Kit export. A plain file over the size or batch
 limits in any scanned root blocks Recovery Kit export until you fix it.
 
 System's **Download Recovery Kit** saves one recovery file for the signed-in

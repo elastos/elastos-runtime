@@ -7,7 +7,8 @@ import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { validHostedReceipt, validIsolationClaims } from "./website-claims.mjs";
 import {
-  checkExternalWalletLinksNotRestoredByKit,
+  checkKitMustNotClaimExternalWalletLinkRestore,
+  checkKitMustNotClaimUserFileRestore,
   checkKitPromiseNotBroaderThanCode,
   checkRecoveryStolenDeviceStatements,
   checkUninstallScopeHonest,
@@ -126,7 +127,8 @@ check("public website matches storage recovery statements", () => {
   const website = ["website/elastos/index.html"];
   checkRecoveryStolenDeviceStatements(website, readTracked);
   checkKitPromiseNotBroaderThanCode(website, readTracked);
-  checkExternalWalletLinksNotRestoredByKit(website, readTracked);
+  checkKitMustNotClaimUserFileRestore(website, readTracked);
+  checkKitMustNotClaimExternalWalletLinkRestore(website, readTracked);
   checkUninstallScopeHonest(website, readTracked);
 });
 
