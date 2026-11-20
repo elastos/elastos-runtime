@@ -17,7 +17,7 @@ function summary(count) {
 
 // The outer test-worker leader owns one ledger across file processes, smoke
 // children and nested supervisors. Isolated fixtures clear the inherited path.
-export function createBrowserLaunchRun() {
+export function createBrowserLaunchRun({ reportRelaunches = false } = {}) {
   if (process.env.ELASTOS_BROWSER_LAUNCH_LEDGER) {
     return { ledger: process.env.ELASTOS_BROWSER_LAUNCH_LEDGER, finish: code => code };
   }
@@ -26,8 +26,11 @@ export function createBrowserLaunchRun() {
   writeFileSync(ledger, "", { mode: 0o600 });
   return { ledger, finish(code) {
     try {
-      const count = readFileSync(ledger, "utf8").split("\n").filter(Boolean).length;
-      return summary(count) ? 1 : code;
+      const events = readFileSync(ledger, "utf8").split("\n").filter(Boolean);
+      // Rust's command.output() captures some successful smoke output. Its
+      // outer caller replays the ledger so every relaunch remains visible.
+      if (reportRelaunches) for (const event of events) console.log(event);
+      return summary(events.length) ? 1 : code;
     } finally {
       unlinkSync(ledger);
       rmdirSync(directory);
@@ -65,9 +68,10 @@ async function launch(browserType, options, site) {
     if (!signal) throw first;
     const { name, file } = currentTest.getStore() ?? {};
     const label = String(name ? `${file}: ${name}` : site).replace(/\s+/g, " ").slice(0, 600);
-    console.log(`Browser launch relaunch: ${label}; engine=${browserType.name()}; signal=${signal}; attempt=2/2`);
+    const event = `Browser launch relaunch: ${label}; engine=${browserType.name()}; signal=${signal}; attempt=2/2`;
+    console.log(event);
     const ledger = process.env.ELASTOS_BROWSER_LAUNCH_LEDGER;
-    if (ledger) appendFileSync(ledger, "1\n"); // One O_APPEND write per event across processes.
+    if (ledger) appendFileSync(ledger, event + "\n"); // One O_APPEND write per event across processes.
     else localRelaunches++;
     try { return await browserType.launch(options); }
     catch (second) {
