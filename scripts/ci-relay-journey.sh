@@ -14,8 +14,12 @@ PY
 scripts/test-behaviour.sh inputs
 export NODE_PATH="${BEHAVIOUR_INPUTS:-${HOME}/.cache/elastos-runtime/behaviour}/browser/node_modules"
 export BROWSER_OPERATOR_PLAYWRIGHT_CORE="${BEHAVIOUR_INPUTS:-${HOME}/.cache/elastos-runtime/behaviour}/core/node_modules/playwright-core"
+evidence=()
+if [[ -n "${ELASTOS_RELAY_EVIDENCE:-}" ]]; then
+    evidence=(--evidence-dir "$ELASTOS_RELAY_EVIDENCE")
+fi
 if [[ "${1:-}" == matrix ]]; then
-    python3 scripts/ci-relay-journey.py --matrix
+    python3 scripts/ci-relay-journey.py --matrix "${evidence[@]}"
 else
-    python3 scripts/ci-relay-journey.py --network-arrangement "${1:-two-nat}"
+    python3 scripts/ci-relay-journey.py --network-arrangement "${1:-two-nat}" "${evidence[@]}"
 fi

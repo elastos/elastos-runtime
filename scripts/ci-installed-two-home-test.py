@@ -333,6 +333,9 @@ class TwoHomeReceiptTests(unittest.TestCase):
         check = JOURNEY['two_home_receipt_valid']
         self.assertTrue(check(row, self.identity(), 'relay-to-direct'))
         changed = copy.deepcopy(row)
+        changed['promotion_candidates'] = {}
+        self.assertFalse(check(changed, self.identity(), 'relay-to-direct'))
+        changed = copy.deepcopy(row)
         changed['promotion_candidates']['a'] = 'other'
         self.assertFalse(check(changed, self.identity(), 'relay-to-direct'))
         changed = copy.deepcopy(row)

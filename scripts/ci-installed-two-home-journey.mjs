@@ -211,6 +211,13 @@ async function run() {
       },85000);
       const row=direct.locator('#message-list li.message.self-message').filter({has:direct.locator('.message-body').filter({hasText:blockedText})});
       assert.match(await row.innerText(),/Your Home is still trying to deliver this message/);
+      await direct.screenshot({path:join(evidence,'direct-unconfirmed-desktop.png'),fullPage:true});
+      await direct.setViewportSize({width:375,height:812});
+      assert(await direct.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'phone delivery view fits its viewport');
+      const retryBox=await row.getByRole('button',{name:'Retry',exact:true}).boundingBox();
+      assert(retryBox&&retryBox.x>=0&&retryBox.x+retryBox.width<=375,'phone Retry stays reachable');
+      await direct.screenshot({path:join(evidence,'direct-unconfirmed-phone.png'),fullPage:true});
+      await direct.setViewportSize({width:1440,height:900});
       const {observation}=await runtime('observe_blocked');
       assert.equal(observation.b_alive,true);
       assert.equal(observation.b_health,200);

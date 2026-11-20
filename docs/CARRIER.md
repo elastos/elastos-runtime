@@ -561,7 +561,17 @@ active identity only after an operator restart.
 
 From a different network, check `https://<approved-origin>/healthz` with a TLS
 client configured to trust that certificate and compare its DER digest with the
-release pin. Then run the installed two-Home journey: send a unique message in
+release pin. With the approved origin, DNS host and port in
+`MEETING_POINT_ORIGIN`, `MEETING_POINT_HOST` and `MEETING_POINT_PORT`, run:
+
+```sh
+curl --fail --cacert meeting-point.crt "${MEETING_POINT_ORIGIN%/}/healthz"
+openssl s_client -connect "$MEETING_POINT_HOST:$MEETING_POINT_PORT" \
+  -servername "$MEETING_POINT_HOST" </dev/null 2>/dev/null |
+  openssl x509 -outform DER | openssl dgst -sha256
+```
+
+The digest must equal the signed build's approved pin. Then run the installed two-Home journey: send a unique message in
 each direction, observe receipt settlement, block direct UDP at the test routers
 and repeat, then restore UDP and observe a direct route. The Linux CI journey
 also counts actual discovery packets. A public certificate check alone proves

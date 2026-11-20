@@ -2028,6 +2028,7 @@ def two_home_receipt_valid(row, identity, network_arrangement="same-host", node_
                     for name in ("sender_delivered",))
             and row["negative_controls"]["sender_delivered"].get("api_state") == "pending"
             and row["negative_controls"]["sender_delivered"].get("ui_detail") == "Sending"
+            and (network_arrangement != "relay-to-direct" or set(row.get("promotion_candidates", {})) == {"a", "b"})
             and (network_arrangement != "relay-to-direct" or all(
                 observation.get("endpoint_id") == row.get("promotion_candidates", {}).get(observation.get("home"))
                 for observation in row.get("direct_endpoint_observations", []) if observation.get("home") in ("a", "b")))

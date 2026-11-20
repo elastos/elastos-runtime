@@ -1306,21 +1306,10 @@ mod tests {
             });
             (url, task)
         }
-        let mut relay = iroh_relay::server::RelayConfig::new(
-            "127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap(),
-        );
-        apply_byte_limits(&mut relay, 64 * 1024, 128 * 1024);
-        let rate = |bytes, burst| {
-            let mut rate =
-                iroh_relay::server::ClientRateLimit::new(std::num::NonZeroU32::new(bytes).unwrap());
-            rate.max_burst_bytes = std::num::NonZeroU32::new(burst);
-            rate
-        };
-        relay.limits.global_rx = Some(rate(1024 * 1024, 2 * 1024 * 1024));
-        relay.limits.network_rx = Some(rate(16 * 1024, 32 * 1024));
-        let mut config = iroh_relay::server::ServerConfig::default();
-        config.relay = Some(relay);
-        let server = iroh_relay::server::Server::spawn(config).await.unwrap();
+        let fixture = tempfile::tempdir().unwrap();
+        std::fs::write(fixture.path().join("config.toml"),
+            "gateway_public_publisher_bootstrap = true\ncarrier_relay_bind_addr = \"127.0.0.1:0\"\n").unwrap();
+        let server = configured_server(fixture.path()).await.unwrap().unwrap();
         let address = server.http_addr().unwrap();
         let url: RelayUrl = format!("http://{address}/").parse().unwrap();
         let tls = CaTlsConfig::embedded()

@@ -995,7 +995,9 @@ jobs:
             | tee -a "$GITHUB_STEP_SUMMARY"
       - name: installed Carrier across two home networks
         if: matrix.os == 'ubuntu-24.04'
-        timeout-minutes: 35
+        timeout-minutes: 40
+        env:
+          ELASTOS_RELAY_EVIDENCE: ${{ runner.temp }}/source-home-journeys/relay
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y iproute2 iptables iputils-ping

@@ -62,6 +62,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--network-arrangement", choices=("same-host", "two-nat", "forced-relay", "relay-to-direct"), default="two-nat")
     parser.add_argument("--matrix", action="store_true")
+    parser.add_argument("--evidence-dir", type=Path)
     args = parser.parse_args()
     root = Path.cwd().resolve()
     journey = runpy.run_path(str(root / "scripts/ci-installed-journeys.py"))
@@ -118,6 +119,12 @@ def main():
                         assert record["relay_selection"] == "compiled_release_default"
             if result.returncode:
                 raise RuntimeError("installed message journey failed: " + arrangement)
+            if args.evidence_dir:
+                destination = args.evidence_dir.resolve() / arrangement
+                destination.mkdir(mode=0o700, parents=True, exist_ok=True)
+                for name in ("installed-journeys.json", "two-home-ui.json", "direct-unconfirmed-desktop.png", "direct-unconfirmed-phone.png"):
+                    if (evidence / name).is_file():
+                        shutil.copy2(evidence / name, destination / name)
             print("installed message journey: PASS " + arrangement, flush=True)
     finally:
         # The shared removal guard checks parent links and live fixture processes.
