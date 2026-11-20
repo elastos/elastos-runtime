@@ -9127,6 +9127,11 @@ pub(crate) mod tests {
     #[test]
     fn relay_off_keeps_lan_vpn_and_routed_ticket_addresses() {
         let id = iroh::SecretKey::from_bytes(&[201; 32]).public();
+        let mixed = iroh::EndpointAddr::new(id)
+            .with_ip_addr("192.168.4.5:5000".parse().unwrap())
+            .with_ip_addr("100.101.102.103:5000".parse().unwrap())
+            .with_ip_addr("[2606:4700::123]:5000".parse().unwrap());
+        assert_eq!(exported_endpoint_addr(mixed.clone()), mixed);
         for address in [
             "192.168.4.5:5000",
             "100.64.1.5:5000",
