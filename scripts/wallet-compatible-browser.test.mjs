@@ -10,7 +10,7 @@ if (!vm.SourceTextModule) {
     const env = { ...process.env }; delete env.NODE_TEST_CONTEXT;
     const result = spawnSync(process.execPath, ['--experimental-vm-modules', '--test-reporter=tap', '--test', import.meta.filename], { env, encoding: 'utf8', timeout: 60000 });
     assert.equal(result.error, undefined);
-    assert.match(result.stdout, /# tests 5/);
+    assert.match(result.stdout, /# tests 6/);
     assert.match(result.stdout, /# fail 0/);
     assert.equal(result.status, 0, result.stdout + result.stderr);
     t.diagnostic('Child executed host wallet compatibility tests.');
@@ -21,7 +21,7 @@ async function hostWithProviders(announcements) {
   const calls = [];
   const providers = new Map();
   for (const spec of announcements) {
-    const provider = {
+    const provider = spec.provider ?? {
       request(call) { calls.push({ rdns: spec.rdns, call }); return Promise.resolve(spec.reply?.(call) ?? []); },
       on() {},
     };
@@ -34,7 +34,7 @@ async function hostWithProviders(announcements) {
     dispatchEvent() {},
   };
   const context = vm.createContext({
-    window, Event, Set, Map, WeakSet, Number, Object, TextEncoder,
+    window, Event, Set, Map, WeakSet, Number, Object, TextEncoder, crypto,
   });
   context.fetchJson = async () => { throw new Error('network'); };
   const module = new vm.SourceTextModule(source, { context });
@@ -105,7 +105,7 @@ if (vm.SourceTextModule) test('MetaMask wins when MetaMask and Rabby are both an
   assert.equal(calls[0].rdns, 'io.metamask');
 });
 
-if (vm.SourceTextModule) test('two non-MetaMask wallets require an explicit walletUuid', async () => {
+if (vm.SourceTextModule) test('two non-MetaMask wallets require an explicit walletChoiceId', async () => {
   const { module, calls } = await hostWithProviders([
     { rdns: 'io.rabby', uuid: 'rabby-1', name: 'Rabby Wallet', reply: () => [] },
     { rdns: 'com.brave.wallet', uuid: 'brave-1', name: 'Brave Wallet', reply: () => [] },
@@ -124,16 +124,47 @@ if (vm.SourceTextModule) test('two non-MetaMask wallets require an explicit wall
   });
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(calls.length, 0);
-  assert.match(messages.at(-1)?.error, /Choose a browser wallet/);
+  const choicePayload = messages.at(-1);
+  assert.match(choicePayload?.error, /Choose a browser wallet/);
+  assert.equal(choicePayload?.walletChoices?.length, 2);
+  const braveChoice = choicePayload.walletChoices.find((row) => row.name === 'Brave Wallet');
+  assert.ok(braveChoice?.id);
 
   module.namespace.handleHomeWalletConnectorEffect({ source: admitted.source }, admitted, {
     type: 'home:wallet-connector-effect', schema: 'elastos.home.wallet-connector-effect/v1',
     requestId: 'req:4', connectorId: 'wallet-metamask', connectorToken: 'token',
-    action: { kind: 'link', walletUuid: 'brave-1' },
+    action: { kind: 'link', walletChoiceId: braveChoice.id },
   });
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(calls.length, 1);
   assert.equal(calls[0].rdns, 'com.brave.wallet');
+});
+
+if (vm.SourceTextModule) test('conflicting duplicate rdns announcements drop only that wallet', async () => {
+  const conflicted = {
+    request(call) { return Promise.resolve([]); },
+    on() {},
+  };
+  const { module, calls } = await hostWithProviders([
+    {
+      rdns: 'io.metamask', uuid: 'mm-1', name: 'MetaMask',
+      reply: (call) => (call.method === 'eth_requestAccounts' ? ['0x' + '1'.repeat(40)] : call.method === 'eth_chainId' ? '0x1' : '0x' + 'ab'.repeat(65)),
+    },
+    { rdns: 'io.rabby', uuid: 'r1', name: 'Rabby', provider: conflicted },
+    { rdns: 'io.rabby.alt', uuid: 'r2', name: 'Rabby alt', provider: conflicted },
+  ]);
+  const frame = { postMessage() {} };
+  module.namespace.handleHomeWalletConnectorEffect({ source: frame }, {
+    kind: 'app-frame', targetId: 'wallet-metamask', homeToken: 'token', source: frame,
+    clipboardState: { retired: false, generation: 'g1' },
+    walletEffectState: { inFlight: false, requestIds: new Set() },
+  }, {
+    type: 'home:wallet-connector-effect', schema: 'elastos.home.wallet-connector-effect/v1',
+    requestId: 'req:conflict', connectorId: 'wallet-metamask', connectorToken: 'token', action: { kind: 'link' },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(calls.filter((entry) => entry.call.method === 'eth_requestAccounts').length, 1);
+  assert.equal(calls[0].rdns, 'io.metamask');
 });
 
 if (vm.SourceTextModule) test('legacy shared-slot provider is not announced and is not used', async () => {

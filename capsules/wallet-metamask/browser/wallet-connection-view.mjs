@@ -194,11 +194,13 @@ export function connectionView(input) {
   const safety = window === 'walletconnect' ? input.localSafety ?? null : provider?.paymentPending ?? null;
   requireValue(boolOrNull(safety), 'payment safety');
   const knownWallet=provider?.availability==='found'?(provider.displayName||providerCopy[provider.providerId]||null):null;
+  const reservedWalletName = name => typeof name === 'string' && /^(home|wallet|inbox|elastos)$/i.test(name.trim());
   const extension=window==='metamask'||window==='unisat';
+  const safeWalletLabel = knownWallet && !reservedWalletName(knownWallet) ? knownWallet : null;
   const name = extension
-    ? (knownWallet || (window === 'metamask' ? 'your wallet' : 'UniSat'))
+    ? (safeWalletLabel || (window === 'metamask' ? 'your wallet' : 'UniSat'))
     : account?.name || (window === 'walletconnect' ? 'your wallet' : brands[window]);
-  const title=extension?(knownWallet||(window==='unisat'?'UniSat':'Your wallet')):brands[window];
+  const title=extension?(safeWalletLabel||(window==='unisat'?'UniSat':'Your wallet')):brands[window];
   const headingMark=extension?(provider?.providerId==='io.metamask'?'metamask':provider?.providerId==='unisat'?'unisat':'wallet'):window;
   const home = displayOrigin(input.homeOrigin);
   requireValue(input.targetNetwork===undefined||bounded(input.targetNetwork,80),'requested network label');

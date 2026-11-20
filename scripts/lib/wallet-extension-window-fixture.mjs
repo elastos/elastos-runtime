@@ -12,7 +12,7 @@ const A = '0x' + '1'.repeat(40), U = 'bc1q' + 'a'.repeat(38);
 // Approved, and :362 omits it from the pending list. Home checks the signer later.
 // This provider exercises the live Home controller with isolated test results.
 // Recorded peers below are kept separate and retain their exact parameters.
-function installProvider({ kind, address }) {
+function installProvider({ kind, address, dualAlt = false }) {
   if (window !== window.top) return;
   window.testState = { mode: 'approve', address, chain: '0x1', linked: false, requests: [], calls: [], receipts: [], effects: [], copies: [], pending: [] };
   const listeners = new Map();
@@ -37,11 +37,22 @@ function installProvider({ kind, address }) {
     return Promise.resolve(result);
   }
   window.emitWallet = (name, value) => listeners.get(name)?.(value);
-  window.addEventListener('eip6963:requestProvider', () => window.dispatchEvent(new CustomEvent('eip6963:announceProvider', { detail: { info: { rdns: 'io.metamask', uuid: 'test' }, provider } })));
+  if (dualAlt && kind === 'metamask') {
+    const rabby = { on: provider.on.bind(provider), request(call) { testState.calls.push({ method: call.method, wallet: 'rabby' }); return provider.request(call); } };
+    const brave = { on: provider.on.bind(provider), request(call) { testState.calls.push({ method: call.method, wallet: 'brave' }); return provider.request(call); } };
+    const announceAltWallets = () => {
+      window.dispatchEvent(new CustomEvent('eip6963:announceProvider', { detail: { info: { rdns: 'io.rabby', uuid: 'rabby-1', name: 'Rabby Wallet' }, provider: rabby } }));
+      window.dispatchEvent(new CustomEvent('eip6963:announceProvider', { detail: { info: { rdns: 'com.brave.wallet', uuid: 'brave-1', name: 'Brave Wallet' }, provider: brave } }));
+    };
+    window.addEventListener('eip6963:requestProvider', announceAltWallets);
+    announceAltWallets();
+  } else {
+    window.addEventListener('eip6963:requestProvider', () => window.dispatchEvent(new CustomEvent('eip6963:announceProvider', { detail: { info: { rdns: 'io.metamask', uuid: 'test' }, provider } })));
+  }
   if (kind === 'unisat') window.unisat = provider;
 }
 
-export async function fixture(browser, kind, { saved = false, requests = false, recording, mutate, oldHost = false, oldWindow = false, readFailure = null, launch = true, noHomeWallet = false, extraHomeAccount = false, pictures = true, pictureContext = null } = {}) {
+export async function fixture(browser, kind, { saved = false, requests = false, recording, mutate, oldHost = false, oldWindow = false, readFailure = null, launch = true, noHomeWallet = false, extraHomeAccount = false, pictures = true, pictureContext = null, dualAlt = false } = {}) {
   const address = kind === 'metamask' ? A : U;
   const context = await browser.newContext({ viewport: { width: 480, height: 560 }, colorScheme: 'dark' });
   const replay = recording ? await replayInput(recording) : null;
@@ -50,7 +61,7 @@ export async function fixture(browser, kind, { saved = false, requests = false, 
   if (recording) {
     await context.addInitScript(({ source, input }) => { if (window === window.top) (0, eval)(`(${source})`)(input); }, { source: installScriptedExtension.toString(), input: replay });
     await context.addInitScript(({ address }) => { if (window === window.top) window.testState = { address, linked: false, requests: [], receipts: [], effects: [], copies: [], calls: [] }; }, { address });
-  } else await context.addInitScript(installProvider, { kind, address });
+  } else await context.addInitScript(installProvider, { kind, address, dualAlt });
   const errors = [], reads = [];
   const top = await context.newPage(); top.on('pageerror', e => errors.push(e.message));
   await top.clock.install();
