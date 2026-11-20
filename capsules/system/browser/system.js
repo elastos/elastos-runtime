@@ -1,4 +1,5 @@
 import { createTransferProgress, announceTransferProgress } from "./transfer-progress.js?v=download-progress-20261112";
+import { backgroundSettingState, runtimeUpdateStatusMessage } from "./update-feedback.mjs";
 import {
   gatePreviewAuditView,
   inspectActionRequestValidation,
@@ -3836,10 +3837,6 @@ function focusUpdateCard() {
   }
 }
 
-function backgroundSettingState(background) {
-  return JSON.stringify({ enabled: background?.enabled, readable: background?.readable, message: background?.message });
-}
-
 async function onBackgroundChange() {
   if (backgroundBusy || !backgroundChoice || !runtimeUpdate?.background_checks) return;
   const stateAtSave = backgroundSettingState(runtimeUpdate.background_checks);
@@ -4088,10 +4085,8 @@ function runtimeUpdateCanApply() {
 }
 
 function showRuntimeUpdateStatus(message) {
-  const currentSaveError = backgroundSaveError
-    && backgroundSettingState(runtimeUpdate?.background_checks) === backgroundSaveState;
   if (runtimeUpdateStatusNode) runtimeUpdateStatusNode.textContent =
-    message === runtimeUpdate?.background_checks?.message && !currentSaveError ? "" : message;
+    runtimeUpdateStatusMessage(message, runtimeUpdate, backgroundSaveError, backgroundSaveState);
 }
 
 function scheduleRuntimeUpdateRefresh(delay) {
