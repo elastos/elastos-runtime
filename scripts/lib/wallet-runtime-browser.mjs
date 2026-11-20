@@ -63,7 +63,7 @@ export async function runtimeView(t, app, state = {}) {
         if (input?.action === "request") {
           if (state.cleanup) return plain("Finish clearing the previous WalletConnect session in Inbox first.", 500);
           if (!["requested", "granted"].includes(state.permission)) {
-            if (state.guest) return route.fulfill({status:403,headers:{"content-type":"text/plain","x-elastos-error-code":"walletconnect_admin_required","access-control-expose-headers":"x-elastos-error-code"},body:"Ask an admin of this Home to open WalletConnect, choose Connect wallet, then allow internet access in Inbox."});
+            if (state.guest) return route.fulfill({status:500,headers:{"content-type":"text/plain","x-elastos-error-code":"walletconnect_admin_required","access-control-expose-headers":"x-elastos-error-code"},body:"Ask an admin of this Home to open WalletConnect, choose Connect wallet, then allow internet access in Inbox."});
             state.question = "consent:new";
             state.issuedAt = Math.floor(Date.now() / 1000);
             state.permission = "requested";

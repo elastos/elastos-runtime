@@ -35,7 +35,7 @@ export async function windowFixture() {
    if(path.startsWith('/api/')) {
     const call={path,method:req.method,revision:req.headers['if-match']};state.calls.push(call);
     if(state.expiredLaunch){res.writeHead(403).end('Launch expired');return;}
-    if(state.guest&&path.endsWith('/internet')&&req.method==='POST'&&state.permission!=='granted'){res.writeHead(403,{'x-elastos-error-code':'walletconnect_admin_required','access-control-expose-headers':'x-elastos-error-code'}).end('Fixture wording differs from the product sentence.');return;}
+    if(state.guest&&path.endsWith('/internet')&&req.method==='POST'&&state.permission!=='granted'){res.writeHead(500,{'x-elastos-error-code':'walletconnect_admin_required','access-control-expose-headers':'x-elastos-error-code'}).end('Fixture wording differs from the product sentence.');return;}
     let input='';for await(const chunk of req)input+=chunk;const body=input?JSON.parse(input):{};
     if(path.endsWith('/internet')&&req.method==='POST'&&state.permission!=='granted')state.permission='requested';
     if(path.endsWith('/internet'))return json({status:state.permission,request:{id:'request-1',issued_at:Math.floor(Date.now()/1000)}});

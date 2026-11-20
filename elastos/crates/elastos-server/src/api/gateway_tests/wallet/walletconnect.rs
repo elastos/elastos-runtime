@@ -605,7 +605,7 @@ async fn n5_guest_request_creates_no_question() {
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     assert_eq!(
         response.headers()["x-elastos-error-code"],
         "walletconnect_admin_required"

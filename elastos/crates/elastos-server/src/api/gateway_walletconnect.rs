@@ -389,16 +389,22 @@ pub(super) async fn internet(
     .await;
     match result {
         Ok(v) => Json(v).into_response(),
-        Err(e) if e.is::<AdminConsentRequired>() => (
-            StatusCode::FORBIDDEN,
-            [
-                ("x-elastos-error-code", "walletconnect_admin_required"),
-                ("access-control-expose-headers", "x-elastos-error-code"),
-            ],
-            e.to_string(),
-        )
-            .into_response(),
-        Err(e) => system_error_response(e),
+        Err(e) => {
+            let admin_required = e.is::<AdminConsentRequired>();
+            let mut response = system_error_response(e);
+            if admin_required {
+                for (name, value) in [
+                    ("x-elastos-error-code", "walletconnect_admin_required"),
+                    ("access-control-expose-headers", "x-elastos-error-code"),
+                ] {
+                    response.headers_mut().insert(
+                        name,
+                        axum::http::HeaderValue::from_static(value),
+                    );
+                }
+            }
+            response
+        }
     }
 }
 
