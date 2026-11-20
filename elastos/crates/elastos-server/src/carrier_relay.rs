@@ -594,7 +594,7 @@ pub(super) async fn configured_server(
     )?);
     anyhow::ensure!(
         global.bytes_per_second.get() >= 640,
-        "global byte rate must reserve 64 source budgets"
+        "global byte rate must be at least 640 bytes per second"
     );
     let source = source_byte_limits(&config)?;
     anyhow::ensure!(

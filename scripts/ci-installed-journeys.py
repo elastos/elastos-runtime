@@ -2422,7 +2422,7 @@ def two_home_message_matrix(arguments):
         raise RuntimeError("the two-network arrangements require Linux namespaces")
     root = Path.cwd().resolve()
     journey = runpy.run_path(str(root / "scripts/ci-installed-journeys.py"))
-    journey["require_disk_space"](root, 4 * 1024 ** 3)
+    journey["require_disk_space"](root, 10 * 1024 ** 3)
     # Fresh stable storage outside the checkout; no existing Home is consulted.
     work = Path(tempfile.mkdtemp(prefix="carrier-journey-", dir=Path.home()))
     home = work / "source"

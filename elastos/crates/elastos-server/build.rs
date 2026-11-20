@@ -21,7 +21,8 @@ fn main() {
     if let Ok(raw) = env::var("ELASTOS_RELEASE_RELAY_URL") {
         let relay = url::Url::parse(&raw).expect("invalid release meeting point origin");
         assert!(
-            relay.scheme() == "https"
+            !raw.chars().any(char::is_whitespace)
+                && relay.scheme() == "https"
                 && relay.host().is_some()
                 && relay.username().is_empty()
                 && relay.password().is_none()

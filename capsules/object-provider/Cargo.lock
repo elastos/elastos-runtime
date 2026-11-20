@@ -1758,6 +1758,7 @@ dependencies = [
  "wasmparser 0.236.1",
  "webpki-roots 1.0.10",
  "x25519-dalek 2.0.1",
+ "x509-parser 0.18.1",
  "zeroize",
  "zip",
 ]
