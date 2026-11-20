@@ -47,7 +47,7 @@ test('R5 K21: rejected and dismissed transactions have their own queue counts',(
 const titleGuard=(api=product,sources=currentTitleSources)=>assertTitleSources(intent=>api.reduceSummary(raw('metamask',{intent}),{connector:'wallet-metamask'}).title,sources);
 test('R5: canonical titles equal both raw integration sources including the unknown kind',async()=>{
  assertTitleSourceBlobs();await titleGuard();
- const broken=structuredClone(currentTitleSources);broken[rustPath].source=broken[rustPath].source.replace(/(_\s*=>\s*")[^"]+(")/,'$1Wrong unknown title$2');await assert.rejects(()=>titleGuard(product,broken),/Wallet and Inbox/);
+ const broken=structuredClone(currentTitleSources);broken[rustPath].source=broken[rustPath].source.replace(/(fn wallet_approval_title\(intent: &str\) -> String \{[\s\S]*?_\s*=>\s*")[^"]+(")/,'$1Wrong unknown title$2');await assert.rejects(()=>titleGuard(product,broken),/Wallet and Inbox/);
 });
 function commonGuard(api=product){for(const window of ['metamask','unisat'])for(const stage of ['request-expired','request-wallet-error']){
  const v=reduce(window,{requesting_app_name:'Browser'},{stage},api);
