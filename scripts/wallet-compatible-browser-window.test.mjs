@@ -50,6 +50,7 @@ async function namedCalls(f) {return f.top.evaluate(()=>testState.calls.filter(c
 test('V2-1 Home-only choice is a whole-row button and completes the chosen link',async()=>windowCase({dualAlt:true},async f=>{
   assert.equal(await f.top.evaluate(()=>testState.effects.length),0);
   await click(f,'connect','extension-choose-wallet');
+  assert.match(await f.frame.evaluate(()=>document.activeElement.dataset.focusKey),/^select-wallet:/);
   assert.deepEqual(await f.frame.locator('.connection-wallet-choice').allTextContents(),['Brave Wallet','Rabby Wallet']);
   assert.equal(await f.action('close-window').count(),1);assert.equal(await f.action('refresh-status').count(),1);
   assert.deepEqual(await namedCalls(f),[]);
@@ -160,7 +161,15 @@ test('review: a new queued request clears the prior wallet identity and shows it
   await f.top.evaluate(A=>emitWallet('accountsChanged',[A]),A);
   await f.state('request-waiting');
   assert.doesNotMatch(await f.action('send-request').innerText(),/MetaMask/);
-  await click(f,'send-request','request-done');
+  await f.frame.evaluate(()=>{window.probeEvents=0;window.probeBarrier=false;addEventListener('message',e=>{if(e.data?.type==='home:wallet-connector-event')probeEvents++;if(e.data?.type==='fixture:wallet-event-barrier')probeBarrier=true;});});
+  await f.top.evaluate(()=>{testState.calls=[];testState.wallets[0].probePending=true;});
+  await f.top.clock.pauseAt(new Date(await f.top.evaluate(()=>Date.now())+10000));
+  await f.action('send-request').click();
+  await f.top.waitForFunction(()=>testState.calls.filter(c=>c.wallet&&c.method==='eth_accounts').length===2);
+  await f.top.evaluate(A=>{emitWallet('accountsChanged',[A]);document.querySelector('iframe').contentWindow.postMessage({type:'fixture:wallet-event-barrier'},'*');},A);
+  await f.frame.waitForFunction(()=>probeBarrier);
+  assert.equal(await f.frame.evaluate(()=>probeEvents),0,'Home retires the old provider while selecting the next one');
+  await f.top.clock.runFor(1001);await f.state('request-done');
   assert.equal((await namedCalls(f)).filter(c=>c.method==='personal_sign').at(-1).wallet,'io.rabby');
   assert.equal(await f.frame.locator('.connection-request-account img').count(),1);
   assert.equal(await f.frame.locator('.connection-request-account img').getAttribute('src'),icon);

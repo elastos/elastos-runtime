@@ -52,6 +52,7 @@ function installProvider({ kind, address, dualAlt = false, wallets }) {
         on: provider.on.bind(provider),
         request(call) {
           if (dualAlt || wallets) testState.calls.push({method:call.method,wallet:info.rdns});
+          if (call.method === 'eth_accounts' && info.probePending) return new Promise(()=>{});
           if (call.method === 'eth_accounts' && info.accounts) return Promise.resolve(info.accounts);
           return provider.request(call);
         },

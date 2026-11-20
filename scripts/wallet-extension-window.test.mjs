@@ -342,14 +342,15 @@ test('live-window regression oracle rejects deliberate breaks', { timeout: 50000
         await f.frame.waitForFunction(() => expiryEventSeen);
         await f.state('window-expired');
       }],
-      ['wrong linked signer', s => s.replace("if (accountEvent && selected && !sameAccount(accountEvent[0], selected.address)) return 'account-unavailable';", ''), async f => {
-        await secondRequest(f); await peerEvent(f, 'accountsChanged', [B]); await f.state('account-unavailable');
+      ['wrong linked signer', s => s.replace("if (kind === 'metamask' && !operation && !operationWallet) {", 'if (false) {'), async f => {
+        await secondRequest(f); await peerEvent(f, 'accountsChanged', [B]); await f.state('request-waiting');
       }],
       ['expiry hidden by wallet state', s => s.replace('!fixedOutcome && isRequestExpired())', "!fixedOutcome && isRequestExpired() && ['request-waiting', 'request-typed-data', 'transaction-waiting', 'request-list'].includes(stage))"), async f => {
-        await secondRequest(f); await peerEvent(f, 'accountsChanged', [B]); await f.state('account-unavailable');
+        await secondRequest(f); await f.top.evaluate(value=>testState.walletAddress=value,B);
+        await f.action('send-request').click();await f.state('request-unsendable');
         await f.top.clock.runFor(301000); await f.state('request-expired');
       }],
-      ['overdue event before timer', s => s.replace("if (isRequestExpired()) { fixedOutcome = true; return 'request-expired'; }", ''), async f => {
+      ['overdue event before timer', s => s.replace('function isRequestExpired() {', 'function isRequestExpired() { return false;'), async f => {
         await secondRequest(f); assert.equal(await overdueEvent(f, 'accountsChanged', [B]), 'request-expired');
       }],
       ['outcome focus lost', s => s.replace("root.querySelector('.connection-actions')?.append(close);", "root.querySelector('.connection-actions')?.append(close); close.focus();"), async f => {
@@ -445,8 +446,22 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
         if (mode === 'event') {
           assert.equal(await overdueEvent(f, 'accountsChanged', [kind === 'metamask' ? B : V]), 'request-expired');
           await f.state('request-expired');
+        } else if (kind === 'metamask') {
+          await peerEvent(f, 'accountsChanged', [B]);await f.state('request-waiting');
+          assert.equal(await f.action('send-request').count(),1,'an earlier wallet event cannot choose the next wallet');
+          await f.top.evaluate(value=>testState.walletAddress=value,B);
+          await f.action('send-request').click();await f.state('request-unsendable');
+          assert.equal(await f.top.evaluate(()=>testState.requests[0].status),'pending');
+          if(mode==='recover'){
+            await f.top.evaluate(value=>testState.walletAddress=value,A);
+            await f.action('refresh-status').click();await f.state('request-waiting');
+            await f.action('send-request').click();await f.state('request-done');
+            assert.equal(await f.top.evaluate(()=>testState.receipts.length),2);
+            assert.equal(await f.top.evaluate(()=>testState.effects.at(-1).action.approvalRequestId),'approval-2');continue;
+          }
+          await f.top.clock.runFor(301000);await f.state('request-expired');
         } else {
-          await peerEvent(f, 'accountsChanged', [kind === 'metamask' ? B : V]); await f.state('account-unavailable');
+          await peerEvent(f, 'accountsChanged', [V]); await f.state('account-unavailable');
           assert.equal(await f.action('send-request').count(), 0);
           assert.equal(await f.top.evaluate(() => testState.effects.length), 1);
           if (mode === 'recover') {
@@ -461,7 +476,7 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
         }
         await peerEvent(f, 'accountsChanged', [kind === 'metamask' ? A : U]); await f.state('request-expired');
         assert.equal(await f.action('send-request').count(), 0);
-        assert.equal(await f.top.evaluate(() => testState.effects.length), 1);
+        assert.equal(await f.top.evaluate(() => testState.effects.length), kind==='metamask'&&mode!=='event'?2:1);
         assert.deepEqual(f.errors, []);
       } finally { await f.close(); }
     }
