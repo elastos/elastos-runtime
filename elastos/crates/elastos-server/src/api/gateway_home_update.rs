@@ -646,7 +646,7 @@ pub(super) fn system_update_failure(error: &anyhow::Error) -> Response {
     } else if error.is::<crate::update_controller::ApprovalReplaced>() {
         (StatusCode::GONE, "This approval is no longer valid. Check for the update again and approve it once more.")
     } else if error.is::<crate::update::InvalidInstalledVersion>() {
-        tracing::warn!("{}", crate::update::InvalidInstalledVersion);
+        tracing::warn!("{}", gateway_update_notice::INVALID_VERSION_REPAIR);
         return (
             StatusCode::CONFLICT,
             Json(serde_json::json!({

@@ -21,7 +21,7 @@ const NOTICE_BODY: &str = "ElastOS {version} is available.";
 const FOLDER_TEXT: &str = "Automatic update checks are off because Home cannot use its update settings. Check that the computer that runs Home has free disk space, then turn this on. Home's log has more steps.";
 const FOLDER_REPAIR: &str = "Update checks are off because Home cannot use Local/Shared/System/Updates inside this Home's data folder. On the device that runs Home, check free disk space and write access. Use a real folder and a regular .notice.lock file, both owned by and private to the account that runs Home, then turn this on.";
 pub(super) const INVALID_VERSION_TEXT: &str = "Home cannot check for updates. The computer running Home needs attention. Check Home's log for repair details.";
-const INVALID_VERSION_REPAIR: &str = "Home cannot check for updates until you repair the installed version. On the device that runs Home, run elastos update --force.";
+pub(super) const INVALID_VERSION_REPAIR: &str = "Home cannot check for updates until you repair the installed version. On the device that runs Home, run elastos update --force.";
 const UNREADABLE_TEXT: &str =
     "Automatic update checks are off because Home could not read its settings. Turn automatic update checks on to try resetting the settings. If that fails, the computer running Home needs attention. Check Home's log for details.";
 const UNREADABLE_REPAIR: &str = "Update checks are off because Home could not read its settings. On the device that runs Home, repair or move aside Local/Shared/System/Updates/notice.json inside this Home's data folder, then turn this on.";
