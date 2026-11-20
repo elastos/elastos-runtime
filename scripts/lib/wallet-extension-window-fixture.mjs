@@ -34,6 +34,7 @@ function installProvider({ kind, address, dualAlt = false, wallets }) {
     async signMessage() { testState.calls.push({ method: 'signMessage' }); return ask('signMessage', 'fixture-signature'); },
   };
   function ask(method, result) {
+    if (testState.requestError?.method === method) return Promise.reject(Object.assign(new Error(testState.requestError.message), {walletChoices:testState.requestError.walletChoices}));
     if (testState.mode === 'pending') return new Promise((resolve, reject) => testState.pending.push({ resolve, reject, method, result }));
     if (testState.mode === 'decline' || testState.mode === 'closed') return Promise.reject({ code: 4001, message: 'User rejected the request.' });
     return Promise.resolve(result);

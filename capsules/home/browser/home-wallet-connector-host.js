@@ -148,7 +148,7 @@ export function handleHomeWalletConnectorEffect(event, context, data) {
         connectorId,
         null,
         error instanceof Error ? error.message : "Wallet request failed.",
-        error?.walletChoices,
+        error instanceof WalletChoiceRequired ? error.walletChoices : undefined,
       );
     })
     .finally(() => {

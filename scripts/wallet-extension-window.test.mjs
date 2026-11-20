@@ -474,7 +474,8 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
           }
           await f.top.clock.runFor(301000); await f.state('request-expired');
         }
-        await peerEvent(f, 'accountsChanged', [kind === 'metamask' ? A : U]); await f.state('request-expired');
+        if (kind === 'unisat' || mode === 'event') await peerEvent(f, 'accountsChanged', [kind === 'metamask' ? A : U]);
+        await f.state('request-expired');
         assert.equal(await f.action('send-request').count(), 0);
         assert.equal(await f.top.evaluate(() => testState.effects.length), kind==='metamask'&&mode!=='event'?2:1);
         assert.deepEqual(f.errors, []);

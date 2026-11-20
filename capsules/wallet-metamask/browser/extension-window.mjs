@@ -387,7 +387,7 @@ export function startExtensionWindow(kind, homeClipboard) {
       || !hasExactKeys(data, ['type', 'connectorId', 'event', 'value']) || data.connectorId !== CONNECTOR_ID) return;
     // Home chooses the owner for each action. Earlier-wallet observations cannot
     // prevent that selection for a new request. UniSat keeps its own discovery rule.
-    if (kind === 'metamask' && !operation && !operationWallet) {
+    if (kind === 'metamask' && !operation && !operationWallet && !uncertain) {
       if (!fixedOutcome && isRequestExpired()) { stage = 'request-expired'; fixedOutcome = true; draw(); }
       return;
     }

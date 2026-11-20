@@ -112,6 +112,11 @@ test('V2-5 forged brands, markup, direction controls and reserved names are refu
       await click(f,'connect','link-error');assert.equal(await f.top.evaluate(()=>testState.calls.length),0,name);
     });
   }
+  await windowCase({},async f=>{
+    await f.top.evaluate(()=>testState.requestError={method:'eth_requestAccounts',message:'Choose a browser wallet in the connection window.',walletChoices:[{id:'wchoice-00000000-0000-4000-8000-000000000001',name:'Home',icon:null}]});
+    await click(f,'connect','link-error');
+    assert.equal(await f.frame.locator('.connection-wallet-choice').count(),0,'a provider error cannot issue Home wallet choices');
+  });
 });
 
 test('V2-6 saved cards have no mark; only a wallet linked in this window supplies name and icon',async()=>windowCase({wallets:[{...rabby,icon}]},async f=>{
@@ -163,6 +168,9 @@ test('review: a new queued request clears the prior wallet identity and shows it
   await f.state('request-waiting');
   assert.doesNotMatch(await f.action('send-request').innerText(),/MetaMask/);
   await f.frame.evaluate(()=>{window.probeEvents=0;window.probeBarrier=false;addEventListener('message',e=>{if(e.data?.type==='home:wallet-connector-event')probeEvents++;if(e.data?.type==='fixture:wallet-event-barrier')probeBarrier=true;});});
+  await f.top.evaluate(()=>document.querySelector('iframe').contentWindow.postMessage({type:'fixture:wallet-event-barrier'},'*'));
+  await f.frame.waitForFunction(()=>probeBarrier);
+  await f.frame.evaluate(()=>{probeEvents=0;probeBarrier=false;});
   await f.top.evaluate(()=>{testState.calls=[];testState.wallets[0].probePending=true;});
   await f.top.clock.pauseAt(new Date(await f.top.evaluate(()=>Date.now())+10000));
   await f.action('send-request').click();
