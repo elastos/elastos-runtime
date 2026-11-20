@@ -397,10 +397,9 @@ pub(super) async fn internet(
                     ("x-elastos-error-code", "walletconnect_admin_required"),
                     ("access-control-expose-headers", "x-elastos-error-code"),
                 ] {
-                    response.headers_mut().insert(
-                        name,
-                        axum::http::HeaderValue::from_static(value),
-                    );
+                    response
+                        .headers_mut()
+                        .insert(name, axum::http::HeaderValue::from_static(value));
                 }
             }
             response
