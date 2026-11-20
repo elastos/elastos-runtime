@@ -305,7 +305,7 @@ const definitions = {
     },
     "request-expired": {
       "status": "This request expired.",
-      "notice": "To try again, start a new request in {{app}}.",
+      "notice": "To try again, go back to {{app}} and start a new request.",
       "account": true,
       "request": true,
       "outcome": true,
@@ -333,7 +333,7 @@ const definitions = {
     },
     "request-declined": {
       "status": "{{wallet}} did not approve this message.",
-      "notice": "To try again, start a new request in {{app}}.",
+      "notice": "To try again, go back to {{app}} and start a new request.",
       "account": true,
       "request": true,
       "outcome": true,
@@ -526,7 +526,7 @@ const definitions = {
     },
     "request-wallet-error": {
       "status": "{{wallet}} could not sign this message.",
-      "notice": "To try again, start a new request in {{app}}.",
+      "notice": "To try again, go back to {{app}} and start a new request.",
       "account": true,
       "request": true,
       "outcome": true,
@@ -582,7 +582,7 @@ const definitions = {
     },
     "request-sent-wallet-removed": {
       "status": "{{wallet}} ended the connection after this message was sent.",
-      "notice": "To try again, start a new request in {{app}}.",
+      "notice": "To try again, go back to {{app}} and start a new request.",
       "account": true,
       "request": true,
       "outcome": true,
@@ -811,7 +811,7 @@ const definitions = {
       "focus": "connect"
     },
     "request-unavailable": {
-      "status": "This request is unavailable here. To try again, start a new request in {{app}}.",
+      "status": "This request is unavailable here. To try again, go back to {{app}} and start a new request.",
       "request": true,
       "account": true,
       "focusOutcome": true,
@@ -2212,7 +2212,7 @@ const definitions = {
       "focus": "connect"
     },
     "request-unavailable": {
-      "status": "This request is unavailable. Return to the app and make a new request.",
+      "status": "This request is unavailable. Go back to the app and start a new request.",
       "request": true,
       "account": true,
       "focusOutcome": true,
@@ -2309,10 +2309,6 @@ for(const window of ['walletconnect','metamask','unisat']){
   definitions[window]['request-dismissed']={status:'This request was dismissed.',notice:'This request may still be in progress in {{wallet}}. Closing this window does not cancel it. Before making a new request in {{app}}, check {{wallet}} and Activity in Wallet. Open Wallet from Home to see Activity.',request:true,account:true,afterAnswer:true,focusOutcome:true,primary:{id:'open-wallet-activity',label:'Open Activity in Wallet',quiet:false},secondary:[{id:'close-window',label:'Close window',quiet:false}]};
 }
 
-for(const [stage,screen] of Object.entries(definitions.unisat)){
-  if(screen.notice===requestRecovery)screen.notice='To try again, return to {{app}} and make a new request.';
-}
-definitions.walletconnect['request-rejected'].notice='To try again, start a new request in {{app}}.';
 definitions.unisat['request-dismissed'].notice='A request may still be waiting in UniSat. Before trying again, check UniSat and Activity in Wallet. Open Wallet from Home to review this request.';
 const freeze = value => { if(value && typeof value==='object'){Object.values(value).forEach(freeze);Object.freeze(value);}return value;};
 export const screens = freeze(definitions);

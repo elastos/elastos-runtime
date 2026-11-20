@@ -96,3 +96,15 @@ test('wording R2: the view document uses the settled headings and fallback',asyn
   assert.doesNotMatch(text,/Wallet approval request|headings and instructions use Browser wallet/);
   assert.match(text,/“Requesting app” as its label and “the app” in instructions/);
 });
+
+
+test('wording R2: every return-and-request instruction uses the settled form',()=>{
+  for(const window of ['metamask','unisat','walletconnect'])for(const input of wordingInputs(window)){
+    for(const supportedActions of [input.supportedActions,input.supportedActions.filter(id=>!['check-access','check-status'].includes(id))]){
+      const view=connectionView({...input,supportedActions});
+      const text=viewText(view.status)+' '+viewText(view.notice);
+      assert.doesNotMatch(text,/start a new request in|return to .*?make a new request/i,window+'/'+input.stage);
+      if(/(?:go back to|return to).*?new request/i.test(text))assert.match(text,/go back to .*? and start a new request/i,window+'/'+input.stage);
+    }
+  }
+});

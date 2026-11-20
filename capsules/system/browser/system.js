@@ -3882,7 +3882,7 @@ function renderUpdateNotice() {
     backgroundChoice.disabled = backgroundBusy;
     document.querySelector("#update-background-label").textContent = background.label;
     document.querySelector("#update-background-message").textContent = backgroundSaveError || background.message;
-    if (runtimeUpdate?.message === background.message) showRuntimeUpdateStatus(runtimeUpdate.message);
+    if (backgroundSaveError && runtimeUpdate?.message === background.message) showRuntimeUpdateStatus(runtimeUpdate.message);
   }
   if (focusUpdateRequested && !runtimeUpdateNode.hidden) focusUpdateCard();
 }
