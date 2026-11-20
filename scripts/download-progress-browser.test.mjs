@@ -139,7 +139,7 @@ test("System, model and Library transfer states stay accessible in light and dar
       await assertOrder();
       await screenshot(`system-update-offer-${theme}`);
       phase = "downloading"; message = downloadMessage;
-      await card.getByText("Updating to 2.0.2", { exact: true }).waitFor({ timeout: 9000 });
+      await card.getByText("Updating ElastOS 2.0.2", { exact: true }).waitFor({ timeout: 9000 });
       await card.getByRole("heading", { name: "What's new", exact: true }).waitFor();
       await card.getByText(changes.at(-1), { exact: true }).waitFor();
       await assertOrder();
