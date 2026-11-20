@@ -791,7 +791,7 @@ async fn test_btc_wallet_approval_journey_reviews_in_inbox_and_signs() {
     assert_eq!(home_json["notifications"]["attention_count"], 1);
     assert_eq!(
         home_entries_of_kind(&home_json["notifications"], "wallet_approval_request")[0]["title"],
-        "Confirm this Bitcoin account is yours"
+        "Bitcoin proof request"
     );
     assert_eq!(
         home_entries_of_kind(&home_json["notifications"], "wallet_approval_request")[0]
@@ -817,7 +817,7 @@ async fn test_btc_wallet_approval_journey_reviews_in_inbox_and_signs() {
     let inbox_json: serde_json::Value = serde_json::from_slice(&inbox_body).unwrap();
     assert_eq!(
         home_entries_of_kind(&inbox_json["notifications"], "wallet_approval_request")[0]["title"],
-        "Confirm this Bitcoin account is yours"
+        "Bitcoin proof request"
     );
 
     let approval_token = step_up_token_for_app_context(
