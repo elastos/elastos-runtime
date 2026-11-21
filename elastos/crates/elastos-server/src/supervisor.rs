@@ -10,7 +10,7 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 
@@ -179,6 +179,11 @@ enum ProviderRoute {
 
 // ── Supervisor ──────────────────────────────────────────────────────
 
+struct SchemeRouteHolder {
+    capsule_name: String,
+    provider: Weak<dyn elastos_runtime::provider::Provider>,
+}
+
 /// The capsule supervisor manages lifecycle for all capsule VMs.
 pub struct Supervisor {
     /// Where capsule artifacts are stored (~/.local/share/elastos/capsules/)
@@ -191,6 +196,7 @@ pub struct Supervisor {
     running: Arc<RwLock<HashMap<String, RunningCapsule>>>,
     /// Next vsock CID to assign (starts at 3, increments)
     next_cid: Arc<RwLock<u32>>,
+    scheme_route_holders: RwLock<HashMap<String, SchemeRouteHolder>>,
     /// crosvm configuration (paths to binary, kernel, etc.)
     crosvm_config: CrosvmConfig,
     /// Shell session token — only injected into the shell capsule VM
@@ -397,6 +403,7 @@ impl Supervisor {
             registry,
             running: Arc::new(RwLock::new(HashMap::new())),
             next_cid: Arc::new(RwLock::new(Self::initial_cid_seed())),
+            scheme_route_holders: RwLock::new(HashMap::new()),
             crosvm_config,
             shell_token: None,
             api_addr: None,
@@ -612,15 +619,30 @@ impl Supervisor {
                 }
             }
             ProviderRoute::Scheme(scheme) => {
-                registry.register(provider).await;
-                tracing::info!(
-                    "Registered VM provider route {}://... -> capsule '{}' (guest={}, port={})",
-                    scheme,
-                    capsule_name,
-                    guest_ip,
-                    VM_PROVIDER_PORT
-                );
-                Some(ProviderRoute::Scheme(scheme))
+                match self
+                    .register_scheme_route(registry, capsule_name, &scheme, provider)
+                    .await
+                {
+                    Ok(()) => {
+                        tracing::info!(
+                        "Registered VM provider route {}://... -> capsule '{}' (guest={}, port={})",
+                        scheme,
+                        capsule_name,
+                        guest_ip,
+                        VM_PROVIDER_PORT
+                    );
+                        Some(ProviderRoute::Scheme(scheme))
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to register VM provider route for '{}' ({}): {}",
+                            capsule_name,
+                            provides,
+                            e
+                        );
+                        None
+                    }
+                }
             }
         }
     }
@@ -676,16 +698,66 @@ impl Supervisor {
                 }
             }
             ProviderRoute::Scheme(scheme) => {
-                registry.register(provider).await;
-                tracing::info!(
-                    "Registered carrier service route {}://... -> '{}' (binary={})",
-                    scheme,
-                    capsule_name,
-                    binary_path.display()
-                );
-                Some(ProviderRoute::Scheme(scheme))
+                match self
+                    .register_scheme_route(registry, capsule_name, &scheme, provider)
+                    .await
+                {
+                    Ok(()) => {
+                        tracing::info!(
+                            "Registered carrier service route {}://... -> '{}' (binary={})",
+                            scheme,
+                            capsule_name,
+                            binary_path.display()
+                        );
+                        Some(ProviderRoute::Scheme(scheme))
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to register carrier service route for '{}' ({}): {}",
+                            capsule_name,
+                            provides,
+                            e
+                        );
+                        None
+                    }
+                }
             }
         }
+    }
+
+    /// A relaunch replaces only the provider installed by this supervisor for
+    /// that capsule. The registry checks the holder and registers atomically.
+    async fn register_scheme_route(
+        &self,
+        registry: &ProviderRegistry,
+        capsule_name: &str,
+        scheme: &str,
+        provider: Arc<dyn elastos_runtime::provider::Provider>,
+    ) -> std::result::Result<(), elastos_runtime::provider::ProviderError> {
+        let mut holders = self.scheme_route_holders.write().await;
+        let previous = holders
+            .get(scheme)
+            .filter(|holder| holder.capsule_name == capsule_name)
+            .and_then(|holder| holder.provider.upgrade());
+        let result = registry
+            .register_unheld_replacing(provider.clone(), previous.as_ref())
+            .await;
+        let route = ProviderRoute::Scheme(scheme.to_string());
+        for capsule in self.running.write().await.values_mut() {
+            if capsule.name == capsule_name && capsule.provider_route.as_ref() == Some(&route) {
+                capsule.provider_route = None;
+            }
+        }
+        if result.is_ok() {
+            holders.insert(
+                scheme.to_string(),
+                SchemeRouteHolder {
+                    capsule_name: capsule_name.to_string(),
+                    provider: Arc::downgrade(&provider),
+                },
+            );
+        }
+        result
     }
 
     async fn unregister_provider_route(&self, route: &ProviderRoute) -> Result<()> {
@@ -759,10 +831,13 @@ impl Supervisor {
     ) -> Result<(PathBuf, elastos_common::CapsuleManifest)> {
         let capsule_dir = self.ensure_capsule(name).await?;
         let manifest_path = capsule_dir.join("capsule.json");
-        let manifest_data = tokio::fs::read_to_string(&manifest_path)
-            .await
-            .with_context(|| format!("reading capsule.json for '{name}'"))?;
-        let manifest: elastos_common::CapsuleManifest = serde_json::from_str(&manifest_data)
+        let manifest_data = tokio::task::spawn_blocking(move || {
+            elastos_common::capsule_manifest_file::read(&manifest_path)
+        })
+        .await
+        .context("reading capsule.json task")?
+        .with_context(|| format!("reading capsule.json for '{name}'"))?;
+        let manifest: elastos_common::CapsuleManifest = serde_json::from_slice(&manifest_data)
             .with_context(|| format!("parsing capsule.json for '{name}'"))?;
         Ok((capsule_dir, manifest))
     }
@@ -1617,7 +1692,8 @@ mod tests {
     use crate::setup::{Component, PlatformInfo};
     use base64::Engine as _;
     use elastos_runtime::provider::{
-        Provider, ProviderError, ProviderRegistry, ResourceRequest, ResourceResponse,
+        Provider, ProviderError, ProviderRegistry, ResourceAction, ResourceRequest,
+        ResourceResponse,
     };
     use sha2::Digest;
     use std::sync::{
@@ -1882,6 +1958,332 @@ mod tests {
         assert_eq!(
             Supervisor::parse_provider_route_from_provides("elastos://"),
             None
+        );
+    }
+
+    struct SchemeAnswerProvider;
+
+    #[async_trait::async_trait]
+    impl Provider for SchemeAnswerProvider {
+        async fn handle(
+            &self,
+            _request: ResourceRequest,
+        ) -> Result<ResourceResponse, ProviderError> {
+            Ok(ResourceResponse::Data(b"first".to_vec()))
+        }
+
+        fn schemes(&self) -> Vec<&'static str> {
+            vec!["http"]
+        }
+
+        fn name(&self) -> &'static str {
+            "first-provider"
+        }
+    }
+
+    #[tokio::test]
+    async fn scheme_route_vm_route_leaves_a_held_scheme_with_its_holder() {
+        require_vm_provider_bridge();
+        let registry = Arc::new(ProviderRegistry::new());
+        let first: Arc<dyn Provider> = Arc::new(SchemeAnswerProvider);
+        registry.register(first.clone()).await;
+        let mut supervisor = make_test_supervisor();
+        supervisor.set_provider_registry(registry.clone());
+
+        let route = supervisor
+            .register_provider_route(
+                "capsule-a",
+                Some("http://*"),
+                "127.0.0.1",
+                serde_json::Value::Null,
+            )
+            .await;
+        assert_eq!(route, None);
+        assert!(Arc::ptr_eq(&registry.get("http").await.unwrap(), &first));
+        assert!(matches!(
+            registry.route("http://item", "capsule", ResourceAction::Read, None).await,
+            Ok(ResourceResponse::Data(data)) if data == b"first"
+        ));
+        // The same arm registers a scheme nobody holds, so the refusal above
+        // came from the held scheme and not from a skipped arm.
+        assert_eq!(
+            supervisor
+                .register_provider_route(
+                    "capsule-a",
+                    Some("localhost://*"),
+                    "127.0.0.1",
+                    serde_json::Value::Null,
+                )
+                .await,
+            Some(ProviderRoute::Scheme("localhost".into()))
+        );
+    }
+
+    #[tokio::test]
+    async fn scheme_route_carrier_route_leaves_a_held_scheme_with_its_holder() {
+        require_vm_provider_bridge();
+        let registry = Arc::new(ProviderRegistry::new());
+        let first: Arc<dyn Provider> = Arc::new(SchemeAnswerProvider);
+        registry.register(first.clone()).await;
+        let mut supervisor = make_test_supervisor();
+        supervisor.set_provider_registry(registry.clone());
+
+        let route = supervisor
+            .register_carrier_service_route(
+                "capsule-a",
+                Some("http://*"),
+                Path::new("/unused"),
+                vec![],
+                serde_json::Value::Null,
+            )
+            .await;
+        assert_eq!(route, None);
+        assert!(Arc::ptr_eq(&registry.get("http").await.unwrap(), &first));
+        assert!(matches!(
+            registry.route("http://item", "capsule", ResourceAction::Read, None).await,
+            Ok(ResourceResponse::Data(data)) if data == b"first"
+        ));
+    }
+
+    #[tokio::test]
+    async fn scheme_route_keeps_the_first_holder() {
+        require_vm_provider_bridge();
+        let registry = Arc::new(ProviderRegistry::new());
+        let mut supervisor = make_test_supervisor();
+        supervisor.set_provider_registry(registry.clone());
+        let first_route = supervisor
+            .register_carrier_service_route(
+                "capsule-a",
+                Some("http://*"),
+                Path::new("/unused"),
+                vec![],
+                serde_json::Value::Null,
+            )
+            .await;
+        assert_eq!(first_route, Some(ProviderRoute::Scheme("http".into())));
+        let first = registry.get("http").await.unwrap();
+
+        let second_route = supervisor
+            .register_carrier_service_route(
+                "capsule-b",
+                Some("http://*"),
+                Path::new("/unused"),
+                vec![],
+                serde_json::Value::Null,
+            )
+            .await;
+        assert_eq!(second_route, None);
+        assert!(Arc::ptr_eq(&registry.get("http").await.unwrap(), &first));
+    }
+
+    #[tokio::test]
+    async fn scheme_route_stopped_capsule_registers_its_scheme_again() {
+        require_vm_provider_bridge();
+        let registry = Arc::new(ProviderRegistry::new());
+        let mut supervisor = make_test_supervisor();
+        supervisor.set_provider_registry(registry.clone());
+        let route = supervisor
+            .register_carrier_service_route(
+                "capsule-a",
+                Some("http://*"),
+                Path::new("/unused"),
+                vec![],
+                serde_json::Value::Null,
+            )
+            .await
+            .unwrap();
+        supervisor.running.write().await.insert(
+            "capsule-a".into(),
+            host_process_capsule("capsule-a", route.clone()),
+        );
+        supervisor.stop_capsule("capsule-a").await.unwrap();
+        assert!(registry.get("http").await.is_none());
+        assert_eq!(
+            supervisor
+                .register_carrier_service_route(
+                    "capsule-a",
+                    Some("http://*"),
+                    Path::new("/unused"),
+                    vec![],
+                    serde_json::Value::Null
+                )
+                .await,
+            Some(route)
+        );
+    }
+
+    /// The scheme rows exercise the provider-route arms, which run only while
+    /// the VM provider bridge is on (`ELASTOS_VM_PROVIDER_BRIDGE`). Fail
+    /// rather than pass trivially when it is turned off.
+    fn require_vm_provider_bridge() {
+        assert!(
+            vm_provider_bridge_enabled(),
+            "ELASTOS_VM_PROVIDER_BRIDGE is off; the scheme route rows need it on"
+        );
+    }
+
+    #[tokio::test]
+    async fn scheme_route_relaunched_capsule_serves_its_scheme_again() {
+        require_vm_provider_bridge();
+        let registry = Arc::new(ProviderRegistry::new());
+        let mut supervisor = make_test_supervisor();
+        supervisor.set_provider_registry(registry.clone());
+        let register = |name: &'static str| {
+            let supervisor = &supervisor;
+            async move {
+                supervisor
+                    .register_carrier_service_route(
+                        name,
+                        Some("http://*"),
+                        Path::new("/unused"),
+                        vec![],
+                        serde_json::Value::Null,
+                    )
+                    .await
+            }
+        };
+        let route = register("capsule-a").await.unwrap();
+        // A host-process capsule stays recorded after its process exits.
+        supervisor.running.write().await.insert(
+            "capsule-a-1".into(),
+            RunningCapsule {
+                name: "capsule-a".to_string(),
+                handle: "capsule-a-1".to_string(),
+                vsock_cid: 0,
+                started_at: std::time::Instant::now(),
+                provider_route: Some(route.clone()),
+                backend: CapsuleBackend::HostProcess,
+            },
+        );
+        let first = registry.get("http").await.unwrap();
+
+        // The first holder keeps the scheme.
+        assert_eq!(register("capsule-b").await, None);
+        assert!(Arc::ptr_eq(&registry.get("http").await.unwrap(), &first));
+
+        // The same capsule, launched again, serves it with its new provider.
+        assert_eq!(register("capsule-a").await, Some(route));
+        let second = registry.get("http").await.unwrap();
+        assert!(!Arc::ptr_eq(&second, &first));
+        assert_eq!(
+            supervisor.running.read().await["capsule-a-1"].provider_route,
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn scheme_route_relaunch_preserves_replacement_holder() {
+        require_vm_provider_bridge();
+        for vm in [false, true] {
+            let registry = Arc::new(ProviderRegistry::new());
+            let mut supervisor = make_test_supervisor();
+            supervisor.set_provider_registry(registry.clone());
+            let route = supervisor
+                .register_carrier_service_route(
+                    "capsule-a",
+                    Some("http://*"),
+                    Path::new("/unused"),
+                    vec![],
+                    serde_json::Value::Null,
+                )
+                .await
+                .unwrap();
+            let mut earlier = host_process_capsule("capsule-a-1", route);
+            earlier.name = "capsule-a".to_string();
+            supervisor
+                .running
+                .write()
+                .await
+                .insert("capsule-a-1".into(), earlier);
+            let holder: Arc<dyn Provider> = Arc::new(SchemeAnswerProvider);
+            registry.register(holder.clone()).await;
+            let relaunched = if vm {
+                supervisor
+                    .register_provider_route(
+                        "capsule-a",
+                        Some("http://*"),
+                        "127.0.0.1",
+                        serde_json::Value::Null,
+                    )
+                    .await
+            } else {
+                supervisor
+                    .register_carrier_service_route(
+                        "capsule-a",
+                        Some("http://*"),
+                        Path::new("/unused"),
+                        vec![],
+                        serde_json::Value::Null,
+                    )
+                    .await
+            };
+            assert_eq!(relaunched, None);
+            assert!(Arc::ptr_eq(&registry.get("http").await.unwrap(), &holder));
+        }
+    }
+
+    #[tokio::test]
+    async fn scheme_route_stop_releases_provider_instance() {
+        require_vm_provider_bridge();
+        let registry = Arc::new(ProviderRegistry::new());
+        let mut supervisor = make_test_supervisor();
+        supervisor.set_provider_registry(registry.clone());
+        let route = supervisor
+            .register_carrier_service_route(
+                "capsule-a",
+                Some("http://*"),
+                Path::new("/unused"),
+                vec![],
+                serde_json::Value::Null,
+            )
+            .await
+            .unwrap();
+        let provider = Arc::downgrade(&registry.get("http").await.unwrap());
+        supervisor
+            .running
+            .write()
+            .await
+            .insert("capsule-a".into(), host_process_capsule("capsule-a", route));
+        supervisor.stop_capsule("capsule-a").await.unwrap();
+        assert!(provider.upgrade().is_none());
+    }
+
+    #[tokio::test]
+    async fn scheme_route_subprovider_route_keeps_its_refusal() {
+        require_vm_provider_bridge();
+        let registry = Arc::new(ProviderRegistry::new());
+        let mut supervisor = make_test_supervisor();
+        supervisor.set_provider_registry(registry.clone());
+        let first_route = supervisor
+            .register_provider_route(
+                "capsule-a",
+                Some("elastos://storage/*"),
+                "127.0.0.1",
+                serde_json::Value::Null,
+            )
+            .await;
+        assert_eq!(
+            first_route,
+            Some(ProviderRoute::SubProvider("storage".into()))
+        );
+        let first = registry
+            .registration_for_uri("elastos://storage/item")
+            .await;
+        assert!(first.is_some());
+        let second_route = supervisor
+            .register_provider_route(
+                "capsule-b",
+                Some("elastos://storage/*"),
+                "127.0.0.1",
+                serde_json::Value::Null,
+            )
+            .await;
+        assert_eq!(second_route, None);
+        assert_eq!(
+            registry
+                .registration_for_uri("elastos://storage/item")
+                .await,
+            first
         );
     }
 

@@ -4410,13 +4410,12 @@ async fn online_activation_refuses_over_limit_before_protection() {
         .await
         .unwrap();
     let body = String::from_utf8_lossy(&body);
+    // The owner keeps the file name and recovery steps without the disk path.
     assert!(
-        body.contains(
-            "Documents/large.bin is not encrypted and is 17 MiB. Home encrypts existing files \
-             of up to 16 MiB in place."
-        ),
+        body.contains("Documents/large.bin") && body.contains("upload it again in"),
         "{body}"
     );
+    assert!(!body.contains(&dir.path().display().to_string()), "{body}");
     assert!(crate::auth::load_principal_root_protection(
         dir.path(),
         &principal.principal_id,
@@ -4748,11 +4747,10 @@ async fn damaged_home_state_file_leaves_shell_and_summaries_answering() {
             let text = String::from_utf8_lossy(&text);
             assert!(!status.is_success(), "{file} {endpoint}: {text}");
             assert!(
-                text.contains(&format!(
-                    ".AppData/ElastOS/Home/{file} does not carry the label"
-                )),
-                "{file} {endpoint}: {text}"
+                text.contains(file) && text.contains("move the original"),
+                "{text}"
             );
+            assert!(!text.contains(&dir.path().display().to_string()), "{text}");
         }
         assert_eq!(std::fs::read(&path).unwrap(), damaged, "{file}");
     }
@@ -4809,9 +4807,11 @@ async fn damaged_background_image_survives_upload_and_reset() {
         let text = String::from_utf8_lossy(&text);
         assert!(!status.is_success(), "{method}: {text}");
         assert!(
-            text.contains(&format!(
-                ".AppData/ElastOS/Home/{file} does not carry the label"
-            )),
+            text.contains(file) && text.contains("upload it again in Library"),
+            "{method}: {text}"
+        );
+        assert!(
+            !text.contains(&dir.path().display().to_string()),
             "{method}: {text}"
         );
         assert_eq!(std::fs::read(&path).unwrap(), damaged, "{method}");

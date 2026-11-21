@@ -379,3 +379,7 @@ pub(super) fn validate_legacy_workspace_bytes(bytes: &[u8]) -> anyhow::Result<se
     validate_workspace(&workspace)?;
     Ok(serde_json::from_slice(bytes)?)
 }
+
+#[cfg(test)]
+#[path = "gateway_tests/cs_child_saves/assistant_row.rs"]
+mod cs_rows;

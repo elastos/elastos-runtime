@@ -66,7 +66,7 @@ pub(super) async fn capsule_contract_audit_summary(
     for name in &active_capsule_names {
         let installed_path = installed_root.join(name).join("capsule.json");
         let installed_manifest = if installed_path.is_file() {
-            load_manifest(&installed_path, name, &mut issues)
+            load_manifest(&installed_path, name, &mut issues).await
         } else {
             issues.push(issue(
                 "active_capsule_not_installed",
@@ -77,7 +77,7 @@ pub(super) async fn capsule_contract_audit_summary(
         };
         let source_path = source_root.join(name).join("capsule.json");
         let source_manifest = if source_path.is_file() {
-            load_manifest(&source_path, name, &mut issues)
+            load_manifest(&source_path, name, &mut issues).await
         } else {
             None
         };
@@ -578,12 +578,12 @@ fn viewer_accepts_content_capsule(manifest: &CapsuleManifest, viewer: &str) -> b
     })
 }
 
-fn load_manifest(
+async fn load_manifest(
     path: &Path,
     expected_name: &str,
     issues: &mut Vec<CapsuleContractIssue>,
 ) -> Option<(CapsuleManifest, serde_json::Value)> {
-    let value = match read_json(path) {
+    let value = match read_json(path).await {
         Ok(value) => value,
         Err(error) => {
             issues.push(issue("invalid_manifest", Some(expected_name), &error));
@@ -620,8 +620,14 @@ fn load_manifest(
     Some((manifest, value))
 }
 
-fn read_json(path: &Path) -> Result<serde_json::Value, String> {
-    let bytes = std::fs::read(path).map_err(|error| format!("{}: {error}", path.display()))?;
+async fn read_json(path: &Path) -> Result<serde_json::Value, String> {
+    let read_path = path.to_path_buf();
+    let bytes = tokio::task::spawn_blocking(move || {
+        elastos_common::capsule_manifest_file::read(&read_path)
+    })
+    .await
+    .map_err(|error| format!("{}: {error}", path.display()))?
+    .map_err(|error| format!("{}: {error}", path.display()))?;
     serde_json::from_slice(&bytes).map_err(|error| format!("{}: {error}", path.display()))
 }
 
@@ -812,9 +818,20 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::{Arc, OnceLock};
 
+    use super::*;
     use elastos_runtime::provider::{Provider, ProviderError, ResourceRequest, ResourceResponse};
 
-    use super::*;
+    #[tokio::test]
+    async fn audit_manifest_read_refuses_oversized_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("capsule.json");
+        std::fs::File::create(&path)
+            .unwrap()
+            .set_len(elastos_common::capsule_manifest_file::MAX_CAPSULE_MANIFEST_BYTES + 1)
+            .unwrap();
+        let error = read_json(&path).await.unwrap_err();
+        assert!(error.contains("capsule.json exceeds 67108864 bytes"));
+    }
 
     struct FixtureProvider;
 
@@ -965,8 +982,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn audit_reports_legacy_provider_labels_as_native_processes() {
+    #[tokio::test]
+    async fn audit_reports_legacy_provider_labels_as_native_processes() {
         let base: serde_json::Value = serde_json::from_str(include_str!(
             "../../../../../../capsules/model-provider/capsule.json"
         ))
@@ -984,7 +1001,9 @@ mod tests {
             let path = directory.path().join("capsule.json");
             std::fs::write(&path, value.to_string()).unwrap();
             let mut issues = Vec::new();
-            let (manifest, _) = load_manifest(&path, "model-provider", &mut issues).unwrap();
+            let (manifest, _) = load_manifest(&path, "model-provider", &mut issues)
+                .await
+                .unwrap();
             assert!(issues.is_empty());
             assert_eq!(execution_boundary(&manifest), "native-provider-process");
             assert_eq!(host_process_boundary(&manifest), "native-provider-process");

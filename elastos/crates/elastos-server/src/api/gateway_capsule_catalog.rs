@@ -56,7 +56,7 @@ pub(super) async fn capsule_catalog(
         Ok(catalog) => Json(catalog).into_response(),
         Err(err) => (
             StatusCode::FORBIDDEN,
-            Json(serde_json::json!({ "error": err.to_string() })),
+            Json(serde_json::json!({ "error": gateway_error_text("catalog", &err) })),
         )
             .into_response(),
     }
@@ -192,7 +192,7 @@ pub(super) async fn capsule_interfaces(
         .into_response(),
         Err(err) => (
             StatusCode::FORBIDDEN,
-            Json(serde_json::json!({ "error": err.to_string() })),
+            Json(serde_json::json!({ "error": gateway_error_text("catalog", &err) })),
         )
             .into_response(),
     }
@@ -254,7 +254,7 @@ pub(super) async fn capsule_contract_audit(
         }
         Err(err) => (
             StatusCode::FORBIDDEN,
-            Json(serde_json::json!({ "error": err.to_string() })),
+            Json(serde_json::json!({ "error": gateway_error_text("catalog", &err) })),
         )
             .into_response(),
     }

@@ -8751,56 +8751,197 @@ fn provider_error(code: &str, message: &str) -> Value {
     })
 }
 
-/// Error envelope for a failed provider request: `message` stays the stable,
-/// app-facing sentence (the outermost error), and `detail` carries the cause
-/// chain beneath it (fail-closed site, provider verdict, RPC revert data) so
-/// an operator or driver can see why without the runtime log.
+/// The `message` a caller receives when the error's own text would show a
+/// local file path or a raw OS or parse error.
+const LIBRARY_INTERNAL_ERROR_MESSAGE: &str =
+    "Library request failed on this Runtime; the Runtime log has the cause";
+
+/// Error envelope for a failed provider request. `message` is the outermost
+/// error's own sentence, with the refusal code and reason when there is one.
+/// When that sentence names an absolute local path, or is itself a raw OS or
+/// parse error, the caller gets one fixed sentence instead. The cause chain
+/// beneath it goes to the Runtime log only, never to the caller.
 fn provider_error_from(code: &str, error: &anyhow::Error) -> Value {
     let refusal = find_library_refusal(error);
-    let mut response = provider_error(
-        refusal.map_or(code, |refusal| refusal.code),
-        &error.to_string(),
-    );
+    let text = error.to_string();
+    let hidden = hides_a_local_path(&text) || is_raw_fault(error);
+    if hidden || error.chain().nth(1).is_some() {
+        tracing::warn!("Library request failed: {error:#}");
+    }
+    let message = if hidden {
+        LIBRARY_INTERNAL_ERROR_MESSAGE
+    } else {
+        text.as_str()
+    };
+    let mut response = provider_error(refusal.map_or(code, |refusal| refusal.code), message);
     if let Some(reason) = refusal.and_then(|refusal| refusal.reason) {
         response["reason"] = Value::String(reason.to_string());
-    }
-    let detail = anyhow_error_detail(error);
-    if !detail.is_empty() {
-        response["detail"] = Value::String(detail);
     }
     response
 }
 
-fn anyhow_error_detail(error: &anyhow::Error) -> String {
-    let mut detail = error
+/// Whether the outermost error is itself a file system or parse error, whose
+/// text is OS or parser output rather than a sentence for the caller.
+pub(crate) fn is_raw_fault(error: &anyhow::Error) -> bool {
+    error
         .chain()
-        .skip(1)
-        .map(|cause| cause.to_string())
-        .collect::<Vec<_>>()
-        .join(" <- ");
-    if detail.len() > 1024 {
-        detail.truncate(1024);
-    }
-    detail
+        .next()
+        .is_some_and(|outer| outer.is::<std::io::Error>() || outer.is::<serde_json::Error>())
+}
+
+/// Whether an error text must be replaced by a fixed sentence before it
+/// reaches a caller: it names an absolute local path.
+pub(crate) fn hides_a_local_path(text: &str) -> bool {
+    text_names_a_local_path(text)
+}
+
+/// Whether `text` names an absolute local path: a `/` that starts a word
+/// (after a space, quote or bracket) and is followed by a name, or a Windows
+/// drive path such as `C:\`. A URI such as `localhost://Users/x` and a
+/// relative name such as `Documents/a.txt` do not count.
+fn text_names_a_local_path(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    bytes.iter().enumerate().any(|(at, &byte)| {
+        let before = at.checked_sub(1).map(|i| bytes[i]);
+        let after = bytes.get(at + 1).copied();
+        let starts_word = matches!(
+            before,
+            None | Some(
+                b' ' | b'"'
+                    | b'\''
+                    | b'('
+                    | b'['
+                    | b'`'
+                    | b'='
+                    | b':'
+                    | b','
+                    | b';'
+                    | b'\t'
+                    | b'\n'
+            )
+        );
+        let file_uri_path = bytes[..at].ends_with(b"file://");
+        let unix = byte == b'/'
+            && (starts_word || file_uri_path)
+            && after.is_some_and(|next| {
+                next.is_ascii_alphanumeric() || matches!(next, b'.' | b'_' | b'~')
+            });
+        let windows = byte == b':'
+            && after == Some(b'\\')
+            && before.is_some_and(|letter| letter.is_ascii_alphabetic());
+        unix || windows
+    })
 }
 
 #[cfg(test)]
 mod tests {
     #[test]
-    fn provider_error_from_keeps_the_stable_message_and_exposes_the_cause_chain() {
+    fn provider_error_from_keeps_the_stable_message_and_not_the_cause_chain() {
         let error = anyhow::anyhow!("(400, \"upstream_rpc_error: reverted\")")
             .context("gateway_provider_proxy.rs:1")
             .context("Runtime custody purchase is unavailable");
         let value = super::provider_error_from("library_error", &error);
-        assert_eq!(value["status"], "error");
-        assert_eq!(value["code"], "library_error");
-        assert_eq!(value["message"], "Runtime custody purchase is unavailable");
         assert_eq!(
-            value["detail"],
-            "gateway_provider_proxy.rs:1 <- (400, \"upstream_rpc_error: reverted\")"
+            value,
+            serde_json::json!({
+                "status": "error",
+                "code": "library_error",
+                "message": "Runtime custody purchase is unavailable",
+            })
         );
         let plain = super::provider_error_from("library_error", &anyhow::anyhow!("only"));
+        assert_eq!(plain["message"], "only");
         assert!(plain.get("detail").is_none());
+    }
+
+    #[test]
+    fn provider_error_from_answers_a_fixed_sentence_for_a_local_path_or_raw_fault() {
+        let fixed = serde_json::json!({
+            "status": "error",
+            "code": "library_error",
+            "message": super::LIBRARY_INTERNAL_ERROR_MESSAGE,
+        });
+        let io = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied");
+        let error = anyhow::Error::new(io).context("failed to list \"/data/Users/abc/Documents\"");
+        assert_eq!(super::provider_error_from("library_error", &error), fixed);
+        let parse = serde_json::from_slice::<serde_json::Value>(b"not json").unwrap_err();
+        let error = anyhow::Error::new(parse).context("failed to parse auth state \"/data/x\"");
+        assert_eq!(super::provider_error_from("library_error", &error), fixed);
+        let raw = anyhow::Error::new(std::io::Error::other("os text"));
+        assert_eq!(super::provider_error_from("library_error", &raw), fixed);
+        let windows = anyhow::anyhow!("failed to read C:\\Users\\abc\\file");
+        assert_eq!(super::provider_error_from("library_error", &windows), fixed);
+    }
+
+    #[test]
+    fn provider_error_from_keeps_a_sentence_without_a_local_path() {
+        let missing = std::io::Error::new(std::io::ErrorKind::NotFound, "gone");
+        let error =
+            anyhow::Error::new(missing).context("library share requires a published object");
+        let value = super::provider_error_from("library_error", &error);
+        assert_eq!(
+            value["message"],
+            "library share requires a published object"
+        );
+        assert!(value.get("detail").is_none());
+        for kept in [
+            "Documents/a.txt does not carry the label",
+            "uri must be under localhost://Users/abc",
+            "path a / b",
+        ] {
+            assert!(!super::text_names_a_local_path(kept), "{kept}");
+        }
+        for notice in [
+            format!(
+                "{}: Documents/a.txt is damaged. Restore it, or move it out of /data/Users/abc/Documents.",
+                crate::auth::PROTECTED_PRINCIPAL_ROOT_OBJECT_DAMAGED
+            ),
+            "Documents/big.bin is not encrypted and is 17 MiB. Move it out of /data/Users/abc/Documents and try again.".to_string(),
+        ] {
+            assert!(super::hides_a_local_path(&notice), "{notice}");
+        }
+        assert!(super::hides_a_local_path(
+            "failed to list \"/data/Users/abc\""
+        ));
+        for named in [
+            "at /var/x",
+            "\"/tmp/y\"",
+            "(/home/z)",
+            "/etc/passwd",
+            "D:\\data",
+        ] {
+            assert!(super::text_names_a_local_path(named), "{named}");
+        }
+    }
+
+    #[test]
+    fn local_path_after_punctuation_is_hidden() {
+        for text in [
+            "file:///Users/alice/private",
+            "file:/Users/alice/private",
+            "at:/Users/alice/private",
+            "at,/Users/alice/private",
+            "at;/Users/alice/private",
+        ] {
+            assert!(super::hides_a_local_path(text), "{text}");
+        }
+    }
+
+    #[test]
+    fn owner_recovery_notice_keeps_the_import_steps_without_disk_path() {
+        let notice = crate::auth::PrincipalRootObjectNotice::new(
+            std::path::Path::new("/Users/private/Home"),
+            "localhost://Users/person",
+            "localhost://Users/person/Documents/a.txt",
+            crate::auth::PrincipalRootObjectDamage::NoKey,
+        );
+        let error = crate::auth::principal_root_object_damaged_error(&notice);
+        let answer = super::provider_error_from("library_error", &error);
+        let message = answer["message"].as_str().unwrap();
+        assert!(message.contains("Documents/a.txt"), "{message}");
+        assert!(message.contains("Import the Recovery Kit"), "{message}");
+        assert!(message.contains("System → Recovery"), "{message}");
+        assert!(!message.contains("/Users/private"), "{message}");
     }
 
     /// Documents edits text: a name routes to it only when its manifest

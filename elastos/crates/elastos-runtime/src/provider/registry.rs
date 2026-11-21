@@ -878,6 +878,44 @@ impl ProviderRegistry {
         }
     }
 
+    /// Register `provider` only if none of its schemes has a holder yet. If
+    /// one has, nothing changes and the holder keeps serving it.
+    pub async fn register_unheld(&self, provider: Arc<dyn Provider>) -> Result<(), ProviderError> {
+        self.register_unheld_replacing(provider, None).await
+    }
+
+    /// Replace a prior registration only while the exact provider still holds
+    /// it. The ownership check and replacement share one registry write lock.
+    pub async fn register_unheld_replacing(
+        &self,
+        provider: Arc<dyn Provider>,
+        previous: Option<&Arc<dyn Provider>>,
+    ) -> Result<(), ProviderError> {
+        let mut providers = self.providers.write().await;
+        let schemes = provider.schemes();
+        for scheme in &schemes {
+            if let Some(holder) = providers.get(*scheme) {
+                if previous.is_some_and(|previous| Arc::ptr_eq(holder, previous)) {
+                    continue;
+                }
+                return Err(ProviderError::Provider(format!(
+                    "scheme '{}' is already held by provider '{}'",
+                    scheme,
+                    holder.name()
+                )));
+            }
+        }
+        for scheme in schemes {
+            tracing::info!(
+                "Registered provider '{}' for scheme '{}'",
+                provider.name(),
+                scheme
+            );
+            providers.insert(scheme.to_string(), provider.clone());
+        }
+        Ok(())
+    }
+
     /// Unregister a provider
     pub async fn unregister(&self, scheme: &str) {
         let mut providers = self.providers.write().await;
@@ -3697,6 +3735,186 @@ mod tests {
 
         assert!(registry.has_provider("localhost").await);
         assert!(!registry.has_provider("unknown").await);
+    }
+
+    struct SchemeAnswerProvider {
+        name: &'static str,
+        schemes: Vec<&'static str>,
+        answer: &'static str,
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for SchemeAnswerProvider {
+        async fn handle(
+            &self,
+            _request: ResourceRequest,
+        ) -> Result<ResourceResponse, ProviderError> {
+            Ok(ResourceResponse::Data(self.answer.as_bytes().to_vec()))
+        }
+
+        fn schemes(&self) -> Vec<&'static str> {
+            self.schemes.clone()
+        }
+
+        fn name(&self) -> &'static str {
+            self.name
+        }
+    }
+
+    #[tokio::test]
+    async fn register_unheld_leaves_a_held_scheme_with_its_holder() {
+        let registry = ProviderRegistry::new();
+        let first: Arc<dyn Provider> = Arc::new(SchemeAnswerProvider {
+            name: "first-provider",
+            schemes: vec!["held"],
+            answer: "first",
+        });
+        registry.register(first.clone()).await;
+        let before = registry.providers.read().await.clone();
+        let error = registry
+            .register_unheld(Arc::new(SchemeAnswerProvider {
+                name: "second-provider",
+                schemes: vec!["held"],
+                answer: "second",
+            }))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("held"));
+        assert!(error.to_string().contains("first-provider"));
+        let after = registry.providers.read().await;
+        assert_eq!(after.len(), before.len());
+        assert!(after
+            .iter()
+            .all(|(scheme, provider)| Arc::ptr_eq(provider, &before[scheme])));
+        drop(after);
+        assert!(matches!(
+            registry.route("held://item", "capsule", ResourceAction::Read, None).await,
+            Ok(ResourceResponse::Data(data)) if data == b"first"
+        ));
+    }
+
+    #[tokio::test]
+    async fn register_unheld_registers_nothing_when_any_scheme_is_held() {
+        let registry = ProviderRegistry::new();
+        registry
+            .register(Arc::new(SchemeAnswerProvider {
+                name: "first-provider",
+                schemes: vec!["held"],
+                answer: "first",
+            }))
+            .await;
+        assert!(registry
+            .register_unheld(Arc::new(SchemeAnswerProvider {
+                name: "second-provider",
+                schemes: vec!["free", "held"],
+                answer: "second",
+            }))
+            .await
+            .is_err());
+        assert!(registry.get("free").await.is_none());
+        assert_eq!(registry.providers.read().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn register_unheld_registers_a_free_scheme() {
+        let registry = ProviderRegistry::new();
+        registry
+            .register_unheld(Arc::new(SchemeAnswerProvider {
+                name: "first-provider",
+                schemes: vec!["free"],
+                answer: "first",
+            }))
+            .await
+            .unwrap();
+        assert!(matches!(
+            registry.route("free://item", "capsule", ResourceAction::Read, None).await,
+            Ok(ResourceResponse::Data(data)) if data == b"first"
+        ));
+    }
+
+    #[tokio::test]
+    async fn register_replacing_preserves_a_different_holder() {
+        let registry = ProviderRegistry::new();
+        let earlier: Arc<dyn Provider> = Arc::new(SchemeAnswerProvider {
+            name: "same-name",
+            schemes: vec!["held"],
+            answer: "earlier",
+        });
+        let holder: Arc<dyn Provider> = Arc::new(SchemeAnswerProvider {
+            name: "same-name",
+            schemes: vec!["held"],
+            answer: "holder",
+        });
+        registry.register(earlier.clone()).await;
+        registry.register(holder.clone()).await;
+        assert!(registry
+            .register_unheld_replacing(earlier.clone(), Some(&earlier))
+            .await
+            .is_err());
+        assert!(Arc::ptr_eq(&registry.get("held").await.unwrap(), &holder));
+    }
+
+    #[tokio::test]
+    async fn register_replacing_is_atomic_with_a_queued_claim() {
+        use std::future::Future;
+        use std::task::Poll;
+        let registry = ProviderRegistry::new();
+        let earlier: Arc<dyn Provider> = Arc::new(SchemeAnswerProvider {
+            name: "earlier",
+            schemes: vec!["held"],
+            answer: "earlier",
+        });
+        let replacement: Arc<dyn Provider> = Arc::new(SchemeAnswerProvider {
+            name: "replacement",
+            schemes: vec!["held"],
+            answer: "replacement",
+        });
+        let claimant: Arc<dyn Provider> = Arc::new(SchemeAnswerProvider {
+            name: "claimant",
+            schemes: vec!["held"],
+            answer: "claimant",
+        });
+        registry.register(earlier.clone()).await;
+        let read = registry.providers.read().await;
+        let mut replace =
+            Box::pin(registry.register_unheld_replacing(replacement.clone(), Some(&earlier)));
+        std::future::poll_fn(|cx| {
+            assert!(replace.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        let mut claim = Box::pin(registry.register_unheld(claimant));
+        std::future::poll_fn(|cx| {
+            assert!(claim.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        drop(read);
+        let (replaced, claimed) = tokio::join!(replace, claim);
+        assert!(replaced.is_ok(), "{replaced:?}");
+        assert!(claimed.is_err(), "{claimed:?}");
+        assert!(Arc::ptr_eq(
+            &registry.get("held").await.unwrap(),
+            &replacement
+        ));
+    }
+
+    #[tokio::test]
+    async fn register_still_replaces_for_built_in_callers() {
+        let registry = ProviderRegistry::new();
+        for answer in ["first", "second"] {
+            registry
+                .register(Arc::new(SchemeAnswerProvider {
+                    name: "provider",
+                    schemes: vec!["held"],
+                    answer,
+                }))
+                .await;
+        }
+        assert!(matches!(
+            registry.route("held://item", "capsule", ResourceAction::Read, None).await,
+            Ok(ResourceResponse::Data(data)) if data == b"second"
+        ));
     }
 
     #[tokio::test]

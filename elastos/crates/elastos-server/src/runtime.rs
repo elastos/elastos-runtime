@@ -28,6 +28,30 @@ pub struct RunningCapsuleInfo {
     pub handle: Option<CapsuleHandle>,
 }
 
+/// Refuses an entrypoint that is on disk but is not a regular file inside the
+/// capsule directory: a link that leads out of it, or a pipe, device or
+/// folder in its place. Nothing is opened here (`metadata` does not open the
+/// file), so a pipe cannot block the launch. An entrypoint that is absent is
+/// left to the launch path, which reports it in its own words.
+pub async fn check_entrypoint_file(capsule_dir: &Path, entrypoint: &str) -> Result<()> {
+    let refused =
+        |why: &str| ElastosError::InvalidManifest(format!("Entrypoint {entrypoint} {why}"));
+    let Ok(file) = tokio::fs::canonicalize(capsule_dir.join(entrypoint)).await else {
+        return Ok(());
+    };
+    let dir = tokio::fs::canonicalize(capsule_dir)
+        .await
+        .map_err(ElastosError::Io)?;
+    if !file.starts_with(&dir) {
+        return Err(refused("leads out of the capsule directory"));
+    }
+    let kind = tokio::fs::metadata(&file).await.map_err(ElastosError::Io)?;
+    if !kind.is_file() {
+        return Err(refused("is not a regular file"));
+    }
+    Ok(())
+}
+
 /// Which unsigned local capsules the Runtime admits.
 enum UnsignedCapsules {
     /// A source or CI Home with `dev_mode = true`.
@@ -240,25 +264,44 @@ impl Runtime {
         args: Vec<String>,
         principal_id: Option<String>,
     ) -> Result<CapsuleHandle> {
+        self.run_local_with_launch_grant(path, args, principal_id, None)
+            .await
+    }
+
+    pub(crate) async fn run_local_with_launch_grant(
+        &self,
+        path: &Path,
+        args: Vec<String>,
+        principal_id: Option<String>,
+        grant_name: Option<&str>,
+    ) -> Result<CapsuleHandle> {
         // Read manifest
         let manifest_path = path.join("capsule.json");
-        let manifest_data = tokio::fs::read_to_string(&manifest_path)
-            .await
-            .map_err(|e| {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    ElastosError::InvalidManifest(format!(
-                        "capsule.json not found in {}",
-                        path.display()
-                    ))
-                } else {
-                    ElastosError::Io(e)
-                }
-            })?;
+        let manifest_data = tokio::task::spawn_blocking(move || {
+            elastos_common::capsule_manifest_file::read(&manifest_path)
+        })
+        .await
+        .map_err(|err| ElastosError::Io(std::io::Error::other(err)))?
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                ElastosError::InvalidManifest(format!(
+                    "capsule.json not found in {}",
+                    path.display()
+                ))
+            } else {
+                ElastosError::Io(e)
+            }
+        })?;
 
-        let manifest: CapsuleManifest = serde_json::from_str(&manifest_data).map_err(|e| {
+        let manifest: CapsuleManifest = serde_json::from_slice(&manifest_data).map_err(|e| {
             ElastosError::InvalidManifest(format!("Failed to parse capsule.json: {}", e))
         })?;
         manifest.validate().map_err(ElastosError::InvalidManifest)?;
+        if grant_name.is_some_and(|name| manifest.name != name) {
+            return Err(ElastosError::InvalidManifest(
+                "launch grant mismatch".into(),
+            ));
+        }
 
         // Reject entrypoints that escape the capsule directory
         if manifest.entrypoint.contains("..")
@@ -268,6 +311,8 @@ impl Runtime {
                 "Entrypoint must be a relative path within the capsule directory".into(),
             ));
         }
+
+        check_entrypoint_file(path, &manifest.entrypoint).await?;
 
         tracing::info!(
             "Loading capsule '{}' ({:?})",
@@ -348,7 +393,7 @@ impl Runtime {
     }
 
     /// Verify capsule signature if verification is enabled
-    async fn verify_capsule_signature(
+    pub async fn verify_capsule_signature(
         &self,
         manifest: &CapsuleManifest,
         path: &Path,
@@ -804,6 +849,155 @@ mod tests {
             .verify_capsule_signature(&manifest, &release_dir)
             .await
             .is_err());
+    }
+
+    /// A Runtime whose one compute provider counts its loads, a capsule folder
+    /// holding a signed microVM manifest whose entrypoint is `rootfs.ext4`, and
+    /// the Home's admission set as asked.
+    async fn entrypoint_fixture(
+        dev_mode: bool,
+    ) -> (Runtime, tempfile::TempDir, PathBuf, Arc<AtomicUsize>) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage = Arc::new(
+            LocalFSProvider::new(temp_dir.path().join("storage"))
+                .await
+                .unwrap(),
+        );
+        let loads = Arc::new(AtomicUsize::new(0));
+        let runtime = Runtime::new(
+            storage,
+            Arc::new(CountingComputeProvider {
+                loads: loads.clone(),
+            }),
+        );
+        let key = elastos_runtime::signature::SigningKey::from_bytes(&[42; 32]);
+        runtime
+            .configure_capsule_admission(
+                temp_dir.path(),
+                &[hex::encode(key.verifying_key().to_bytes())],
+                dev_mode,
+            )
+            .await
+            .unwrap();
+        let mut manifest = unsigned_manifest();
+        manifest.name = "entrypoint-kind".to_string();
+        manifest.capsule_type = CapsuleType::MicroVM;
+        manifest.entrypoint = "rootfs.ext4".to_string();
+        if !dev_mode {
+            elastos_runtime::signature::sign_capsule(
+                &key,
+                &mut manifest,
+                &hash_content(b"vm image bytes"),
+            )
+            .unwrap();
+        }
+        let dir = temp_dir.path().join("capsule");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("capsule.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+        (runtime, temp_dir, dir, loads)
+    }
+
+    #[tokio::test]
+    async fn runtime_launch_requires_the_authorized_manifest_name() {
+        let (runtime, _temp, dir, loads) = entrypoint_fixture(true).await;
+        std::fs::write(dir.join("rootfs.ext4"), b"vm image bytes").unwrap();
+        // Runtime requires the manifest name authorized by the route.
+        let error = runtime
+            .run_local_with_launch_grant(&dir, Vec::new(), None, Some("authorized-capsule"))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("launch grant mismatch"));
+        assert_eq!(loads.load(Ordering::SeqCst), 0);
+        runtime
+            .run_local_with_launch_grant(&dir, Vec::new(), None, Some("entrypoint-kind"))
+            .await
+            .unwrap();
+        assert_eq!(loads.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn a_regular_entrypoint_and_a_link_inside_the_capsule_folder_are_launched() {
+        let (runtime, _temp, dir, loads) = entrypoint_fixture(true).await;
+        std::fs::write(dir.join("rootfs.ext4"), b"vm image bytes").unwrap();
+        runtime.run_local(&dir, Vec::new()).await.unwrap();
+        assert_eq!(loads.load(Ordering::SeqCst), 1);
+
+        #[cfg(unix)]
+        {
+            std::fs::rename(dir.join("rootfs.ext4"), dir.join("image.bin")).unwrap();
+            std::os::unix::fs::symlink("image.bin", dir.join("rootfs.ext4")).unwrap();
+            runtime.run_local(&dir, Vec::new()).await.unwrap();
+            assert_eq!(loads.load(Ordering::SeqCst), 2);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_folder_as_an_entrypoint_is_refused_before_the_provider_loads() {
+        let (runtime, _temp, dir, loads) = entrypoint_fixture(true).await;
+        std::fs::create_dir(dir.join("rootfs.ext4")).unwrap();
+        let error = runtime.run_local(&dir, Vec::new()).await.unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Invalid manifest: Entrypoint rootfs.ext4 is not a regular file"
+        );
+        assert_eq!(loads.load(Ordering::SeqCst), 0);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_entrypoint_outside_the_capsule_folder_is_refused() {
+        let (runtime, temp, dir, loads) = entrypoint_fixture(true).await;
+        let outside = temp.path().join("outside.img");
+        std::fs::write(&outside, b"vm image bytes").unwrap();
+        std::os::unix::fs::symlink(&outside, dir.join("rootfs.ext4")).unwrap();
+        let error = runtime.run_local(&dir, Vec::new()).await.unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Invalid manifest: Entrypoint rootfs.ext4 leads out of the capsule directory"
+        );
+        assert_eq!(loads.load(Ordering::SeqCst), 0);
+    }
+
+    /// Fails if the launch does not return in ten seconds.
+    #[cfg(unix)]
+    async fn launch_with_a_pipe_entrypoint(runtime: &Runtime, dir: &Path) -> Result<CapsuleHandle> {
+        use std::os::unix::fs::OpenOptionsExt;
+        let pipe = dir.join("rootfs.ext4");
+        let made = std::process::Command::new("mkfifo").arg(&pipe).status();
+        assert!(made.unwrap().success(), "mkfifo");
+        let launch = runtime.run_local(dir, Vec::new());
+        match tokio::time::timeout(std::time::Duration::from_secs(10), launch).await {
+            Ok(result) => result,
+            Err(_) => {
+                let _ = std::fs::OpenOptions::new()
+                    .write(true)
+                    .custom_flags(libc::O_NONBLOCK)
+                    .open(&pipe);
+                panic!("launch did not return");
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_special_file_entrypoint_is_refused() {
+        // Both signature modes refuse before the provider loads.
+        for dev_mode in [false, true] {
+            let (runtime, _temp, dir, loads) = entrypoint_fixture(dev_mode).await;
+            let error = launch_with_a_pipe_entrypoint(&runtime, &dir)
+                .await
+                .unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                "Invalid manifest: Entrypoint rootfs.ext4 is not a regular file",
+                "dev_mode {dev_mode}"
+            );
+            assert_eq!(loads.load(Ordering::SeqCst), 0, "dev_mode {dev_mode}");
+        }
     }
 
     #[tokio::test]

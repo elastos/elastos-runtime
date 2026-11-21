@@ -4092,6 +4092,62 @@ pub(super) fn normalize_model_provider_request(
     }
 }
 
+/// The Bus model path stamps the run binding as the gateway does: from the
+/// bridge's own caller context. The session is the
+/// bridge's launch handle and the grant is the capability token the Runtime
+/// validated for this call. Errors are `(code, message)`.
+pub(crate) fn bus_model_provider_request(
+    op: &str,
+    body: &serde_json::Value,
+    data_dir: Option<&std::path::Path>,
+    principal_id: Option<&str>,
+    session_id: &str,
+    grant_id: &str,
+    capsule_id: &str,
+) -> Result<serde_json::Value, (&'static str, String)> {
+    let refused = |message: String| ("principal_context_required", message);
+    let principal_id = principal_id.filter(|id| !id.trim().is_empty());
+    let (Some(data_dir), Some(principal_id)) = (data_dir, principal_id) else {
+        return Err(refused(
+            "model runs require a principal-scoped launch context".to_string(),
+        ));
+    };
+    if [session_id, grant_id, capsule_id]
+        .iter()
+        .any(|id| id.trim().is_empty())
+    {
+        return Err(refused(
+            "model runs require a launch session and grant".to_string(),
+        ));
+    }
+    let proof_binding_id = crate::auth::load_auth_state(data_dir)
+        .ok()
+        .and_then(|state| {
+            state
+                .principals
+                .into_iter()
+                .find(|principal| principal.principal_id == principal_id)
+        })
+        .map(|principal| principal.proof_binding_id);
+    let context = HomeLaunchTokenContext {
+        principal_id: principal_id.to_string(),
+        session_id: session_id.to_string(),
+        proof_binding_id,
+        grant_id: grant_id.to_string(),
+    };
+    let mut body = body.clone();
+    if let Some(object) = body.as_object_mut() {
+        object.remove("op");
+        object.remove("runtime_binding");
+    }
+    let request = normalize_model_provider_request(op, &body, &context, capsule_id)
+        .map_err(|(_, message)| ("invalid_model_request", message))?;
+    if op == "runs_create" && !hosted_run_allowed(data_dir, &context, &request) {
+        return Err(("hosted_run_admin_only", HOSTED_RUN_ADMIN_ONLY.to_string()));
+    }
+    Ok(request)
+}
+
 fn local_model_request_expiry_refusal(
     request: &serde_json::Value,
     response: &serde_json::Value,

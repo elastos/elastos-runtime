@@ -1399,11 +1399,8 @@ fn validate_room_join_invite_token(token_or_url: &str) -> anyhow::Result<Validat
     let bytes = BASE64_URL_SAFE_NO_PAD
         .decode(token.as_bytes())
         .context("conversation join token is not valid base64url")?;
-    let (envelope_value, signer_did) = crate::crypto::verify_signed_json_envelope_against_dids(
-        &bytes,
-        ROOM_JOIN_INVITE_DOMAIN,
-        &[],
-    )?;
+    let (envelope_value, signer_did) =
+        crate::crypto::verify_self_signed_json_envelope(&bytes, ROOM_JOIN_INVITE_DOMAIN)?;
     let envelope: SignedRoomJoinInviteEnvelope = serde_json::from_value(envelope_value)?;
     let envelope_sha256 = room_envelope_sha256(&envelope)?;
     let payload = envelope.payload.clone();
@@ -1529,10 +1526,9 @@ fn validate_room_invite_envelope(
     envelope_bytes: &[u8],
     local_profile: &crate::collaboration_profile_authority::VerifiedCollaborationProfileDocument,
 ) -> anyhow::Result<ValidatedRoomInvite> {
-    let (envelope_value, signer_did) = crate::crypto::verify_signed_json_envelope_against_dids(
+    let (envelope_value, signer_did) = crate::crypto::verify_self_signed_json_envelope(
         envelope_bytes,
         ROOM_INVITE_ENVELOPE_DOMAIN,
-        &[],
     )?;
     let envelope: SignedRoomInviteEnvelope = serde_json::from_value(envelope_value)?;
     let envelope_sha256 = room_envelope_sha256(&envelope)?;
@@ -1727,10 +1723,9 @@ pub fn import_room_acceptance_envelope(
     data_dir: &Path,
     envelope_bytes: &[u8],
 ) -> anyhow::Result<RoomMemberView> {
-    let (envelope_value, signer_did) = crate::crypto::verify_signed_json_envelope_against_dids(
+    let (envelope_value, signer_did) = crate::crypto::verify_self_signed_json_envelope(
         envelope_bytes,
         ROOM_ACCEPT_ENVELOPE_DOMAIN,
-        &[],
     )?;
     let envelope: SignedRoomAcceptEnvelope = serde_json::from_value(envelope_value)?;
     let acceptance_envelope_sha256 = room_envelope_sha256(&envelope)?;

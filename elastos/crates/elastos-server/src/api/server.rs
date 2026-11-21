@@ -35,6 +35,17 @@ use elastos_runtime::namespace::NamespaceStore;
 use elastos_runtime::provider::ProviderRegistry;
 use elastos_runtime::session::SessionRegistry;
 
+pub(crate) fn storage_router() -> Router<handlers::storage::ProviderStorageState> {
+    Router::new()
+        .route("/api/localhost", get(handlers::storage_get_root))
+        .route("/api/localhost/", get(handlers::storage_get_root))
+        .route("/api/localhost/*path", get(handlers::storage_get))
+        .route("/api/localhost/*path", put(handlers::storage_write))
+        .route("/api/localhost/*path", delete(handlers::storage_delete))
+        .route("/api/localhost/*path", head(handlers::storage_stat))
+        .route("/api/localhost/*path", post(handlers::storage_post))
+}
+
 /// Middleware that sets Cross-Origin-Opener-Policy and Cross-Origin-Embedder-Policy headers.
 /// Required for SharedArrayBuffer (used by threaded WASM like mgba-wasm).
 async fn cross_origin_isolation(
@@ -383,14 +394,7 @@ pub async fn start_server_with_sessions(config: ServerConfig) -> anyhow::Result<
             capability_manager: Some(capability_manager.clone()),
         };
 
-        let storage_router = Router::new()
-            .route("/api/localhost", get(handlers::storage_get_root))
-            .route("/api/localhost/", get(handlers::storage_get_root))
-            .route("/api/localhost/*path", get(handlers::storage_get))
-            .route("/api/localhost/*path", put(handlers::storage_write))
-            .route("/api/localhost/*path", delete(handlers::storage_delete))
-            .route("/api/localhost/*path", head(handlers::storage_stat))
-            .route("/api/localhost/*path", post(handlers::storage_post))
+        let storage_router = storage_router()
             .layer(axum_middleware::from_fn_with_state(
                 api_state.clone(),
                 auth_middleware,

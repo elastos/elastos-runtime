@@ -11,9 +11,13 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{self, BufRead, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use elastos_common::localhost::{is_plaintext_root, parse_localhost_path, parse_localhost_uri};
+
+/// Per-person (`Users`) and per-agent (`UsersAI`) areas.
+/// A request reaches these roots only by naming them.
+const PROTECTED_AREA_ROOTS: &[&str] = &["Users", "UsersAI"];
 
 /// Provider protocol version
 const PROTOCOL_VERSION: &str = "1.0";
@@ -279,7 +283,11 @@ impl LocalProvider {
         })
     }
 
-    /// Resolve and validate a path (hardened against symlink traversal)
+    /// Resolve and validate a path (hardened against symlink traversal).
+    ///
+    /// The resolved location is used only for the access check below. Every
+    /// operation acts on the path as requested, so deleting a link removes the
+    /// link, not its target.
     fn resolve_path(&self, path: &str) -> io::Result<PathBuf> {
         // Normalize the path
         let normalized = if let Some((root, rest)) = parse_localhost_uri(path) {
@@ -325,52 +333,46 @@ impl LocalProvider {
             ));
         }
 
-        // Resolve symlinks: walk up to deepest existing ancestor, canonicalize,
-        // and verify it stays within base_path. No silent fallback.
-        let mut check = full_path.as_path();
-        while !check.exists() {
-            match check.parent() {
-                Some(p) => check = p,
-                None => break,
-            }
+        // Resolve the location the request actually addresses: the target when
+        // it exists, otherwise its deepest existing ancestor plus the names that
+        // do not exist yet. Every check below uses this resolved form, so a
+        // symlink inside the data folder cannot widen what a request reaches.
+        let resolved = Self::resolve_existing_prefix(&full_path)?;
+        if !resolved.starts_with(&self.base_path) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "Path escapes sandbox via symlink",
+            ));
         }
-        if check.exists() {
-            let canonical = check.canonicalize().map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    format!("Failed to resolve path: {}", e),
-                )
-            })?;
-            if !canonical.starts_with(&self.base_path) {
+
+        let resolved_relative = resolved
+            .strip_prefix(&self.base_path)
+            .unwrap_or(resolved.as_path());
+        let resolved_root = match resolved_relative.components().next() {
+            Some(std::path::Component::Normal(name)) => Some(name),
+            _ => None,
+        };
+        let requested_root = Path::new(path)
+            .components()
+            .find_map(|component| match component {
+                std::path::Component::Normal(name) => Some(name),
+                _ => None,
+            });
+
+        // Requests into `Users` or `UsersAI` must name the area.
+        if let Some(root) = resolved_root {
+            if PROTECTED_AREA_ROOTS.iter().any(|area| root == *area) && requested_root != Some(root)
+            {
                 return Err(io::Error::new(
                     io::ErrorKind::PermissionDenied,
-                    "Path escapes sandbox via symlink",
+                    "Path is not inside the requested root",
                 ));
             }
         }
 
-        // If full path exists, canonicalize it too and re-verify
-        if full_path.exists() {
-            let canonical = full_path.canonicalize().map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    format!("Failed to resolve path: {}", e),
-                )
-            })?;
-            if !canonical.starts_with(&self.base_path) {
-                return Err(io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    "Path escapes sandbox via symlink",
-                ));
-            }
-        }
-
-        // Check against allowed paths if configured
+        // Check against allowed paths if configured, on the resolved path
         if !self.config.allowed_paths.is_empty() {
-            let relative = full_path
-                .strip_prefix(&self.base_path)
-                .unwrap_or(full_path.as_path());
-            let rel_str = relative.to_string_lossy();
+            let rel_str = resolved_relative.to_string_lossy();
 
             let allowed = self.config.allowed_paths.iter().any(|allowed| {
                 if allowed == "*" {
@@ -387,7 +389,48 @@ impl LocalProvider {
             }
         }
 
+        // Return the checked request path. Link deletion operates on the
+        // link itself and preserves its target.
         Ok(full_path)
+    }
+
+    fn resolve_mutation_path(&self, path: &str) -> io::Result<PathBuf> {
+        let full_path = self.resolve_path(path)?;
+        if full_path == self.base_path {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "Cannot modify provider base folder",
+            ));
+        }
+        Ok(full_path)
+    }
+
+    /// Canonicalize the deepest existing ancestor of `full_path` and reattach
+    /// the names that do not exist yet. A dangling symlink has no resolvable
+    /// target, so it is refused instead of treated as a new file.
+    fn resolve_existing_prefix(full_path: &Path) -> io::Result<PathBuf> {
+        let mut existing = full_path;
+        let mut missing: Vec<std::ffi::OsString> = Vec::new();
+        while fs::symlink_metadata(existing).is_err() {
+            let Some(name) = existing.file_name() else {
+                break;
+            };
+            missing.push(name.to_os_string());
+            let Some(parent) = existing.parent() else {
+                break;
+            };
+            existing = parent;
+        }
+        let mut resolved = existing.canonicalize().map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!("Failed to resolve path: {}", e),
+            )
+        })?;
+        for name in missing.iter().rev() {
+            resolved.push(name);
+        }
+        Ok(resolved)
     }
 
     /// Validate a capability token (placeholder - runtime validates tokens)
@@ -491,7 +534,7 @@ impl LocalProvider {
         }
 
         self.validate_token(token, "write", path)?;
-        let full_path = self.resolve_path(path)?;
+        let full_path = self.resolve_mutation_path(path)?;
 
         // Ensure parent directory exists
         if let Some(parent) = full_path.parent() {
@@ -583,7 +626,7 @@ impl LocalProvider {
         }
 
         self.validate_token(token, "delete", path)?;
-        let full_path = self.resolve_path(path)?;
+        let full_path = self.resolve_mutation_path(path)?;
 
         if full_path.is_dir() {
             if recursive {
@@ -639,7 +682,7 @@ impl LocalProvider {
         }
 
         self.validate_token(token, "write", path)?;
-        let full_path = self.resolve_path(path)?;
+        let full_path = self.resolve_mutation_path(path)?;
 
         if parents {
             fs::create_dir_all(&full_path)?;
@@ -1007,6 +1050,215 @@ mod tests {
             )
             .unwrap();
         assert_eq!(content, b"hello rooted world");
+    }
+
+    fn protected_area_provider(dir: &tempfile::TempDir) -> LocalProvider {
+        fs::create_dir_all(dir.path().join("Public")).unwrap();
+        fs::create_dir_all(dir.path().join("UsersAI/agent-root/Documents")).unwrap();
+        fs::create_dir_all(dir.path().join("Users/self/Documents")).unwrap();
+        fs::write(
+            dir.path().join("UsersAI/agent-root/Documents/a.md"),
+            b"agent bytes",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("Users/self/Documents/a.md"),
+            b"person bytes",
+        )
+        .unwrap();
+        fs::write(dir.path().join("Public/note.txt"), b"public note").unwrap();
+
+        LocalProvider::new(ProviderConfig {
+            base_path: dir.path().to_string_lossy().to_string(),
+            allowed_paths: elastos_common::localhost::file_backed_prefixes(),
+            read_only: false,
+            encryption_key: String::new(),
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn base_folder_mutations_are_refused() {
+        for path in ["", "/", "///"] {
+            for operation in ["delete", "write", "mkdir"] {
+                let dir = tempfile::tempdir().unwrap();
+                let provider = protected_area_provider(&dir);
+                let marker = dir.path().join("Public/note.txt");
+                let result = match operation {
+                    "delete" => provider.delete(path, "fixture", true),
+                    "write" => provider
+                        .write_file(path, "fixture", b"test", false)
+                        .map(|_| ()),
+                    "mkdir" => provider.mkdir(path, "fixture", true),
+                    _ => unreachable!(),
+                };
+                assert_eq!(
+                    result.unwrap_err().kind(),
+                    io::ErrorKind::PermissionDenied,
+                    "{operation} {path:?}"
+                );
+                assert!(dir.path().is_dir(), "{operation} {path:?}");
+                assert_eq!(fs::read(marker).unwrap(), b"public note");
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn protected_roots_are_reached_only_by_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let provider = protected_area_provider(&dir);
+        std::os::unix::fs::symlink(
+            "../UsersAI/agent-root/Documents",
+            dir.path().join("Public/agent-link"),
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(
+            "../Users/self/Documents",
+            dir.path().join("Public/person-link"),
+        )
+        .unwrap();
+
+        for (link, target, original) in [
+            (
+                "Public/agent-link/a.md",
+                "UsersAI/agent-root/Documents/a.md",
+                &b"agent bytes"[..],
+            ),
+            (
+                "Public/person-link/a.md",
+                "Users/self/Documents/a.md",
+                &b"person bytes"[..],
+            ),
+        ] {
+            let read = provider
+                .read_file(link, "token", None, None)
+                .expect_err("read through link must be refused");
+            assert_eq!(read.kind(), io::ErrorKind::PermissionDenied, "read {link}");
+
+            let write = provider
+                .write_file(link, "token", b"overwritten", false)
+                .expect_err("write through link must be refused");
+            assert_eq!(
+                write.kind(),
+                io::ErrorKind::PermissionDenied,
+                "write {link}"
+            );
+
+            let delete = provider
+                .delete(link, "token", false)
+                .expect_err("delete through link must be refused");
+            assert_eq!(
+                delete.kind(),
+                io::ErrorKind::PermissionDenied,
+                "delete {link}"
+            );
+
+            assert_eq!(fs::read(dir.path().join(target)).unwrap(), original);
+        }
+        assert!(!dir
+            .path()
+            .join("UsersAI/agent-root/Documents/new.md")
+            .exists());
+        assert!(!dir.path().join("Users/self/Documents/new.md").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn new_files_in_protected_roots_need_the_root_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let provider = protected_area_provider(&dir);
+        std::os::unix::fs::symlink(
+            "../UsersAI/agent-root/Documents",
+            dir.path().join("Public/agent-link"),
+        )
+        .unwrap();
+
+        let write = provider
+            .write_file("Public/agent-link/new.md", "token", b"# new", false)
+            .expect_err("write through link must be refused");
+        assert_eq!(write.kind(), io::ErrorKind::PermissionDenied);
+        assert!(!dir
+            .path()
+            .join("UsersAI/agent-root/Documents/new.md")
+            .exists());
+
+        let mkdir = provider
+            .mkdir("Public/agent-link/new-dir", "token", false)
+            .expect_err("mkdir through link must be refused");
+        assert_eq!(mkdir.kind(), io::ErrorKind::PermissionDenied);
+        assert!(!dir
+            .path()
+            .join("UsersAI/agent-root/Documents/new-dir")
+            .exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn deleting_a_public_link_removes_the_link_and_keeps_the_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let provider = protected_area_provider(&dir);
+        fs::write(dir.path().join("Public/target.txt"), b"target bytes").unwrap();
+        std::os::unix::fs::symlink("target.txt", dir.path().join("Public/link")).unwrap();
+
+        provider.delete("Public/link", "token", false).unwrap();
+
+        assert!(
+            fs::symlink_metadata(dir.path().join("Public/link")).is_err(),
+            "the link itself must be gone"
+        );
+        assert_eq!(
+            fs::read(dir.path().join("Public/target.txt")).unwrap(),
+            b"target bytes",
+            "the target must survive delete of the link"
+        );
+    }
+
+    #[test]
+    fn public_root_storage_and_named_protected_root_storage_still_work() {
+        let dir = tempfile::tempdir().unwrap();
+        let provider = protected_area_provider(&dir);
+
+        assert_eq!(
+            provider
+                .read_file("Public/note.txt", "token", None, None)
+                .unwrap(),
+            b"public note"
+        );
+        provider
+            .write_file("Public/added.txt", "token", b"# added", false)
+            .unwrap();
+        assert_eq!(
+            fs::read(dir.path().join("Public/added.txt")).unwrap(),
+            b"# added"
+        );
+        provider.delete("Public/added.txt", "token", false).unwrap();
+        assert!(!dir.path().join("Public/added.txt").exists());
+
+        // The runtime principal-scoped route still names the protected root.
+        assert_eq!(
+            provider
+                .read_file(
+                    "localhost://UsersAI/agent-root/Documents/a.md",
+                    "token",
+                    None,
+                    None
+                )
+                .unwrap(),
+            b"agent bytes"
+        );
+        provider
+            .write_file(
+                "UsersAI/agent-root/Documents/named.md",
+                "token",
+                b"# named",
+                false,
+            )
+            .unwrap();
+        assert_eq!(
+            fs::read(dir.path().join("UsersAI/agent-root/Documents/named.md")).unwrap(),
+            b"# named"
+        );
     }
 
     #[test]

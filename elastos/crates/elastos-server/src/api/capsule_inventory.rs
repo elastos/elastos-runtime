@@ -122,7 +122,7 @@ pub(crate) fn verify_model_catalog(
     bytes: &[u8],
     now: u64,
 ) -> anyhow::Result<Vec<VerifiedModelCatalogEntry>> {
-    // The shared verifier treats an empty expected set as unrestricted trust.
+    // Model catalogs require one to eight distinct, bounded publisher DIDs.
     if trust.publisher_dids.is_empty()
         || trust.publisher_dids.len() > 8
         || trust
@@ -301,7 +301,7 @@ pub(crate) fn load_capsule_manifest(dir: &Path, expected_name: &str) -> Option<C
     }
 
     let manifest_path = dir.join("capsule.json");
-    let bytes = std::fs::read(&manifest_path).ok()?;
+    let bytes = elastos_common::capsule_manifest_file::read(&manifest_path).ok()?;
     let manifest: CapsuleManifest = serde_json::from_slice(&bytes).ok()?;
     if manifest.validate().is_err() || manifest.name != expected_name {
         return None;

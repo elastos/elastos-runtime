@@ -6,8 +6,8 @@ pub async fn run_publish(path: PathBuf) -> anyhow::Result<()> {
         anyhow::bail!("No capsule.json found at {}", path.display());
     }
 
-    let manifest_data = std::fs::read_to_string(&manifest_path)?;
-    let mut manifest: elastos_common::CapsuleManifest = serde_json::from_str(&manifest_data)?;
+    let manifest_data = elastos_common::capsule_manifest_file::read(&manifest_path)?;
+    let mut manifest: elastos_common::CapsuleManifest = serde_json::from_slice(&manifest_data)?;
     manifest
         .validate()
         .map_err(|e| anyhow::anyhow!("Invalid manifest: {}", e))?;

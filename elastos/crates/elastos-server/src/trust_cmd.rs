@@ -58,8 +58,8 @@ pub fn run_sign(path: PathBuf, key: PathBuf) -> anyhow::Result<()> {
     let signing_key = SigningKey::from_bytes(&key_array);
 
     let manifest_path = path.join("capsule.json");
-    let manifest_data = std::fs::read_to_string(&manifest_path)?;
-    let mut manifest: elastos_common::CapsuleManifest = serde_json::from_str(&manifest_data)?;
+    let manifest_data = elastos_common::capsule_manifest_file::read(&manifest_path)?;
+    let mut manifest: elastos_common::CapsuleManifest = serde_json::from_slice(&manifest_data)?;
     manifest
         .validate()
         .map_err(|e| anyhow::anyhow!("Invalid manifest: {}", e))?;
@@ -182,8 +182,8 @@ fn run_verify_capsule(path: PathBuf, public_key: PathBuf) -> anyhow::Result<()> 
     verifier.add_trusted_key_hex(key_hex.trim())?;
 
     let manifest_path = path.join("capsule.json");
-    let manifest_data = std::fs::read_to_string(&manifest_path)?;
-    let manifest: elastos_common::CapsuleManifest = serde_json::from_str(&manifest_data)?;
+    let manifest_data = elastos_common::capsule_manifest_file::read(&manifest_path)?;
+    let manifest: elastos_common::CapsuleManifest = serde_json::from_slice(&manifest_data)?;
     manifest
         .validate()
         .map_err(|e| anyhow::anyhow!("Invalid manifest: {}", e))?;

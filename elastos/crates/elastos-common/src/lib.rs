@@ -3,6 +3,7 @@
 pub mod browser_protocol;
 #[cfg(unix)]
 pub mod browser_vm_seed;
+pub mod capsule_manifest_file;
 pub mod chat_protocol;
 pub mod collaboration_protocol;
 mod error;

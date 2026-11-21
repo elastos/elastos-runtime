@@ -261,10 +261,10 @@ fn wallet_op_required_action(op: &str) -> Option<Action> {
 
 fn ipfs_op_required_action(op: &str) -> Option<Action> {
     match op {
-        "cat" | "cat_to_path" | "get_bytes" | "ls" | "download_directory" | "health" | "status" => {
-            Some(Action::Read)
-        }
-        "add_bytes" | "add_path" | "add_directory" | "pin" => Some(Action::Write),
+        "cat" | "get_bytes" | "ls" | "health" | "status" => Some(Action::Read),
+        // Operations that store content need Write.
+        "cat_to_path" | "download_directory" | "add_bytes" | "add_path" | "add_directory"
+        | "pin" => Some(Action::Write),
         "unpin" => Some(Action::Delete),
         _ => None,
     }
@@ -654,6 +654,24 @@ mod tests {
         ] {
             assert!(build_capability_resource("ipfs", op, &serde_json::json!({})).is_err());
             assert!(provider_operation_action("ipfs", op).is_none());
+        }
+    }
+
+    #[test]
+    fn ipfs_destination_operations_require_write() {
+        for op in ["cat_to_path", "download_directory"] {
+            assert_eq!(
+                provider_operation_action("ipfs", op),
+                Some(Action::Write),
+                "{op}"
+            );
+        }
+        for op in ["cat", "get_bytes", "ls", "health", "status"] {
+            assert_eq!(
+                provider_operation_action("ipfs", op),
+                Some(Action::Read),
+                "{op}"
+            );
         }
     }
 

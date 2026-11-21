@@ -13,7 +13,7 @@ pub(super) async fn marketplace_catalog(
         Ok(_) => Json(capsule_catalog_summary_async(&state.data_dir).await).into_response(),
         Err(err) => (
             StatusCode::FORBIDDEN,
-            Json(serde_json::json!({ "error": err.to_string() })),
+            Json(serde_json::json!({ "error": gateway_error_text("marketplace", &err) })),
         )
             .into_response(),
     }

@@ -134,8 +134,8 @@ impl CatalogInspectSource {
             return None;
         }
         let path = self.capsules_dir.join(name).join("capsule.json");
-        let data = tokio::fs::read_to_string(path).await.ok()?;
-        let manifest: CapsuleManifest = serde_json::from_str(&data).ok()?;
+        let data = elastos_common::capsule_manifest_file::read(&path).ok()?;
+        let manifest: CapsuleManifest = serde_json::from_slice(&data).ok()?;
         let is_running = Self::provided_scheme(&manifest)
             .map(|scheme| running.contains(&scheme))
             .unwrap_or(false);

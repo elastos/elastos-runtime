@@ -154,8 +154,8 @@ async fn load_valid_manifest_if_present(
         return Ok(None);
     }
 
-    let data = tokio::fs::read_to_string(&manifest_path).await?;
-    let manifest: elastos_common::CapsuleManifest = serde_json::from_str(&data)?;
+    let data = elastos_common::capsule_manifest_file::read(&manifest_path)?;
+    let manifest: elastos_common::CapsuleManifest = serde_json::from_slice(&data)?;
     manifest
         .validate()
         .map_err(|e| anyhow::anyhow!("Invalid manifest: {}", e))?;

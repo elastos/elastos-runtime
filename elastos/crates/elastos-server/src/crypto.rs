@@ -134,6 +134,28 @@ pub fn verify_signed_json_envelope_against_dids(
     domain: &str,
     expected_dids: &[String],
 ) -> anyhow::Result<(serde_json::Value, String)> {
+    if expected_dids.is_empty() || expected_dids.iter().any(|did| did.trim().is_empty()) {
+        anyhow::bail!("Signed envelope has no trusted signer DID");
+    }
+    verify_signed_json_envelope_inner(envelope_bytes, domain, Some(expected_dids))
+}
+
+/// Verify an envelope signed by its own `signer_did`, whoever that is.
+/// This proves only that the named key signed the payload; the caller must
+/// tie the returned signer to an authority (a signed Profile, the announced
+/// node DID) or use it for display only.
+pub fn verify_self_signed_json_envelope(
+    envelope_bytes: &[u8],
+    domain: &str,
+) -> anyhow::Result<(serde_json::Value, String)> {
+    verify_signed_json_envelope_inner(envelope_bytes, domain, None)
+}
+
+fn verify_signed_json_envelope_inner(
+    envelope_bytes: &[u8],
+    domain: &str,
+    expected_dids: Option<&[String]>,
+) -> anyhow::Result<(serde_json::Value, String)> {
     let envelope: serde_json::Value = serde_json::from_slice(envelope_bytes)?;
 
     let signer_did = envelope["signer_did"]
@@ -141,12 +163,14 @@ pub fn verify_signed_json_envelope_against_dids(
         .ok_or_else(|| anyhow::anyhow!("Missing signer_did in envelope"))?
         .to_string();
 
-    if !expected_dids.is_empty() && !expected_dids.iter().any(|did| did == &signer_did) {
-        anyhow::bail!(
-            "Signer DID mismatch: trusted set = {:?}, got {}",
-            expected_dids,
-            signer_did
-        );
+    if let Some(expected_dids) = expected_dids {
+        if !expected_dids.iter().any(|did| did == &signer_did) {
+            anyhow::bail!(
+                "Signer DID mismatch: trusted set = {:?}, got {}",
+                expected_dids,
+                signer_did
+            );
+        }
     }
 
     let sig_hex = envelope["signature"]
@@ -340,7 +364,12 @@ mod tests {
         .unwrap_err()
         .to_string()
         .contains("Signer DID mismatch"));
-        assert!(verify_signed_json_envelope_against_dids(&bytes, "changed.domain", &[]).is_err());
+        assert!(verify_signed_json_envelope_against_dids(
+            &bytes,
+            "changed.domain",
+            std::slice::from_ref(&did)
+        )
+        .is_err());
         for altered in [
             serde_json::json!({"payload": {"body": "changed", "revision": 1}, "signature": signature, "signer_did": did}),
             serde_json::json!({"payload": payload, "signature": signature, "signer_did": other}),
@@ -352,13 +381,82 @@ mod tests {
             assert!(verify_signed_json_envelope_against_dids(
                 &serde_json::to_vec(&altered).unwrap(),
                 domain,
-                &[],
+                std::slice::from_ref(&did),
             )
             .is_err());
         }
-        assert!(verify_signed_json_envelope_against_dids(b"invalid JSON", domain, &[]).is_err());
+        assert!(verify_signed_json_envelope_against_dids(
+            b"invalid JSON",
+            domain,
+            std::slice::from_ref(&did)
+        )
+        .is_err());
         verify_signed_json_envelope_against_dids(&bytes, domain, std::slice::from_ref(&did))
             .unwrap();
+    }
+
+    fn signed_test_envelope(seed: u8, domain: &str) -> (Vec<u8>, String) {
+        let key = ed25519_dalek::SigningKey::from_bytes(&[seed; 32]);
+        let payload = serde_json::json!({"body": "trusted list fixture"});
+        let canonical = serde_json::to_vec(&payload).unwrap();
+        let (signature, did) = domain_separated_sign(&key, domain, &canonical);
+        let envelope = serde_json::json!({
+            "payload": payload, "signature": signature, "signer_did": did,
+        });
+        (serde_json::to_vec(&envelope).unwrap(), did)
+    }
+
+    #[test]
+    fn signed_envelopes_require_a_nonempty_trusted_signer_set() {
+        let domain = "test.trusted.set.v1";
+        let (bytes, did) = signed_test_envelope(46, domain);
+        let (_, signer) =
+            verify_signed_json_envelope_against_dids(&bytes, domain, std::slice::from_ref(&did))
+                .unwrap();
+        assert_eq!(signer, did);
+        let accepted = verify_signed_json_envelope_against_dids(&bytes, domain, &[]);
+        let err = accepted.expect_err("signature admission requires an explicit trusted signer");
+        assert_eq!(err.to_string(), "Signed envelope has no trusted signer DID");
+        let accepted = verify_release_envelope_against_dids(&bytes, domain, &[]);
+        let err = accepted.expect_err("release admission requires an explicit trusted signer");
+        assert_eq!(err.to_string(), "Signed envelope has no trusted signer DID");
+    }
+
+    /// Every trusted signer list entry requires a nonblank DID.
+    #[test]
+    fn trusted_signer_lists_require_nonblank_dids() {
+        let domain = "test.trusted.set.v1";
+        let (bytes, did) = signed_test_envelope(46, domain);
+        for trusted in [vec![" ".to_string(), did.clone()], vec![String::new()]] {
+            let accepted = verify_signed_json_envelope_against_dids(&bytes, domain, &trusted);
+            let err = accepted.expect_err("trusted signer DIDs require nonblank values");
+            assert_eq!(err.to_string(), "Signed envelope has no trusted signer DID");
+        }
+    }
+
+    #[test]
+    fn self_signed_verifier_returns_its_signer_and_rejects_tampering() {
+        let domain = "test.self.signed.v1";
+        let (bytes, did) = signed_test_envelope(47, domain);
+        let (_, signer) = verify_self_signed_json_envelope(&bytes, domain).unwrap();
+        assert_eq!(signer, did);
+        assert!(verify_self_signed_json_envelope(&bytes, "other.domain").is_err());
+        let other = encode_signing_key_did(&ed25519_dalek::SigningKey::from_bytes(&[48; 32]));
+        let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        for (key, altered) in [
+            ("payload", serde_json::json!({"body": "changed"})),
+            ("signer_did", serde_json::json!(other)),
+            ("signature", serde_json::json!("zz")),
+        ] {
+            let original = value[key].clone();
+            value[key] = altered;
+            let altered = serde_json::to_vec(&value).unwrap();
+            assert!(
+                verify_self_signed_json_envelope(&altered, domain).is_err(),
+                "{key}"
+            );
+            value[key] = original;
+        }
     }
 
     #[test]

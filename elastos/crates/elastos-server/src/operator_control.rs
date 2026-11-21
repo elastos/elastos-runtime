@@ -1192,8 +1192,7 @@ fn verify_request_envelope(
     envelope_bytes: &[u8],
     expected_requesters: &[String],
 ) -> Result<OperatorRequestPayload> {
-    // The envelope check treats an empty trusted set as "any signer"; an
-    // operator request verifies only against a configured peer.
+    // Operator requests require a configured peer before envelope verification.
     if expected_requesters.is_empty() {
         anyhow::bail!("requester DID is not configured for operator control");
     }
@@ -2624,6 +2623,79 @@ mod tests {
         let data = std::fs::read_to_string(log_path).unwrap();
         assert!(data.contains(REQUEST_STATE_RESERVED));
         assert!(data.contains(REQUEST_STATE_COMPLETED));
+    }
+
+    /// Operator request admission requires an explicit configured peer.
+    #[test]
+    fn operator_request_admission_requires_a_configured_peer() {
+        let dir = tempfile::tempdir().unwrap();
+        let (sk, did) = elastos_identity::derive_did(&[16u8; 32]);
+        let request = OperatorRequestPayload {
+            version: 1,
+            request_id: "req-self-signed-1".to_string(),
+            requester_did: did.clone(),
+            target_did: did.clone(),
+            ts: now_ts(),
+            action: OPERATOR_ACTION_STATUS_READ.to_string(),
+            args: serde_json::Value::Null,
+        };
+        let signed = sign_envelope(&sk, OPERATOR_REQUEST_DOMAIN, &request).unwrap();
+        let bytes = serde_json::to_vec(&signed).unwrap();
+        for contents in [None, Some("{not json"), Some(r#"{"peers":[]}"#)] {
+            if let Some(contents) = contents {
+                std::fs::write(operator_control_path(dir.path()), contents).unwrap();
+            }
+            // As handle_operator_stream builds the list.
+            let config = load_operator_control(dir.path())
+                .unwrap_or_else(|_| OperatorControlConfig::empty());
+            let expected: Vec<String> = config.peers.iter().map(|p| p.did.clone()).collect();
+            let err = verify_request_envelope(&bytes, &expected)
+                .expect_err("an unconfigured node must refuse a self-signed request");
+            assert_eq!(
+                err.to_string(),
+                "requester DID is not configured for operator control"
+            );
+        }
+    }
+
+    #[test]
+    fn operator_request_envelope_requires_a_trusted_signer_list() {
+        let (sk, did) = elastos_identity::derive_did(&[16u8; 32]);
+        let request = OperatorRequestPayload {
+            version: 1,
+            request_id: "request-trust-fixture".to_string(),
+            requester_did: did.clone(),
+            target_did: did,
+            ts: now_ts(),
+            action: OPERATOR_ACTION_STATUS_READ.to_string(),
+            args: serde_json::Value::Null,
+        };
+        let signed = sign_envelope(&sk, OPERATOR_REQUEST_DOMAIN, &request).unwrap();
+        let bytes = serde_json::to_vec(&signed).unwrap();
+        let error = verify_release_envelope_against_dids(&bytes, OPERATOR_REQUEST_DOMAIN, &[])
+            .expect_err("operator envelopes require a trusted signer list");
+        assert_eq!(
+            error.to_string(),
+            "Signed envelope has no trusted signer DID"
+        );
+    }
+
+    #[test]
+    fn operator_request_admission_accepts_a_configured_peer() {
+        let (sk, did) = elastos_identity::derive_did(&[16u8; 32]);
+        let request = OperatorRequestPayload {
+            version: 1,
+            request_id: "request-peer-fixture".to_string(),
+            requester_did: did.clone(),
+            target_did: did.clone(),
+            ts: now_ts(),
+            action: OPERATOR_ACTION_STATUS_READ.to_string(),
+            args: serde_json::Value::Null,
+        };
+        let signed = sign_envelope(&sk, OPERATOR_REQUEST_DOMAIN, &request).unwrap();
+        let bytes = serde_json::to_vec(&signed).unwrap();
+        let accepted = verify_request_envelope(&bytes, std::slice::from_ref(&did)).unwrap();
+        assert_eq!(accepted.requester_did, did);
     }
 
     #[tokio::test]

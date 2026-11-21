@@ -6413,7 +6413,7 @@ pub(super) async fn home_active_shell_update(
             } else {
                 StatusCode::INTERNAL_SERVER_ERROR
             };
-            (status, text).into_response()
+            (status, gateway_shown_text("home", text, &err)).into_response()
         }
     }
 }
@@ -9408,3 +9408,7 @@ mod home_events_pacing_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "gateway_tests/cs_child_saves/home_rows.rs"]
+mod cs_rows;

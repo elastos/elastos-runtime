@@ -754,7 +754,7 @@ async fn process_presence_messages(
             signature,
         )
         .await;
-        if !verified {
+        if !verified || presence.did != sender_id {
             continue;
         }
         let presence_key = attached_identity_key(&presence.did, presence.session_id.as_deref());
@@ -1852,6 +1852,79 @@ mod tests {
     use elastos_server::sources::{TrustedSource, TrustedSourcesConfig};
     use std::io::Cursor;
     use std::sync::Mutex;
+
+    #[tokio::test]
+    async fn presence_records_the_verified_signer_identity() {
+        use axum::{extract::Path, routing::post, Json, Router};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        for (claimed, expected_remembers) in [("did:key:other", 0), ("did:key:signer", 1)] {
+            let remembers = Arc::new(AtomicUsize::new(0));
+            let seen = remembers.clone();
+            let presence = ChatPresenceAnnouncement {
+                kind: "chat_presence_v1".into(),
+                room: CHAT_TOPIC.into(),
+                did: claimed.into(),
+                session_id: Some("remote-session".into()),
+                nick: "peer".into(),
+                ticket: "peer-ticket".into(),
+                ts: 1,
+            };
+            let message = serde_json::json!({
+                "sender_id": "did:key:signer", "ts": 1, "signature": "verified-by-fixture",
+                "content": serde_json::to_string(&presence).unwrap(),
+            });
+            let app = Router::new().route("/api/provider/:scheme/:op", post(
+                move |Path((scheme, op)): Path<(String, String)>, Json(request): Json<serde_json::Value>| {
+                    let message = message.clone();
+                    let seen = seen.clone();
+                    async move {
+                        Json(match (scheme.as_str(), op.as_str()) {
+                            ("peer", "gossip_recv") => serde_json::json!({"status": "ok", "data": {"messages": [message]}}),
+                            ("did", "verify") => {
+                                assert_eq!(request["did"], "did:key:signer");
+                                serde_json::json!({"status": "ok", "data": {"valid": true}})
+                            }
+                            ("peer", "remember_peer") => {
+                                seen.fetch_add(1, Ordering::SeqCst);
+                                serde_json::json!({"status": "ok", "data": {"added": []}})
+                            }
+                            _ => panic!("unexpected provider call {scheme}/{op}"),
+                        })
+                    }
+                }
+            ));
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let api = format!("http://{}", listener.local_addr().unwrap());
+            let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            let attached = Arc::new(tokio::sync::Mutex::new(HashSet::new()));
+            let retries = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
+            let result = process_presence_messages(
+                &reqwest::Client::new(),
+                &api,
+                "token",
+                "peer-cap",
+                "did-cap",
+                "did:key:self",
+                "self-session",
+                "discovery",
+                "consumer",
+                attached.clone(),
+                retries.clone(),
+                None,
+            )
+            .await;
+            server.abort();
+            let _ = server.await;
+            result.unwrap();
+            assert_eq!(
+                remembers.load(Ordering::SeqCst),
+                expected_remembers,
+                "{claimed}"
+            );
+            assert!(attached.lock().await.is_empty());
+            assert_eq!(retries.lock().await.len(), expected_remembers, "{claimed}");
+        }
+    }
 
     fn carrier_ticket(seed: u8) -> (String, String) {
         let secret = iroh::SecretKey::from_bytes(&[seed; 32]);
