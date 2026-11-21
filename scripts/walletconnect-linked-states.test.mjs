@@ -157,3 +157,13 @@ for(const engine of ['chromium','webkit']){
   await r.capture('add-retry-'+ending);
  });
 }
+
+for(const engine of ['chromium','webkit'])test(`add-account recognizes the same address on another network in ${engine}`,windowTestOptions(engine,60000),async t=>{
+ const r=await fixtureWindow(t,engine,{sourceRef:process.env.WALLETCONNECT_DUPLICATE_BEFORE==='1'?'b8027d77930ff012de1784687bad4c336717ca67':undefined});
+ await r.link();r.peer.choose({chains:['eip155:8453']});
+ await r.click('add-account');await r.click('start-over');await r.state('qr-shown');await r.pair();
+ await r.state('account-already-linked');
+ assert.equal(r.fixture.state.accounts.length,1,'a new network offer keeps the one saved account');
+ assert.equal(r.fixture.state.verified,1,'a duplicate address requests no additional network proof in Add account');
+ assert.equal(r.peer.trace.filter(e=>e.kind==='request').length,1);
+});
