@@ -2235,9 +2235,14 @@ window.addEventListener("message", (event) => {
       && !Array.isArray(data.query) && Object.keys(data.query).length === 0;
     if (!marketplace && !settings && !inbox) return;
   }
-  if (context.targetId === "marketplace" && target === "assistant" &&
-      (!hasExactMessageKeys(data, ["type", "target", "query", "homeToken"]) ||
-       !marketplaceAssistantHandoffQuery(data.query))) return;
+  if (context.targetId === "marketplace" && target === "assistant") {
+    // The app card opens Assistant without selecting a model. Model cards use
+    // the separate, bounded handoff contract.
+    const plainOpen = hasExactMessageKeys(data, ["type", "target", "homeToken"]);
+    const modelOpen = hasExactMessageKeys(data, ["type", "target", "query", "homeToken"])
+      && marketplaceAssistantHandoffQuery(data.query);
+    if (!plainOpen && !modelOpen) return;
+  }
   if (
     context.kind === "app-frame" &&
     (context.targetId === "wallet" || context.targetId === "inbox" && target === "wallet-walletconnect") &&

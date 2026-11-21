@@ -34,6 +34,8 @@ const issuedLaunchTokens = new Map();
 const state = {
   launches: {
     "home-gui": 0,
+    marketplace: 0,
+    assistant: 0,
     wallet: 0,
     "wallet-metamask": 0,
     "wallet-unisat": 0,
@@ -91,6 +93,8 @@ function staticPath(pathname) {
   const roots = [
     ["/apps/home/", join(repoRoot, "capsules/home/browser")],
     ["/apps/home-gui/", join(repoRoot, "capsules/home-gui/browser")],
+    ["/apps/marketplace/", join(repoRoot, "capsules/marketplace/browser")],
+    ["/apps/assistant/", join(repoRoot, "capsules/assistant/browser")],
     ["/apps/wallet/", join(repoRoot, "capsules/wallet/browser")],
     ["/apps/wallet-metamask/", join(repoRoot, "capsules/wallet-metamask/browser")],
     ["/apps/wallet-unisat/", join(repoRoot, "capsules/wallet-unisat/browser")],
@@ -168,7 +172,10 @@ function homeSummary() {
       window_policy: JSON.parse(readFileSync(join(repoRoot, "capsules", name, "capsule.json"), "utf8")).window_policy,
     })) },
     capsule_interfaces: [],
-    targets: [{
+    targets: [...["marketplace", "assistant"].map(target => ({
+      target, title: target === "assistant" ? "Assistant" : "Marketplace", role: "app",
+      target_kind: "app", attach_kind: "iframe",
+    })), {
       target: "wallet",
       title: "Wallet",
       description: "Private Wallet",
@@ -186,7 +193,7 @@ function launchToken(target) {
   if (target === "wallet") {
     return walletToken;
   }
-  return connectorTokens[target] || "";
+  return connectorTokens[target] || `fixture-${target}-token`;
 }
 
 function launchResponse(origin, target, query) {
@@ -219,6 +226,17 @@ function requireToken(req, token, res) {
 }
 
 async function handleApi(req, res, url) {
+  if (url.pathname === "/api/capsules/catalog" && req.method === "GET") {
+    json(res, 200, { capsules: ["assistant", ...Object.keys(connectorTitles)].map(name => ({
+      name, title: connectorTitles[name] || "Assistant", role: "app", installed: true,
+      launchable: true, launch_target: name,
+    })) });
+    return true;
+  }
+  if (url.pathname === "/api/capsules/interfaces" && req.method === "GET") {
+    json(res, 200, { interfaces: [] });
+    return true;
+  }
   if (req.method === "OPTIONS") {
     res.writeHead(204, {
       "access-control-allow-headers": "content-type,x-elastos-home-token,if-match",
@@ -340,7 +358,11 @@ const server = createServer(async (req, res) => {
       json(res, 404, { error: "fixture route not found", path: url.pathname });
       return;
     }
-    const body = process.env.HOME_WALLET_REFRESH_BEFORE === "1" && path === join(repoRoot, "capsules/home/browser/home-shell-host.js")
+    const beforePath = relative(repoRoot, path);
+    const body = process.env.MARKETPLACE_OPEN_BEFORE === "1"
+      && ["capsules/marketplace/browser/marketplace.js", "capsules/home/browser/home-shell-host.js"].includes(beforePath)
+      ? execFileSync("git", ["show", `5cc6f5b8cd55c0ae3d37bd3a56e57c04315e44a1:${beforePath}`])
+      : process.env.HOME_WALLET_REFRESH_BEFORE === "1" && path === join(repoRoot, "capsules/home/browser/home-shell-host.js")
       ? execFileSync("git", ["show", "0db7eb247c8d89f367d5458acb03339605cc216e:capsules/home/browser/home-shell-host.js"])
       : readFileSync(path);
     res.writeHead(200, {
@@ -496,6 +518,60 @@ function rectangleIntersectionRatio(subject, overlay) {
   return (width * height) / area;
 }
 
+async function checkMarketplaceOpen(page, homeGui, pageErrors) {
+  await homeGui.locator('#launcher-toggle').click();
+  await homeGui.locator('#launcher-grid [data-target="marketplace"]').click();
+  await waitFor(() => frameFor(page, "marketplace"), 15000, "Marketplace frame");
+  const marketplace = frameFor(page, "marketplace");
+  await marketplace.locator('.store-row[data-app="assistant"]').first().waitFor({timeout:5000}).catch(async error => {
+    throw new Error(`${error.message}\nMarketplace: ${await marketplace.locator("body").innerText()}\nPage errors: ${JSON.stringify(pageErrors)}`);
+  });
+  if (process.env.MARKETPLACE_OPEN_CASE === "connectors") {
+    for (const destination of ["discover", "installed"]) {
+      await marketplace.locator(`.store-nav-item[data-destination="${destination}"]`).click();
+      for (const [target, title] of Object.entries(connectorTitles)) {
+        const row = marketplace.locator(`.store-row[data-app="${target}"]`);
+        assert(await row.count() >= 1, `${title} stays listed in ${destination}`);
+        assert(await row.locator('[data-action="open"]').count() === 0,
+          `${title} must direct the person to Wallet instead of offering Open`);
+        assert((await row.first().innerText()).includes("Connect in Wallet"), `${title} row explains where to connect`);
+        await row.locator('.store-row-title').first().click();
+        await marketplace.locator('#detail-modal').waitFor({state:"visible"});
+        const detail = marketplace.locator('#detail-content');
+        assert(await detail.locator('[data-action="open"]').count() === 0, `${title} detail offers no standalone Open`);
+        assert((await detail.innerText()).includes(`Open Wallet and choose Connect beside ${title}.`),
+          `${title} detail gives the complete next step`);
+        await detail.locator('[data-action="close-detail"]').first().click();
+      }
+    }
+    assert(Object.keys(connectorTitles).every(target => state.launches[target] === 0), "Browsing connectors launches none");
+  } else {
+    // A plain Open is distinct from a model selection. Model handoffs retain their narrow contract.
+    for (const query of [null, [], {}, {offer_id:"model:private"}, {model_cid:"bad"}, {authority:"new"}]) {
+      await marketplace.evaluate(query => top.postMessage({type:"home:open-target", target:"assistant", query,
+        homeToken:new URLSearchParams(location.hash.slice(1)).get("home_token")},
+        new URLSearchParams(location.search).get("home_origin")), query);
+    }
+    await page.waitForTimeout(1500);
+    assert(!await homeGui.locator('#assistant-face').isVisible(), "malformed handoffs cannot show the Assistant face");
+    assert(state.launches.assistant === 0, "malformed model handoffs cannot launch Assistant");
+    await marketplace.locator('.store-row[data-app="assistant"] .store-row-title').first().click();
+    await marketplace.locator('#detail-content [data-action="open"]').click();
+    await homeGui.locator('#assistant-face').waitFor({state:"visible", timeout:5000});
+    await waitFor(() => state.launches.assistant === 1, 5000, "Assistant Runtime launch");
+    await waitFor(() => frameFor(page, "assistant"), 5000, "Assistant app frame");
+    const assistant = frameFor(page, "assistant");
+    assert(await (await assistant.frameElement()).isVisible(), "Assistant app frame is visible");
+    const query = new URL(assistant.url()).searchParams;
+    assert(!query.has("model_cid") && !query.has("offer_id"), "plain Open selects no model");
+    const bounds = await homeGui.locator('#assistant-face').boundingBox();
+    const viewport = await homeGui.evaluate(() => ({width:innerWidth,height:innerHeight}));
+    assert(bounds && bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= viewport.width
+      && bounds.y + bounds.height <= viewport.height, "Assistant opens on screen");
+  }
+  console.log(`[marketplace-open] PASS ${process.env.MARKETPLACE_OPEN_CASE}`);
+}
+
 const origin = await listen();
 let browser = null;
 try {
@@ -520,7 +596,7 @@ try {
     ],
     } : {}),
   });
-  const context = await browser.newContext();
+  const context = await browser.newContext(process.env.MARKETPLACE_OPEN_CASE ? { reducedMotion: "reduce" } : {});
   const page = await context.newPage();
   const pageErrors = [];
   page.on("pageerror", (error) => pageErrors.push(String(error?.stack || error)));
@@ -533,6 +609,12 @@ try {
   );
   await waitFor(() => frameFor(page, "home-gui"), 15_000, "real Home GUI frame");
   const homeGui = frameFor(page, "home-gui");
+  if (process.env.MARKETPLACE_OPEN_CASE) {
+    await checkMarketplaceOpen(page, homeGui, pageErrors);
+    assert(state.serverErrors.length === 0, "fixture server recorded errors", state.serverErrors);
+    assert(pageErrors.length === 0, "real Marketplace/Home source raised page errors", pageErrors);
+    return;
+  }
   await homeGui.evaluate(async () => {
     const {shellState} = await import("./shell-core.js?v=home-20261101d");
     window.connectorSmokeState = shellState;
