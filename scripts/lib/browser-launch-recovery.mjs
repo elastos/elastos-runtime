@@ -3,6 +3,7 @@ import { tracingChannel } from "node:diagnostics_channel";
 import { appendFileSync, mkdtempSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { webkitMacOSLaunchOptions } from "./webkit-macos-sandbox.mjs";
 
 const currentTest = new AsyncLocalStorage();
 tracingChannel("node.test").start.bindStore(currentTest, ({ name, file }) => ({ name, file }));
@@ -80,7 +81,7 @@ async function launch(browserType, options, site) {
   }
 }
 
-export function withBrowserLaunchRecovery(playwright) {
+export function withBrowserLaunchRecovery(playwright, { platform = process.platform, cacheRoot } = {}) {
   if (wrapped.has(playwright)) return wrapped.get(playwright);
   const types = new Map();
   const result = new Proxy(playwright, { get(target, key) {
@@ -89,10 +90,13 @@ export function withBrowserLaunchRecovery(playwright) {
       const type = Reflect.get(target, key);
       if (!type) return type;
       types.set(key, new Proxy(type, { get(browserType, method) {
-        if (method === "launch") return options => launch(browserType, options,
+        if (method === "launch") return async options => launch(browserType,
+          webkitMacOSLaunchOptions(browserType, options, { platform, cacheRoot }),
           new Error().stack?.split("\n").find(line => line.includes(".mjs:") && !line.includes("browser-launch-recovery.mjs:")) ?? process.argv[1]);
         // Persistent launch creates its first context/page internally. Its
         // rejected promise cannot prove that they never existed: preserve it.
+        if (method === "launchPersistentContext") return async (userDataDir, options) => browserType.launchPersistentContext(userDataDir,
+          webkitMacOSLaunchOptions(browserType, options, { platform, cacheRoot }));
         const value = Reflect.get(browserType, method);
         return typeof value === "function" ? value.bind(browserType) : value;
       } }));
