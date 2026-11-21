@@ -438,7 +438,10 @@ import { sharedModelOffers, REMOTE_MODEL_ID, detailPublisher, rowSubtitle } from
     const model = capsule.source === "signed-model-catalog";
     const role = String(capsule.role || "").toLowerCase();
     const installed = capsule.installed === true;
-    const launchable = !model && Boolean(capsule.launchable && capsule.launch_target);
+    // Wallet owns connector windows and their account flow. A catalogue launch
+    // target alone does not make a connector a standalone app.
+    const walletConnector = ["wallet-metamask", "wallet-unisat", "wallet-walletconnect"].includes(capsule.name);
+    const launchable = !model && !walletConnector && Boolean(capsule.launchable && capsule.launch_target);
     const dependencies = (Array.isArray(capsule.requires) ? capsule.requires : [])
       .map((entry) => {
         const dependency = capsulesByName.get(String(entry && entry.name || ""));
@@ -458,6 +461,7 @@ import { sharedModelOffers, REMOTE_MODEL_ID, detailPublisher, rowSubtitle } from
       description: model ? modelDescription(capsule) : publicDescription(capsule),
       version: String(capsule.version || ""),
       installed,
+      walletConnector,
       launchable,
       launchTarget: model ? "" : String(capsule.launch_target || ""),
       role,
@@ -970,6 +974,9 @@ import { sharedModelOffers, REMOTE_MODEL_ID, detailPublisher, rowSubtitle } from
   }
 
   function actionButton(app) {
+    if (app.walletConnector) {
+      return '<span class="store-row-sub">Connect in Wallet</span>';
+    }
     if (!app.launchable) {
       return "";
     }
@@ -1149,7 +1156,8 @@ import { sharedModelOffers, REMOTE_MODEL_ID, detailPublisher, rowSubtitle } from
     const items = [
       `Trust: ${trustLabel(app.trustState)}`,
       `Status: ${app.installed ? "Installed on this Home" : "Not installed on this Home"}`,
-      `Launch: ${app.launchable ? "Open from Home available" : "Open from Home unavailable"}`,
+      app.walletConnector ? "Use: Connect in Wallet"
+        : `Launch: ${app.launchable ? "Open from Home available" : "Open from Home unavailable"}`,
     ];
     if (app.paymentState === "provider") {
       items.push("Supports payments");
@@ -1161,6 +1169,9 @@ import { sharedModelOffers, REMOTE_MODEL_ID, detailPublisher, rowSubtitle } from
   }
 
   function availableActionItems(app) {
+    if (app.walletConnector) {
+      return [`Open Wallet and choose Connect beside ${app.name}.`];
+    }
     if (app.availableActions.length) {
       return app.availableActions.map((action) => action);
     }
