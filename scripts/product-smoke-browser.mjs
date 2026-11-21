@@ -6,6 +6,7 @@
 // A missing file leaves the executable to the Playwright module.
 
 import { createRequire } from "node:module";
+import { withBrowserLaunchRecovery } from "./lib/browser-launch-recovery.mjs";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -29,7 +30,7 @@ function specifierPath(spec) {
 function withChromium(loaded) {
   const module = loaded && loaded.chromium ? loaded : loaded?.default;
   if (!module?.chromium) throw new Error("Playwright module has no chromium export");
-  return module;
+  return withBrowserLaunchRecovery(module);
 }
 
 function loadPlaywrightPackage(env) {

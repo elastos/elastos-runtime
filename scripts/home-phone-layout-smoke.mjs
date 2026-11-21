@@ -3648,7 +3648,7 @@ async function launchEngine(playwright, engineId) {
         "--no-proxy-server",
       ]
     : [];
-  return engine.launch({ executablePath: executable, headless: true, args });
+  return engine.launch({ ...(engineId === "chromium" ? { executablePath: executable } : {}), headless: true, args });
 }
 
 const requestedEngines = (process.env.HOME_PHONE_SMOKE_ENGINES || "chromium,webkit")

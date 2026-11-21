@@ -10,6 +10,8 @@ import {
   behaviourInputsDir,
   playwrightCoreDir,
   productSmokeLaunchOptions,
+  importProductSmokePlaywright,
+  requireProductSmokePlaywright,
 } from "./product-smoke-browser.mjs";
 
 test("behaviour cache paths follow test-behaviour.sh", () => {
@@ -179,4 +181,54 @@ test("a cache with only the installed full Chromium is the product smoke browser
 test("a cache with only the headless shell is not the product smoke browser", () => {
   const shell = installedExecutable("shell");
   assert.deepEqual(chooseFromInstallDir(browserInstallDir(shell), shell).options, {});
+});
+
+for (const format of ["cjs", "mjs"]) {
+  test(`the ${format} smoke loader routes normal and persistent WebKit launches through the private engine`, async t => {
+    const root = mkdtempSync(join(tmpdir(), "product-smoke-webkit-"));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const modulePath = join(root, `playwright.${format}`);
+    const module = `const chromium = {name: () => "chromium"};
+      const webkit = {
+        name: () => "webkit", executablePath: () => "/missing/pw_run.sh",
+        async launch(options) { return {options, receiver: this === webkit}; },
+        async launchPersistentContext(directory, options) { return {directory, options, receiver: this === webkit}; },
+      };`;
+    writeFileSync(modulePath, module + (format === "cjs"
+      ? "module.exports = {chromium, webkit};"
+      : "export {chromium, webkit};"));
+    const env = { ELASTOS_PLAYWRIGHT_MODULE: modulePath };
+    const loaded = format === "cjs" ? requireProductSmokePlaywright(env) : await importProductSmokePlaywright(env);
+    const original = format === "cjs" ? createRequire(modulePath)(modulePath) : await import(pathToFileURL(modulePath));
+    assert.notEqual(loaded.webkit, original.webkit, "the loader owns the WebKit launch boundary");
+    assert.equal(loaded.chromium, original.chromium, "Chromium keeps its existing launch path");
+    const options = {headless: true};
+    assert.deepEqual(await loaded.webkit.launch(options), {options, receiver: true});
+    assert.deepEqual(await loaded.webkit.launchPersistentContext("/fixture/profile", options), {
+      directory: "/fixture/profile", options, receiver: true,
+    });
+  });
+}
+
+test("the phone smoke leaves default WebKit executable selection to the launch boundary", t => {
+  const root = mkdtempSync(join(tmpdir(), "phone-smoke-webkit-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const modulePath = join(root, "playwright.cjs");
+  writeFileSync(modulePath, `module.exports = {chromium: {}, webkit: {
+    name: () => "webkit", executablePath: () => process.execPath,
+    async launch(options) {
+      console.log("PHONE_WEBKIT_OPTIONS=" + JSON.stringify(options));
+      throw new Error("PHONE_LAUNCH_CAPTURED");
+    },
+  }};`);
+  const result = spawnSync(process.execPath, [fileURLToPath(new URL("./home-phone-layout-smoke.mjs", import.meta.url))], {
+    env: {...process.env, ELASTOS_PLAYWRIGHT_MODULE: modulePath,
+      HOME_PHONE_SMOKE_ENGINES: "webkit", HOME_PHONE_SMOKE_OUT: join(root, "output")},
+    encoding: "utf8", timeout: 15_000,
+  });
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /PHONE_LAUNCH_CAPTURED/);
+  const recorded = result.stdout.split("\n").find(line => line.startsWith("PHONE_WEBKIT_OPTIONS="));
+  assert.ok(recorded, result.stdout);
+  assert.deepEqual(JSON.parse(recorded.slice("PHONE_WEBKIT_OPTIONS=".length)), {headless: true, args: []});
 });
