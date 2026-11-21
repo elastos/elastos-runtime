@@ -156,7 +156,7 @@ function draw() {
   if (connectionPage === 'add-account' && presentation.input.stage === 'linked') {presentation.input.stage='add-account';presentation.input.localReturn=false;}
   if (addingAccount && ['qr-cancelled','qr-expired','connection-declined','link-declined','link-timeout','link-error','link-cancelled'].includes(presentation.input.stage)) presentation.input.stage='add-'+presentation.input.stage;
   if (addingAccount && (['add-account','account-already-linked'].includes(presentation.input.stage) || presentation.input.stage.startsWith('add-'))) presentation.input.linkedConnection=false;
-  if (presentation.input.stage === 'account-already-linked') presentation.input.localReturn=false;
+  if (presentation.input.stage === 'account-already-linked' || ['add-qr-cancelled','add-qr-expired','add-connection-declined','add-link-cancelled'].includes(presentation.input.stage)) presentation.input.localReturn=false;
   if (connectionPage) presentation.otherRequests=requests;
   if (connectionNeedsReplacement && ['request-waiting','request-multiple','transaction-waiting'].includes(presentation.input.stage) && !hostEffectInFlight) presentation.input.stage='request-new-connection';
   const canChooseRequests=Boolean(accountsLoaded&&requests.length&&!hostEffectInFlight&&!launchExpired&&permissionStatus==='granted'&&!homeReadFailed);
@@ -246,7 +246,7 @@ async function onConnect({fresh=true}={}) {
     if (epoch !== actionEpoch) return;
     notifyHomeSummaryChanged();await refreshWalletState();
     outcome=result.status === 'already-linked' ? 'account-already-linked' : undefined;
-    if(result.status === 'linked')addingAccount=false;
+    if(result.status === 'linked'){addingAccount=false;connectionPage=undefined;}
   } catch (error) {if (epoch === actionEpoch && !outcome && !awaitingAccess()) {connectionNeedsReplacement=Boolean(error.freshConnection);outcome=errorStage(error,recoveryAction,effectPhase);}}
   finally {if (epoch === actionEpoch) {draw();checkConnection().catch(()=>{});}}
 }

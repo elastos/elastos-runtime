@@ -153,8 +153,15 @@ for(const engine of ['chromium','webkit']){
   await r.state('add-'+ending);await r.capture('add-'+ending);
   assert.equal(r.fixture.state.accounts.length,1);assert.equal(r.fixture.state.accounts[0].address.toLowerCase(),first.toLowerCase());
   assert.match(await r.frame.locator('main').innerText(),/Your accounts stay in Wallet/);
+  if(['link-cancelled','link-timeout'].includes(ending)){
+   assert.equal(await r.frame.locator('button.el-button-primary').getAttribute('data-action'),'start-over','the highlighted recovery gets the new QR code named by the notice');
+   assert.match(await r.frame.locator('main').innerText(),/[Gg]et a new QR code/);
+  }
+  if(['qr-cancelled','qr-expired','connection-declined','link-cancelled'].includes(ending))assert.equal(await r.frame.locator('[data-action=back-to-connection]').count(),0,'a deleted session has no Back to connection');
+  if(ending==='link-error')await r.page.unroute('**/api/auth/evm/verify');
   r.peer.choose({proposal:'approve',request:'sign'});await r.click('start-over');await r.state('qr-shown');
-  await r.capture('add-retry-'+ending);
+  await r.capture('add-retry-'+ending);await r.pair();await r.state('linked');
+  await r.wallet.locator('#wallet-account-state').filter({hasText:'2 accounts'}).waitFor();
  });
 }
 
@@ -167,3 +174,23 @@ for(const engine of ['chromium','webkit'])test(`add-account recognizes the same 
  assert.equal(r.fixture.state.verified,1,'a duplicate address requests no additional network proof in Add account');
  assert.equal(r.peer.trace.filter(e=>e.kind==='request').length,1);
 });
+
+for(const engine of ['chromium','webkit']){
+ for(const add of [false,true])test(`later approval appears normally after ${add?'add-account':'initial link'} in ${engine}`,windowTestOptions(engine,60000),async t=>{
+  const r=await linkedWindow(t,engine);await r.link();
+  if(add){await r.click('add-account');r.peer.selectAccount();await r.click('start-over');await r.state('qr-shown');await r.pair();await r.state('linked');}
+  r.fixture.state.approvals=[{request_id:'later-message',connector_id:'wallet-walletconnect',capsule_id:'browser',requesting_origin:'https://example.test',reason:'Review the later message',status:'pending',intent:'credential',proof_type:'siwe',address:r.peer.address,chain_namespace:'eip155:1',expires_at:Math.floor(Date.now()/1000)+600}];
+  await r.refresh();await r.state('request-waiting');await r.capture(add?'add-later-request':'initial-later-request');
+  await r.click('send-request');await r.state('request-done');assert.equal(r.fixture.state.completed,1,'the later approval completes without View requests');
+ });
+ for(const connector of ['wallet-metamask',undefined])test(`add-account accepts an address saved through ${connector||'legacy MetaMask'} in ${engine}`,windowTestOptions(engine,60000),async t=>{
+  const r=await linkedWindow(t,engine);await r.link();
+  r.fixture.state.accounts[0]={...r.fixture.state.accounts[0],connector_id:connector,wallet_display_name:'MetaMask'};
+  await r.refresh();await r.click('add-account');await r.click('start-over');await r.state('qr-shown');await r.pair();await r.state('linked');
+  assert.equal(r.fixture.state.verified,2,'a distinct method needs its own ownership proof');
+  assert.deepEqual(new Set(r.fixture.state.accounts.map(a=>a.connector_id)),new Set([connector,'wallet-walletconnect']));
+  await r.wallet.locator('#wallet-account-state').filter({hasText:'2 accounts'}).waitFor();
+  assert.equal(await r.wallet.locator('#wallet-accounts .wallet-account').count(),2,'Wallet displays a card for each method with the same address');
+  await r.capture('add-same-address-'+(connector||'legacy-metamask'));
+ });
+}
