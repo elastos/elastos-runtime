@@ -302,6 +302,11 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
     const revision = generation;
     const signer = await address(signal), namespace = await chain(signal);
     if (action.kind === 'link') {
+      if (action.addAccount) {
+        const saved=await waitFor(api('wallet/accounts'),signal);
+        signal.throwIfAborted();
+        if (saved.accounts?.some(account=>account.chain_namespace === namespace && same(account.address,signer))) return {status:'already-linked'};
+      }
       const challenge = await api('/api/auth/evm/challenge',{method:'POST',body:JSON.stringify({address:signer,chain_id:Number(namespace.split(':')[1])})});
       const check = async () => {
         signal.throwIfAborted();

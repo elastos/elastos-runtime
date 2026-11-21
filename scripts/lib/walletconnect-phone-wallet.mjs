@@ -54,6 +54,8 @@ export async function scriptedPhoneWallet({projectId,relayUrl,chains=['eip155:84
   client.on('session_delete',event=>{for(let i=pending.length-1;i>=0;i--)if(pending[i].topic===event.topic)pending.splice(i,1);trace.push({kind:'deleted'});events.emit('deleted');});
   client.on('session_request_expire',event=>{const i=pending.findIndex(item=>item.id===event.id);if(i>=0)pending.splice(i,1);trace.push({kind:'request-expired'});});
   return {client,events,trace,get lastTransactionHash(){return lastTransactionHash;},get address(){return account.address;},
+    // Phone selection can leave every existing session unchanged.
+    selectAccount(index=1){account=accounts[index];},
     async changeAccount(index=1,notify=true){
       account=accounts[index];
       for(const session of client.session.getAll()){
