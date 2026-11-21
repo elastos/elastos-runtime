@@ -6,20 +6,75 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 
 ## [Unreleased]
 
+## [2.0.2] - 2026-11-21
+
+### Added
+
+- WalletConnect links a wallet app on your phone to Wallet. Scan the QR code, or copy the link into a wallet app on this computer.
+- Compatible browser wallets can link through the MetaMask option. When MetaMask is installed, the option uses MetaMask.
+- Chat marks a direct message as Delivery unconfirmed when the other Home has not confirmed it, and says what you can do.
+
+### Changed
+
+- MetaMask, UniSat and WalletConnect open in smaller windows that show one step at a time.
+- Wallet requests are headed by the action, such as Sign a message, and show the network and the website that asked.
+- Marketplace says to connect MetaMask, UniSat and WalletConnect from Wallet.
+- Model downloads and Library uploads show their progress and use the same units for file sizes.
+- Inbox tells you when an update is available. System > About shows release notes and update download progress, and lets you turn automatic update checks on or off.
+- The Recovery Kit and backup screens say what a kit saves and when to save a new one.
+- Known issue: a direct message reaches a contact only when the two Homes can reach each other directly (#345).
+
 ### Fixed
 
 - Home and apps can enter full screen in Safari and the desktop app.
-- WalletConnect separates unfinished phone connections from linked wallets, can copy a connection link, and lets you cancel a phone wait and start again.
-- WalletConnect keeps its SDK in the connector capsule, uses capsule-scoped Runtime storage and relay access, and shows recovery instructions for interrupted transactions.
-- Home repairs sustained local Community failures automatically, keeps retrying for its lifetime, and shows the same reconnecting state in Chat and System. Startup logs identify each setup stage and explain when a Profile is not ready. Failed first joins keep Home running, missing local topics return through paced repair, and Chat reads explicit state independently of wording (#451).
-- Apps no longer open blank in Safari and other WebKit browsers.
+- Apps load in Safari and other WebKit browsers.
+- Home repairs local Community connection failures, keeps trying while it runs, and shows the same reconnecting state in Chat and System.
+- Community posts keep arriving when one connection stalls.
+- To add another account from a linked phone wallet, choose Add account, switch account in the wallet, then scan a new QR code.
+- Wallet keeps showing your answer to a request when its request list refreshes.
+- You can dismiss an unfinished phone wallet payment in Wallet. Home can record a later wallet confirmation for up to 24 hours after the request expires.
+- Assistant opens from Marketplace and offers to get a model when none is installed.
+- Typing in a new document stays in the document.
+- After you refuse internet access, Browser asks again when you press Return, and returns to full screen when you allow it.
+- Browser keeps your page when its internet access is renewed.
+- Home keeps at least one admin passkey. Removing a passkey asks you to confirm and signs out the windows that used it.
+- Home started without opening a browser window stays that way after an update or Undo.
+- Updating works for a Home installed through a linked folder.
 
-### Developer detail
+## [2.0.2-rc.1] - 2026-11-21
 
-- The behaviour gate rejects incomplete or missing test results, early exits
-  and stalled files. Its completion supervisor reports the file and first
-  unfinished test, ends with one PASS or FAIL verdict, and stops its workers
-  when the gate exits. Plain smoke scripts finish naturally with process.exitCode.
+### Added
+
+- WalletConnect links a wallet app on your phone to Wallet. Scan the QR code, or copy the link into a wallet app on this computer.
+- Compatible browser wallets can link through the MetaMask option. When MetaMask is installed, the option uses MetaMask.
+- Chat marks a direct message as Delivery unconfirmed when the other Home has not confirmed it, and says what you can do.
+
+### Changed
+
+- MetaMask, UniSat and WalletConnect open in smaller windows that show one step at a time.
+- Wallet requests are headed by the action, such as Sign a message, and show the network and the website that asked.
+- Marketplace says to connect MetaMask, UniSat and WalletConnect from Wallet.
+- Model downloads and Library uploads show their progress and use the same units for file sizes.
+- Inbox tells you when an update is available. System > About shows release notes and update download progress, and lets you turn automatic update checks on or off.
+- The Recovery Kit and backup screens say what a kit saves and when to save a new one.
+- Known issue: a direct message reaches a contact only when the two Homes can reach each other directly (#345).
+
+### Fixed
+
+- Home and apps can enter full screen in Safari and the desktop app.
+- Apps load in Safari and other WebKit browsers.
+- Home repairs local Community connection failures, keeps trying while it runs, and shows the same reconnecting state in Chat and System.
+- Community posts keep arriving when one connection stalls.
+- To add another account from a linked phone wallet, choose Add account, switch account in the wallet, then scan a new QR code.
+- Wallet keeps showing your answer to a request when its request list refreshes.
+- You can dismiss an unfinished phone wallet payment in Wallet. Home can record a later wallet confirmation for up to 24 hours after the request expires.
+- Assistant opens from Marketplace and offers to get a model when none is installed.
+- Typing in a new document stays in the document.
+- After you refuse internet access, Browser asks again when you press Return, and returns to full screen when you allow it.
+- Browser keeps your page when its internet access is renewed.
+- Home keeps at least one admin passkey. Removing a passkey asks you to confirm and signs out the windows that used it.
+- Home started without opening a browser window stays that way after an update or Undo.
+- Updating works for a Home installed through a linked folder.
 
 ## [2.0.1] - 2026-11-09
 
