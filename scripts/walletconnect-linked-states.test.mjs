@@ -101,10 +101,10 @@ for(const engine of ['chromium','webkit'])test(`add-account reconnect adds a pho
  await r.click('add-account');await r.state('add-account');await r.capture('add-before-code');
  r.peer.selectAccount();
  assert.deepEqual(r.peer.client.session.getAll().map(s=>s.namespaces),oldSessions,'switching in this phone leaves the approved session on the first account');
- await r.click('start-over');await r.state('qr-shown');await r.capture('add-waiting-for-scan');
+ const clearing=r.holdApi('/api/apps/wallet-walletconnect/storage','DELETE');await r.click('start-over');await clearing.entered;await r.state('preparing-qr');await r.capture('add-preparing-code');clearing.release();await r.state('qr-shown');await r.capture('add-waiting-for-scan');
  assert.equal(r.fixture.state.accounts.length,1);r.peer.choose({request:'silent'});
  const prompt=once(r.peer.events,'request');await r.pair();await r.state('link-wait');await prompt;await r.capture('add-new-account-signature');
- await r.peer.answer('sign');await r.state('linked');
+ const verify=r.holdApi('/api/auth/evm/verify');await r.peer.answer('sign');await verify.entered;await r.state('checking-response');await r.capture('add-checking-signature');verify.release();await r.state('linked');
  await r.wallet.locator('#wallet-account-state').filter({hasText:'2 accounts'}).waitFor();
  assert.deepEqual(new Set(r.fixture.state.accounts.map(a=>a.address.toLowerCase())),new Set([first,r.peer.address].map(a=>a.toLowerCase())));
  assert.equal(await r.wallet.locator('#wallet-accounts .wallet-account').count(),2);await r.capture('add-both-accounts');
@@ -115,7 +115,7 @@ for(const engine of ['chromium','webkit'])test(`add-account reconnect adds a pho
 for(const engine of ['chromium','webkit']){
  test(`add-account duplicate offers retry without another signature in ${engine}`,windowTestOptions(engine,60000),async t=>{
   const r=await linkedWindow(t,engine);await r.page.setViewportSize({width:1440,height:900});await r.link();
-  const first=r.peer.address;await r.click('add-account');await r.click('start-over');await r.state('qr-shown');await r.pair();await r.state('account-already-linked');await r.capture('add-already-linked');
+  const first=r.peer.address;await r.click('add-account');await r.click('start-over');await r.state('qr-shown');await r.pair();await r.state('account-already-linked');assert.equal(await r.frame.locator('[data-action=back-to-connection]').count(),1,'one return control');await r.capture('add-already-linked');
   assert.equal(r.fixture.state.verified,1);assert.equal(r.peer.trace.filter(e=>e.kind==='request').length,1,'duplicate offers never request ownership again');
   assert.match(await r.frame.locator('main').innerText(),/This account is already in Wallet/);
   r.peer.selectAccount();await r.click('start-over');await r.state('qr-shown');await r.pair();await r.state('linked');

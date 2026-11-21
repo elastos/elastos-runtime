@@ -83,7 +83,7 @@ export async function linkedWindow(t,engine,{holdWalletRead=false,sourceRef}={})
  async function state(name){try{await frame.locator(`[data-state="${name}"]`).waitFor();}catch(error){throw new Error(`Expected ${name}: ${await frame.locator('main').innerText()}`,{cause:error});}}
  const click=action=>frame.locator(`[data-action="${action}"]`).click();
  async function link(){await state('internet-ready');await click('connect');await state('qr-shown');await pair();await state('linked');}
- async function pair(){await click('copy-link');await page.waitForFunction(()=>window.copied.startsWith('wc:'));await peer.pair(await page.evaluate(()=>window.copied));}
+ async function pair(){await page.evaluate(()=>window.copied='');await click('copy-link');await page.waitForFunction(()=>window.copied.startsWith('wc:'));await peer.pair(await page.evaluate(()=>window.copied));}
  async function refresh(){await frame.evaluate(()=>window.dispatchEvent(new Event('focus')));}
  async function reopen(){await settle(frame);const loaded=page.waitForEvent('framenavigated',f=>f.parentFrame()===page.mainFrame()&&f.url().includes('/apps/wallet-walletconnect/'));await page.locator('#wallet').evaluate((node,src)=>node.src=src,nodeURL());frame=await loaded;await frame.locator('main[data-state]').waitFor();}
  function nodeURL(){return fixture.origin+'/apps/wallet-walletconnect/?home_origin='+encodeURIComponent(fixture.origin)+'#home_token=fixture-wallet';}

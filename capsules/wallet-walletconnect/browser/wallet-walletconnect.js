@@ -156,6 +156,7 @@ function draw() {
   if (connectionPage === 'add-account' && presentation.input.stage === 'linked') {presentation.input.stage='add-account';presentation.input.localReturn=false;}
   if (addingAccount && ['qr-cancelled','qr-expired','connection-declined','link-declined','link-timeout','link-error','link-cancelled'].includes(presentation.input.stage)) presentation.input.stage='add-'+presentation.input.stage;
   if (addingAccount && (['add-account','account-already-linked'].includes(presentation.input.stage) || presentation.input.stage.startsWith('add-'))) presentation.input.linkedConnection=false;
+  if (presentation.input.stage === 'account-already-linked') presentation.input.localReturn=false;
   if (connectionPage) presentation.otherRequests=requests;
   if (connectionNeedsReplacement && ['request-waiting','request-multiple','transaction-waiting'].includes(presentation.input.stage) && !hostEffectInFlight) presentation.input.stage='request-new-connection';
   const canChooseRequests=Boolean(accountsLoaded&&requests.length&&!hostEffectInFlight&&!launchExpired&&permissionStatus==='granted'&&!homeReadFailed);
