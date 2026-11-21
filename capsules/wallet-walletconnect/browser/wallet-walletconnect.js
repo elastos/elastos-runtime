@@ -23,7 +23,7 @@ const requestOutcomes=new Map();
 let unrecordedHash,proofAccount;
 let dispatchedRequestId;
 let outcome, activeRequest, selectedId, deadline, qrData, qrControls, currentView, renderKey;
-let showPicker = false;
+let showPicker = false, addingAccount = false;
 let copying=false;
 let clipboardFeedback = '';
 let clipboardFeedbackKey;
@@ -84,9 +84,9 @@ root.addEventListener('click', async event => {
   if (action === 'stop-waiting') return cancelWalletWait();
   if (action === 'disconnect') return disconnect();
   if (action === 'inbox') return showInternetRequest();
-  if (action === 'add-account') {connectionPage='add-account';showPicker=false;activeRequest=undefined;selectedId=undefined;outcome=undefined;draw();return;}
+  if (action === 'add-account') {addingAccount=true;connectionPage='add-account';showPicker=false;activeRequest=undefined;selectedId=undefined;outcome=undefined;draw();return;}
   if (action === 'back-to-connection') {
-    connectionPage='overview';showPicker=false;activeRequest=undefined;selectedId=undefined;outcome=undefined;draw();return;
+    addingAccount=false;connectionPage='overview';showPicker=false;activeRequest=undefined;selectedId=undefined;outcome=undefined;draw();return;
   }
   if (action === 'check-access' || action === 'check-status' || action === 'refresh-status') {
     outcome = undefined;activeRequest = undefined;
@@ -99,10 +99,11 @@ root.addEventListener('click', async event => {
     return;
   }
   if (action === 'select-request') {
+    addingAccount=false;
     selectedId = button.dataset.focusKey.slice('select-request:'.length);showPicker=false;
     connectionPage=undefined;const saved=requestOutcomes.get(selectedId);outcome=saved?.outcome;unrecordedHash=saved?.hash;dispatchedRequestId=saved?.dispatched?selectedId:undefined;activeRequest=requests.find(row=>row.request_id===selectedId);if(activeRequest&&saved?.walletName)activeRequest={...activeRequest,walletName:saved.walletName};draw();return;
   }
-  if (action === 'view-requests') {connectionPage=undefined;outcome=undefined;activeRequest=undefined;selectedId=undefined;showPicker=true;draw();return;}
+  if (action === 'view-requests') {addingAccount=false;connectionPage=undefined;outcome=undefined;activeRequest=undefined;selectedId=undefined;showPicker=true;draw();return;}
   if (action === 'copy-link' || action === 'copy-address') {
     const copyingQR=qrControls,copyingStage=copyFeedbackKey();
     copying=true;button.disabled = true;
@@ -153,6 +154,9 @@ function draw() {
     outcome:homeReadFailed&&!knownOutcome()&&!hostEffectInFlight ? 'home-read-unavailable' : outcome,qrData,selectedId,activeRequest,deadline,homeOrigin,action:recoveryAction,unrecordedHash,proofAccount,walletChanged,walletChange,dispatchedRequestId,connectionPage,resultWalletName:outcome?activeRequest?.walletName:undefined,
     paymentPending:requests.some(row=>row.intent==='transaction_intent'&&row.status==='approved'&&!['transaction-declined','transaction-done'].includes(requestOutcomes.get(row.request_id)?.outcome))},now);
   if (connectionPage === 'add-account' && presentation.input.stage === 'linked') {presentation.input.stage='add-account';presentation.input.localReturn=false;}
+  if (addingAccount && ['qr-cancelled','qr-expired','connection-declined','link-declined','link-timeout','link-error','link-cancelled'].includes(presentation.input.stage)) presentation.input.stage='add-'+presentation.input.stage;
+  if (addingAccount && (['add-account','account-already-linked'].includes(presentation.input.stage) || presentation.input.stage.startsWith('add-'))) presentation.input.linkedConnection=false;
+  if (presentation.input.stage === 'account-already-linked' || ['add-qr-cancelled','add-qr-expired','add-connection-declined','add-link-cancelled'].includes(presentation.input.stage)) presentation.input.localReturn=false;
   if (connectionPage) presentation.otherRequests=requests;
   if (connectionNeedsReplacement && ['request-waiting','request-multiple','transaction-waiting'].includes(presentation.input.stage) && !hostEffectInFlight) presentation.input.stage='request-new-connection';
   const canChooseRequests=Boolean(accountsLoaded&&requests.length&&!hostEffectInFlight&&!launchExpired&&permissionStatus==='granted'&&!homeReadFailed);
@@ -235,12 +239,14 @@ function copyFeedbackKey() {return `${renderKey}:${currentView?.account?.account
 function resetFeedback() {homeReadFailed=false;connectionPage=undefined;showPicker=false;proofAccount=undefined;unrecordedHash=undefined;dispatchedRequestId=undefined;walletChanged=false;walletChange=undefined;outcome=undefined;clipboardFeedback='';deadline=undefined;}
 async function onConnect({fresh=true}={}) {
   if (hostEffectInFlight || launchExpired) return;
-  resetFeedback();activeRequest=undefined;connectionNeedsReplacement=false;
+  resetFeedback();if(addingAccount)connectionPage='adding-account';activeRequest=undefined;connectionNeedsReplacement=false;
   const epoch=++actionEpoch;currentPhase='starting';effectPhase='starting';
   try {
-    await requestCapsuleWalletEffect({kind:'link',fresh});
+    const result=await requestCapsuleWalletEffect({kind:'link',fresh,addAccount:addingAccount});
     if (epoch !== actionEpoch) return;
-    notifyHomeSummaryChanged();await refreshWalletState();outcome=undefined;
+    notifyHomeSummaryChanged();await refreshWalletState();
+    outcome=result.status === 'already-linked' ? 'account-already-linked' : undefined;
+    if(result.status === 'linked'){addingAccount=false;connectionPage=undefined;}
   } catch (error) {if (epoch === actionEpoch && !outcome && !awaitingAccess()) {connectionNeedsReplacement=Boolean(error.freshConnection);outcome=errorStage(error,recoveryAction,effectPhase);}}
   finally {if (epoch === actionEpoch) {draw();checkConnection().catch(()=>{});}}
 }
@@ -259,7 +265,7 @@ async function onRequestClick(approvalRequestId=currentView?.request?.id || sele
 }
 async function disconnect() {
   if (hostEffectInFlight || launchExpired) return;
-  resetFeedback();const epoch=++actionEpoch;currentPhase='disconnecting';effectPhase='disconnecting';
+  addingAccount=false;resetFeedback();const epoch=++actionEpoch;currentPhase='disconnecting';effectPhase='disconnecting';
   try {await requestCapsuleWalletEffect({kind:'disconnect'});if(epoch===actionEpoch){connectionState=undefined;outcome='disconnected';}}
   catch(error){if(epoch===actionEpoch&&!launchExpired)outcome=errorStage(error,{kind:'disconnect'},'disconnecting');}
   finally{draw();checkConnection().catch(()=>{});}
@@ -270,7 +276,7 @@ async function cancelWalletWait() {
   const sentId=dispatchedRequestId;
   const confirmationAccount=phase === 'ownership' ? proofAccount : undefined;
   const unsent=Boolean(pendingEffect) || activeRequest && activeRequest.request_id !== sentId;
-  ++actionEpoch;pendingEffect=undefined;resetFeedback();proofAccount=confirmationAccount;unrecordedHash=knownHash;dispatchedRequestId=sentId;
+  ++actionEpoch;pendingEffect=undefined;resetFeedback();if(addingAccount)connectionPage='adding-account';proofAccount=confirmationAccount;unrecordedHash=knownHash;dispatchedRequestId=sentId;
   try {hostEffectInFlight=true;currentPhase='disconnecting';draw();await connector.effect({kind:'cancel'});connectionState={};
     if (unsent) {activeRequest=undefined;outcome=undefined;}
     else outcome=phase === 'ownership' ? 'link-cancelled' : phase === 'signature' ? 'request-cancelled' : phase === 'transaction' ? 'transaction-cancelled' : 'qr-cancelled';
@@ -297,7 +303,7 @@ async function requestCapsuleWalletEffect(action) {
     const result=await connector.effect(action);
     if (epoch === actionEpoch) {
       if (action.kind === 'approve') {outcome=result.effect === 'transaction' ? 'transaction-done' : 'request-done';activeRequest.status='completed';}
-      else outcome=action.kind === 'link' ? walletChanged ? undefined : 'linked' : 'disconnected';
+      else outcome=action.kind === 'link' ? result.status === 'already-linked' ? 'account-already-linked' : walletChanged ? undefined : 'linked' : 'disconnected';
       draw();
     }
     return result;

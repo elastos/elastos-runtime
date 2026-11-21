@@ -46,7 +46,7 @@ export async function windowFixture() {
      else {if(req.headers['if-match']!==JSON.stringify(String(state.revision))){call.status=409;state.fencedWrites++;return res.writeHead(409,{'content-type':'text/plain'}).end(staleSessionMessage);}if(req.method==='POST'){if(body.value===null)delete state.keys[body.key];else state.keys[body.key]=body.value;}}
      return json(state.keys);
     }
-    if(path.endsWith('/wallet/accounts'))return json({accounts:state.accounts});
+    if(path.endsWith('/wallet/accounts'))return json({accounts:state.accounts.filter(account=>account.connector_id==='wallet-walletconnect'&&!['managed_evm','managed_btc_p2wpkh'].includes(account.proof_type))});
     if(path.endsWith('/wallet/approvals'))return json({approval_requests:state.approvals.filter(r=>r.status==='pending'||r.status==='approved'&&r.intent==='transaction_intent')});
     if(path.endsWith('/challenge')){state.challenge={message:'Test Home ownership proof '+crypto.randomUUID(),expires_at:Math.floor(Date.now()/1000)+300,address:body.address,chain:body.chain_id};return json(state.challenge);}
     if(path.endsWith('/verify')){if(body.message!==state.challenge.message)return json({},400);const address=await recoverMessageAddress({message:body.message,signature:body.signature});if(address.toLowerCase()!==state.challenge.address.toLowerCase())return json({},400);state.verified++;state.accounts=[{address,chain_namespace:`eip155:${state.challenge.chain}`,connector_id:'wallet-walletconnect',proof_type:'siwe'}];return json({status:'linked'});}
