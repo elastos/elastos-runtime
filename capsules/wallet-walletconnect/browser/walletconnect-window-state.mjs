@@ -99,7 +99,7 @@ export function errorStage(error, action, phase) {
 }
 
 // Only intents supported by the base controller are exposed. N1 is a separate gate.
-export const baseActions = new Set(['connect','start-over','finish','cancel','stop-waiting','inbox','check-access','check-status','copy-link','copy-address','disconnect','send-request','select-request','view-requests','send-message','refresh-status','back-to-connection','add-account']);
+export const baseActions = new Set(['connect','start-over','finish','cancel','stop-waiting','inbox','check-access','check-status','copy-link','copy-address','disconnect','send-request','select-request','view-requests','send-message','refresh-status','back-to-connection','add-account','use-walletconnect-method']);
 
 // A latent request stays with the controller. Only a request screen receives its
 // identity, so account confirmation can never inherit an earlier request address.

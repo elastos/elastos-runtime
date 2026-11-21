@@ -79,6 +79,7 @@ root.addEventListener('click', async event => {
   if (!button || button.disabled || !mounted?.root.contains(button)) return;
   const action = button.dataset.action;
   if (action === 'connect' || action === 'start-over') return onConnect();
+  if (action === 'use-walletconnect-method') return onConnect({fresh:false,replaceMethod:true});
   if (action === 'finish' || action === 'send-message') return onConnect({fresh:false});
   if (action === 'cancel') return qrControls ? qrControls.cancel() : cancelWalletWait();
   if (action === 'stop-waiting') return cancelWalletWait();
@@ -155,8 +156,8 @@ function draw() {
     paymentPending:requests.some(row=>row.intent==='transaction_intent'&&row.status==='approved'&&!['transaction-declined','transaction-done'].includes(requestOutcomes.get(row.request_id)?.outcome))},now);
   if (connectionPage === 'add-account' && presentation.input.stage === 'linked') {presentation.input.stage='add-account';presentation.input.localReturn=false;}
   if (addingAccount && ['qr-cancelled','qr-expired','connection-declined','link-declined','link-timeout','link-error','link-cancelled'].includes(presentation.input.stage)) presentation.input.stage='add-'+presentation.input.stage;
-  if (addingAccount && (['add-account','account-already-linked'].includes(presentation.input.stage) || presentation.input.stage.startsWith('add-'))) presentation.input.linkedConnection=false;
-  if (presentation.input.stage === 'account-already-linked' || ['add-qr-cancelled','add-qr-expired','add-connection-declined','add-link-cancelled'].includes(presentation.input.stage)) presentation.input.localReturn=false;
+  if (addingAccount && (['add-account','account-already-linked','account-method-change'].includes(presentation.input.stage) || presentation.input.stage.startsWith('add-'))) presentation.input.linkedConnection=false;
+  if (['account-already-linked','account-method-change'].includes(presentation.input.stage) || ['add-qr-cancelled','add-qr-expired','add-connection-declined','add-link-cancelled'].includes(presentation.input.stage)) presentation.input.localReturn=false;
   if (connectionPage) presentation.otherRequests=requests;
   if (connectionNeedsReplacement && ['request-waiting','request-multiple','transaction-waiting'].includes(presentation.input.stage) && !hostEffectInFlight) presentation.input.stage='request-new-connection';
   const canChooseRequests=Boolean(accountsLoaded&&requests.length&&!hostEffectInFlight&&!launchExpired&&permissionStatus==='granted'&&!homeReadFailed);
@@ -237,15 +238,15 @@ async function refreshWalletState() {
 }
 function copyFeedbackKey() {return `${renderKey}:${currentView?.account?.accounts[0]?.address || ''}`;}
 function resetFeedback() {homeReadFailed=false;connectionPage=undefined;showPicker=false;proofAccount=undefined;unrecordedHash=undefined;dispatchedRequestId=undefined;walletChanged=false;walletChange=undefined;outcome=undefined;clipboardFeedback='';deadline=undefined;}
-async function onConnect({fresh=true}={}) {
+async function onConnect({fresh=true,replaceMethod=false}={}) {
   if (hostEffectInFlight || launchExpired) return;
   resetFeedback();if(addingAccount)connectionPage='adding-account';activeRequest=undefined;connectionNeedsReplacement=false;
   const epoch=++actionEpoch;currentPhase='starting';effectPhase='starting';
   try {
-    const result=await requestCapsuleWalletEffect({kind:'link',fresh,addAccount:addingAccount});
+    const result=await requestCapsuleWalletEffect({kind:'link',fresh,addAccount:addingAccount,replaceMethod});
     if (epoch !== actionEpoch) return;
     notifyHomeSummaryChanged();await refreshWalletState();
-    outcome=result.status === 'already-linked' ? 'account-already-linked' : undefined;
+    outcome=result.status === 'already-linked' ? 'account-already-linked' : result.status === 'method-change' ? 'account-method-change' : undefined;
     if(result.status === 'linked'){addingAccount=false;connectionPage=undefined;}
   } catch (error) {if (epoch === actionEpoch && !outcome && !awaitingAccess()) {connectionNeedsReplacement=Boolean(error.freshConnection);outcome=errorStage(error,recoveryAction,effectPhase);}}
   finally {if (epoch === actionEpoch) {draw();checkConnection().catch(()=>{});}}
@@ -303,7 +304,7 @@ async function requestCapsuleWalletEffect(action) {
     const result=await connector.effect(action);
     if (epoch === actionEpoch) {
       if (action.kind === 'approve') {outcome=result.effect === 'transaction' ? 'transaction-done' : 'request-done';activeRequest.status='completed';}
-      else outcome=action.kind === 'link' ? result.status === 'already-linked' ? 'account-already-linked' : walletChanged ? undefined : 'linked' : 'disconnected';
+      else outcome=action.kind === 'link' ? result.status === 'already-linked' ? 'account-already-linked' : result.status === 'method-change' ? 'account-method-change' : walletChanged ? undefined : 'linked' : 'disconnected';
       draw();
     }
     return result;

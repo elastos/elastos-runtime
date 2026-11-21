@@ -45,9 +45,9 @@ export async function linkedWindow(t,engine,{holdWalletRead=false,sourceRef}={})
   if(path==='/api/wallet/prices')return json({prices:{},unavailable:true});
   if(path==='/api/provider/chain/balance')return json({status:'unavailable'});
   if(path.endsWith('/verify')){
-   // LinkVerifiedAccount adds a row; the older window fixture replaces its list.
+   // The provider replaces the same network/address row, regardless of method.
    const prior=[...fixture.state.accounts],response=await route.fetch();
-   if(response.ok())fixture.state.accounts=[...prior.filter(a=>!fixture.state.accounts.some(b=>a.connector_id===b.connector_id&&a.address.toLowerCase()===b.address.toLowerCase()&&a.chain_namespace===b.chain_namespace)),...fixture.state.accounts].map((a,i)=>({...a,account_id:a.account_id||`fixture-account-${i}-${a.address}`,wallet_display_name:a.wallet_display_name||'WalletConnect',wallet_mark:'wallet',linked_at:1,signing_available:true}));
+   if(response.ok())fixture.state.accounts=[...prior.filter(a=>!fixture.state.accounts.some(b=>a.address.toLowerCase()===b.address.toLowerCase()&&a.chain_namespace===b.chain_namespace)),...fixture.state.accounts].map((a,i)=>({...a,account_id:a.account_id||`fixture-account-${i}-${a.address}`,wallet_display_name:a.wallet_display_name||'WalletConnect',wallet_mark:'wallet',linked_at:1,signing_available:true}));
    return route.fulfill({response});
   }
   return route.fallback();
