@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createWalletConnectClient, walletConnectMessages as messages } from '../../capsules/wallet-walletconnect/browser/walletconnect-client.mjs';
 export const address = `0x${'12'.repeat(20)}`, payloadHash=`0x${'34'.repeat(32)}`, transactionHash=`0x${'56'.repeat(32)}`;
-export async function exerciseWalletConnect(scenario='valid') {
+export async function exerciseWalletConnect(scenario='valid',{savedAccounts=[],addAccount=false,clientFactory=createWalletConnectClient}={}) {
   const clock=Date.now, calls=[],routes=[],events=new Map(); let changed=false, memoryCleared=false, status=scenario==='approved'?'approved':'pending';
   const signatureIntent=scenario.startsWith('signature-') || scenario.startsWith('typed') || scenario==='unsupported' || scenario==='protected-content';
   const intent=scenario.startsWith('typed')?'browser_typed_data_sign':scenario==='unsupported'?'unavailable_intent':scenario==='protected-content'?'protected_content_rights_signature':signatureIntent?'browser_personal_sign':'transaction_intent';
@@ -32,6 +32,7 @@ export async function exerciseWalletConnect(scenario='valid') {
       throw new Error('Unexpected wallet call');
     }};
   const api=async(path,input)=>{routes.push({path,input});
+    if(path==='wallet/accounts')return {accounts:savedAccounts};
     if(path==='wallet/config')return {walletconnect:{project_id:'fixture-project',storage_revision:'"0"'}};
     if(path==='internet')return {status:'granted'};
     if(path==='storage')return {};
@@ -48,9 +49,9 @@ export async function exerciseWalletConnect(scenario='valid') {
       if(kind==='completion-window-expired')throw new Error('This wallet window expired. Close it and open WalletConnect again.');if(kind==='completion-refused')throw new Error('Completion refused');return {receipt_status:scenario==='dismissed-during-send'?'sent_after_dismissal':'completed'};}
     throw new Error('Unexpected Runtime resource');
   };
-  const client=createWalletConnectClient({api,origin:'http://localhost:61180',clearMemory:()=>{memoryCleared=true;},
+  const client=clientFactory({api,origin:'http://localhost:61180',clearMemory:()=>{memoryCleared=true;},
     loadAdapter:async()=>({connectWalletConnectEvm:async options=>{assert.equal(options.contextKey,'wallet-walletconnect');if (scenario.startsWith('proposal-')) phoneError();return provider;},disconnectWalletConnectEvm:async()=>{}})});
-  try {return {result:await client.effect({kind:(scenario.startsWith('link')||scenario==='numeric-chain-link')?'link':scenario==='disconnect'?'disconnect':'approve',approvalRequestId:'approval:fixture'}),calls,routes,memoryCleared};}
+  try {return {result:await client.effect({kind:(scenario.startsWith('link')||scenario==='numeric-chain-link')?'link':scenario==='disconnect'?'disconnect':'approve',approvalRequestId:'approval:fixture',addAccount}),calls,routes,memoryCleared};}
   catch(error){
     let secondError;
     if (/^(signature|transaction)-phone-/.test(scenario)) {

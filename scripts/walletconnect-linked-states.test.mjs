@@ -183,27 +183,21 @@ for(const engine of ['chromium','webkit']){
   await r.refresh();await r.state('request-waiting');await r.capture(add?'add-later-request':'initial-later-request');
   await r.click('send-request');await r.state('request-done');assert.equal(r.fixture.state.completed,1,'the later approval completes without View requests');
  });
- for(const connector of ['wallet-metamask',undefined])for(const sameNetwork of [true,false])test(`add-account accepts ${connector||'legacy MetaMask'} on ${sameNetwork?'the same':'another'} network with truthful method handling in ${engine}`,windowTestOptions(engine,60000),async t=>{
+ for(const connector of ['wallet-metamask',undefined])for(const sameNetwork of [true,false])test(`add-account links ${connector||'legacy MetaMask'} address on ${sameNetwork?'the same':'another'} network through the scoped endpoint in ${engine}`,windowTestOptions(engine,60000),async t=>{
   const r=await linkedWindow(t,engine);await r.link();
-  const first={...r.fixture.state.accounts[0],connector_id:connector,wallet_display_name:'MetaMask'};
-  r.fixture.state.accounts[0]=first;
+  const first=r.fixture.state.accounts[0];r.peer.selectAccount();
+  const other={...first,address:r.peer.address,account_id:'fixture-metamask-'+r.peer.address,connector_id:connector,wallet_display_name:'MetaMask'};
+  r.fixture.state.accounts.push(other);
+  const scoped=await fetch(r.fixture.origin+'/api/apps/wallet-walletconnect/wallet/accounts').then(response=>response.json());
+  assert.deepEqual(scoped.accounts,[first],'the real connector endpoint hides other methods');
   if(!sameNetwork)r.peer.choose({chains:['eip155:8453']});
-  await r.refresh();await r.click('add-account');await r.click('start-over');await r.state('qr-shown');await r.pair();
-  if(sameNetwork){
-   await r.state('account-method-change');assert.equal(r.fixture.state.verified,1,'the method change waits for an explicit choice');
-   assert.match((await r.frame.locator('main').innerText()).replace(/\s+/g,' '),/use WalletConnect for new requests on this network/);
-   assert.deepEqual(r.fixture.state.accounts,[first],'the saved method stays intact before confirmation');
-   await r.capture('add-method-choice-'+(connector||'legacy-metamask'));
-   await r.click('back-to-connection');await r.state('linked');assert.deepEqual(r.fixture.state.accounts,[first]);
-   await r.click('add-account');await r.click('start-over');await r.state('qr-shown');await r.pair();await r.state('account-method-change');
-   await r.click('use-walletconnect-method');
-  }
-  await r.state('linked');assert.equal(r.fixture.state.verified,2,'the new method needs its own ownership proof');
-  assert.equal(r.fixture.state.accounts.length,sameNetwork?1:2,'the provider keeps one record per network and address');
-  if(sameNetwork)assert.equal(r.fixture.state.accounts[0].connector_id,'wallet-walletconnect');
-  else assert.ok(r.fixture.state.accounts.some(a=>a.connector_id===connector),'the other network keeps its MetaMask method');
-  await r.wallet.locator('#wallet-account-state').filter({hasText:sameNetwork?'1 account':'2 accounts'}).waitFor();
-  assert.equal(await r.wallet.locator('#wallet-accounts .wallet-account').count(),sameNetwork?1:2);
+  await r.refresh();await r.click('add-account');await r.click('start-over');await r.state('qr-shown');await r.pair();await r.state('linked');
+  assert.equal(r.fixture.state.verified,2,'linking requires a fresh ownership proof');
+  assert.equal(r.fixture.state.accounts.length,sameNetwork?2:3,'the provider keeps one record per network and address');
+  if(sameNetwork)assert.equal(r.fixture.state.accounts.find(a=>a.address===other.address).connector_id,'wallet-walletconnect','the existing network record now uses WalletConnect');
+  else assert.ok(r.fixture.state.accounts.some(a=>a.connector_id===connector),'the other network keeps MetaMask');
+  await r.wallet.locator('#wallet-account-state').filter({hasText:sameNetwork?'2 accounts':'3 accounts'}).waitFor();
+  assert.equal(await r.wallet.locator('#wallet-accounts .wallet-account').count(),sameNetwork?2:3);
   await r.capture('add-method-result-'+(connector||'legacy-metamask')+'-'+(sameNetwork?'same':'other'));
  });
 }

@@ -306,7 +306,6 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
         const saved=await waitFor(api('wallet/accounts'),signal);
         signal.throwIfAborted();
         if (saved.accounts?.some(account=>account.connector_id === 'wallet-walletconnect' && (account.chain_namespace === 'eip155' || account.chain_namespace?.startsWith('eip155:')) && same(account.address,signer))) return {status:'already-linked'};
-        if (!action.replaceMethod && saved.accounts?.some(account=>account.chain_namespace === namespace && same(account.address,signer))) return {status:'method-change'};
       }
       const challenge = await api('/api/auth/evm/challenge',{method:'POST',body:JSON.stringify({address:signer,chain_id:Number(namespace.split(':')[1])})});
       const check = async () => {

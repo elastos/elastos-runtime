@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync,readdirSync } from 'node:fs';
+import {execFileSync} from 'node:child_process';
 import { join } from 'node:path';
-import { exerciseWalletConnect,transactionHash } from './lib/walletconnect-capsule-fixture.mjs';
-import {walletConnectMessages as messages} from '../capsules/wallet-walletconnect/browser/walletconnect-client.mjs';
+import { exerciseWalletConnect,transactionHash,address } from './lib/walletconnect-capsule-fixture.mjs';
+import {createWalletConnectClient,walletConnectMessages as messages} from '../capsules/wallet-walletconnect/browser/walletconnect-client.mjs';
 const sent = r=>r.calls.filter(c=>c.method==='eth_sendTransaction');
 const completed = r=>r.routes.filter(c=>c.path.endsWith('/complete'));
 test('opaque capsule sends the exact Runtime transaction once',async()=>{const r=await exerciseWalletConnect();assert.equal(r.error,undefined);assert.equal(sent(r).length,1);assert.equal(completed(r).length,1);});
@@ -147,4 +148,11 @@ test('round18 ownership asks for the five-minute challenge deadline',async()=>{
 test('round18 signature completion preserves the expired-window recovery',async()=>{
   const r=await exerciseWalletConnect('signature-completion-window-expired');
   assert.equal(r.error,'This wallet window expired. Close it and open WalletConnect again.');
+});
+
+for(const connector of ['wallet-metamask',undefined])test(`duplicate identity uses the WalletConnect method even in an overbroad API response: ${connector||'legacy MetaMask'}`,async()=>{
+ // Deliberately overbroad input tests the client guard; the production endpoint is connector-scoped.
+ const clientFactory=process.env.WALLETCONNECT_METHOD_GUARD_BEFORE==='1'?(await import('data:text/javascript;base64,'+execFileSync('git',['show','03fe8a186:capsules/wallet-walletconnect/browser/walletconnect-client.mjs']).toString('base64'))).createWalletConnectClient:createWalletConnectClient;
+ const r=await exerciseWalletConnect('link',{addAccount:true,clientFactory,savedAccounts:[{address,chain_namespace:'eip155:20',connector_id:connector,proof_type:'siwe'}]});
+ assert.equal(r.error,undefined);assert.equal(r.result.status,'linked');assert.equal(r.calls.filter(c=>c.method==='personal_sign').length,1);
 });
