@@ -209,3 +209,26 @@ for (const format of ["cjs", "mjs"]) {
     });
   });
 }
+
+test("the phone smoke leaves default WebKit executable selection to the launch boundary", t => {
+  const root = mkdtempSync(join(tmpdir(), "phone-smoke-webkit-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const modulePath = join(root, "playwright.cjs");
+  writeFileSync(modulePath, `module.exports = {chromium: {}, webkit: {
+    name: () => "webkit", executablePath: () => process.execPath,
+    async launch(options) {
+      console.log("PHONE_WEBKIT_OPTIONS=" + JSON.stringify(options));
+      throw new Error("PHONE_LAUNCH_CAPTURED");
+    },
+  }};`);
+  const result = spawnSync(process.execPath, [fileURLToPath(new URL("./home-phone-layout-smoke.mjs", import.meta.url))], {
+    env: {...process.env, ELASTOS_PLAYWRIGHT_MODULE: modulePath,
+      HOME_PHONE_SMOKE_ENGINES: "webkit", HOME_PHONE_SMOKE_OUT: join(root, "output")},
+    encoding: "utf8", timeout: 15_000,
+  });
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /PHONE_LAUNCH_CAPTURED/);
+  const recorded = result.stdout.split("\n").find(line => line.startsWith("PHONE_WEBKIT_OPTIONS="));
+  assert.ok(recorded, result.stdout);
+  assert.deepEqual(JSON.parse(recorded.slice("PHONE_WEBKIT_OPTIONS=".length)), {headless: true, args: []});
+});
