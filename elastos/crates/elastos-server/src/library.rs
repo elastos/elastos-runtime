@@ -716,18 +716,36 @@ pub async fn handle_object_provider_runtime_request(
     registry: Arc<ProviderRegistry>,
     request: &Value,
 ) -> Value {
-    handle_object_provider_runtime_request_with_gateway(data_dir, registry, request, None).await
+    handle_object_provider_runtime_request_with_gateway(ObjectProviderRuntimeRequest {
+        data_dir,
+        registry,
+        request,
+        gateway_authority: None,
+    })
+    .await
+}
+
+/// One object-provider request the Runtime mediates. A field added here leaves
+/// every caller that builds it alone.
+pub(crate) struct ObjectProviderRuntimeRequest<'a> {
+    pub(crate) data_dir: &'a Path,
+    pub(crate) registry: Arc<ProviderRegistry>,
+    pub(crate) request: &'a Value,
+    pub(crate) gateway_authority: Option<(
+        &'a crate::api::gateway::GatewayState,
+        &'a crate::api::gateway::RuntimeWalletAuthority,
+    )>,
 }
 
 pub(crate) async fn handle_object_provider_runtime_request_with_gateway(
-    data_dir: &Path,
-    registry: Arc<ProviderRegistry>,
-    request: &Value,
-    gateway_authority: Option<(
-        &crate::api::gateway::GatewayState,
-        &crate::api::gateway::RuntimeWalletAuthority,
-    )>,
+    runtime_request: ObjectProviderRuntimeRequest<'_>,
 ) -> Value {
+    let ObjectProviderRuntimeRequest {
+        data_dir,
+        registry,
+        request,
+        gateway_authority,
+    } = runtime_request;
     let request = match serde_json::from_value::<ObjectProviderRequest>(request.clone()) {
         Ok(request) => request,
         Err(err) => return provider_error("invalid_request", &err.to_string()),

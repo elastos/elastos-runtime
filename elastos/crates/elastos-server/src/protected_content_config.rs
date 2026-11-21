@@ -241,17 +241,7 @@ async fn run_protected_content_config_command_with_writer(
 ) -> anyhow::Result<()> {
     match command {
         ProtectedContentConfigCommand::CreatePolicyAuthorityKey { key } => {
-            let mut bytes = [0u8; 32];
-            getrandom::getrandom(&mut bytes)
-                .context("OS randomness unavailable for protected-content policy authority key")?;
-            create_owner_only_file(&key, &bytes, "protected-content policy authority key")?;
-            write_receipt(
-                output,
-                &PolicyAuthorityKeyReceipt {
-                    schema: POLICY_AUTHORITY_KEY_RECEIPT_SCHEMA,
-                    created: true,
-                },
-            )
+            run_create_policy_authority_key(key, output)
         }
         ProtectedContentConfigCommand::ProvisionCustodyNode {
             data_dir,
@@ -261,146 +251,28 @@ async fn run_protected_content_config_command_with_writer(
             transport_peer_did,
             output: output_path,
         } => {
-            let issuer = parse_runtime_issuer_hex(&trusted_runtime_issuer)?;
-            let operator = validated_custody_node_label(&operator, "operator")?;
-            let failure_domain = validated_custody_node_label(&failure_domain, "failure domain")?;
-            let transport = match transport_peer_did {
-                None => CustodyNodeDescriptorTransportV1::Local,
-                Some(peer_did) => CustodyNodeDescriptorTransportV1::CarrierPeerDid {
-                    peer_did: decode_canonical_peer_did(&peer_did)?,
-                },
-            };
-            let inactive_root = provisioned_inactive_custody_root(&data_dir).map_err(|_| {
-                anyhow::anyhow!("custody provider state root is unavailable or unsafe")
-            })?;
-            let provisioned =
-                provision_custody_node_with_installed_provider(&data_dir, &inactive_root, issuer)
-                    .await?;
-            let descriptor = CustodyNodeDescriptorV1 {
-                schema: CUSTODY_NODE_DESCRIPTOR_SCHEMA_V1.to_string(),
-                node_public_key_hex: format!(
-                    "0x{}",
-                    hex::encode(provisioned.node_public_key.as_bytes())
-                ),
-                node_custody_public_key_hex: format!(
-                    "0x{}",
-                    hex::encode(provisioned.node_custody_public_key.as_bytes())
-                ),
+            run_provision_custody_node(
+                data_dir,
+                trusted_runtime_issuer,
                 operator,
                 failure_domain,
-                transport,
-            };
-            let descriptor_bytes = serde_json::to_vec(&serde_json::to_value(&descriptor)?)?;
-            create_owner_only_file(&output_path, &descriptor_bytes, "custody node descriptor")?;
-            write_receipt(
+                transport_peer_did,
+                output_path,
                 output,
-                &CustodyNodeProvisionReceipt {
-                    schema: CUSTODY_NODE_PROVISION_RECEIPT_SCHEMA,
-                    node_public_key_hex: descriptor.node_public_key_hex,
-                    descriptor_sha256: format!(
-                        "sha256:{}",
-                        hex::encode(Sha256::digest(&descriptor_bytes))
-                    ),
-                    created: true,
-                },
             )
+            .await
         }
         ProtectedContentConfigCommand::GenerateCustodyComposition {
             authority_key,
             nodes,
             data_dir,
             valid_days,
-        } => {
-            let authority = read_policy_authority_key(&authority_key)?;
-            let descriptors = read_distinct_custody_node_descriptors(&nodes)?;
-            let config = signed_custody_composition_config(&authority, descriptors, valid_days)?;
-            let config_bytes = serde_json::to_vec(&serde_json::to_value(&config)?)?;
-
-            validate_existing_data_dir(&data_dir)?;
-            ensure_owner_only_dir(&protected_content_root(&data_dir), "protected-content root")?;
-            let config_path = runtime_custody_composition_config_path(&data_dir);
-            create_owner_only_file(&config_path, &config_bytes, "custody composition")?;
-
-            // The Runtime loader is the single validation authority; prove the
-            // installed file end to end before reporting success.
-            if let Err(error) = crate::protected_content_runtime::load_runtime_custody_composition(
-                &data_dir,
-                std::sync::Arc::new(elastos_runtime::provider::ProviderRegistry::new()),
-            ) {
-                let _ = std::fs::remove_file(&config_path);
-                return Err(error.context("generated custody composition failed loader validation"));
-            }
-
-            write_receipt(
-                output,
-                &CustodyCompositionReceipt {
-                    schema: CUSTODY_COMPOSITION_RECEIPT_SCHEMA,
-                    node_public_key_hexes: config
-                        .routes
-                        .iter()
-                        .map(|route| {
-                            Ok(format!(
-                                "0x{}",
-                                hex::encode(decode_standard_base64(&route.node_public_key_base64)?)
-                            ))
-                        })
-                        .collect::<anyhow::Result<Vec<_>>>()?,
-                    config_sha256: format!("sha256:{}", hex::encode(Sha256::digest(&config_bytes))),
-                    created: true,
-                },
-            )
-        }
+        } => run_generate_custody_composition(authority_key, nodes, data_dir, valid_days, output),
         ProtectedContentConfigCommand::VerifyCustodyComposition { data_dir } => {
-            crate::protected_content_runtime::load_runtime_custody_composition(
-                &data_dir,
-                std::sync::Arc::new(elastos_runtime::provider::ProviderRegistry::new()),
-            )?
-            .context("custody composition is missing; generate and install it first")?;
-            let config_bytes = read_owner_only_file(
-                &runtime_custody_composition_config_path(&data_dir),
-                MAX_CUSTODY_COMPOSITION_FILE_BYTES,
-                "custody composition",
-            )?;
-            let config: RuntimeCustodyCompositionConfigFile =
-                serde_json::from_slice(&config_bytes)?;
-            write_receipt(
-                output,
-                &CustodyCompositionVerifiedReceipt {
-                    schema: CUSTODY_COMPOSITION_VERIFIED_RECEIPT_SCHEMA,
-                    node_public_key_hexes: config
-                        .routes
-                        .iter()
-                        .map(|route| {
-                            Ok(format!(
-                                "0x{}",
-                                hex::encode(decode_standard_base64(&route.node_public_key_base64)?)
-                            ))
-                        })
-                        .collect::<anyhow::Result<Vec<_>>>()?,
-                    config_sha256: format!("sha256:{}", hex::encode(Sha256::digest(&config_bytes))),
-                    verified: true,
-                },
-            )
+            run_verify_custody_composition(data_dir, output)
         }
         ProtectedContentConfigCommand::ShowRuntimeIssuer { data_dir } => {
-            let device_key_path = elastos_identity::device_key_path(&data_dir);
-            if std::fs::symlink_metadata(&device_key_path).is_err() {
-                anyhow::bail!(
-                    "Runtime device key is missing at {}; start the Runtime on this data dir once, then retry",
-                    device_key_path.display()
-                );
-            }
-            let device_key = elastos_identity::load_or_create_device_key(&data_dir)?;
-            let issuer = crate::protected_content_runtime::derive_protected_content_runtime_issuer(
-                &device_key,
-            )?;
-            write_receipt(
-                output,
-                &RuntimeIssuerReceipt {
-                    schema: RUNTIME_ISSUER_RECEIPT_SCHEMA,
-                    trusted_runtime_issuer: format!("0x{}", hex::encode(issuer.as_bytes())),
-                },
-            )
+            run_show_runtime_issuer(data_dir, output)
         }
         ProtectedContentConfigCommand::GenerateChainConfig {
             data_dir,
@@ -417,92 +289,303 @@ async fn run_protected_content_config_command_with_writer(
             mint_ledger,
             mint_pay_token,
             mint_asset_created_emitter,
-        } => {
-            validate_private_rpc_url(&rpc_url, "rpc url")?;
-            validate_evidence_rpc_urls(&evidence_rpc_urls)?;
-            let rights_contract = validated_contract_address(&rights_contract, "rights contract")?;
-            let authority_gateway_contract = validated_contract_address(
-                &authority_gateway_contract,
-                "authority gateway contract",
-            )?;
-            let mint_ledger = validated_contract_address(&mint_ledger, "mint ledger")?;
-            let mint_pay_token = validated_contract_address(&mint_pay_token, "mint pay token")?;
-            let mint_asset_created_emitter = validated_contract_address(
-                &mint_asset_created_emitter,
-                "mint asset-created emitter",
-            )?;
-            validated_selector(&rights_selector)?;
-
-            let network = serde_json::json!({
-                "id": id,
-                "display_name": display_name,
-                "kind": "evm_json_rpc",
-                "chain_id": chain_id,
-                "native_symbol": native_symbol,
-                "provider": "operator",
-                "mainnet": mainnet,
-                "explorer_url": null,
-                "rpc_url": rpc_url,
-                "rights_methods": [{
-                    "id": "has_access_by_content_id",
-                    "contract": rights_contract,
-                    "abi": "has_access_by_content_id_address_bytes16",
-                    "selector": rights_selector,
-                    "protected_content_policies": [{
-                        "action": "view",
-                        "evidence_rpc_urls": evidence_rpc_urls,
-                    }],
-                }],
-                "protected_content_creator_mint": {
-                    "ledger": mint_ledger,
-                    "pay_token": mint_pay_token,
-                    "asset_created_emitter": mint_asset_created_emitter,
-                    "abi": "elacity_mint_v1",
-                },
-                "protected_content_market": {
-                    "authority_gateway_contract": authority_gateway_contract,
-                    "evidence_rpc_urls": evidence_rpc_urls,
-                },
-            });
-            let config_bytes = serde_json::to_vec(&serde_json::json!({
-                "schema": crate::protected_content_runtime::PROTECTED_CONTENT_CHAIN_PROVIDER_CONFIG_SCHEMA_V1,
-                "protected_content_network": network,
-            }))?;
-
-            validate_existing_data_dir(&data_dir)?;
-            ensure_owner_only_dir(&protected_content_root(&data_dir), "protected-content root")?;
-            let config_path = protected_content_root(&data_dir).join("chain-provider.json");
-            create_owner_only_file(
-                &config_path,
-                &config_bytes,
-                "protected-content chain config",
-            )?;
-
-            // Prove the installed file passes the Runtime loader before
-            // reporting success; the chain-provider capsule re-validates the
-            // network body at Init and stays the live admission authority.
-            if let Err(error) =
-                crate::protected_content_runtime::load_runtime_protected_content_chain_provider_config(
-                    &data_dir,
-                )
-            {
-                let _ = std::fs::remove_file(&config_path);
-                return Err(error.context("generated chain config failed loader validation"));
-            }
-
-            write_receipt(
-                output,
-                &ChainConfigReceipt {
-                    schema: CHAIN_CONFIG_RECEIPT_SCHEMA,
-                    network_id: id,
-                    chain_id,
-                    evidence_rpc_sources: evidence_rpc_urls.len(),
-                    config_sha256: format!("sha256:{}", hex::encode(Sha256::digest(&config_bytes))),
-                    created: true,
-                },
-            )
-        }
+        } => run_generate_chain_config(
+            ChainConfigRequest {
+                data_dir,
+                id,
+                display_name,
+                chain_id,
+                native_symbol,
+                mainnet,
+                rpc_url,
+                evidence_rpc_urls,
+                rights_contract,
+                rights_selector,
+                authority_gateway_contract,
+                mint_ledger,
+                mint_pay_token,
+                mint_asset_created_emitter,
+            },
+            output,
+        ),
     }
+}
+
+fn run_create_policy_authority_key(key: PathBuf, output: &mut dyn Write) -> anyhow::Result<()> {
+    let mut bytes = [0u8; 32];
+    getrandom::getrandom(&mut bytes)
+        .context("OS randomness unavailable for protected-content policy authority key")?;
+    create_owner_only_file(&key, &bytes, "protected-content policy authority key")?;
+    write_receipt(
+        output,
+        &PolicyAuthorityKeyReceipt {
+            schema: POLICY_AUTHORITY_KEY_RECEIPT_SCHEMA,
+            created: true,
+        },
+    )
+}
+
+async fn run_provision_custody_node(
+    data_dir: PathBuf,
+    trusted_runtime_issuer: String,
+    operator: String,
+    failure_domain: String,
+    transport_peer_did: Option<String>,
+    output_path: PathBuf,
+    output: &mut dyn Write,
+) -> anyhow::Result<()> {
+    let issuer = parse_runtime_issuer_hex(&trusted_runtime_issuer)?;
+    let operator = validated_custody_node_label(&operator, "operator")?;
+    let failure_domain = validated_custody_node_label(&failure_domain, "failure domain")?;
+    let transport = match transport_peer_did {
+        None => CustodyNodeDescriptorTransportV1::Local,
+        Some(peer_did) => CustodyNodeDescriptorTransportV1::CarrierPeerDid {
+            peer_did: decode_canonical_peer_did(&peer_did)?,
+        },
+    };
+    let inactive_root = provisioned_inactive_custody_root(&data_dir)
+        .map_err(|_| anyhow::anyhow!("custody provider state root is unavailable or unsafe"))?;
+    let provisioned =
+        provision_custody_node_with_installed_provider(&data_dir, &inactive_root, issuer).await?;
+    let descriptor = CustodyNodeDescriptorV1 {
+        schema: CUSTODY_NODE_DESCRIPTOR_SCHEMA_V1.to_string(),
+        node_public_key_hex: format!("0x{}", hex::encode(provisioned.node_public_key.as_bytes())),
+        node_custody_public_key_hex: format!(
+            "0x{}",
+            hex::encode(provisioned.node_custody_public_key.as_bytes())
+        ),
+        operator,
+        failure_domain,
+        transport,
+    };
+    let descriptor_bytes = serde_json::to_vec(&serde_json::to_value(&descriptor)?)?;
+    create_owner_only_file(&output_path, &descriptor_bytes, "custody node descriptor")?;
+    write_receipt(
+        output,
+        &CustodyNodeProvisionReceipt {
+            schema: CUSTODY_NODE_PROVISION_RECEIPT_SCHEMA,
+            node_public_key_hex: descriptor.node_public_key_hex,
+            descriptor_sha256: format!("sha256:{}", hex::encode(Sha256::digest(&descriptor_bytes))),
+            created: true,
+        },
+    )
+}
+
+fn run_generate_custody_composition(
+    authority_key: PathBuf,
+    nodes: Vec<PathBuf>,
+    data_dir: PathBuf,
+    valid_days: u16,
+    output: &mut dyn Write,
+) -> anyhow::Result<()> {
+    let authority = read_policy_authority_key(&authority_key)?;
+    let descriptors = read_distinct_custody_node_descriptors(&nodes)?;
+    let config = signed_custody_composition_config(&authority, descriptors, valid_days)?;
+    let config_bytes = serde_json::to_vec(&serde_json::to_value(&config)?)?;
+
+    validate_existing_data_dir(&data_dir)?;
+    ensure_owner_only_dir(&protected_content_root(&data_dir), "protected-content root")?;
+    let config_path = runtime_custody_composition_config_path(&data_dir);
+    create_owner_only_file(&config_path, &config_bytes, "custody composition")?;
+
+    // The Runtime loader is the single validation authority; prove the
+    // installed file end to end before reporting success.
+    if let Err(error) = crate::protected_content_runtime::load_runtime_custody_composition(
+        &data_dir,
+        std::sync::Arc::new(elastos_runtime::provider::ProviderRegistry::new()),
+    ) {
+        let _ = std::fs::remove_file(&config_path);
+        return Err(error.context("generated custody composition failed loader validation"));
+    }
+
+    write_receipt(
+        output,
+        &CustodyCompositionReceipt {
+            schema: CUSTODY_COMPOSITION_RECEIPT_SCHEMA,
+            node_public_key_hexes: config
+                .routes
+                .iter()
+                .map(|route| {
+                    Ok(format!(
+                        "0x{}",
+                        hex::encode(decode_standard_base64(&route.node_public_key_base64)?)
+                    ))
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?,
+            config_sha256: format!("sha256:{}", hex::encode(Sha256::digest(&config_bytes))),
+            created: true,
+        },
+    )
+}
+
+fn run_verify_custody_composition(data_dir: PathBuf, output: &mut dyn Write) -> anyhow::Result<()> {
+    crate::protected_content_runtime::load_runtime_custody_composition(
+        &data_dir,
+        std::sync::Arc::new(elastos_runtime::provider::ProviderRegistry::new()),
+    )?
+    .context("custody composition is missing; generate and install it first")?;
+    let config_bytes = read_owner_only_file(
+        &runtime_custody_composition_config_path(&data_dir),
+        MAX_CUSTODY_COMPOSITION_FILE_BYTES,
+        "custody composition",
+    )?;
+    let config: RuntimeCustodyCompositionConfigFile = serde_json::from_slice(&config_bytes)?;
+    write_receipt(
+        output,
+        &CustodyCompositionVerifiedReceipt {
+            schema: CUSTODY_COMPOSITION_VERIFIED_RECEIPT_SCHEMA,
+            node_public_key_hexes: config
+                .routes
+                .iter()
+                .map(|route| {
+                    Ok(format!(
+                        "0x{}",
+                        hex::encode(decode_standard_base64(&route.node_public_key_base64)?)
+                    ))
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?,
+            config_sha256: format!("sha256:{}", hex::encode(Sha256::digest(&config_bytes))),
+            verified: true,
+        },
+    )
+}
+
+fn run_show_runtime_issuer(data_dir: PathBuf, output: &mut dyn Write) -> anyhow::Result<()> {
+    let device_key_path = elastos_identity::device_key_path(&data_dir);
+    if std::fs::symlink_metadata(&device_key_path).is_err() {
+        anyhow::bail!(
+            "Runtime device key is missing at {}; start the Runtime on this data dir once, then retry",
+            device_key_path.display()
+        );
+    }
+    let device_key = elastos_identity::load_or_create_device_key(&data_dir)?;
+    let issuer =
+        crate::protected_content_runtime::derive_protected_content_runtime_issuer(&device_key)?;
+    write_receipt(
+        output,
+        &RuntimeIssuerReceipt {
+            schema: RUNTIME_ISSUER_RECEIPT_SCHEMA,
+            trusted_runtime_issuer: format!("0x{}", hex::encode(issuer.as_bytes())),
+        },
+    )
+}
+
+struct ChainConfigRequest {
+    data_dir: PathBuf,
+    id: String,
+    display_name: String,
+    chain_id: u64,
+    native_symbol: String,
+    mainnet: bool,
+    rpc_url: String,
+    evidence_rpc_urls: Vec<String>,
+    rights_contract: String,
+    rights_selector: String,
+    authority_gateway_contract: String,
+    mint_ledger: String,
+    mint_pay_token: String,
+    mint_asset_created_emitter: String,
+}
+
+fn run_generate_chain_config(
+    request: ChainConfigRequest,
+    output: &mut dyn Write,
+) -> anyhow::Result<()> {
+    let ChainConfigRequest {
+        data_dir,
+        id,
+        display_name,
+        chain_id,
+        native_symbol,
+        mainnet,
+        rpc_url,
+        evidence_rpc_urls,
+        rights_contract,
+        rights_selector,
+        authority_gateway_contract,
+        mint_ledger,
+        mint_pay_token,
+        mint_asset_created_emitter,
+    } = request;
+    validate_private_rpc_url(&rpc_url, "rpc url")?;
+    validate_evidence_rpc_urls(&evidence_rpc_urls)?;
+    let rights_contract = validated_contract_address(&rights_contract, "rights contract")?;
+    let authority_gateway_contract =
+        validated_contract_address(&authority_gateway_contract, "authority gateway contract")?;
+    let mint_ledger = validated_contract_address(&mint_ledger, "mint ledger")?;
+    let mint_pay_token = validated_contract_address(&mint_pay_token, "mint pay token")?;
+    let mint_asset_created_emitter =
+        validated_contract_address(&mint_asset_created_emitter, "mint asset-created emitter")?;
+    validated_selector(&rights_selector)?;
+
+    let network = serde_json::json!({
+        "id": id,
+        "display_name": display_name,
+        "kind": "evm_json_rpc",
+        "chain_id": chain_id,
+        "native_symbol": native_symbol,
+        "provider": "operator",
+        "mainnet": mainnet,
+        "explorer_url": null,
+        "rpc_url": rpc_url,
+        "rights_methods": [{
+            "id": "has_access_by_content_id",
+            "contract": rights_contract,
+            "abi": "has_access_by_content_id_address_bytes16",
+            "selector": rights_selector,
+            "protected_content_policies": [{
+                "action": "view",
+                "evidence_rpc_urls": evidence_rpc_urls,
+            }],
+        }],
+        "protected_content_creator_mint": {
+            "ledger": mint_ledger,
+            "pay_token": mint_pay_token,
+            "asset_created_emitter": mint_asset_created_emitter,
+            "abi": "elacity_mint_v1",
+        },
+        "protected_content_market": {
+            "authority_gateway_contract": authority_gateway_contract,
+            "evidence_rpc_urls": evidence_rpc_urls,
+        },
+    });
+    let config_bytes = serde_json::to_vec(&serde_json::json!({
+        "schema": crate::protected_content_runtime::PROTECTED_CONTENT_CHAIN_PROVIDER_CONFIG_SCHEMA_V1,
+        "protected_content_network": network,
+    }))?;
+
+    validate_existing_data_dir(&data_dir)?;
+    ensure_owner_only_dir(&protected_content_root(&data_dir), "protected-content root")?;
+    let config_path = protected_content_root(&data_dir).join("chain-provider.json");
+    create_owner_only_file(
+        &config_path,
+        &config_bytes,
+        "protected-content chain config",
+    )?;
+
+    // Prove the installed file passes the Runtime loader before
+    // reporting success; the chain-provider capsule re-validates the
+    // network body at Init and stays the live admission authority.
+    if let Err(error) =
+        crate::protected_content_runtime::load_runtime_protected_content_chain_provider_config(
+            &data_dir,
+        )
+    {
+        let _ = std::fs::remove_file(&config_path);
+        return Err(error.context("generated chain config failed loader validation"));
+    }
+
+    write_receipt(
+        output,
+        &ChainConfigReceipt {
+            schema: CHAIN_CONFIG_RECEIPT_SCHEMA,
+            network_id: id,
+            chain_id,
+            evidence_rpc_sources: evidence_rpc_urls.len(),
+            config_sha256: format!("sha256:{}", hex::encode(Sha256::digest(&config_bytes))),
+            created: true,
+        },
+    )
 }
 
 /// Doc-backed shape rule for private chain endpoints (see the chain-provider

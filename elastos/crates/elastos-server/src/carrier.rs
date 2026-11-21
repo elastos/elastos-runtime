@@ -2803,6 +2803,16 @@ pub(crate) async fn local_cid_pinned(registry: &ProviderRegistry, cid: &str) -> 
     response.get("data")?.get("pinned")?.as_bool()
 }
 
+/// A Carrier peer's content fetch to admit. A field added here leaves every
+/// caller that builds it alone.
+pub(crate) struct CarrierPeerContentFetch<'a> {
+    pub(crate) data_dir: &'a std::path::Path,
+    pub(crate) network:
+        Option<&'a crate::collaboration_network::VerifiedCollaborationNetworkProfile>,
+    pub(crate) source: &'a iroh::PublicKey,
+    pub(crate) request: &'a serde_json::Value,
+}
+
 /// A peer `fetch` on a node that does not serve publisher content reads only
 /// a CID an active publication on this Home lists. Sharing follows the
 /// publication record: a pin is only local storage, which received files,
@@ -2813,11 +2823,14 @@ pub(crate) async fn local_cid_pinned(registry: &ProviderRegistry, cid: &str) -> 
 /// from contacts. A protected listing's sealed payload is served to any peer:
 /// opening it needs the key release a purchase grants.
 pub(crate) async fn admit_carrier_peer_content_fetch(
-    data_dir: &std::path::Path,
-    network: Option<&crate::collaboration_network::VerifiedCollaborationNetworkProfile>,
-    source: &iroh::PublicKey,
-    request: &serde_json::Value,
+    fetch: CarrierPeerContentFetch<'_>,
 ) -> std::result::Result<(), serde_json::Value> {
+    let CarrierPeerContentFetch {
+        data_dir,
+        network,
+        source,
+        request,
+    } = fetch;
     if is_trusted_source_runtime(data_dir) {
         return Ok(());
     }
@@ -2990,9 +3003,13 @@ async fn carrier_provider_invoke_registry(
             return Ok(answer);
         }
         if operation == "fetch" {
-            if let Err(answer) =
-                admit_carrier_peer_content_fetch(data_dir, network, source_endpoint_id, &request)
-                    .await
+            if let Err(answer) = admit_carrier_peer_content_fetch(CarrierPeerContentFetch {
+                data_dir,
+                network,
+                source: source_endpoint_id,
+                request: &request,
+            })
+            .await
             {
                 return Ok(answer);
             }
@@ -3000,7 +3017,7 @@ async fn carrier_provider_invoke_registry(
         }
     }
 
-    let result = if target == "custody"
+    let result = if crate::custody_surface::is_runtime_provider_target(target)
         || target == crate::collaboration_history::HISTORY_PROVIDER
         || target == crate::collaboration_transport::SHARED_PROVIDER
     {
@@ -3011,8 +3028,13 @@ async fn carrier_provider_invoke_registry(
         registry.send_raw(target, &request).await
     };
     if let (Ok(_), Some((data_dir, network))) = (&result, admitted_read) {
-        if let Err(answer) =
-            admit_carrier_peer_content_fetch(data_dir, network, source_endpoint_id, &request).await
+        if let Err(answer) = admit_carrier_peer_content_fetch(CarrierPeerContentFetch {
+            data_dir,
+            network,
+            source: source_endpoint_id,
+            request: &request,
+        })
+        .await
         {
             return Ok(answer);
         }
@@ -3045,21 +3067,21 @@ async fn carrier_provider_invoke_registry(
 }
 
 fn carrier_provider_target_allowed(target: &str) -> bool {
-    matches!(
-        target,
-        "content"
-            | "model"
-            | "custody"
-            | "rights"
-            | "key"
-            | "decrypt"
-            | "drm"
-            | "collaboration"
-            | "collaboration-direct"
-            | "collaboration-profile"
-            | "collaboration.history"
-            | "collaboration.shared"
-    )
+    crate::custody_surface::carrier_target_allowed(target)
+        || matches!(
+            target,
+            "content"
+                | "model"
+                | "rights"
+                | "key"
+                | "decrypt"
+                | "drm"
+                | "collaboration"
+                | "collaboration-direct"
+                | "collaboration-profile"
+                | "collaboration.history"
+                | "collaboration.shared"
+        )
 }
 
 fn validate_carrier_provider_invocation(
@@ -4935,11 +4957,11 @@ async fn fetch_content_via_carrier_provider_invocation(
             transfer: ProviderTransfer::Stream,
             range: None,
             progress: None,
-            transport: ProviderInvocationTransport::Carrier(ProviderCarrierRoute::ConnectTicket {
-                connect_ticket: ticket.to_string(),
-                peer_did: Some(holder_did.to_string()),
-                timeout_ms: Some(5_000),
-            }),
+            transport: ProviderInvocationTransport::Carrier(ProviderCarrierRoute::connect_ticket(
+                ticket.to_string(),
+                Some(holder_did.to_string()),
+                Some(5_000),
+            )),
         })
         .await
         // Keep the typed cause so availability can tell transit from refusal.
@@ -4974,11 +4996,11 @@ async fn ensure_content_via_carrier_provider_invocation(
     source_request: &serde_json::Value,
 ) -> Result<CarrierReplicationProof> {
     validate_content_cid(cid).map_err(anyhow::Error::msg)?;
-    let route = ProviderCarrierRoute::ConnectTicket {
-        connect_ticket: replica.connect_ticket.clone(),
-        peer_did: Some(replica.node_did.clone()),
-        timeout_ms: Some(5_000),
-    };
+    let route = ProviderCarrierRoute::connect_ticket(
+        replica.connect_ticket.clone(),
+        Some(replica.node_did.clone()),
+        Some(5_000),
+    );
     let admission =
         content_admission_via_carrier_provider_invocation(registry, &route, cid, source_request)
             .await?;
@@ -12699,11 +12721,11 @@ pub(crate) mod tests {
                 range: None,
                 progress: None,
                 transport: ProviderInvocationTransport::Carrier(
-                    ProviderCarrierRoute::ConnectTicket {
-                        connect_ticket: slow.ticket.clone(),
-                        peer_did: Some(slow.did.clone()),
-                        timeout_ms: Some(1_000),
-                    },
+                    ProviderCarrierRoute::connect_ticket(
+                        slow.ticket.clone(),
+                        Some(slow.did.clone()),
+                        Some(1_000),
+                    ),
                 ),
             };
 
@@ -13050,11 +13072,11 @@ pub(crate) mod tests {
             transfer: ProviderTransfer::Json,
             range: None,
             progress: None,
-            transport: ProviderInvocationTransport::Carrier(ProviderCarrierRoute::ConnectTicket {
-                connect_ticket: encode_ticket_for(remote_addr),
-                peer_did: Some(remote_did.to_string()),
-                timeout_ms: Some(5_000),
-            }),
+            transport: ProviderInvocationTransport::Carrier(ProviderCarrierRoute::connect_ticket(
+                encode_ticket_for(remote_addr),
+                Some(remote_did.to_string()),
+                Some(5_000),
+            )),
         }
     }
 
@@ -17896,11 +17918,8 @@ pub(crate) mod tests {
         let invoker = CarrierProviderInvoker::with_carrier_endpoint(consumer.clone());
         let request = serde_json::json!({"op":"fetch", "cid":"bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
             "path":"weights.gguf", "bounded_read":true, "range":{"start":0,"end":3}});
-        let route = ProviderCarrierRoute::ConnectTicket {
-            connect_ticket: encode_ticket_for(address),
-            peer_did: None,
-            timeout_ms: Some(5_000),
-        };
+        let route =
+            ProviderCarrierRoute::connect_ticket(encode_ticket_for(address), None, Some(5_000));
         let invocation = ProviderInvocation {
             source: "carrier-availability".into(),
             target: "content".into(),

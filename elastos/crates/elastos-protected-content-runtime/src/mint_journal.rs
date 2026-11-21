@@ -4350,4 +4350,91 @@ mod tests {
             Err(RuntimeMintJournalError::Conflict)
         );
     }
+
+    /// Records the mint journal writes today, committed byte for byte: a
+    /// fully provisioned mint (store `epc-mj05`) and a recorded intent
+    /// (`epc-mi02`). Later releases must keep reading both.
+    const MINT_STORE_V5_GOLDEN: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/testdata/runtime-mint-journal-v5.bin"
+    );
+    const MINT_INTENT_V2_GOLDEN: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/testdata/runtime-mint-intent-v2.bin"
+    );
+    /// Set on an unchanged tree to record the goldens once.
+    const RECORD_MINT_JOURNAL_GOLDEN: &str = "ELASTOS_RECORD_MINT_JOURNAL_GOLDEN";
+
+    fn golden(path: &str, written: &[u8]) -> Vec<u8> {
+        match fs::read(path) {
+            Ok(golden) => golden,
+            Err(_) if std::env::var_os(RECORD_MINT_JOURNAL_GOLDEN).is_some() => {
+                fs::create_dir_all(Path::new(path).parent().unwrap()).unwrap();
+                fs::write(path, written).unwrap();
+                written.to_vec()
+            }
+            Err(_) => panic!(
+                "record {path} on an unchanged tree with {RECORD_MINT_JOURNAL_GOLDEN}=1 and this test alone"
+            ),
+        }
+    }
+
+    fn replay_root_with(file_name: &str, bytes: &[u8]) -> (tempfile::TempDir, PathBuf) {
+        use std::os::unix::fs::OpenOptionsExt as _;
+
+        let temp = tempdir().unwrap();
+        let root = owner_only_journal_root(&temp);
+        create_owner_only_directory(&root).unwrap();
+        let mut file = fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o600)
+            .open(root.join(file_name))
+            .unwrap();
+        file.write_all(bytes).unwrap();
+        file.sync_all().unwrap();
+        (temp, root)
+    }
+
+    #[test]
+    fn mint_store_v5_file_reads_unchanged() {
+        let temp = tempdir().unwrap();
+        let root = owner_only_journal_root(&temp);
+        let journal = RuntimeMintJournal::new(&root);
+        let draft = draft();
+        let provisioned = custody_provision_all(&journal, &draft);
+        let file_name = hex::encode(draft.mint_id().as_bytes());
+        let written = fs::read(root.join(&file_name)).unwrap();
+        assert_eq!(&written[..8], STORE_MAGIC);
+
+        let golden = golden(MINT_STORE_V5_GOLDEN, &written);
+        assert_eq!(written, golden, "the mint journal record encoding moved");
+
+        let (_replay, replay_root) = replay_root_with(&file_name, &golden);
+        let loaded = RuntimeMintJournal::new(replay_root)
+            .load(draft.mint_id())
+            .unwrap();
+        assert_eq!(loaded, provisioned);
+    }
+
+    #[test]
+    fn mint_intent_v2_file_reads_unchanged() {
+        let temp = tempdir().unwrap();
+        let root = owner_only_journal_root(&temp);
+        let journal = RuntimeMintJournal::new(&root);
+        let intent = intent();
+        let persisted = journal.persist_intent(&intent).unwrap();
+        let file_name = format!("intent-{}", hex::encode(intent.request_id().as_bytes()));
+        let written = fs::read(root.join(&file_name)).unwrap();
+        assert_eq!(&written[..8], INTENT_MAGIC);
+
+        let golden = golden(MINT_INTENT_V2_GOLDEN, &written);
+        assert_eq!(written, golden, "the mint intent record encoding moved");
+
+        let (_replay, replay_root) = replay_root_with(&file_name, &golden);
+        let loaded = RuntimeMintJournal::new(replay_root)
+            .load_intent(intent.request_id())
+            .unwrap();
+        assert_eq!(loaded, persisted);
+    }
 }

@@ -1,0 +1,40 @@
+{
+  "schema": "elastos.library.runtime-custody-listing/v1",
+  "origin": {
+    "kind": "imported",
+    "listing_uri": "ipfs://bafkreibbbb",
+    "package_sha256": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "package": {
+    "schema": "elastos.protected-content.portable-listing/v1",
+    "mint_id": "0x1111111111111111111111111111111111111111111111111111111111111111",
+    "content_id": "0x2222222222222222222222222222222222222222222222222222222222222222",
+    "content_cid": "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+    "metadata_cid": "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku",
+    "token_uri": "ipfs://bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku",
+    "publisher_profile_did": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+    "display_name": "Fixture item",
+    "media_identity_base64": "AAAA",
+    "content_access_id": "0x3333333333333333333333333333333333333333333333333333333333333333",
+    "key_envelope_identity_base64": "AQID",
+    "rights_policy_identity_base64": "BAUG",
+    "content_key_commitment_base64": "BwgJ",
+    "seller_address": "0x4444444444444444444444444444444444444444",
+    "chain_namespace": "eip155",
+    "network": "base-mainnet",
+    "ledger": "0x5555555555555555555555555555555555555555",
+    "token_id": "1",
+    "operative": "0x6666666666666666666666666666666666666666",
+    "quantity": "10",
+    "price": "1000000",
+    "pay_token": "0x7777777777777777777777777777777777777777",
+    "mint_transaction_hash": "0x8888888888888888888888888888888888888888888888888888888888888888",
+    "published_at": 1763700000,
+    "payment_processor": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "availability": {
+    "checked_at": 1763700100,
+    "observed_replicas": 2,
+    "receipt_digest": "0x9999999999999999999999999999999999999999999999999999999999999999"
+  }
+}

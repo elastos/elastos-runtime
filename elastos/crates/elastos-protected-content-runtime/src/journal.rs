@@ -1967,4 +1967,82 @@ mod tests {
         assert!(!rendered.contains("7b2277616c6c65745f72657175657374"));
         assert!(!rendered.contains("7b2277616c6c65745f726573706f6e7365"));
     }
+
+    /// Plan B T4.1 step 0 (S4-Q2): one V1 record, written by the journal as
+    /// it was before T4.1 and committed byte for byte.
+    const V1_JOURNAL_GOLDEN: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/testdata/runtime-release-journal-v1.bin"
+    );
+    /// Set on the unchanged tree to record the golden once (TODO-GOLDEN).
+    const RECORD_V1_JOURNAL_GOLDEN: &str = "ELASTOS_RECORD_V1_JOURNAL_GOLDEN";
+
+    /// The guard's V1 record: a started release that persisted two
+    /// replayable decisions, then a terminal of two contributions. Every input is
+    /// deterministic (Ed25519 and RFC 6979 signatures, fixed times).
+    #[test]
+    fn v1_journal_file_reads_unchanged() {
+        let temp = tempdir().unwrap();
+        let root = owner_only_journal_root(&temp);
+        let journal = RuntimeReleaseJournal::new(root.clone());
+        let operation = signed_runtime_release_operation(0x42);
+        let draft = draft(0x42);
+        let decisions = vec![
+            signed_node_rights_decision(&operation, 1, RightsDecisionV1::Allowed),
+            signed_node_rights_decision(&operation, 2, RightsDecisionV1::Allowed),
+        ];
+        let terminal = RuntimeReleaseTerminalResult::ContributionsReady {
+            signed_node_contributions: vec![
+                signed_node_contribution(&operation, 1),
+                signed_node_contribution(&operation, 2),
+            ],
+        };
+        journal.persist_before_provider_effect(&draft).unwrap();
+        journal.mark_provider_effect_started(&draft).unwrap();
+        journal
+            .persist_replayable_rights_decisions(&draft, &decisions)
+            .unwrap();
+        journal.mark_terminal(&draft, terminal.clone()).unwrap();
+        let key = draft.operation_hash().unwrap();
+        let file_name = lower_hex_digest(slot_hash_for(key));
+        let written = fs::read(root.join(&file_name)).unwrap();
+
+        let golden = match fs::read(V1_JOURNAL_GOLDEN) {
+            Ok(golden) => golden,
+            Err(_) if std::env::var_os(RECORD_V1_JOURNAL_GOLDEN).is_some() => {
+                fs::create_dir_all(Path::new(V1_JOURNAL_GOLDEN).parent().unwrap()).unwrap();
+                fs::write(V1_JOURNAL_GOLDEN, &written).unwrap();
+                written.clone()
+            }
+            Err(_) => panic!(
+                "TODO-GOLDEN: record {V1_JOURNAL_GOLDEN} on the tree before Plan B T4.1 with \
+                 {RECORD_V1_JOURNAL_GOLDEN}=1 and this test alone"
+            ),
+        };
+        assert_eq!(written, golden, "the V1 journal record encoding moved");
+
+        // The committed file reads back as the same record.
+        let replay_temp = tempdir().unwrap();
+        let replay_root = owner_only_journal_root(&replay_temp);
+        create_owner_only_directory(&replay_root).unwrap();
+        {
+            use std::io::Write as _;
+            use std::os::unix::fs::OpenOptionsExt as _;
+            let mut file = OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .mode(0o600)
+                .open(replay_root.join(&file_name))
+                .unwrap();
+            file.write_all(&golden).unwrap();
+            file.sync_all().unwrap();
+        }
+        let loaded = RuntimeReleaseJournal::new(replay_root).load(key).unwrap();
+        assert_eq!(loaded.draft(), &draft);
+        assert_eq!(loaded.terminal_result(), Some(&terminal));
+        // The terminal write drops the replayable decisions, as before T4.1.
+        assert!(loaded.replayable_rights_decisions().is_empty());
+        assert!(loaded.provider_effect_started());
+        assert_eq!(loaded, journal.load(key).unwrap());
+    }
 }

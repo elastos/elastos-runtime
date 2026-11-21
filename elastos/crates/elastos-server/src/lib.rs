@@ -42,6 +42,7 @@ pub(crate) mod collaboration_transport;
 pub(crate) mod component;
 pub mod content;
 pub mod crypto;
+pub(crate) mod custody_surface;
 pub mod documents;
 pub mod esp_binding;
 pub mod fetcher;
