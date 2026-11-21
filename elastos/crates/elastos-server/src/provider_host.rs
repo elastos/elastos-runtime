@@ -219,7 +219,7 @@ impl ProviderHostPlan {
 
         let mut providers = Vec::with_capacity(1 + additional.len());
         for name_or_path in std::iter::once(target).chain(additional.iter().map(String::as_str)) {
-            let resolved = resolve_provider(name_or_path)?;
+            let resolved = resolve_provider(&data_dir, name_or_path)?;
             if providers
                 .iter()
                 .any(|hosted: &HostedProvider| hosted.plane == resolved.plane)
@@ -253,7 +253,12 @@ impl ProviderHostPlan {
 
 /// Interpret a `--with` / target argument as a binary path when it looks like
 /// one, otherwise as an installed provider name.
-fn resolve_provider(name_or_path: &str) -> anyhow::Result<HostedProvider> {
+///
+/// A name resolves only to the copy installed in this data dir's `bin/`,
+/// checked against the checksum `components.json` records for it. Override
+/// variables, other install locations and `PATH` are not searched for a name;
+/// an operator who wants another build passes its path.
+fn resolve_provider(data_dir: &Path, name_or_path: &str) -> anyhow::Result<HostedProvider> {
     let name = provider_name_of(name_or_path);
     let plane = ProviderPlane::from_provider_name(name).ok_or_else(|| {
         anyhow::anyhow!(
@@ -269,9 +274,18 @@ fn resolve_provider(name_or_path: &str) -> anyhow::Result<HostedProvider> {
         }
         path
     } else {
-        crate::find_installed_provider_binary(name).ok_or_else(|| {
-            anyhow::anyhow!("{name} is not installed.\n  Run:\n    elastos setup --with {name}")
-        })?
+        let path = data_dir.join("bin").join(name);
+        if !path.is_file() {
+            anyhow::bail!("{name} is not installed.\n  Run:\n    elastos setup --with {name}");
+        }
+        elastos_server::binaries::verify_component_binary_with_data_dir(data_dir, name, &path).with_context(
+            || {
+                format!(
+                    "installed {name} failed verification; reinstall it with `elastos setup --with {name}`, or pass a binary path to run a build you chose"
+                )
+            },
+        )?;
+        path
     };
 
     Ok(HostedProvider { plane, binary_path })
@@ -515,7 +529,7 @@ mod tests {
 
     #[test]
     fn a_missing_provider_binary_path_fails_closed() {
-        let error = resolve_provider("/nonexistent/dir/ipfs-provider")
+        let error = resolve_provider(Path::new("/nonexistent"), "/nonexistent/dir/ipfs-provider")
             .expect_err("a missing binary must fail closed");
         assert!(error.to_string().contains("is not a file"), "{error}");
     }
@@ -534,6 +548,167 @@ mod tests {
         )
         .expect_err("a repeated provider must fail closed");
         assert!(error.to_string().contains("more than once"), "{error}");
+    }
+
+    /// Serialises the rows that set a provider override in the environment.
+    static PROVIDER_NAME_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    const AVAILABILITY_OVERRIDE_ENV: &str = "ELASTOS_AVAILABILITY_PROVIDER_BIN";
+
+    struct OverrideEnv(Option<std::ffi::OsString>);
+
+    impl OverrideEnv {
+        fn set(path: &Path) -> Self {
+            let previous = std::env::var_os(AVAILABILITY_OVERRIDE_ENV);
+            std::env::set_var(AVAILABILITY_OVERRIDE_ENV, path);
+            Self(previous)
+        }
+    }
+
+    impl Drop for OverrideEnv {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(value) => std::env::set_var(AVAILABILITY_OVERRIDE_ENV, value),
+                None => std::env::remove_var(AVAILABILITY_OVERRIDE_ENV),
+            }
+        }
+    }
+
+    fn current_platform() -> &'static str {
+        match (std::env::consts::OS, std::env::consts::ARCH) {
+            ("linux", "x86_64") => "linux-amd64",
+            ("linux", "aarch64") => "linux-arm64",
+            ("macos", "aarch64") => "darwin-arm64",
+            (os, arch) => panic!("unsupported test platform {os}-{arch}"),
+        }
+    }
+
+    /// A data dir whose `components.json` stamps `availability-provider` with
+    /// the checksum of `genuine`.
+    fn data_dir_stamping(temp: &Path, genuine: &[u8]) -> PathBuf {
+        use sha2::Digest as _;
+        let data_dir = temp.join("data");
+        std::fs::create_dir_all(data_dir.join("bin")).unwrap();
+        let checksum = format!("sha256:{}", hex::encode(sha2::Sha256::digest(genuine)));
+        let manifest = serde_json::json!({
+            "external": {
+                "availability-provider": {
+                    "install_path": "bin/availability-provider",
+                    "platforms": {
+                        current_platform(): {
+                            "checksum": checksum,
+                            "install_path": "bin/availability-provider"
+                        }
+                    }
+                }
+            },
+            "capsules": {},
+            "profiles": {}
+        });
+        std::fs::write(
+            data_dir.join("components.json"),
+            serde_json::to_vec_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+        data_dir
+    }
+
+    fn override_binary(temp: &Path) -> PathBuf {
+        let dir = temp.join("elsewhere");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("availability-provider");
+        std::fs::write(&path, b"some other program").unwrap();
+        path
+    }
+
+    #[test]
+    fn a_provider_name_does_not_start_an_override_binary() {
+        let _lock = PROVIDER_NAME_ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let temp = tempfile::tempdir().unwrap();
+        let data_dir = data_dir_stamping(temp.path(), b"genuine provider");
+        let _env = OverrideEnv::set(&override_binary(temp.path()));
+
+        let error = ProviderHostPlan::resolve(data_dir, "availability-provider", &[], None)
+            .expect_err("a provider name resolves only to the checked installed copy");
+        assert!(error.to_string().contains("not installed"), "{error}");
+    }
+
+    #[test]
+    fn a_provider_name_refuses_an_installed_binary_that_fails_its_checksum() {
+        let _lock = PROVIDER_NAME_ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let temp = tempfile::tempdir().unwrap();
+        let data_dir = data_dir_stamping(temp.path(), b"genuine provider");
+        std::fs::write(
+            data_dir.join("bin").join("availability-provider"),
+            b"replaced provider",
+        )
+        .unwrap();
+        let _env = OverrideEnv::set(&override_binary(temp.path()));
+
+        let error = ProviderHostPlan::resolve(data_dir, "availability-provider", &[], None)
+            .expect_err("a provider whose bytes differ from components.json must be refused");
+        assert!(
+            format!("{error:#}").contains("failed checksum verification"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn a_provider_name_resolves_to_the_verified_installed_binary() {
+        let _lock = PROVIDER_NAME_ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let temp = tempfile::tempdir().unwrap();
+        let data_dir = data_dir_stamping(temp.path(), b"genuine provider");
+        let installed = data_dir.join("bin").join("availability-provider");
+        std::fs::write(&installed, b"genuine provider").unwrap();
+        let _env = OverrideEnv::set(&override_binary(temp.path()));
+
+        let plan = ProviderHostPlan::resolve(data_dir, "availability-provider", &[], None)
+            .expect("the verified installed provider must resolve");
+        assert_eq!(plan.providers.len(), 1);
+        assert_eq!(plan.providers[0].binary_path, installed);
+    }
+
+    #[test]
+    fn a_provider_name_without_current_platform_metadata_is_refused() {
+        let temp = tempfile::tempdir().unwrap();
+        let data_dir = data_dir_stamping(temp.path(), b"genuine provider");
+        let installed = data_dir.join("bin/availability-provider");
+        std::fs::write(&installed, b"genuine provider").unwrap();
+        let path = data_dir.join("components.json");
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        manifest["external"]["availability-provider"]["platforms"]
+            .as_object_mut()
+            .unwrap()
+            .remove(current_platform());
+        std::fs::write(path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let error = ProviderHostPlan::resolve(data_dir.clone(), "availability-provider", &[], None)
+            .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(
+            message.contains(&format!("no platform entry for {}", current_platform())),
+            "{message}"
+        );
+        assert!(message.contains("pass a binary path"), "{message}");
+        assert!(
+            ProviderHostPlan::resolve(data_dir, installed.to_str().unwrap(), &[], None).is_ok()
+        );
+    }
+
+    #[test]
+    fn an_explicit_provider_path_stays_operator_selected() {
+        let temp = tempfile::tempdir().unwrap();
+        let data_dir = data_dir_stamping(temp.path(), b"genuine provider");
+        let chosen = override_binary(temp.path());
+
+        let plan = ProviderHostPlan::resolve(data_dir, chosen.to_str().unwrap(), &[], None)
+            .expect("an explicit binary path is the operator's own choice");
+        assert_eq!(plan.providers[0].binary_path, chosen);
     }
 
     #[test]

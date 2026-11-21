@@ -1222,6 +1222,7 @@ mod browser_profile;
 mod browser_reconciliation;
 mod collaboration_presence;
 mod content_sandbox;
+pub(in crate::api) mod cs_child_saves;
 mod documents;
 mod esp;
 mod frontdoor;

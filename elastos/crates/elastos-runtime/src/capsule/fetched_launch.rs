@@ -110,7 +110,7 @@ fn try_prepare_bundle(
     let manifest_dir = manifest_path
         .parent()
         .ok_or_else(|| "Fetched capsule bundle manifest has no parent directory".to_string())?;
-    let manifest_bytes = std::fs::read(&manifest_path)
+    let manifest_bytes = elastos_common::capsule_manifest_file::read(&manifest_path)
         .map_err(|err| format!("Failed to read fetched capsule manifest: {}", err))?;
     let manifest: CapsuleManifest = serde_json::from_slice(&manifest_bytes)
         .map_err(|err| format!("Invalid fetched capsule manifest: {}", err))?;
@@ -236,6 +236,40 @@ mod tests {
         .expect_err("bundle without manifest should fail");
 
         assert!(err.contains("missing capsule.json"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fetched_symlink_manifest_is_refused() {
+        let encoder = GzEncoder::new(Vec::new(), Compression::default());
+        let mut tar = Builder::new(encoder);
+        let mut target_header = tar::Header::new_gnu();
+        target_header.set_mode(0o644);
+        target_header.set_size(2);
+        target_header.set_cksum();
+        tar.append_data(&mut target_header, "chat/real.json", b"{}" as &[u8])
+            .unwrap();
+        let mut header = tar::Header::new_gnu();
+        header.set_mode(0o644);
+        header.set_entry_type(tar::EntryType::Symlink);
+        header.set_size(0);
+        header.set_cksum();
+        tar.append_link(&mut header, "chat/capsule.json", "real.json")
+            .unwrap();
+        let bundle = tar.into_inner().unwrap().finish().unwrap();
+        let error = prepare_fetched_capsule(
+            "QmBundleCid",
+            FetchResult {
+                content: bundle,
+                source: FetchSource::LocalCache,
+                verified: true,
+            },
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("Failed to read fetched capsule manifest"),
+            "{error}"
+        );
     }
 
     #[test]

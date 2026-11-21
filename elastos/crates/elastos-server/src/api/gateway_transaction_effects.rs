@@ -2614,7 +2614,11 @@ fn load_transaction_effect_store(
     .map_err(|err| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to read Runtime transaction effects: {err}"),
+            gateway_shown_text(
+                "transaction",
+                format!("failed to read Runtime transaction effects: {err}"),
+                &err,
+            ),
         )
     })?;
     if bytes.len() > MAX_TRANSACTION_EFFECT_STORE_BYTES {
@@ -2626,7 +2630,11 @@ fn load_transaction_effect_store(
     let store: RuntimeTransactionEffectStore = serde_json::from_slice(&bytes).map_err(|err| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("invalid Runtime transaction effect store: {err}"),
+            gateway_shown_text(
+                "transaction",
+                format!("invalid Runtime transaction effect store: {err}"),
+                &anyhow::Error::new(err),
+            ),
         )
     })?;
     store.validate(principal_id).map_err(internal_error)?;
@@ -2643,7 +2651,11 @@ fn save_transaction_effect_store(
     let bytes = serde_json::to_vec_pretty(store).map_err(|err| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to encode Runtime transaction effects: {err}"),
+            gateway_shown_text(
+                "transaction",
+                format!("failed to encode Runtime transaction effects: {err}"),
+                &anyhow::Error::new(err),
+            ),
         )
     })?;
     if bytes.len() > MAX_TRANSACTION_EFFECT_STORE_BYTES {
@@ -2657,7 +2669,11 @@ fn save_transaction_effect_store(
         std::fs::create_dir_all(parent).map_err(|err| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to create Runtime transaction effect storage: {err}"),
+                gateway_shown_text(
+                    "transaction",
+                    format!("failed to create Runtime transaction effect storage: {err}"),
+                    &anyhow::Error::new(err),
+                ),
             )
         })?;
     }
@@ -2670,9 +2686,16 @@ fn save_transaction_effect_store(
         &bytes,
     )
     .map_err(|err| {
+        if err.is::<crate::auth::ProtectedRecordKeptElsewhere>() {
+            return (StatusCode::FORBIDDEN, err.to_string());
+        }
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to persist Runtime transaction effects: {err}"),
+            gateway_shown_text(
+                "transaction",
+                format!("failed to persist Runtime transaction effects: {err}"),
+                &err,
+            ),
         )
     })
 }
@@ -2848,7 +2871,10 @@ fn wallet_unavailable(err: anyhow::Error) -> (StatusCode, String) {
 }
 
 fn internal_error(err: anyhow::Error) -> (StatusCode, String) {
-    (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        gateway_error_text("transaction", &err),
+    )
 }
 
 fn conflict_error(err: anyhow::Error) -> (StatusCode, String) {
@@ -3108,6 +3134,52 @@ mod approved_request_resume_tests {
     use tokio::sync::Mutex;
 
     use super::*;
+
+    #[test]
+    fn transaction_effect_damaged_store_keeps_guidance_without_disk_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = test_gateway_state(dir.path(), None);
+        let principal = "principal:test";
+        crate::auth::store_test_principal_root_protection(&state.data_dir, principal);
+        let (root, uri, path) = transaction_effect_location(&state, principal).unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        crate::auth::write_principal_root_object(
+            &state.data_dir,
+            principal,
+            &root,
+            &uri,
+            &path,
+            b"{}",
+        )
+        .unwrap();
+        let mut damaged = std::fs::read(&path).unwrap();
+        damaged[9] = 0xff;
+        std::fs::write(&path, &damaged).unwrap();
+        let (status, message) = load_transaction_effect_store(&state, principal).unwrap_err();
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(
+            !message.contains(&state.data_dir.display().to_string()),
+            "{message}"
+        );
+        assert!(message.contains("upload it again in Library"), "{message}");
+        assert_eq!(std::fs::read(path).unwrap(), damaged);
+    }
+
+    #[test]
+    fn transaction_effect_raw_parse_error_uses_fixed_response() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = test_gateway_state(dir.path(), None);
+        let (_, _, path) = transaction_effect_location(&state, "principal:test").unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, b"invalid JSON").unwrap();
+        let (status, message) =
+            load_transaction_effect_store(&state, "principal:test").unwrap_err();
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(
+            message,
+            "transaction request failed on this Runtime; the Runtime log has the cause"
+        );
+    }
 
     struct MockApprovedWalletProvider {
         approvals: Mutex<Vec<Value>>,
@@ -4454,3 +4526,7 @@ mod approved_request_resume_tests {
         assert_eq!(err.0, StatusCode::NOT_FOUND);
     }
 }
+
+#[cfg(test)]
+#[path = "gateway_tests/cs_child_saves/transaction_rows.rs"]
+mod cs_rows;

@@ -19,6 +19,7 @@ use elastos_runtime::capability::{
 use elastos_runtime::session::Session;
 
 use crate::provider_resource::ensure_generic_wallet_capability;
+use crate::resource_bridge::reject_localhost_user_area_root;
 
 /// Shared state for capability handlers
 #[derive(Clone)]
@@ -93,6 +94,8 @@ pub async fn request_capability(
             "Unsupported resource scheme. Allowed: elastos://, localhost://".to_string(),
         ));
     }
+    reject_localhost_user_area_root(&input.resource)
+        .map_err(|message| (StatusCode::FORBIDDEN, message))?;
 
     if input.resource == "elastos://browser/internet" {
         return Ok(Json(RequestCapabilityOutput {
@@ -700,6 +703,62 @@ pub async fn get_audit_event_types(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[tokio::test]
+    async fn capability_route_refuses_user_area_roots_before_pending() {
+        let state = test_state();
+        for area in ["Users", "UsersAI"] {
+            for suffix in [
+                "",
+                "/",
+                "/.",
+                "/./",
+                "//.",
+                "/./.",
+                "/x/..",
+                "/self/..",
+                "/ /",
+                "/\t/",
+                "/\u{a0}/",
+                "// /",
+                "/. /",
+                "/.\t/",
+                "/.\u{a0}/",
+                "//.\u{a0}/",
+                "/.\u{3000}/",
+                "/.\u{2028}/",
+                "//. /",
+                "/. //",
+            ] {
+                let resource = format!("localhost://{area}{suffix}");
+                let error = request_capability(
+                    State(state.clone()),
+                    Extension(Session::new_capsule("test-app".into())),
+                    Json(RequestCapabilityInput {
+                        resource: resource.clone(),
+                        action: "read".into(),
+                        reason: "fixture".into(),
+                    }),
+                )
+                .await
+                .expect_err(&resource);
+                assert_eq!(error.0, StatusCode::FORBIDDEN, "{resource}");
+                assert_eq!(
+                    error.1,
+                    if suffix.ends_with("/..") {
+                        "localhost paths cannot contain .."
+                    } else {
+                        "Capsules cannot access a localhost user area root"
+                    },
+                    "{resource}"
+                );
+                assert!(
+                    state.pending_store.list_pending().await.is_empty(),
+                    "{resource}"
+                );
+            }
+        }
+    }
 
     #[tokio::test]
     async fn review559_exit_and_net_are_system_only_resources() {

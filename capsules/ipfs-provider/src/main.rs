@@ -2407,22 +2407,43 @@ fn validate_dest_path(data_dir: &Path, dest: &Path) -> Result<(), String> {
     if !dest.is_absolute() {
         return Err("Destination path must be absolute".to_string());
     }
+    // Check the spelling that the write receives. `components()` drops inner
+    // `.` components, so inspect the original path text instead.
+    if dest
+        .to_str()
+        .ok_or("Destination path is not UTF-8")?
+        .split(std::path::MAIN_SEPARATOR)
+        .any(|part| matches!(part, "." | ".."))
+    {
+        return Err("Destination path cannot contain . or ..".to_string());
+    }
 
-    // Canonicalize parent (dest itself may not exist yet)
-    let resolved = if dest.exists() {
-        dest.canonicalize()
-            .map_err(|e| format!("Failed to canonicalize path: {}", e))?
-    } else if let Some(parent) = dest.parent() {
-        if parent.exists() {
-            let p = parent
-                .canonicalize()
-                .map_err(|e| format!("Failed to canonicalize parent: {}", e))?;
-            p.join(dest.file_name().unwrap_or_default())
-        } else {
-            dest.to_path_buf()
+    // Resolve the nearest existing ancestor, then append only missing names.
+    // A dangling symlink is an existing entry that cannot be canonicalized.
+    let mut ancestor = dest;
+    let mut missing = Vec::new();
+    let resolved = loop {
+        match ancestor.canonicalize() {
+            Ok(mut path) => {
+                for name in missing.iter().rev() {
+                    path.push(name);
+                }
+                break path;
+            }
+            Err(error) if ancestor.symlink_metadata().is_ok() => {
+                return Err(format!("Failed to canonicalize path: {error}"));
+            }
+            Err(_) => {
+                missing.push(
+                    ancestor
+                        .file_name()
+                        .ok_or("Destination has no existing ancestor")?,
+                );
+                ancestor = ancestor
+                    .parent()
+                    .ok_or("Destination has no existing ancestor")?;
+            }
         }
-    } else {
-        dest.to_path_buf()
     };
 
     // Allowed prefixes. The destination path above is canonicalized, so the
@@ -5098,6 +5119,83 @@ mod tests {
         let data_dir = data_dir();
         let result = validate_dest_path(&data_dir, Path::new("relative/path"));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_dest_path_refuses_dot_components_on_written_path() {
+        let data_dir = tempfile::tempdir().unwrap();
+        // The allowed temp root is canonicalized inside validate_dest_path, so
+        // build the destination from the canonical form too.
+        let tmp = std::env::temp_dir().canonicalize().unwrap();
+        let escape_root = tmp
+            .parent()
+            .unwrap()
+            .join(format!("ipfs-dest-escape-{}", std::process::id()));
+        assert!(!escape_root.exists());
+        let dest = tmp
+            .join("missing")
+            .join("..")
+            .join("..")
+            .join(escape_root.file_name().unwrap())
+            .join("file");
+        // Destination validation checks each written path component,
+        // including paths whose parent folder is absent.
+        assert!(!dest.parent().unwrap().exists());
+        assert!(validate_dest_path(data_dir.path(), &dest).is_err());
+        // Destination components require a canonical spelling inside the root.
+        let inside = data_dir.path().join("new").join("..").join("file");
+        assert!(validate_dest_path(data_dir.path(), &inside).is_err());
+        assert!(validate_dest_path(data_dir.path(), &data_dir.path().join("./file")).is_err());
+        assert!(validate_dest_path(data_dir.path(), &data_dir.path().join("file")).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_validate_dest_path_refuses_symlink_followed_by_dotdot_and_dangling_link() {
+        use std::os::unix::fs::symlink;
+
+        let data_dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let link = data_dir.path().join("link");
+        symlink(outside.path(), &link).unwrap();
+        assert!(validate_dest_path(data_dir.path(), &link.join("..").join("file")).is_err());
+
+        let dangling = data_dir.path().join("dangling");
+        symlink(outside.path().join("missing"), &dangling).unwrap();
+        assert!(validate_dest_path(data_dir.path(), &dangling).is_err());
+        assert!(validate_dest_path(data_dir.path(), &dangling.join("file")).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn provider_request_refuses_unsafe_destinations_before_kubo_access() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        symlink(outside.path(), root.path().join("link")).unwrap();
+        symlink(outside.path().join("missing"), root.path().join("dangling")).unwrap();
+        let mut provider = bounded_cat_fixture_provider(root.path(), 0);
+        let paths = [
+            root.path().join("link/../file"),
+            root.path().join("dangling"),
+            root.path().join("dangling/file"),
+            root.path().join("./file"),
+        ];
+        for dest in paths {
+            for op in ["cat_to_path", "download_directory"] {
+                let request = serde_json::json!({
+                    "op": op, "cid": "fixture-cid", "dest": dest,
+                });
+                let response = provider.handle(serde_json::from_value(request).unwrap());
+                assert!(
+                    matches!(response, Response::Error { code, .. } if code == "invalid_dest"),
+                    "{op} {}",
+                    dest.display()
+                );
+            }
+        }
+        assert!(provider.kubo_child.is_none());
     }
 
     #[test]

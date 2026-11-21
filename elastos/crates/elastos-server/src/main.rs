@@ -1863,8 +1863,8 @@ async fn serve_web_capsule(
     // Read manifest if present (may have viewer field)
     let manifest_path = capsule_dir.join("capsule.json");
     let manifest: Option<elastos_common::CapsuleManifest> = if manifest_path.exists() {
-        let data = tokio::fs::read_to_string(&manifest_path).await?;
-        let m: elastos_common::CapsuleManifest = serde_json::from_str(&data)?;
+        let data = elastos_common::capsule_manifest_file::read(&manifest_path)?;
+        let m: elastos_common::CapsuleManifest = serde_json::from_slice(&data)?;
         m.validate()
             .map_err(|e| anyhow::anyhow!("Invalid manifest: {}", e))?;
         Some(m)

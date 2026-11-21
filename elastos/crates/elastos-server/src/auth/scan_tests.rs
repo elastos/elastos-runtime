@@ -561,11 +561,8 @@ fn linked_declared_folder_is_refused_by_name() {
     std::os::unix::fs::symlink(elsewhere.path(), &documents).unwrap();
     assert_eq!(
         home.ready().unwrap_err().to_string(),
-        format!(
-            "Documents is a link. Protected Home folders hold only regular files and folders. \
-             Move it out of {}, then try again.",
-            documents.parent().unwrap().display()
-        )
+        "Documents is a link. Protected Home folders hold only regular files and folders. \
+         Move it out of your Home's data folder, then try again."
     );
 
     // A link above an exact declaration.
@@ -583,11 +580,8 @@ fn linked_declared_folder_is_refused_by_name() {
         verify_declared_principal_roots_ready(home.data_dir(), &declarations)
             .unwrap_err()
             .to_string(),
-        format!(
-            "Documents/notes is a link. Protected Home folders hold only regular files and \
-             folders. Move it out of {}, then try again.",
-            notes.parent().unwrap().display()
-        )
+        "Documents/notes is a link. Protected Home folders hold only regular files and \
+         folders. Move it out of your Home's data folder, then try again."
     );
 }
 
@@ -623,7 +617,7 @@ fn names_with_line_breaks_or_bidi_render_on_one_line() {
         "{message}"
     );
     assert!(
-        message.contains("/Documents/x\\u{2066}\\u{a}Error: y, then try again."),
+        message.ends_with("Move it out of your Home's data folder, then try again."),
         "{message}"
     );
 }

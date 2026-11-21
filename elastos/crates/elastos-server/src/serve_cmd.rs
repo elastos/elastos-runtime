@@ -63,8 +63,8 @@ pub async fn run_serve(
     if let Some(capsule_dir) = capsule_dir {
         let manifest_path = capsule_dir.join("capsule.json");
         if manifest_path.exists() {
-            let manifest_data = tokio::fs::read_to_string(&manifest_path).await?;
-            let manifest: elastos_common::CapsuleManifest = serde_json::from_str(&manifest_data)?;
+            let manifest_data = elastos_common::capsule_manifest_file::read(&manifest_path)?;
+            let manifest: elastos_common::CapsuleManifest = serde_json::from_slice(&manifest_data)?;
             manifest
                 .validate()
                 .map_err(|e| anyhow::anyhow!("Invalid manifest: {}", e))?;
@@ -97,10 +97,9 @@ pub async fn run_serve(
                 let pending_store = infra.pending_store.clone();
                 let tls_config = infra.tls_config;
 
-                let handle = vm_provider
-                    .load(&capsule_dir, manifest.clone())
-                    .await
-                    .map_err(|e| anyhow::anyhow!("Failed to load capsule: {}", e))?;
+                let handle =
+                    load_serve_microvm(&runtime, &vm_provider, &capsule_dir, manifest.clone())
+                        .await?;
 
                 if let Some(vm_id) = vm_provider.get_vm_id(&handle.id).await {
                     let vm_session = create_initial_vm_session(&session_registry, &vm_id).await;
@@ -533,6 +532,17 @@ async fn create_initial_vm_session(
         .await
 }
 
+async fn load_serve_microvm(
+    runtime: &elastos_server::runtime::Runtime,
+    provider: &dyn ComputeProvider,
+    path: &std::path::Path,
+    manifest: elastos_common::CapsuleManifest,
+) -> anyhow::Result<elastos_compute::CapsuleHandle> {
+    elastos_server::runtime::check_entrypoint_file(path, &manifest.entrypoint).await?;
+    runtime.verify_capsule_signature(&manifest, path).await?;
+    Ok(provider.load(path, manifest).await?)
+}
+
 fn current_binary_sha256() -> anyhow::Result<String> {
     let self_exe = std::env::current_exe()
         .map_err(|e| anyhow::anyhow!("Failed to determine runtime binary: {}", e))?;
@@ -549,6 +559,134 @@ mod tests {
     use elastos_runtime::primitives::audit::AuditLog;
     use elastos_server::api::middleware::{auth_middleware, shell_only_middleware, ApiState};
     use tower::ServiceExt;
+
+    #[derive(Default)]
+    struct LoadCounter(std::sync::atomic::AtomicUsize);
+
+    #[async_trait::async_trait]
+    impl ComputeProvider for LoadCounter {
+        async fn load(
+            &self,
+            _: &std::path::Path,
+            manifest: elastos_common::CapsuleManifest,
+        ) -> elastos_common::Result<elastos_compute::CapsuleHandle> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(elastos_compute::CapsuleHandle {
+                id: elastos_common::CapsuleId::new("serve-test"),
+                manifest,
+                args: vec![],
+            })
+        }
+        async fn start(&self, _: &elastos_compute::CapsuleHandle) -> elastos_common::Result<()> {
+            unreachable!()
+        }
+        async fn stop(&self, _: &elastos_compute::CapsuleHandle) -> elastos_common::Result<()> {
+            unreachable!()
+        }
+        async fn status(
+            &self,
+            _: &elastos_compute::CapsuleHandle,
+        ) -> elastos_common::Result<elastos_common::CapsuleStatus> {
+            unreachable!()
+        }
+        async fn info(
+            &self,
+            _: &elastos_compute::CapsuleHandle,
+        ) -> elastos_common::Result<elastos_compute::CapsuleInfo> {
+            unreachable!()
+        }
+        fn supports(&self, _: &elastos_common::CapsuleType) -> bool {
+            true
+        }
+    }
+
+    #[tokio::test]
+    async fn serve_microvm_requires_admission_before_load() {
+        let temp = tempfile::tempdir().unwrap();
+        let storage = Arc::new(
+            elastos_storage::providers::LocalFSProvider::new(temp.path().join("storage"))
+                .await
+                .unwrap(),
+        );
+        let provider = Arc::new(LoadCounter::default());
+        let runtime = elastos_server::runtime::Runtime::new(storage, provider.clone());
+        runtime
+            .configure_capsule_admission(temp.path(), &[], false)
+            .await
+            .unwrap();
+        let mut manifest: elastos_common::CapsuleManifest =
+            serde_json::from_value(serde_json::json!({
+                "schema": "elastos.capsule/v1", "version": "0.1.0", "name": "serve-test",
+                "role": "app", "type": "microvm", "entrypoint": "rootfs.ext4"
+            }))
+            .unwrap();
+        manifest.validate().unwrap();
+        let error = load_serve_microvm(&runtime, provider.as_ref(), temp.path(), manifest.clone())
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("is unsigned"), "{error}");
+        assert_eq!(provider.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+        let key = elastos_runtime::signature::SigningKey::from_bytes(&[29; 32]);
+        runtime
+            .configure_capsule_admission(
+                temp.path(),
+                &[hex::encode(key.verifying_key().to_bytes())],
+                false,
+            )
+            .await
+            .unwrap();
+        let image = b"isolated VM test image";
+        std::fs::write(temp.path().join("rootfs.ext4"), image).unwrap();
+        elastos_runtime::signature::sign_capsule(
+            &key,
+            &mut manifest,
+            &elastos_runtime::signature::hash_content(image),
+        )
+        .unwrap();
+        load_serve_microvm(&runtime, provider.as_ref(), temp.path(), manifest)
+            .await
+            .unwrap();
+        assert_eq!(provider.0.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn serve_microvm_requires_a_regular_contained_entrypoint_before_admission() {
+        let temp = tempfile::tempdir().unwrap();
+        let storage = Arc::new(
+            elastos_storage::providers::LocalFSProvider::new(temp.path().join("storage"))
+                .await
+                .unwrap(),
+        );
+        let provider = Arc::new(LoadCounter::default());
+        let runtime = elastos_server::runtime::Runtime::new(storage, provider.clone());
+        let capsule = temp.path().join("capsule");
+        std::fs::create_dir(&capsule).unwrap();
+        std::fs::create_dir(capsule.join("directory")).unwrap();
+        std::fs::write(temp.path().join("image"), b"VM image").unwrap();
+        std::os::unix::fs::symlink(temp.path().join("image"), capsule.join("linked")).unwrap();
+        let fifo = std::ffi::CString::new(capsule.join("pipe").to_str().unwrap()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+        for (entrypoint, requirement) in [
+            ("directory", "is not a regular file"),
+            ("linked", "leads out of the capsule directory"),
+            ("pipe", "is not a regular file"),
+        ] {
+            let manifest = serde_json::from_value(serde_json::json!({
+                "schema": "elastos.capsule/v1", "version": "0.1.0", "name": "serve-test",
+                "role": "app", "type": "microvm", "entrypoint": entrypoint
+            }))
+            .unwrap();
+            let error = load_serve_microvm(&runtime, provider.as_ref(), &capsule, manifest)
+                .await
+                .unwrap_err();
+            assert!(
+                error.to_string().contains(requirement),
+                "{entrypoint}: {error}"
+            );
+            assert_eq!(provider.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+        }
+    }
 
     async fn shell_route_status(
         registry: Arc<session::SessionRegistry>,

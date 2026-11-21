@@ -878,7 +878,11 @@ fn clean_storage_file_name(name: &str) -> anyhow::Result<String> {
 }
 
 fn viewer_error_response(err: anyhow::Error) -> Response {
+    if let Some(response) = super::gateway::protected_record_kept_elsewhere_response(&err) {
+        return response;
+    }
     let text = err.to_string();
+    let shown = super::gateway::gateway_shown_text("viewer", text.clone(), &err);
     let status = if text.contains("not found") {
         StatusCode::NOT_FOUND
     } else if text.contains("home launch token") {
@@ -896,5 +900,5 @@ fn viewer_error_response(err: anyhow::Error) -> Response {
     } else {
         StatusCode::INTERNAL_SERVER_ERROR
     };
-    (status, text).into_response()
+    (status, shown).into_response()
 }

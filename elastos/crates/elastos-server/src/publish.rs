@@ -1086,9 +1086,10 @@ fn load_capsule_manifests(
             if !capsule_json.is_file() {
                 continue;
             }
-            let manifest: CapsuleManifest =
-                serde_json::from_str(&std::fs::read_to_string(&capsule_json)?)
-                    .with_context(|| format!("Failed to parse {}", capsule_json.display()))?;
+            let manifest: CapsuleManifest = serde_json::from_slice(
+                &elastos_common::capsule_manifest_file::read(&capsule_json)?,
+            )
+            .with_context(|| format!("Failed to parse {}", capsule_json.display()))?;
             validate_publishable_manifest(&capsule_json, &manifest)?;
             if let Some(existing) = manifests.insert(manifest.name.clone(), manifest) {
                 anyhow::bail!(

@@ -1531,9 +1531,10 @@ pub(crate) async fn ensure_capsule_component_for_home_launch(
     drop(admitted);
 
     let installed_manifest = dest.join("capsule.json");
-    let manifest_bytes = fs::read(&installed_manifest).map_err(|err| {
-        anyhow::anyhow!("materialized capsule '{name}' is missing capsule.json: {err}")
-    })?;
+    let manifest_bytes =
+        elastos_common::capsule_manifest_file::read(&installed_manifest).map_err(|err| {
+            anyhow::anyhow!("materialized capsule '{name}' is missing capsule.json: {err}")
+        })?;
     let capsule_manifest: elastos_common::CapsuleManifest = serde_json::from_slice(&manifest_bytes)
         .map_err(|err| {
             anyhow::anyhow!("materialized capsule '{name}' has invalid capsule.json: {err}")
@@ -1970,7 +1971,11 @@ fn archive_executable_receipt_missing(
 }
 
 fn installed_capsule_bundle_stale_reason(name: &str, install_root: &Path) -> Option<String> {
-    let manifest_bytes = fs::read(install_root.join("capsule.json")).ok()?;
+    let manifest_bytes =
+        match elastos_common::capsule_manifest_file::read(&install_root.join("capsule.json")) {
+            Ok(bytes) => bytes,
+            Err(err) => return Some(format!("capsule metadata is unreadable: {err}")),
+        };
     let manifest: elastos_common::CapsuleManifest = match serde_json::from_slice(&manifest_bytes) {
         Ok(manifest) => manifest,
         Err(err) => return Some(format!("capsule metadata is invalid: {err}")),
@@ -2004,10 +2009,11 @@ fn installed_component_capsule_metadata_stale_reason(
     component: &Component,
     install_root: &Path,
 ) -> Option<String> {
-    let manifest_bytes = match fs::read(install_root.join("capsule.json")) {
-        Ok(bytes) => bytes,
-        Err(err) => return Some(format!("capsule metadata is unreadable: {err}")),
-    };
+    let manifest_bytes =
+        match elastos_common::capsule_manifest_file::read(&install_root.join("capsule.json")) {
+            Ok(bytes) => bytes,
+            Err(err) => return Some(format!("capsule metadata is unreadable: {err}")),
+        };
     let manifest: elastos_common::CapsuleManifest = match serde_json::from_slice(&manifest_bytes) {
         Ok(manifest) => manifest,
         Err(err) => return Some(format!("capsule metadata is invalid: {err}")),

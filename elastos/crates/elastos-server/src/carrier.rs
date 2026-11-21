@@ -6336,10 +6336,9 @@ fn content_availability_replicas_with_reputation(
 ) -> Vec<CarrierAvailabilityReplica> {
     let mut replicas = Vec::new();
     for message in messages {
-        let Ok((envelope, signer_did)) = crate::crypto::verify_signed_json_envelope_against_dids(
+        let Ok((envelope, signer_did)) = crate::crypto::verify_self_signed_json_envelope(
             message.content.as_bytes(),
             CONTENT_AVAILABILITY_ANNOUNCEMENT_DOMAIN,
-            &[],
         ) else {
             continue;
         };

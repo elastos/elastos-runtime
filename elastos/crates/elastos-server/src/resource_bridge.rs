@@ -180,18 +180,69 @@ struct ResourceInvokeDispatch {
     required_action: Action,
 }
 
+/// Why the bridge cannot turn a `resource_invoke` into a provider request.
+///
+/// `code` is the caller-visible error code; `message` keeps the free-form
+/// detail the bridge has always reported.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ResourceInvokeError {
+    code: &'static str,
+    message: String,
+}
+
+impl ResourceInvokeError {
+    fn new(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+        }
+    }
+}
+
+impl From<String> for ResourceInvokeError {
+    fn from(message: String) -> Self {
+        Self::new("invalid_resource_invoke", message)
+    }
+}
+
+impl From<&str> for ResourceInvokeError {
+    fn from(message: &str) -> Self {
+        Self::new("invalid_resource_invoke", message)
+    }
+}
+
+impl std::fmt::Display for ResourceInvokeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::ops::Deref for ResourceInvokeError {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        &self.message
+    }
+}
+
+impl PartialEq<&str> for ResourceInvokeError {
+    fn eq(&self, other: &&str) -> bool {
+        self.message == *other
+    }
+}
+
 fn resource_invoke_dispatch(
     request: &serde_json::Value,
     principal_id: Option<&str>,
-) -> Result<ResourceInvokeDispatch, String> {
+) -> Result<ResourceInvokeDispatch, ResourceInvokeError> {
     let uri = request["uri"]
         .as_str()
         .ok_or_else(|| "resource_invoke missing uri".to_string())?;
     if !is_supported_resource_scheme(uri) {
-        return Err("resource URI must use elastos:// or localhost://".to_string());
+        return Err("resource URI must use elastos:// or localhost://".into());
     }
     if is_system_only_backend_resource(uri) {
-        return Err("system backends are not app capabilities; use elastos://content".to_string());
+        return Err("system backends are not app capabilities; use elastos://content".into());
     }
     let uri = scope_current_user_alias(uri, principal_id)?;
 
@@ -210,7 +261,7 @@ fn resource_invoke_dispatch(
         if uri != WALLET_STATUS_RESOURCE || operation != "status" {
             return Err(
                 "generic Wallet dispatch is limited to read-only elastos://wallet/meta/status; use the private Runtime Wallet Bus for authority-bound operations"
-                    .to_string(),
+                    .into(),
             );
         }
         body = serde_json::json!({});
@@ -219,7 +270,29 @@ fn resource_invoke_dispatch(
         body = serde_json::json!({});
     }
     if !body.is_object() {
-        return Err("resource_invoke body must be a JSON object".to_string());
+        return Err("resource_invoke body must be a JSON object".into());
+    }
+    // Runtime binds each object request to its capsule's launch principal.
+    // The object provider resolves that principal's root for the operation.
+    if scheme == "object" {
+        let Some(launch_principal) = principal_id else {
+            return Err(ResourceInvokeError::new(
+                "principal_context_required",
+                "object requests require a principal-scoped launch context",
+            ));
+        };
+        match body.get("principal_id") {
+            None | Some(serde_json::Value::Null) => {
+                body["principal_id"] = serde_json::Value::String(launch_principal.to_string());
+            }
+            Some(serde_json::Value::String(named)) if named == launch_principal => {}
+            Some(_) => {
+                return Err(ResourceInvokeError::new(
+                    "object_principal_mismatch",
+                    "object request principal_id must match the principal this capsule was launched for",
+                ));
+            }
+        }
     }
     if scheme == "localhost" {
         if let Some(object) = body.as_object_mut() {
@@ -341,10 +414,10 @@ async fn authorize_and_dispatch_resource_invoke(
     bridge_ctx: &BridgeContext,
 ) -> serde_json::Value {
     let token_b64 = request["token"].as_str().unwrap_or("");
-    let dispatch = match resource_invoke_dispatch(request, bridge_ctx.principal_id.as_deref()) {
+    let mut dispatch = match resource_invoke_dispatch(request, bridge_ctx.principal_id.as_deref()) {
         Ok(dispatch) => dispatch,
-        Err(message) => {
-            return resource_error_response("invalid_resource_invoke", &message);
+        Err(err) => {
+            return resource_error_response(err.code, &err.message);
         }
     };
     let audit_id = format!(
@@ -412,6 +485,27 @@ async fn authorize_and_dispatch_resource_invoke(
             "denied",
             resource_error_response("capability_denied", "Capability validation failed"),
         );
+    }
+
+    // A model run is bound to this bridge's caller, never to the body.
+    if dispatch.scheme == "model" && dispatch.operation != "offers_list" {
+        match crate::api::gateway::bus_model_provider_request(
+            &dispatch.operation,
+            &dispatch.request,
+            bridge_ctx.data_dir.as_deref(),
+            bridge_ctx.principal_id.as_deref(),
+            &bridge_ctx.capsule_id,
+            &format!("capability:{}", token.id()),
+            &bridge_ctx.capsule_id,
+        ) {
+            Ok(stamped) => dispatch.request = stamped,
+            Err((code, message)) => {
+                let refusal = resource_error_response(code, &message);
+                return finish_component_invoke(
+                    bridge_ctx, &audit_id, &dispatch, "denied", refusal,
+                );
+            }
+        }
     }
 
     if let Some(response) = protected_principal_root_resource_response(
@@ -674,6 +768,39 @@ fn serialize_bridge_response(response: serde_json::Value) -> Vec<u8> {
     bytes
 }
 
+/// Apply the same area-root refusal at the capsule bridge and session HTTP routes.
+/// Empty, white-space-only, and current-directory segments, including a single dot
+/// with surrounding white space, do not count as children; parent segments are
+/// refused before any capability or provider lookup.
+pub(crate) fn reject_localhost_user_area_root(path_or_uri: &str) -> Result<(), String> {
+    reject_localhost_user_area(path_or_uri, false)
+}
+
+pub(crate) fn reject_localhost_user_area_path(path_or_uri: &str) -> Result<(), String> {
+    reject_localhost_user_area(path_or_uri, true)
+}
+
+fn reject_localhost_user_area(path_or_uri: &str, include_children: bool) -> Result<(), String> {
+    let Some(rooted) = rooted_localhost_uri(path_or_uri) else {
+        return Ok(());
+    };
+    let mut segments = rooted.trim_start_matches("localhost://").split('/');
+    let root = segments.next().unwrap_or_default();
+    let mut has_child = false;
+    for segment in segments {
+        match segment {
+            "" | "." => {}
+            _ if matches!(segment.trim(), "" | ".") => {}
+            ".." => return Err("localhost paths cannot contain ..".to_string()),
+            _ => has_child = true,
+        }
+    }
+    if (include_children || !has_child) && matches!(root, "Users" | "UsersAI") {
+        return Err("Capsules cannot access a localhost user area root".to_string());
+    }
+    Ok(())
+}
+
 fn scope_current_user_alias(
     uri_or_resource: &str,
     principal_id: Option<&str>,
@@ -681,6 +808,7 @@ fn scope_current_user_alias(
     let Some(rooted) = rooted_localhost_uri(uri_or_resource) else {
         return Ok(uri_or_resource.to_string());
     };
+    reject_localhost_user_area_root(&rooted)?;
 
     if is_unscoped_current_user_alias(&rooted) {
         let Some(principal_id) = principal_id else {
@@ -1048,15 +1176,27 @@ pub async fn handle_remote_request_with_audit_dir(
 
     let response = match request_type {
         "resource_invoke" => {
+            if request["uri"]
+                .as_str()
+                .is_some_and(|uri| provider_scheme_for_resource_uri(uri).as_deref() == Ok("object"))
+            {
+                return Ok(serde_json::json!({
+                    "id": id,
+                    "response": resource_error_response(
+                        "principal_context_required",
+                        "principal-root storage requires an in-runtime protected storage bridge",
+                    ),
+                }));
+            }
             let dispatch = match resource_invoke_dispatch(request, principal_id) {
                 Ok(dispatch) => dispatch,
-                Err(message) => {
+                Err(err) => {
                     return Ok(serde_json::json!({
                         "id": id,
                         "response": {
                             "type": "error",
-                            "code": "invalid_resource_invoke",
-                            "message": message,
+                            "code": err.code,
+                            "message": err.message,
                         }
                     }));
                 }
@@ -1084,6 +1224,16 @@ pub async fn handle_remote_request_with_audit_dir(
                     "response": resource_error_response(
                         "principal_context_required",
                         "principal-root storage requires an in-runtime protected storage bridge",
+                    ),
+                }));
+            }
+
+            if dispatch.scheme == "model" && dispatch.operation != "offers_list" {
+                return Ok(serde_json::json!({
+                    "id": id,
+                    "response": resource_error_response(
+                        "principal_context_required",
+                        "model runs require the in-runtime Bus bridge, which binds them to a principal",
                     ),
                 }));
             }
@@ -1358,6 +1508,7 @@ fn random_hex(bytes_len: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine as _;
     use ed25519_dalek::SigningKey;
     use elastos_runtime::{
         capability::token::{Action, CapabilityToken, ResourceId, TokenConstraints},
@@ -1878,6 +2029,99 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn handle_remote_request_refuses_foreign_object_at_protected_bridge_gate() {
+        let response = handle_remote_request(
+            r#"{"id":45,"request":{"type":"resource_invoke","uri":"elastos://object/read","operation":"read","token":"tok","body":{"principal_id":"person:local:object-other","uri":"localhost://Users/Users/other/Documents/secret.txt"}}}"#,
+            "http://127.0.0.1:12345",
+            "client-token",
+            "test-capsule",
+            &["elastos://object/*".to_string()],
+            Some("person:local:object-owner"),
+        )
+        .await
+        .expect("attached bridge should refuse object before HTTP dispatch");
+
+        assert_eq!(response["id"], 45);
+        assert_eq!(response["response"]["type"], "error");
+        assert_eq!(response["response"]["code"], "principal_context_required");
+        assert_eq!(
+            response["response"]["message"],
+            "principal-root storage requires an in-runtime protected storage bridge"
+        );
+    }
+
+    #[tokio::test]
+    async fn attached_bridge_refuses_object_before_http_dispatch() {
+        for uri in [
+            "elastos://object/read",
+            "elastos://object?x",
+            "elastos://object#x",
+        ] {
+            let line = serde_json::json!({
+                "id": 46,
+                "request": {
+                    "type": "resource_invoke", "uri": uri, "operation": "read", "token": "tok",
+                    "body": {"principal_id": "person:local:object-owner", "uri": "localhost://Users/Users/owner/Documents/a.md"},
+                },
+            }).to_string();
+            let response = handle_remote_request(
+                &line,
+                "http://127.0.0.1:12345",
+                "client-token",
+                "test-capsule",
+                &["elastos://object/*".to_string()],
+                Some("person:local:object-owner"),
+            )
+            .await
+            .unwrap_or_else(|error| panic!("{uri}: {error}"));
+
+            assert_eq!(response["id"], 46);
+            assert_eq!(response["response"]["code"], "principal_context_required");
+            assert_eq!(
+                response["response"]["message"],
+                "principal-root storage requires an in-runtime protected storage bridge"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn attached_bridge_refuses_dot_spelled_user_area_roots_before_http() {
+        let root = "localhost://UsersAI/.";
+        for request in [
+            serde_json::json!({
+                "type": "resource_invoke", "uri": root, "operation": "list",
+                "token": "test-token", "body": {},
+            }),
+            serde_json::json!({
+                "type": "resource_invoke",
+                "uri": "localhost://Local/SharedByLocalUsersAndBots/Home/harmless",
+                "operation": "delete", "token": "test-token",
+                "body": {"path": "UsersAI/.", "recursive": true},
+            }),
+            serde_json::json!({
+                "type": "request_capability", "resource": root, "action": "read",
+            }),
+        ] {
+            let line = serde_json::json!({"id": 45, "request": request}).to_string();
+            let response = handle_remote_request(
+                &line,
+                "http://127.0.0.1:12345",
+                "client-token",
+                "test-capsule",
+                &["localhost://UsersAI".to_string()],
+                Some("person:local:active"),
+            )
+            .await
+            .expect("attached bridge should reject before HTTP dispatch");
+            assert_eq!(response["response"]["type"], "error");
+            assert_eq!(
+                response["response"]["message"],
+                "Capsules cannot access a localhost user area root"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn handle_remote_request_denies_users_self_before_runtime_prompt() {
         let response = handle_remote_request(
             r#"{"id":12,"request":{"type":"request_capability","resource":"localhost://Users/self/Documents/*","action":"read"}}"#,
@@ -2263,6 +2507,291 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn resource_invoke_refuses_whitespace_user_area_with_matching_grant() {
+        let mut ctx = bridge_context();
+        let grant = "localhost://UsersAI/*";
+        ctx.manifest_capabilities = vec![grant.to_string()];
+        let provider = Arc::new(CapturingProvider::default());
+        ctx.provider_registry.register(provider.clone()).await;
+        let root = "localhost://UsersAI/ /";
+
+        for (operation, action) in [("list", Action::Read), ("delete", Action::Delete)] {
+            let token = bridge_token(&ctx, grant, action);
+            assert!(manifest_allows_resource(
+                &ctx.manifest_capabilities,
+                root,
+                ctx.principal_id.as_deref()
+            ));
+            ctx.capability_manager
+                .validate(
+                    &CapabilityToken::from_base64(&token).unwrap(),
+                    &ctx.capsule_id,
+                    action,
+                    &ResourceId::new(root),
+                    None,
+                )
+                .await
+                .expect("wildcard token must authorize the whitespace spelling");
+            for (uri, body) in [
+                (root, serde_json::json!({"recursive": true})),
+                (
+                    "localhost://UsersAI/agent-1/notes.md",
+                    serde_json::json!({"path": root, "recursive": true}),
+                ),
+            ] {
+                let line = serde_json::json!({
+                    "id": 47,
+                    "request": {
+                        "type": "resource_invoke", "uri": uri, "operation": operation,
+                        "token": token, "body": body,
+                    },
+                })
+                .to_string();
+                let response = handle_request(&line, &Some(ctx.clone()))
+                    .await
+                    .expect("area refusal should produce a bridge response");
+                assert_eq!(response["response"]["type"], "error");
+                assert_eq!(response["response"]["code"], "invalid_resource_invoke");
+                assert_eq!(
+                    response["response"]["message"],
+                    "Capsules cannot access a localhost user area root",
+                    "{operation} {uri} with body {body}"
+                );
+                assert!(provider.requests().await.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn user_area_guard_refuses_whitespace_roots_after_each_parse() {
+        for area in ["Users", "UsersAI"] {
+            for suffix in [
+                "/ /",
+                "/\t/",
+                "/\u{a0}/",
+                "// /",
+                "/. /",
+                "/.\t/",
+                "/.\u{a0}/",
+                "//.\u{a0}/",
+                "/.\u{3000}/",
+                "/.\u{2028}/",
+                "//. /",
+                "/. //",
+            ] {
+                let raw = format!("localhost://{area}{suffix}");
+                let once = rooted_localhost_uri(&raw).unwrap();
+                let twice = rooted_localhost_uri(&once).unwrap();
+                for (parses, resource) in [raw, once, twice].iter().enumerate() {
+                    assert_eq!(
+                        reject_localhost_user_area_root(resource).err().as_deref(),
+                        Some("Capsules cannot access a localhost user area root"),
+                        "{parses} parses: {resource:?}"
+                    );
+                }
+            }
+        }
+        for area in ["Users", "UsersAI"] {
+            for suffix in [
+                "/agent-1/notes.md",
+                "/ /x",
+                "/. /x",
+                "/my notes/a.md",
+                "/ lead",
+                "/trail /",
+                "/ lead /",
+                "/nested/. /x",
+                "/person:local:abc",
+                "/self",
+                "/self/Documents",
+                "/\u{200b}/",
+            ] {
+                let raw = format!("localhost://{area}{suffix}");
+                let once = rooted_localhost_uri(&raw).unwrap();
+                let twice = rooted_localhost_uri(&once).unwrap();
+                for (parses, resource) in [raw, once, twice].iter().enumerate() {
+                    assert_eq!(
+                        reject_localhost_user_area_root(resource),
+                        Ok(()),
+                        "{parses} parses: {resource:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn resource_invoke_refuses_bare_user_area_roots_before_provider() {
+        let mut ctx = bridge_context();
+        ctx.principal_id = Some("person:local:active".to_string());
+        ctx.manifest_capabilities = vec![
+            "localhost://Users".to_string(),
+            "localhost://UsersAI".to_string(),
+            "localhost://Users/self".to_string(),
+        ];
+        let provider = Arc::new(CapturingProvider::default());
+        ctx.provider_registry.register(provider.clone()).await;
+
+        for area in ["Users", "UsersAI"] {
+            let root = format!("localhost://{area}");
+            let spellings = [
+                root.clone(),
+                format!("{root}/"),
+                format!("{root}/."),
+                format!("{root}/./"),
+                format!("{root}//."),
+                format!("{root}/./."),
+                format!("{root}/x/.."),
+                format!("{root}/self/.."),
+                format!("{root}/ /"),
+                format!("{root}/\t/"),
+                format!("{root}// /"),
+                format!("{root}/./ /"),
+            ];
+            for (operation, action) in [("list", Action::Read), ("delete", Action::Delete)] {
+                let token = bridge_token(&ctx, &root, action);
+                for (uri, body, spelling) in spellings
+                    .iter()
+                    .flat_map(|spelling| {
+                        [
+                            (
+                                spelling.clone(),
+                                serde_json::json!({"recursive": true}),
+                                spelling.clone(),
+                            ),
+                            (
+                                "localhost://Local/SharedByLocalUsersAndBots/Home/harmless"
+                                    .to_string(),
+                                serde_json::json!({"path": spelling, "recursive": true}),
+                                spelling.clone(),
+                            ),
+                        ]
+                    })
+                    .chain(["/.", "/ /", "/\t/", "// /", "/./ /"].map(|suffix| {
+                        let spelling = format!("{area}{suffix}");
+                        (
+                            "localhost://Local/SharedByLocalUsersAndBots/Home/harmless".to_string(),
+                            serde_json::json!({"path": spelling, "recursive": true}),
+                            spelling,
+                        )
+                    }))
+                {
+                    let line = serde_json::json!({
+                        "id": 41,
+                        "request": {
+                            "type": "resource_invoke",
+                            "uri": uri,
+                            "operation": operation,
+                            "token": token.clone(),
+                            "body": body,
+                        }
+                    })
+                    .to_string();
+                    let response = handle_request(&line, &Some(ctx.clone()))
+                        .await
+                        .expect("bare area root refusal should produce a bridge response");
+
+                    assert_eq!(
+                        response["response"]["code"], "invalid_resource_invoke",
+                        "{spelling}"
+                    );
+                    assert_eq!(
+                        response["response"]["message"],
+                        if spelling.split('/').any(|segment| segment == "..") {
+                            "localhost paths cannot contain .."
+                        } else {
+                            "Capsules cannot access a localhost user area root"
+                        },
+                        "{spelling}"
+                    );
+                    assert!(
+                        provider.requests().await.is_empty(),
+                        "{spelling} must not reach the localhost provider"
+                    );
+                }
+            }
+        }
+
+        let own_root = "localhost://Users/self";
+        let principal_root = crate::auth::principal_localhost_root("person:local:active");
+        let line = serde_json::json!({
+            "id": 42,
+            "request": {
+                "type": "resource_invoke",
+                "uri": own_root,
+                "operation": "list",
+                "token": bridge_token(&ctx, &principal_root, Action::Read),
+                "body": {},
+            }
+        })
+        .to_string();
+        let response = handle_request(&line, &Some(ctx))
+            .await
+            .expect("own root listing should produce a bridge response");
+        assert_eq!(response["response"]["type"], "resource_result");
+        let requests = provider.requests().await;
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0]["path"], principal_root);
+    }
+
+    #[tokio::test]
+    async fn capability_request_refuses_bare_user_area_roots_before_pending() {
+        let mut ctx = bridge_context();
+        ctx.principal_id = Some("person:local:active".to_string());
+        ctx.manifest_capabilities = vec![
+            "localhost://Users".to_string(),
+            "localhost://UsersAI".to_string(),
+        ];
+        let pending_store = ctx.pending_store.clone();
+
+        for resource in [
+            "localhost://Users",
+            "localhost://Users/",
+            "localhost://Users/.",
+            "localhost://Users/./",
+            "localhost://Users//.",
+            "localhost://Users/./.",
+            "localhost://Users/x/..",
+            "localhost://Users/self/..",
+            "localhost://UsersAI",
+            "localhost://UsersAI/",
+            "localhost://UsersAI/.",
+            "localhost://UsersAI/./",
+            "localhost://UsersAI//.",
+            "localhost://UsersAI/./.",
+            "localhost://UsersAI/x/..",
+            "localhost://UsersAI/self/..",
+        ] {
+            let line = serde_json::json!({
+                "id": 43,
+                "request": {
+                    "type": "request_capability",
+                    "resource": resource,
+                    "action": "read",
+                }
+            })
+            .to_string();
+            let response = handle_request(&line, &Some(ctx.clone()))
+                .await
+                .expect("bare area root refusal should produce a bridge response");
+            assert_eq!(
+                response["response"]["code"], "principal_context_required",
+                "{resource}"
+            );
+            assert_eq!(
+                response["response"]["message"],
+                if resource.split('/').any(|segment| segment == "..") {
+                    "localhost paths cannot contain .."
+                } else {
+                    "Capsules cannot access a localhost user area root"
+                },
+                "{resource}"
+            );
+            assert!(pending_store.list_pending().await.is_empty());
+        }
+    }
+
+    #[tokio::test]
     async fn resource_invoke_validates_canonical_operation_action_not_token_action() {
         let ctx = bridge_context();
         let provider = Arc::new(CapturingProvider::default());
@@ -2546,5 +3075,407 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("local runtime data directory"));
+    }
+
+    /// Raw object requests go to the object-provider process unchanged, exactly
+    /// as `capsules/object-provider` forwards them to
+    /// `library::handle_object_provider_raw_request`.
+    struct ObjectRawProvider {
+        data_dir: std::path::PathBuf,
+        requests: Mutex<Vec<serde_json::Value>>,
+    }
+
+    impl ObjectRawProvider {
+        async fn requests(&self) -> Vec<serde_json::Value> {
+            self.requests.lock().await.clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for ObjectRawProvider {
+        async fn handle(
+            &self,
+            _request: ResourceRequest,
+        ) -> Result<ResourceResponse, ProviderError> {
+            Err(ProviderError::Provider(
+                "object fixture does not implement ResourceRequest".to_string(),
+            ))
+        }
+
+        fn schemes(&self) -> Vec<&'static str> {
+            vec!["object"]
+        }
+
+        fn name(&self) -> &'static str {
+            "object-provider-raw"
+        }
+
+        async fn send_raw(
+            &self,
+            request: &serde_json::Value,
+        ) -> Result<serde_json::Value, ProviderError> {
+            self.requests.lock().await.push(request.clone());
+            Ok(crate::library::handle_object_provider_raw_request(
+                &self.data_dir,
+                request,
+            ))
+        }
+    }
+
+    /// Object dispatch requires the launch principal. Runtime applies that
+    /// binding before provider access and preserves other principals' data.
+    #[tokio::test]
+    async fn object_requests_require_the_launch_principal() {
+        let temp = tempfile::tempdir().unwrap();
+        let owner = "person:local:object-owner";
+        let other = "person:local:object-other";
+        crate::auth::store_test_principal_root_protection(temp.path(), owner);
+        crate::auth::store_test_principal_root_protection(temp.path(), other);
+        let other_root = crate::auth::principal_localhost_root(other);
+        let secret = b"other-principal-secret";
+        let secret_uri = format!("{other_root}/Documents/secret.txt");
+        let secret_path = rooted_localhost_fs_path(temp.path(), &secret_uri).unwrap();
+        std::fs::create_dir_all(secret_path.parent().unwrap()).unwrap();
+        crate::auth::write_principal_root_object(
+            temp.path(),
+            other,
+            &other_root,
+            &secret_uri,
+            &secret_path,
+            secret,
+        )
+        .unwrap();
+
+        let mut ctx = bridge_context();
+        ctx.principal_id = Some(owner.to_string());
+        ctx.data_dir = Some(temp.path().to_path_buf());
+        ctx.manifest_capabilities = vec!["elastos://object/*".to_string()];
+        let provider = Arc::new(ObjectRawProvider {
+            data_dir: temp.path().to_path_buf(),
+            requests: Mutex::new(Vec::new()),
+        });
+        ctx.provider_registry.register(provider.clone()).await;
+        let token = bridge_token(&ctx, "elastos://object/read", Action::Read);
+        let line = serde_json::json!({
+            "id": 90,
+            "request": {
+                "type": "resource_invoke",
+                "uri": "elastos://object/read",
+                "operation": "read",
+                "token": token,
+                "body": {
+                    "principal_id": other,
+                    "uri": secret_uri
+                }
+            }
+        })
+        .to_string();
+
+        let response = handle_request(&line, &Some(ctx))
+            .await
+            .expect("object resource invoke should produce a bridge response");
+
+        assert_eq!(response["response"]["type"], "error", "{response}");
+        assert_eq!(
+            response["response"]["code"], "object_principal_mismatch",
+            "{response}"
+        );
+        assert!(
+            provider.requests().await.is_empty(),
+            "the refused request reached the object provider: {response}"
+        );
+        let secret_b64 = base64::engine::general_purpose::STANDARD.encode(secret);
+        assert!(
+            !response.to_string().contains(&secret_b64),
+            "another principal's bytes were returned: {response}"
+        );
+    }
+
+    /// Every object operation goes through the same dispatch, so the binding
+    /// holds for read, write and list alike: another principal is refused, the
+    /// launch principal is kept, and a body that names no principal is filled
+    /// in with the launch principal.
+    #[test]
+    fn object_requests_are_bound_to_the_launch_principal() {
+        let launch = "person:local:object-launch";
+        let other = "person:local:object-other";
+        let invoke = |op: &str, body: serde_json::Value, principal: Option<&str>| {
+            resource_invoke_dispatch(
+                &serde_json::json!({
+                    "type": "resource_invoke",
+                    "uri": format!("elastos://object/{op}"),
+                    "operation": op,
+                    "body": body,
+                }),
+                principal,
+            )
+        };
+
+        for op in ["read", "write", "list"] {
+            let err = invoke(op, serde_json::json!({"principal_id": other}), Some(launch))
+                .err()
+                .unwrap_or_else(|| panic!("{op} naming another principal must be refused"));
+            assert_eq!(err.code, "object_principal_mismatch", "{op}: {err}");
+        }
+
+        for op in ["read", "write", "list"] {
+            let dispatch = invoke(
+                op,
+                serde_json::json!({"principal_id": launch}),
+                Some(launch),
+            )
+            .unwrap_or_else(|err| panic!("{op} naming the launch principal must dispatch: {err}"));
+            assert_eq!(
+                dispatch.request["principal_id"], launch,
+                "{op} must keep the launch principal"
+            );
+        }
+
+        for op in ["read", "write", "list"] {
+            let dispatch = invoke(op, serde_json::json!({}), Some(launch))
+                .unwrap_or_else(|err| panic!("{op} without a principal must be filled: {err}"));
+            assert_eq!(
+                dispatch.request["principal_id"], launch,
+                "{op} must be filled with the launch principal"
+            );
+        }
+
+        let err = invoke("read", serde_json::json!({"principal_id": launch}), None)
+            .err()
+            .expect("an object request without a launch principal must be refused");
+        assert_eq!(err.code, "principal_context_required");
+    }
+    /// Stands in for the model-provider capsule, which this crate cannot link
+    /// (its own workspace; its library exports only `run_main`). A run is
+    /// created from the contract's create binding under the contract's run
+    /// id, and reached only by the principal and capsule that created it:
+    /// `assert_run_owner` in capsules/model-provider/src/state.rs.
+    #[derive(Default)]
+    struct OwnedRunsModelProvider {
+        requests: Mutex<Vec<serde_json::Value>>,
+        owners: Mutex<std::collections::HashMap<String, (String, String)>>,
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for OwnedRunsModelProvider {
+        async fn handle(&self, _: ResourceRequest) -> Result<ResourceResponse, ProviderError> {
+            Err(ProviderError::Provider("raw model fixture".to_string()))
+        }
+        fn schemes(&self) -> Vec<&'static str> {
+            vec!["model"]
+        }
+        fn name(&self) -> &'static str {
+            "owned-runs-model"
+        }
+        async fn send_raw(
+            &self,
+            request: &serde_json::Value,
+        ) -> Result<serde_json::Value, ProviderError> {
+            use elastos_model_contract::{RuntimeAccessBinding, RuntimeCreateBinding};
+            self.requests.lock().await.push(request.clone());
+            let refused = |code: &str| serde_json::json!({"status": "error", "code": code});
+            let binding = request["runtime_binding"].clone();
+            let field = |key: &str| request[key].as_str().unwrap_or("");
+            if request["op"] == "runs_create" {
+                let created = serde_json::from_value::<RuntimeCreateBinding>(binding)
+                    .ok()
+                    .filter(|b| {
+                        let input = &request["input"];
+                        b.validate(field("offer_id"), field("operation"), input)
+                            .is_ok()
+                    });
+                let Some(created) = created else {
+                    return Ok(refused("invalid_request"));
+                };
+                let run_id = elastos_model_contract::model_run_id(&created);
+                let owner = (created.principal_id, created.capsule_id);
+                self.owners.lock().await.insert(run_id.clone(), owner);
+                return Ok(serde_json::json!({"status": "ok", "data": {"run_id": run_id}}));
+            }
+            let run_id = field("run_id");
+            let access = serde_json::from_value::<RuntimeAccessBinding>(binding)
+                .ok()
+                .filter(|b| b.validate(run_id).is_ok());
+            let Some(access) = access else {
+                return Ok(refused("invalid_request"));
+            };
+            Ok(match self.owners.lock().await.get(run_id) {
+                None => refused("run_not_found"),
+                Some(owner) if *owner != (access.principal_id, access.capsule_id) => {
+                    refused("unauthorized_run_access")
+                }
+                Some(_) => serde_json::json!({"status": "ok", "data": {"run_id": run_id}}),
+            })
+        }
+    }
+
+    const ALICE: &str = "person:local:alice";
+    const BOB: &str = "person:local:bob";
+
+    async fn model_bus(
+        principal: Option<&str>,
+        capsule: &str,
+    ) -> (
+        BridgeContext,
+        Arc<OwnedRunsModelProvider>,
+        tempfile::TempDir,
+    ) {
+        let temp = tempfile::tempdir().unwrap();
+        let mut ctx = bridge_context();
+        ctx.capsule_id = capsule.to_string();
+        ctx.principal_id = principal.map(str::to_string);
+        ctx.data_dir = Some(temp.path().to_path_buf());
+        ctx.manifest_capabilities = vec!["elastos://model/*".to_string()];
+        let provider = Arc::new(OwnedRunsModelProvider::default());
+        let registry = &ctx.provider_registry;
+        registry
+            .register_sub_provider("model", provider.clone())
+            .await
+            .unwrap();
+        (ctx, provider, temp)
+    }
+
+    async fn model_invoke(
+        ctx: &BridgeContext,
+        op: &str,
+        action: Action,
+        body: serde_json::Value,
+    ) -> serde_json::Value {
+        let token = bridge_token(ctx, "elastos://model/*", action);
+        let line = serde_json::json!({"id": 71, "request": {"type": "resource_invoke",
+            "uri": format!("elastos://model/{op}"), "operation": op, "token": token, "body": body}});
+        handle_request(&line.to_string(), &Some(ctx.clone()))
+            .await
+            .unwrap()
+    }
+
+    fn model_create(offer_id: &str) -> serde_json::Value {
+        serde_json::json!({"offer_id": offer_id, "operation": "text.generate",
+            "input": {"prompt": "hi"}, "request_id": "model-v1:1700000000000:n1",
+            "runtime_binding": {"principal_id": BOB, "capsule_id": "capsule-b"}})
+    }
+
+    #[tokio::test]
+    async fn model_dispatch_stamps_the_bridge_caller_over_a_body_binding() {
+        let (ctx, provider, _temp) = model_bus(Some(ALICE), "capsule-x").await;
+        let response = model_invoke(&ctx, "runs_create", Action::Execute, model_create("m")).await;
+        let kind = &response["response"]["type"];
+        assert_eq!(kind, "resource_result", "{response}");
+        let sent = provider.requests.lock().await.clone();
+        let binding = &sent[0]["runtime_binding"];
+        assert_eq!(binding["principal_id"], "person:local:alice", "{binding}");
+        assert_eq!(binding["capsule_id"], "capsule-x", "{binding}");
+        assert_eq!(binding["session_id"], "capsule-x", "{binding}");
+        let grant = binding["grant_id"].as_str().unwrap();
+        assert!(grant.starts_with("capability:"), "{grant}");
+    }
+
+    /// Model run access requires its creating principal and capsule for
+    /// get, events and cancel operations.
+    #[tokio::test]
+    async fn bus_model_runs_require_the_creating_principal_and_capsule() {
+        let (alice, _provider, _temp) = model_bus(Some(ALICE), "capsule-x").await;
+        let created = model_invoke(&alice, "runs_create", Action::Execute, model_create("m")).await;
+        let run_id = created["response"]["result"]["data"]["run_id"].clone();
+        let run_id = run_id.as_str().expect("created run id").to_string();
+        let presented_binding = elastos_model_contract::RuntimeAccessBinding {
+            schema: elastos_model_contract::RUNTIME_ACCESS_BINDING_SCHEMA.to_string(),
+            principal_id: ALICE.into(),
+            session_id: "capsule-x".into(),
+            capsule_id: "capsule-x".into(),
+            grant_id: "capability:presented_binding".into(),
+            request_id: "model-v1:1:n2".into(),
+            run_id: run_id.clone(),
+        };
+        let body = serde_json::json!({"run_id": run_id, "request_id": "model-v1:1:n2",
+            "runtime_binding": presented_binding});
+        let (mut bob, mut elsewhere) = (alice.clone(), alice.clone());
+        bob.principal_id = Some(BOB.to_string());
+        elsewhere.capsule_id = "capsule-y".to_string();
+        for (op, action) in [
+            ("runs_get", Action::Read),
+            ("runs_events", Action::Read),
+            ("runs_cancel", Action::Execute),
+        ] {
+            for caller_context in [&bob, &elsewhere] {
+                let response = model_invoke(caller_context, op, action, body.clone()).await;
+                let code = &response["response"]["result"]["code"];
+                assert_eq!(code, "unauthorized_run_access", "{op}: {response}");
+            }
+            let response = model_invoke(&alice, op, action, body.clone()).await;
+            assert_eq!(
+                response["response"]["result"]["status"], "ok",
+                "{op}: {response}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_model_run_without_a_principal_is_refused() {
+        let (ctx, provider, _temp) = model_bus(None, "capsule-x").await;
+        let response = model_invoke(&ctx, "runs_create", Action::Execute, model_create("m")).await;
+        let code = &response["response"]["code"];
+        assert_eq!(code, "principal_context_required", "{response}");
+        assert!(provider.requests.lock().await.is_empty());
+    }
+
+    /// The gateway's admin-only hosted gate applies on the Bus too.
+    #[tokio::test]
+    async fn a_guest_bus_capsule_cannot_create_a_hosted_run() {
+        let (ctx, provider, _temp) = model_bus(Some(BOB), "capsule-b").await;
+        let local = model_invoke(&ctx, "runs_create", Action::Execute, model_create("m")).await;
+        assert_eq!(local["response"]["type"], "resource_result", "{local}");
+        let hosted = model_create("model:openrouter");
+        let response = model_invoke(&ctx, "runs_create", Action::Execute, hosted).await;
+        let code = &response["response"]["code"];
+        assert_eq!(code, "hosted_run_admin_only", "{response}");
+        assert_eq!(provider.requests.lock().await.len(), 1);
+    }
+    /// An attached component's model run gets a Bus-shaped refusal from the
+    /// adapter, not the HTTP route's plain-text 403, and nothing is posted.
+    #[tokio::test]
+    async fn an_attached_component_model_run_gets_a_structured_refusal() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let api_url = format!("http://{}", listener.local_addr().unwrap());
+        let posted = Arc::new(AtomicUsize::new(0));
+        let seen = posted.clone();
+        tokio::spawn(async move {
+            // What POST /api/provider/model/<run op> answers.
+            let reply =
+                "principal_context_required: model runs require a principal-scoped launch context";
+            while let Ok((mut socket, _)) = listener.accept().await {
+                seen.fetch_add(1, Ordering::SeqCst);
+                let _ = socket.read(&mut [0u8; 16 * 1024]).await;
+                let head = format!("HTTP/1.1 403 Forbidden\r\ncontent-type: text/plain\r\ncontent-length: {}\r\nconnection: close\r\n\r\n", reply.len());
+                let _ = socket.write_all(format!("{head}{reply}").as_bytes()).await;
+            }
+        });
+        let run_id = format!("run:sha256:{}", "a".repeat(64));
+        for op in ["runs_create", "runs_get", "runs_events", "runs_cancel"] {
+            let line = serde_json::json!({"id": 97, "request": {"type": "resource_invoke",
+                "uri": format!("elastos://model/{op}"), "operation": op, "token": "tok",
+                "body": {"run_id": run_id, "request_id": "model-v1:1:n", "offer_id": "m",
+                    "operation": "text.generate", "input": {}}}});
+            let manifest = ["elastos://model/*".to_string()];
+            let response = handle_remote_request(
+                &line.to_string(),
+                &api_url,
+                "client-token",
+                "test-capsule",
+                &manifest,
+                Some(ALICE),
+            )
+            .await
+            .expect("the guest gets a structured refusal, not a bridge error");
+            let code = &response["response"]["code"];
+            assert_eq!(code, "principal_context_required", "{op}: {response}");
+        }
+        assert_eq!(
+            posted.load(Ordering::SeqCst),
+            0,
+            "a model run body was posted"
+        );
     }
 }

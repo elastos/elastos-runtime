@@ -802,6 +802,24 @@ pub(in crate::api) fn require_carried_home_launch_token(
     )
 }
 
+/// Test-only entry to the verifier below, for rows that hand it the signer
+/// DID a child Runtime reads from its trusted-signer configuration. The
+/// verifier and its result are the production ones.
+#[cfg(test)]
+pub(in crate::api) fn require_home_launch_token_value_from_expected_did_for_test(
+    token: &str,
+    allowed_apps: &[&str],
+    expected_did: String,
+    auth_data_dir: &std::path::Path,
+) -> anyhow::Result<RequiredHomeLaunchToken> {
+    require_home_launch_token_value_from_expected_did(
+        token,
+        allowed_apps,
+        expected_did,
+        auth_data_dir,
+    )
+}
+
 fn require_home_launch_token_value_from_expected_did(
     token: &str,
     allowed_apps: &[&str],

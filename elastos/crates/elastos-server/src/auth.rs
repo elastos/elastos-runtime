@@ -1820,6 +1820,7 @@ pub(crate) fn complete_owner_recovery(
         return enrollment_denied();
     }
     let binding = owner_recovery_binding(client)?;
+    require_person_recovery_kit(kit)?;
     verify_recovery_kit_material(kit)?;
     if kit.localhost_root != principal_localhost_root(&kit.principal_id) {
         anyhow::bail!("recovery kit root does not match its principal");
@@ -5890,10 +5891,9 @@ pub(crate) fn protect_legacy_plaintext_principal_root_object(
     let too_large = || {
         anyhow!(
             "{PROTECTED_PRINCIPAL_ROOT_OBJECT_NOT_ENCRYPTED}: {} is not encrypted and is larger \
-             than 16 MiB, so Home will not encrypt it in place. Move it out of {}, then upload \
-             it again in Library.",
+             than 16 MiB, so Home will not encrypt it in place. Move it out of your Home's \
+             data folder, then upload it again in Library.",
             principal_root_home_relative_path(localhost_root, object_uri),
-            principal_root_disk_folder(data_dir, object_uri),
         )
     };
     let (file, len) = open_principal_root_object_file(path)?;
@@ -6063,6 +6063,50 @@ pub(crate) fn write_principal_root_object_if_revision(
     )
 }
 
+/// A write for a principal whose root is protected by the Runtime whose
+/// sign-in state this Runtime verifies launches against (a child Runtime
+/// serving a parent's person), while this Runtime holds no protection record
+/// for that root. The save is left to the Runtime that holds the protection.
+#[derive(Debug)]
+pub(crate) struct ProtectedRecordKeptElsewhere;
+
+impl std::fmt::Display for ProtectedRecordKeptElsewhere {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("protected record is kept only on the Runtime this person signed in on")
+    }
+}
+
+impl std::error::Error for ProtectedRecordKeptElsewhere {}
+
+/// True when this Runtime verifies launches against another Runtime's
+/// sign-in state, and that state holds a protection record for this
+/// principal's root. On an ordinary Runtime both are the same folder, so this
+/// is false. The other Runtime's state is only read: no lock is taken and
+/// nothing is written there. If it cannot be read, the answer is true, so the
+/// save is refused rather than written without that protection.
+fn principal_root_protected_elsewhere(
+    data_dir: &Path,
+    principal_id: &str,
+    localhost_root: &str,
+) -> bool {
+    let launch_auth_dir = crate::api::gateway::home_launch_auth_data_dir(data_dir);
+    if launch_auth_dir == data_dir {
+        return false;
+    }
+    let read = || -> anyhow::Result<bool> {
+        let Some((bytes, _)) = read_auth_state_bytes(&launch_auth_dir)? else {
+            return Ok(false);
+        };
+        Ok(parse_auth_state(&launch_auth_dir, &bytes)?
+            .principal_root_protections
+            .iter()
+            .any(|stored| {
+                stored.principal_id == principal_id && stored.localhost_root == localhost_root
+            }))
+    };
+    read().unwrap_or(true)
+}
+
 struct PrincipalRootObjectWriteOptions<'a> {
     require_protection: bool,
     create_only: bool,
@@ -6171,6 +6215,12 @@ fn write_principal_root_object_locked(
 ) -> anyhow::Result<()> {
     validate_principal_root_object_binding(principal_id, localhost_root, object_uri)?;
     validate_principal_root_object_path(data_dir, object_uri, path)?;
+    // Every writer that shares this function refuses a path that passes
+    // through a symlink. The protected writer keeps its own, stricter parent
+    // check below (and its own error); the others get this one.
+    if !options.require_protection {
+        ensure_no_symlink_components(data_dir, path)?;
+    }
     if let Some(precondition) = options.precondition {
         let exists = match std::fs::symlink_metadata(path) {
             Ok(_) => true,
@@ -6199,6 +6249,11 @@ fn write_principal_root_object_locked(
         }
     }
     let protection = load_principal_root_protection(data_dir, principal_id, localhost_root)?;
+    if protection.is_none()
+        && principal_root_protected_elsewhere(data_dir, principal_id, localhost_root)
+    {
+        return Err(ProtectedRecordKeptElsewhere.into());
+    }
     if options.require_protection && protection.is_none() {
         anyhow::bail!("protected principal-root object requires active principal-root protection");
     }
@@ -7464,6 +7519,17 @@ pub fn local_person_principal_id(proof_binding_id: &str) -> String {
     format!("person:local:{}", hex::encode(&digest[..16]))
 }
 
+/// Recovery Kit import requires a Runtime-minted person id:
+/// `person:local:` plus one id segment. Each request path applies this
+/// requirement before reading or writing principal data.
+pub(crate) fn require_person_recovery_kit(kit: &RecoveryKitV1) -> anyhow::Result<()> {
+    let minted = kit.principal_id.strip_prefix("person:local:");
+    if !minted.is_some_and(|rest| !rest.is_empty() && !rest.contains(':')) {
+        anyhow::bail!("invalid recovery kit: principal is not a person id this Runtime mints");
+    }
+    Ok(())
+}
+
 pub fn passkey_credential_principal_id(rp_id: &str, credential_id: &str) -> anyhow::Result<String> {
     if rp_id.trim().is_empty()
         || credential_id.trim().is_empty()
@@ -7653,7 +7719,7 @@ fn scan_declared_principal_root_objects(
 }
 
 fn principal_root_plaintext_size_refusal(
-    data_dir: &Path,
+    _data_dir: &Path,
     localhost_root: &str,
     object_uri: &str,
     len: u64,
@@ -7661,11 +7727,10 @@ fn principal_root_plaintext_size_refusal(
     const MIB: u64 = 1024 * 1024;
     anyhow!(
         "{} is not encrypted and is {} MiB. Home encrypts existing files of up to 16 MiB in \
-         place. Move it out of {} and try again; once Home is running, upload it again in \
-         Library, which encrypts files of up to 100 MiB.",
+         place. Move it out of your Home's data folder and try again; once Home is running, \
+         upload it again in Library, which encrypts files of up to 100 MiB.",
         principal_root_home_relative_path(localhost_root, object_uri),
         len.div_ceil(MIB),
-        principal_root_disk_folder(data_dir, object_uri),
     )
 }
 
@@ -7818,10 +7883,9 @@ impl PrincipalRootWalk<'_> {
 
     fn refusal(&self, uri: &str, problem: &str) -> anyhow::Error {
         anyhow!(
-            "{} {problem} {} Move it out of {}, then try again.",
+            "{} {problem} {} Move it out of your Home's data folder, then try again.",
             principal_root_home_relative_path(self.localhost_root, uri),
             Self::ACTION,
-            principal_root_disk_folder(self.data_dir, uri),
         )
     }
 
@@ -8093,7 +8157,7 @@ pub(crate) struct PrincipalRootObjectNotice {
 
 impl PrincipalRootObjectNotice {
     pub(crate) fn new(
-        data_dir: &Path,
+        _data_dir: &Path,
         localhost_root: &str,
         object_uri: &str,
         damage: PrincipalRootObjectDamage,
@@ -8101,7 +8165,7 @@ impl PrincipalRootObjectNotice {
         Self {
             object_uri: object_uri.to_string(),
             path: principal_root_home_relative_path(localhost_root, object_uri),
-            disk_folder: principal_root_disk_folder(data_dir, object_uri),
+            disk_folder: "your Home's data folder".to_string(),
             damage,
             localhost_root: localhost_root.to_string(),
         }
@@ -8195,15 +8259,6 @@ pub(crate) fn principal_root_home_relative_path(localhost_root: &str, object_uri
             .and_then(|rest| rest.strip_prefix('/'))
             .filter(|rest| !rest.is_empty())
             .unwrap_or(object_uri),
-    )
-}
-
-fn principal_root_disk_folder(data_dir: &Path, object_uri: &str) -> String {
-    printable_path(
-        rooted_localhost_fs_path(data_dir, object_uri)
-            .as_deref()
-            .and_then(Path::parent)
-            .unwrap_or(data_dir),
     )
 }
 
@@ -10823,6 +10878,17 @@ fn prune_auth_state(state: &mut AuthState, now: u64) {
     state.sessions.retain(|stored| {
         stored.revoked_at.is_none() && stored.grant.expires_at > now.saturating_sub(86_400)
     });
+}
+
+/// Test-only access to the checked state mutation, for rows that need a
+/// record or protection added or removed in a given data folder.
+#[cfg(test)]
+pub(crate) fn mutate_auth_state_for_test(data_dir: &Path, mutation: impl FnOnce(&mut AuthState)) {
+    mutate_auth_state(data_dir, |state| {
+        mutation(state);
+        Ok(())
+    })
+    .unwrap();
 }
 
 #[cfg(test)]
@@ -13558,6 +13624,76 @@ mod tests {
         )
         .is_err());
         assert_eq!(std::fs::read(victim).unwrap(), b"preserve");
+    }
+
+    /// Principal-root saves require real parent folders. Create-only,
+    /// revision and plain writers preserve existing data on refusal.
+    #[cfg(unix)]
+    #[test]
+    fn principal_root_writers_refuse_a_symlinked_parent() {
+        for writer in ["create-only", "revision", "plain"] {
+            let data = tempfile::tempdir().unwrap();
+            let principal = "person:local:save-parent-link";
+            let protection = store_test_principal_root_protection(data.path(), principal);
+            let root = &protection.localhost_root;
+            let uri = format!("{root}/saves/game.sav");
+            let path = rooted_localhost_fs_path(data.path(), &uri).unwrap();
+            let saves = path.parent().unwrap();
+            // Control: with a real folder the same writer succeeds.
+            write_principal_root_object(data.path(), principal, root, &uri, &path, b"first")
+                .unwrap();
+            let revision = principal_root_object_revision(principal, &uri, b"first");
+            // The folder moves aside and a link takes its place.
+            let elsewhere = data.path().join("elsewhere");
+            std::fs::rename(saves, &elsewhere).unwrap();
+            std::os::unix::fs::symlink(&elsewhere, saves).unwrap();
+            let moved = elsewhere.join("game.sav");
+            if writer == "create-only" {
+                std::fs::remove_file(&moved).unwrap();
+            }
+            let before = std::fs::read(&moved).ok();
+
+            let result = match writer {
+                "create-only" => write_principal_root_object_if_revision(
+                    data.path(),
+                    principal,
+                    root,
+                    &uri,
+                    &path,
+                    b"second",
+                    PrincipalRootObjectPrecondition::Absent,
+                ),
+                "revision" => write_principal_root_object_if_revision(
+                    data.path(),
+                    principal,
+                    root,
+                    &uri,
+                    &path,
+                    b"second",
+                    PrincipalRootObjectPrecondition::Revision(&revision),
+                ),
+                _ => write_principal_root_object(
+                    data.path(),
+                    principal,
+                    root,
+                    &uri,
+                    &path,
+                    b"second",
+                ),
+            };
+
+            let error = result.expect_err(writer).to_string();
+            assert!(
+                error.contains("rejects symlink components"),
+                "{writer}: {error}"
+            );
+            assert_eq!(std::fs::read(&moved).ok(), before, "{writer}");
+            assert_eq!(
+                std::fs::read_dir(&elsewhere).unwrap().count(),
+                usize::from(before.is_some()),
+                "{writer}"
+            );
+        }
     }
 
     #[cfg(unix)]

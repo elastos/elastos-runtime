@@ -172,10 +172,10 @@ pub fn check_viewer_entrypoint(viewer_dir: &std::path::Path) -> anyhow::Result<(
 fn open_viewer_entrypoint(viewer_dir: &std::path::Path) -> anyhow::Result<ViewerEntrypoint> {
     use std::os::unix::fs::OpenOptionsExt as _;
     let manifest_path = viewer_dir.join("capsule.json");
-    let manifest: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&manifest_path).map_err(|err| {
-            anyhow::anyhow!("viewer manifest {}: {err}", manifest_path.display())
-        })?)?;
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &elastos_common::capsule_manifest_file::read(&manifest_path)
+            .map_err(|err| anyhow::anyhow!("viewer manifest {}: {err}", manifest_path.display()))?,
+    )?;
     let entrypoint = manifest
         .get("entrypoint")
         .and_then(|value| value.as_str())

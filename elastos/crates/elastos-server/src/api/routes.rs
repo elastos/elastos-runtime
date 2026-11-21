@@ -142,7 +142,7 @@ pub async fn launch_capsule(
     Json(req): Json<LaunchRequest>,
 ) -> Result<Json<LaunchResponse>, (StatusCode, String)> {
     let path = std::path::Path::new(&req.path);
-    let principal_id = principal_from_launch_request(
+    let (principal_id, grant_name) = principal_from_launch_request(
         data_dir.as_deref(),
         path,
         req.principal_id,
@@ -150,7 +150,7 @@ pub async fn launch_capsule(
     )?;
 
     match runtime
-        .run_local_with_principal(path, vec![], principal_id)
+        .run_local_with_launch_grant(path, vec![], principal_id, grant_name.as_deref())
         .await
     {
         Ok(handle) => {
@@ -192,18 +192,20 @@ fn reject_raw_launch_principal_id(
     Ok(())
 }
 
+type LaunchGrantBinding = (Option<String>, Option<String>);
+
 fn principal_from_launch_request(
     data_dir: Option<&std::path::Path>,
     capsule_dir: &std::path::Path,
     principal_id: Option<String>,
     launch_grant: Option<String>,
-) -> Result<Option<String>, (StatusCode, String)> {
+) -> Result<LaunchGrantBinding, (StatusCode, String)> {
     reject_raw_launch_principal_id(principal_id)?;
     let launch_grant = launch_grant
         .map(|grant| grant.trim().to_string())
         .filter(|grant| !grant.is_empty());
     match launch_grant {
-        None => Ok(None),
+        None => Ok((None, None)),
         Some(grant) => {
             let data_dir = data_dir.ok_or((
                 StatusCode::BAD_REQUEST,
@@ -224,14 +226,14 @@ fn principal_from_launch_request(
                 &[capsule_name.as_str()],
             )
             .map_err(|err| (StatusCode::BAD_REQUEST, err.to_string()))?;
-            Ok(Some(context.principal_id))
+            Ok((Some(context.principal_id), Some(capsule_name)))
         }
     }
 }
 
 fn launch_capsule_name(capsule_dir: &std::path::Path) -> Result<String, (StatusCode, String)> {
     let manifest_path = capsule_dir.join("capsule.json");
-    let bytes = std::fs::read(&manifest_path).map_err(|err| {
+    let bytes = elastos_common::capsule_manifest_file::read(&manifest_path).map_err(|err| {
         (
             StatusCode::BAD_REQUEST,
             format!("read capsule manifest for launch grant: {err}"),
@@ -299,7 +301,7 @@ mod tests {
         let principal =
             principal_from_launch_request(Some(dir.path()), &capsule_dir, None, None).unwrap();
 
-        assert_eq!(principal, None);
+        assert_eq!(principal, (None, None));
     }
 
     #[test]
@@ -355,11 +357,78 @@ mod tests {
             gateway::issue_home_launch_token_with_context(dir.path(), "chat-wasm", &context)
                 .unwrap();
 
-        let principal =
+        let (principal, name) =
             principal_from_launch_request(Some(dir.path()), &capsule_dir, None, Some(grant))
                 .unwrap();
 
+        assert_eq!(name.as_deref(), Some("chat-wasm"));
         assert_eq!(principal.as_deref(), Some(context.principal_id.as_str()));
+    }
+
+    #[test]
+    fn launch_route_passes_the_authorized_name_to_runtime() {
+        use std::future::Future;
+        use std::task::Poll;
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .max_blocking_threads(1)
+            .build()
+            .unwrap()
+            .block_on(async {
+                let dir = tempfile::tempdir().unwrap();
+                let capsule_dir = write_test_capsule(dir.path(), "chat-wasm");
+                let context = gateway::local_home_launch_token_context(dir.path()).unwrap();
+                let grant = gateway::issue_home_launch_token_with_context(
+                    dir.path(),
+                    "chat-wasm",
+                    &context,
+                )
+                .unwrap();
+                let storage = Arc::new(
+                    elastos_storage::providers::LocalFSProvider::new(dir.path().join("storage"))
+                        .await
+                        .unwrap(),
+                );
+                let runtime =
+                    Arc::new(Runtime::with_providers_and_component(storage, vec![], None));
+                let (started_tx, started_rx) = std::sync::mpsc::channel();
+                let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+                let blocker = tokio::task::spawn_blocking(move || {
+                    started_tx.send(()).unwrap();
+                    let _ = release_rx.recv();
+                });
+                started_rx
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .unwrap();
+                let mut launch = Box::pin(launch_capsule(
+                    Extension(runtime),
+                    Extension(Arc::new(AuditLog::new())),
+                    Extension(Some(dir.path().to_path_buf())),
+                    Json(LaunchRequest {
+                        path: capsule_dir.to_str().unwrap().to_string(),
+                        principal_id: None,
+                        launch_grant: Some(grant),
+                    }),
+                ));
+                // The only blocking worker holds the manifest read until after
+                // route authorization. This makes the two reads deterministic.
+                std::future::poll_fn(|cx| {
+                    assert!(matches!(launch.as_mut().poll(cx), Poll::Pending));
+                    Poll::Ready(())
+                })
+                .await;
+                let manifest_path = capsule_dir.join("capsule.json");
+                let mut manifest: serde_json::Value =
+                    serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+                manifest["name"] = serde_json::json!("another-capsule");
+                std::fs::write(manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+                release_tx.send(()).unwrap();
+                blocker.await.unwrap();
+                let (status, message) =
+                    launch.await.err().expect("the authorized name is required");
+                assert_eq!(status, StatusCode::BAD_REQUEST);
+                assert!(message.contains("launch grant mismatch"), "{message}");
+            });
     }
 
     #[test]

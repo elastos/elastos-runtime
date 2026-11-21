@@ -227,11 +227,7 @@ async fn print_release_object_summary(
                 .await?;
         verify_content_object_file(cid, file, &bytes)?;
         let (envelope, signer_did) =
-            elastos_server::crypto::verify_signed_json_envelope_against_dids(
-                &bytes,
-                "elastos.release.v1",
-                &[],
-            )?;
+            elastos_server::crypto::verify_self_signed_json_envelope(&bytes, "elastos.release.v1")?;
         let payload = &envelope["payload"];
         println!("  Type:      release manifest");
         print_json_field("  Version:   ", payload.get("version"));
@@ -253,12 +249,10 @@ async fn print_release_object_summary(
         )
         .await?;
         verify_content_object_file(cid, file, &bytes)?;
-        let (envelope, signer_did) =
-            elastos_server::crypto::verify_signed_json_envelope_against_dids(
-                &bytes,
-                "elastos.release.head.v1",
-                &[],
-            )?;
+        let (envelope, signer_did) = elastos_server::crypto::verify_self_signed_json_envelope(
+            &bytes,
+            "elastos.release.head.v1",
+        )?;
         let payload = &envelope["payload"];
         println!("  Type:      release head");
         print_json_field("  Version:   ", payload.get("version"));

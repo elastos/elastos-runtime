@@ -1903,6 +1903,7 @@ async fn full_recovery_bundle_import_inner(
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("full recovery bundle missing data_kit"))?,
     )?;
+    crate::auth::require_person_recovery_kit(&data_kit)?;
     crate::auth::verify_recovery_kit_material(&data_kit)?;
     let bundle_sha256 = full_recovery_bundle_semantic_digest(&bundle)?;
     let bundle_id = bundle
@@ -3022,6 +3023,7 @@ async fn recovery_kit_import_inner(
 ) -> anyhow::Result<RecoveryKitImportResponse> {
     let context = require_auth_home_or_system_context(state, headers)?;
     let principal = require_active_passkey_principal_for_context(state, &context)?;
+    crate::auth::require_person_recovery_kit(&input.kit)?;
     if input.principal_id != principal.principal_id
         || input.localhost_root != principal.localhost_root
     {
@@ -8646,6 +8648,239 @@ mod tests {
             );
             assert_eq!(std::fs::read(&archive_key_path).ok(), key_before);
         }
+    }
+
+    // Recovery Kit import requires a Runtime-minted person principal before
+    // reading or writing the principal's data.
+    const PERSON_PRINCIPAL_REQUIREMENT: &str = "principal is not a person id this Runtime mints";
+
+    struct RecoveryImportHome {
+        temp: tempfile::TempDir,
+        guest: PasskeyVerifyResponse,
+        guest_principal: crate::auth::PrincipalRecord,
+        device_principal: String,
+    }
+
+    /// An Admin, a signed-in Guest (the importer) and this Runtime's own DID.
+    fn recovery_import_home() -> RecoveryImportHome {
+        let temp = tempfile::tempdir().unwrap();
+        let state = test_gateway_state(temp.path());
+        let origin = "https://elastos.elacitylabs.com";
+        let admin = crate::auth::RuntimePrincipalRole::Admin;
+        let guest = crate::auth::RuntimePrincipalRole::Guest;
+        seed_test_passkey_principal(&state, &test_credential(), origin, admin);
+        seed_test_passkey_principal(&state, &test_credential_2(), origin, guest);
+        let guest = issue_passkey_session_grant(
+            &state,
+            "identity-test",
+            &test_credential_2(),
+            origin,
+            true,
+            "guest importer grant",
+        )
+        .unwrap();
+        let guest_principal =
+            crate::auth::load_principal_for_proof_binding(temp.path(), &guest.proof_binding_id)
+                .unwrap();
+        assert_eq!(
+            guest_principal.role,
+            crate::auth::RuntimePrincipalRole::Guest
+        );
+        let (_, did) = elastos_identity::load_or_create_did(temp.path()).unwrap();
+        let device_principal = elastos_runtime::auth::PrincipalId::device_did(&did)
+            .as_str()
+            .to_string();
+        RecoveryImportHome {
+            temp,
+            guest,
+            guest_principal,
+            device_principal,
+        }
+    }
+
+    /// Every file under the data dir with its bytes.
+    fn recovery_import_snapshot(
+        root: &std::path::Path,
+    ) -> std::collections::BTreeMap<std::path::PathBuf, Vec<u8>> {
+        let mut files = std::collections::BTreeMap::new();
+        let mut pending = vec![root.to_path_buf()];
+        while let Some(dir) = pending.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    pending.push(path);
+                } else {
+                    let bytes = std::fs::read(&path).unwrap();
+                    files.insert(path, bytes);
+                }
+            }
+        }
+        files
+    }
+
+    /// The production HTTP handler, called with the Guest's own session and a
+    /// plain bundle that asks for reassignment.
+    async fn recovery_import_over_http(
+        home: &RecoveryImportHome,
+        kit: &RecoveryKitV1,
+    ) -> (StatusCode, String) {
+        let response = full_recovery_bundle_import(
+            State(test_gateway_state(home.temp.path())),
+            home_token_headers(&home.guest.home_token),
+            Json(FullRecoveryBundleImportRequest {
+                schema: FULL_RECOVERY_BUNDLE_IMPORT_REQUEST_SCHEMA.to_string(),
+                principal_id: home.guest_principal.principal_id.clone(),
+                localhost_root: home.guest_principal.localhost_root.clone(),
+                reassign_to_current_principal: true,
+                bundle: Some(serde_json::json!({
+                    "schema": FULL_RECOVERY_BUNDLE_SCHEMA,
+                    "bundle_id": "bundle:person-principal-fixture",
+                    "principal_id": kit.principal_id,
+                    "localhost_root": kit.localhost_root,
+                    "data_kit": kit,
+                    "wallet_recovery_keys": [],
+                })),
+                package: None,
+                password: None,
+                did_recovery_proof: None,
+            }),
+        )
+        .await;
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        (status, String::from_utf8_lossy(&body).into_owned())
+    }
+
+    /// HTTP and direct Kit import apply the person-principal requirement
+    /// before file access and preserve existing principal data on refusal.
+    async fn assert_recovery_import_person_requirement(
+        home: &RecoveryImportHome,
+        principal_id: &str,
+        decoy: bool,
+    ) {
+        let data_dir = home.temp.path();
+        let root = crate::auth::principal_localhost_root(principal_id);
+        if decoy {
+            // One file the root's inventory declares and one it does not.
+            for name in [".AppData/LocalHost/GBA/ucity/owner.sav", "owner-notes.txt"] {
+                let path = elastos_common::localhost::rooted_localhost_fs_path(
+                    data_dir,
+                    &format!("{root}/{name}"),
+                )
+                .unwrap();
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(&path, b"owner decoy").unwrap();
+            }
+        }
+        let kit = create_recovery_kit_for_principal(principal_id, &root, 1_800_000_000).unwrap();
+        let before = recovery_import_snapshot(data_dir);
+        let scans = crate::auth::principal_root_scan_probes(data_dir);
+        let opens = crate::auth::principal_root_object_opens(data_dir);
+
+        let (status, body) = recovery_import_over_http(home, &kit).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{principal_id}: {body}");
+        assert!(
+            body.contains(PERSON_PRINCIPAL_REQUIREMENT),
+            "{principal_id}: {body}"
+        );
+        let headers = home_token_headers(&home.guest.home_token);
+        let state = test_gateway_state(data_dir);
+        let err = recovery_kit_import_inner(
+            &state,
+            &headers,
+            RecoveryKitMaterialImport {
+                principal_id: home.guest_principal.principal_id.clone(),
+                localhost_root: home.guest_principal.localhost_root.clone(),
+                reassign_to_current_principal: true,
+                kit,
+                did_recovery_proof: None,
+            },
+        )
+        .await
+        .expect_err("a Kit naming a principal that is not a person must be refused");
+        assert!(
+            err.to_string().contains(PERSON_PRINCIPAL_REQUIREMENT),
+            "{err}"
+        );
+
+        let after = recovery_import_snapshot(data_dir);
+        assert_eq!(
+            after.keys().collect::<Vec<_>>(),
+            before.keys().collect::<Vec<_>>()
+        );
+        assert!(after == before, "a refused Kit changed a file's bytes");
+        assert_eq!(crate::auth::principal_root_scan_probes(data_dir), scans);
+        assert_eq!(crate::auth::principal_root_object_opens(data_dir), opens);
+        // The Guest is still only the Guest, and its session still works.
+        let status = recovery_status_inner(&state, &headers).await.unwrap();
+        assert_eq!(status.principal_id, home.guest_principal.principal_id);
+    }
+
+    #[tokio::test]
+    async fn recovery_kit_import_requires_a_person_principal() {
+        for decoy in [false, true] {
+            let home = recovery_import_home();
+            // The local launcher uses this device principal as its context.
+            assert_eq!(
+                crate::api::gateway::local_home_launch_token_context(home.temp.path())
+                    .unwrap()
+                    .principal_id,
+                home.device_principal,
+            );
+            assert_recovery_import_person_requirement(&home, &home.device_principal, decoy).await;
+        }
+    }
+
+    /// Parent device contexts use the same person-principal import rule.
+    #[tokio::test]
+    async fn recovery_kit_import_applies_person_requirement_to_parent_context() {
+        let parent = elastos_runtime::auth::PrincipalId::device_did(
+            "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+        );
+        for decoy in [false, true] {
+            assert_recovery_import_person_requirement(
+                &recovery_import_home(),
+                parent.as_str(),
+                decoy,
+            )
+            .await;
+        }
+    }
+
+    /// Agent contexts use the same person-principal import rule.
+    #[tokio::test]
+    async fn recovery_kit_import_applies_person_requirement_to_agent_context() {
+        let agent = "agent:v1:00112233445566778899aabbccddeeff";
+        assert_recovery_import_person_requirement(&recovery_import_home(), agent, false).await;
+    }
+
+    /// Control: the same Guest, route and request with a Kit that names a
+    /// person id of the minted form still reassigns.
+    #[tokio::test]
+    async fn recovery_kit_import_accepts_a_minted_person_principal() {
+        let home = recovery_import_home();
+        let person =
+            crate::auth::passkey_credential_principal_id("elastos.elacitylabs.com", "lost-passkey")
+                .unwrap();
+        let root = crate::auth::principal_localhost_root(&person);
+        let kit = create_recovery_kit_for_principal(&person, &root, 1_800_000_000).unwrap();
+
+        let (status, body) = recovery_import_over_http(&home, &kit).await;
+
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let body: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(body["status"], "reassigned");
+        assert_eq!(body["principal_id"], person.as_str());
+        assert_eq!(body["localhost_root"], root.as_str());
+        let rebound = crate::auth::load_principal_for_proof_binding(
+            home.temp.path(),
+            &home.guest.proof_binding_id,
+        )
+        .unwrap();
+        assert_eq!(rebound.principal_id, person);
+        assert_eq!(rebound.role, crate::auth::RuntimePrincipalRole::Guest);
     }
 
     #[tokio::test]

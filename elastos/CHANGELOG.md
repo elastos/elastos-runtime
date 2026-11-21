@@ -41,6 +41,11 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 - Home started without opening a browser window stays that way after an update or Undo.
 - Updating works for a Home installed through a linked folder.
 
+### Security
+
+- Apps reach only the data of the person they were opened for, and Home checks more carefully what it starts.
+- Messages that apps see no longer show where files are stored on this computer.
+
 ## [2.0.2-rc.1] - 2026-11-21
 
 ### Added
@@ -75,6 +80,11 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 - Home keeps at least one admin passkey. Removing a passkey asks you to confirm and signs out the windows that used it.
 - Home started without opening a browser window stays that way after an update or Undo.
 - Updating works for a Home installed through a linked folder.
+
+### Security
+
+- Apps reach only the data of the person they were opened for, and Home checks more carefully what it starts.
+- Messages that apps see no longer show where files are stored on this computer.
 
 ## [2.0.1] - 2026-11-09
 

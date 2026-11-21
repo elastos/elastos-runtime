@@ -207,9 +207,9 @@ pub(super) use gateway_passkey_step_up::{
 pub(crate) use gateway_provider_proxy::runtime_custody_publish_creator_tail_for_test;
 use gateway_provider_proxy::*;
 pub(crate) use gateway_provider_proxy::{
-    resolve_runtime_custody_creator_publish_binding, runtime_custody_buy_via_gateway,
-    runtime_custody_publish_via_gateway, ResolvedProtectedContentMintReceipt,
-    ResolvedProtectedContentVerifiedListing,
+    bus_model_provider_request, resolve_runtime_custody_creator_publish_binding,
+    runtime_custody_buy_via_gateway, runtime_custody_publish_via_gateway,
+    ResolvedProtectedContentMintReceipt, ResolvedProtectedContentVerifiedListing,
 };
 use gateway_room::*;
 pub(crate) use gateway_room::{
@@ -1435,10 +1435,33 @@ fn load_home_runtime_coords(data_dir: &std::path::Path) -> Option<GatewayRuntime
     serde_json::from_slice(&bytes).ok()
 }
 
+/// The text a caller receives in place of an error text that names a local
+/// file path. The full error goes to the Runtime log.
+const GATEWAY_INTERNAL_ERROR_TEXT: &str =
+    "request failed on this Runtime; the Runtime log has the cause";
+
+/// An error's text for the caller: its own sentence, unless that names an
+/// absolute local path (`library::hides_a_local_path`), in which case the
+/// fixed sentence, and the full error goes to the Runtime log.
+pub(super) fn gateway_error_text(what: &str, err: &anyhow::Error) -> String {
+    gateway_shown_text(what, err.to_string(), err)
+}
+
+/// `text` as a caller may see it: unchanged, unless it names an absolute
+/// local path, in which case the fixed sentence (and `err` goes to the log).
+pub(super) fn gateway_shown_text(what: &str, text: String, err: &anyhow::Error) -> String {
+    if crate::library::hides_a_local_path(&text) || crate::library::is_raw_fault(err) {
+        tracing::warn!("{what} request failed: {err:#}");
+        format!("{what} {GATEWAY_INTERNAL_ERROR_TEXT}")
+    } else {
+        text
+    }
+}
+
 fn gateway_internal_error(err: anyhow::Error) -> (StatusCode, Json<serde_json::Value>) {
     (
         StatusCode::INTERNAL_SERVER_ERROR,
-        Json(serde_json::json!({ "error": err.to_string() })),
+        Json(serde_json::json!({ "error": gateway_error_text("gateway", &err) })),
     )
 }
 
@@ -1448,7 +1471,10 @@ fn gateway_provider_error_response(scheme: &str, err: anyhow::Error) -> Response
 }
 
 fn gateway_provider_error_tuple(scheme: &str, err: anyhow::Error) -> (StatusCode, String) {
-    (gateway_provider_error_status(scheme, &err), err.to_string())
+    (
+        gateway_provider_error_status(scheme, &err),
+        gateway_error_text(scheme, &err),
+    )
 }
 
 fn gateway_provider_error_status(scheme: &str, err: &anyhow::Error) -> StatusCode {
@@ -1479,14 +1505,27 @@ fn gateway_provider_error_status(scheme: &str, err: &anyhow::Error) -> StatusCod
     }
 }
 
+/// The answer for a save refused because the person's record is kept on
+/// another Runtime and this one holds no protection for their root. A save may
+/// put its own context on top of the refusal, so the whole chain is searched.
+pub(super) fn protected_record_kept_elsewhere_response(err: &anyhow::Error) -> Option<Response> {
+    err.chain()
+        .find(|cause| cause.is::<crate::auth::ProtectedRecordKeptElsewhere>())
+        .map(|cause| (StatusCode::FORBIDDEN, cause.to_string()).into_response())
+}
+
 fn inbox_error_response(err: anyhow::Error) -> Response {
     if let Some(response) = gateway_walletconnect::consent_conflict_response(&err) {
+        return response;
+    }
+    if let Some(response) = protected_record_kept_elsewhere_response(&err) {
         return response;
     }
     let profile_required = gateway_home_system::profile_required_message(&err);
     let text = profile_required
         .map(str::to_string)
         .unwrap_or_else(|| err.to_string());
+    let shown = gateway_shown_text("inbox", text.clone(), &err);
     let status = if text.contains("home launch token")
         || text.contains("admin passkey required")
         || text.contains("fresh passkey")
@@ -1514,11 +1553,14 @@ fn inbox_error_response(err: anyhow::Error) -> Response {
     } else {
         StatusCode::INTERNAL_SERVER_ERROR
     };
-    (status, text).into_response()
+    (status, shown).into_response()
 }
 
 fn system_error_response(err: anyhow::Error) -> Response {
     if let Some(response) = gateway_walletconnect::consent_conflict_response(&err) {
+        return response;
+    }
+    if let Some(response) = protected_record_kept_elsewhere_response(&err) {
         return response;
     }
     if let Some(text) = gateway_home_system::home_appearance_preference_request_message(&err) {
@@ -1554,32 +1596,36 @@ fn system_error_response(err: anyhow::Error) -> Response {
     } else {
         StatusCode::INTERNAL_SERVER_ERROR
     };
-    (status, text).into_response()
+    (status, gateway_error_text("system", &err)).into_response()
 }
 
 fn home_error_response(err: anyhow::Error) -> Response {
+    if let Some(response) = protected_record_kept_elsewhere_response(&err) {
+        return response;
+    }
     let profile_required = gateway_home_system::profile_required_message(&err);
     let appearance_request = gateway_home_system::home_appearance_preference_request_message(&err);
     let text = profile_required
         .map(str::to_string)
         .or_else(|| appearance_request.map(str::to_string))
         .unwrap_or_else(|| err.to_string());
+    let shown = gateway_shown_text("home", text.clone(), &err);
     if text.contains("home launch token") || text.contains("gateway identity") {
-        return (StatusCode::FORBIDDEN, text).into_response();
+        return (StatusCode::FORBIDDEN, shown).into_response();
     }
     if text.contains("admin passkey required") {
-        return (StatusCode::FORBIDDEN, text).into_response();
+        return (StatusCode::FORBIDDEN, shown).into_response();
     }
     if text.contains("share terms") || text.contains("hosted connection is required") {
-        return (StatusCode::BAD_REQUEST, text).into_response();
+        return (StatusCode::BAD_REQUEST, shown).into_response();
     }
     if profile_required.is_some()
         || text == crate::collaboration_release_network::COMMUNITY_LEFT_DETAIL
     {
-        return (StatusCode::CONFLICT, text).into_response();
+        return (StatusCode::CONFLICT, shown).into_response();
     }
     if appearance_request.is_some() {
-        return (StatusCode::BAD_REQUEST, text).into_response();
+        return (StatusCode::BAD_REQUEST, shown).into_response();
     }
     let status = if text.contains("service access request delivery failed: service offer")
         || text.contains("service access request delivery failed: only Browser Exit")
@@ -1598,7 +1644,7 @@ fn home_error_response(err: anyhow::Error) -> Response {
     } else {
         StatusCode::INTERNAL_SERVER_ERROR
     };
-    (status, text).into_response()
+    (status, shown).into_response()
 }
 
 // ---------------------------------------------------------------------------

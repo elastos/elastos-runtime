@@ -6756,10 +6756,15 @@ async fn listing_blocks_damaged_items_and_lists_the_rest() {
         )
         .await;
         assert_ne!(read["status"], "ok", "{name}");
+        let message = read["message"].as_str().unwrap();
+        assert!(message.contains(name), "{name}: {read}");
         assert!(
-            read.to_string()
-                .contains(crate::auth::PROTECTED_PRINCIPAL_ROOT_OBJECT_DAMAGED),
-            "{name}: {read}"
+            message.contains("move") || message.contains("Restore"),
+            "{read}"
+        );
+        assert!(
+            !message.contains(&dir.path().display().to_string()),
+            "{read}"
         );
     }
     for name in ["good-1.txt", "good-2.txt", "good-3.txt", "padded.txt"] {
@@ -6823,9 +6828,12 @@ async fn lazy_protection_bounds_size_and_class() {
         "protected_principal_root_object_not_encrypted"
     );
     let (_, read) = post_library(app.clone(), &token, "read", json!({ "uri": large_uri })).await;
+    assert_eq!(read["status"], "error", "{read}");
+    let message = read["message"].as_str().unwrap();
+    assert!(message.contains("Documents/legacy-17mib.bin"), "{read}");
+    assert!(message.contains("upload it again in Library"), "{read}");
     assert!(
-        read.to_string()
-            .contains("Documents/legacy-17mib.bin is not encrypted and is larger than 16 MiB"),
+        !read.to_string().contains(&dir.path().display().to_string()),
         "{read}"
     );
     let metadata = std::fs::metadata(&large_path).unwrap();
@@ -11834,4 +11842,434 @@ async fn a_publication_withdrawn_by_an_older_release_is_not_served_after_the_upd
     assert!(!crate::library::cid_is_published_here(dir.path(), &cid));
     let (_, status) = post_library(app, &token, "status", json!({ "uri": uri })).await;
     assert_eq!(status["data"]["object"]["published"], false, "{status}");
+}
+
+/// What the `ped_` rows share: a signed-in person with a protected root, one
+/// file in Documents, and a `list` of Documents that answers ok. The rows
+/// check the error answers a caller receives, with literal values.
+struct PedHome {
+    dir: tempfile::TempDir,
+    state: GatewayState,
+    token: String,
+    principal_id: String,
+    documents_uri: String,
+}
+
+const PED_MARKER: &str = "MARKER-9f3a";
+/// The one sentence a Library answer carries for a file system or parse
+/// fault (library.rs, `LIBRARY_INTERNAL_ERROR_MESSAGE`).
+const PED_FIXED_MESSAGE: &str =
+    "Library request failed on this Runtime; the Runtime log has the cause";
+
+/// The whole Library answer for a file system or parse fault.
+fn ped_fixed_answer() -> Value {
+    json!({
+        "status": "error",
+        "code": "library_error",
+        "message": PED_FIXED_MESSAGE,
+    })
+}
+const PED_AUTH_STATE_FILE: &str = "ElastOS/System/Auth/auth-state.json";
+
+async fn ped_home() -> PedHome {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(dir.path().is_absolute());
+    let state = library_test_state(dir.path()).await;
+    let authority = passkey_authority_with_name(dir.path(), Some("admin"));
+    crate::auth::store_test_principal_root_protection(dir.path(), &authority.principal_id);
+    let token = app_token_for_authority(dir.path(), LIBRARY_CAPSULE_ID, &authority);
+    let root = crate::auth::principal_localhost_root(&authority.principal_id);
+    let documents_uri = format!("{root}/Documents");
+    write_library_bytes(
+        &gateway_router(state.clone()),
+        &token,
+        &format!("{documents_uri}/note.txt"),
+        b"note",
+    )
+    .await;
+    PedHome {
+        dir,
+        state,
+        token,
+        principal_id: authority.principal_id,
+        documents_uri,
+    }
+}
+
+impl PedHome {
+    /// The data folder as it is spelled inside an answer.
+    fn data_folder(&self) -> String {
+        self.dir.path().display().to_string()
+    }
+
+    fn auth_state_path(&self) -> std::path::PathBuf {
+        let path = self.dir.path().join(PED_AUTH_STATE_FILE);
+        assert!(path.is_file(), "{path:?}");
+        path
+    }
+
+    fn list_request(&self) -> Value {
+        json!({
+            "op": "list",
+            "principal_id": self.principal_id,
+            "uri": self.documents_uri,
+        })
+    }
+
+    /// The object provider's own answer, asked the way the gateway asks it.
+    async fn provider_list(&self) -> Value {
+        self.state
+            .provider_registry
+            .as_ref()
+            .unwrap()
+            .send_raw("object", &self.list_request())
+            .await
+            .unwrap()
+    }
+
+    /// The HTTP status and body a capsule holding `token` receives from
+    /// `POST /api/provider/object/list`.
+    async fn gateway_list(&self, token: &str, body: Value) -> (StatusCode, String) {
+        let response = gateway_router(self.state.clone())
+            .oneshot(
+                test_browser_request("localhost:61180", "null")
+                    .method("POST")
+                    .uri("/api/provider/object/list")
+                    .header("x-elastos-home-token", token)
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(provider_body(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (status, String::from_utf8(bytes.to_vec()).unwrap())
+    }
+
+    /// The fixture's own auth state file with the one value at `position`
+    /// replaced by the marker string, as text, and the line and column at
+    /// which the marker's closing quote stands.
+    fn auth_state_with_marker_at(healthy: &[u8], position: &str) -> (String, usize, usize) {
+        let mut value: Value = serde_json::from_slice(healthy).unwrap();
+        *value.pointer_mut(position).unwrap() = json!(PED_MARKER);
+        let text = serde_json::to_string_pretty(&value).unwrap();
+        let end = text.find(&format!("\"{PED_MARKER}\"")).unwrap() + PED_MARKER.len() + 2;
+        let line = text[..end].matches('\n').count() + 1;
+        let column = end - text[..end].rfind('\n').map_or(0, |at| at + 1);
+        (text, line, column)
+    }
+}
+
+/// Runs a Library `list` at the object provider after the auth state file is
+/// overwritten with bytes that are not JSON. The answer is one fixed sentence:
+/// no file path, no `detail` and no parse error text. The in-process provider
+/// and the standalone provider entry answer the same.
+#[tokio::test]
+async fn ped_library_list_with_unparsable_auth_state_answers_without_the_file_path() {
+    let home = ped_home().await;
+    let healthy = home.provider_list().await;
+    assert_eq!(healthy["status"], "ok", "{healthy}");
+
+    std::fs::write(home.auth_state_path(), b"not json").unwrap();
+    let answer = home.provider_list().await;
+    println!("PED-ANSWER unparsable, object provider: {answer}");
+    assert_eq!(answer, ped_fixed_answer(), "{answer}");
+    assert!(
+        !answer.to_string().contains(&home.data_folder()),
+        "{answer}"
+    );
+
+    let standalone =
+        crate::library::handle_object_provider_raw_request(home.dir.path(), &home.list_request());
+    println!("PED-ANSWER unparsable, standalone provider entry: {standalone}");
+    assert_eq!(standalone, ped_fixed_answer(), "{standalone}");
+}
+
+/// Runs the same `list` after ONE value of the fixture's valid auth state
+/// file is replaced by the string `MARKER-9f3a`. Where the code expects a
+/// record, a number, an object or one of a fixed set of names, the answer is
+/// the fixed sentence: the marker, the file path and the parse text are in no
+/// answer. Where the code expects any string, the file still parses and the
+/// list answers as before.
+#[tokio::test]
+async fn ped_library_list_with_a_wrongly_typed_auth_state_value_does_not_quote_that_value() {
+    let home = ped_home().await;
+    let path = home.auth_state_path();
+    let healthy_bytes = std::fs::read(&path).unwrap();
+    let healthy = home.provider_list().await;
+    assert_eq!(healthy["status"], "ok", "{healthy}");
+
+    for position in [
+        "/principals/0",
+        "/principals/0/created_at",
+        "/principals/0/proof_binding",
+        "/principal_root_protections/0/protectors/0/envelope",
+        "/principals/0/role",
+    ] {
+        let (text, _, _) = PedHome::auth_state_with_marker_at(&healthy_bytes, position);
+        std::fs::write(&path, text).unwrap();
+        let answer = home.provider_list().await;
+        println!("PED-ANSWER marker at {position}, object provider: {answer}");
+        assert_eq!(answer, ped_fixed_answer(), "{position}: {answer}");
+        assert!(!answer.to_string().contains(PED_MARKER), "{answer}");
+    }
+
+    // A string where any string is accepted: the file parses, the list
+    // answers as before, and the marker is not in the answer.
+    for position in ["/principals/0/display_name", "/principals/0/principal_id"] {
+        let (text, _, _) = PedHome::auth_state_with_marker_at(&healthy_bytes, position);
+        std::fs::write(&path, text).unwrap();
+        let answer = home.provider_list().await;
+        println!("PED-ANSWER marker at {position}, object provider: {answer}");
+        assert_eq!(answer, healthy, "{position}: {answer}");
+        assert!(!answer.to_string().contains(PED_MARKER), "{answer}");
+    }
+
+    // A string that parses and then fails its own format rule: a fixed
+    // sentence, no `detail`, no path and no marker.
+    let position = "/principal_root_protections/0/data_key_id";
+    let (text, _, _) = PedHome::auth_state_with_marker_at(&healthy_bytes, position);
+    std::fs::write(&path, text).unwrap();
+    let answer = home.provider_list().await;
+    println!("PED-ANSWER marker at {position}, object provider: {answer}");
+    assert_eq!(
+        answer,
+        json!({
+            "status": "error",
+            "code": "library_error",
+            "message": "data_key_id must start with pdek:",
+        }),
+        "{answer}"
+    );
+
+    std::fs::write(&path, &healthy_bytes).unwrap();
+    assert_eq!(home.provider_list().await, healthy);
+}
+
+/// Control: the same `list` with the fixture's healthy auth state file, at
+/// the object provider and through the gateway. Status ok, no `message`, no
+/// `detail`, and the data folder's path is nowhere in the answer.
+#[tokio::test]
+async fn ped_library_list_with_healthy_auth_state_has_no_path_in_its_answer() {
+    let home = ped_home().await;
+    let answer = home.provider_list().await;
+    println!("PED-ANSWER healthy, object provider: {answer}");
+    assert_eq!(answer["status"], "ok", "{answer}");
+    assert_eq!(
+        answer["data"]["objects"][0]["uri"],
+        format!("{}/note.txt", home.documents_uri),
+        "{answer}"
+    );
+    assert!(answer.get("message").is_none(), "{answer}");
+    assert!(answer.get("detail").is_none(), "{answer}");
+    assert!(
+        !answer.to_string().contains(&home.data_folder()),
+        "{answer}"
+    );
+
+    let (status, body) = home
+        .gateway_list(&home.token, json!({ "uri": home.documents_uri }))
+        .await;
+    println!("PED-ANSWER healthy, capsule HTTP body: {status} {body}");
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        serde_json::from_str::<Value>(&body).unwrap(),
+        answer,
+        "{body}"
+    );
+    assert!(!body.contains(&home.data_folder()), "{body}");
+}
+
+/// Runs the unparsable-file case through `POST /api/provider/object/list`
+/// with the Library launch token of a signed-in person. The gateway
+/// answers 403 with one fixed sentence before the provider is asked; the
+/// file's path is not in the body.
+#[tokio::test]
+async fn ped_gateway_list_with_unparsable_auth_state_and_a_passkey_session_answers_a_fixed_sentence(
+) {
+    let home = ped_home().await;
+    std::fs::write(home.auth_state_path(), b"not json").unwrap();
+    let (status, body) = home
+        .gateway_list(&home.token, json!({ "uri": home.documents_uri }))
+        .await;
+    println!("PED-ANSWER unparsable, passkey session, capsule HTTP body: {status} {body}");
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(body, "Gateway request requires an admitted host and caller");
+    assert!(!body.contains(&home.data_folder()), "{body}");
+}
+
+/// Runs the same route with a Library launch token of the Runtime's own
+/// device authority, which is checked without reading the auth state file.
+/// The gateway's audit step fails before the provider is asked; the body is
+/// one fixed sentence, without the file's path. With a wrongly typed value in
+/// the file the body is the same and the marker is not in it.
+#[tokio::test]
+async fn ped_gateway_list_with_unparsable_auth_state_and_the_device_token_answers_without_the_file_path(
+) {
+    let home = ped_home().await;
+    let path = home.auth_state_path();
+    let device_token = issue_home_launch_token(home.dir.path(), LIBRARY_CAPSULE_ID).unwrap();
+    let (status, body) = home.gateway_list(&device_token, json!({})).await;
+    println!("PED-ANSWER healthy, device token, capsule HTTP body: {status} {body}");
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let listed: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(listed["status"], "ok", "{body}");
+    assert_eq!(listed["data"]["objects"], json!([]), "{body}");
+    let healthy_bytes = std::fs::read(&path).unwrap();
+    let expected = "object request failed on this Runtime; the Runtime log has the cause";
+
+    std::fs::write(&path, b"not json").unwrap();
+    let (status, body) = home.gateway_list(&device_token, json!({})).await;
+    println!("PED-ANSWER unparsable, device token, capsule HTTP body: {status} {body}");
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert_eq!(body, expected);
+    assert!(!body.contains(&home.data_folder()), "{body}");
+
+    let (text, _, _) = PedHome::auth_state_with_marker_at(&healthy_bytes, "/principals/0");
+    std::fs::write(&path, text).unwrap();
+    let (status, body) = home.gateway_list(&device_token, json!({})).await;
+    println!(
+        "PED-ANSWER marker at /principals/0, device token, capsule HTTP body: {status} {body}"
+    );
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert_eq!(body, expected);
+    assert!(!body.contains(PED_MARKER), "{body}");
+}
+
+/// Gives the Home, Inbox and system error mappers an error whose text names
+/// a file under a data folder, as a failed sign-in state read does. Each
+/// keeps its status and answers without the path.
+#[tokio::test]
+async fn ped_home_inbox_and_system_mappers_answer_without_a_local_path() {
+    let named = "failed to parse auth state \"/data/ElastOS/System/Auth/auth-state.json\"";
+    for (mapper, response) in [
+        (
+            "home",
+            super::super::home_error_response(anyhow::anyhow!(named)),
+        ),
+        (
+            "inbox",
+            super::super::inbox_error_response(anyhow::anyhow!(named)),
+        ),
+        (
+            "system",
+            super::super::system_error_response(anyhow::anyhow!(named)),
+        ),
+    ] {
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body = String::from_utf8(body.to_vec()).unwrap();
+        println!("PED-ANSWER {mapper} mapper: {status} {body}");
+        assert_eq!(
+            status,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "{mapper}: {body}"
+        );
+        assert!(!body.contains("/data/"), "{mapper}: {body}");
+        assert!(!body.contains("auth-state.json"), "{mapper}: {body}");
+    }
+}
+
+#[tokio::test]
+async fn ped_shared_mappers_keep_typed_refusals() {
+    type Mapper = fn(anyhow::Error) -> axum::response::Response;
+    let mappers: [(&str, Mapper); 2] = [
+        ("inbox", super::super::inbox_error_response),
+        ("system", super::super::system_error_response),
+    ];
+    for (name, mapper) in mappers {
+        let conflict = anyhow::Error::new(super::super::gateway_walletconnect::ConsentConflict)
+            .context("save context /data/private");
+        let response = mapper(conflict);
+        assert_eq!(response.status(), StatusCode::CONFLICT, "{name}");
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&bytes).unwrap(),
+            json!({
+                "schema": "elastos.home.wallet-connector.effect.error/v1",
+                "code": "conflict",
+            }),
+            "{name}",
+        );
+
+        let elsewhere = anyhow::Error::new(crate::auth::ProtectedRecordKeptElsewhere)
+            .context("save context /data/private");
+        let response = mapper(elsewhere);
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{name}");
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        assert_eq!(
+            String::from_utf8(bytes.to_vec()).unwrap(),
+            crate::auth::ProtectedRecordKeptElsewhere.to_string(),
+            "{name}",
+        );
+    }
+}
+
+/// Runs a `list` of a folder the Runtime cannot read, with a healthy auth
+/// state file, at the object provider and through the gateway. The provider
+/// answers the fixed sentence, without the folder's path or the OS error, and
+/// the capsule's HTTP body is that same JSON.
+#[cfg(unix)]
+#[tokio::test]
+async fn ped_gateway_list_of_an_unreadable_folder_answers_without_the_folder_path() {
+    use std::os::unix::fs::PermissionsExt;
+    let home = ped_home().await;
+    let folder = library_object_path(home.dir.path(), &home.documents_uri);
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let answer = home.provider_list().await;
+    let (status, body) = home
+        .gateway_list(&home.token, json!({ "uri": home.documents_uri }))
+        .await;
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o700)).unwrap();
+    println!("PED-ANSWER unreadable folder, object provider: {answer}");
+    println!("PED-ANSWER unreadable folder, capsule HTTP body: {status} {body}");
+
+    assert_eq!(answer, ped_fixed_answer(), "{answer}");
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        serde_json::from_str::<Value>(&body).unwrap(),
+        ped_fixed_answer(),
+        "{body}"
+    );
+    assert!(!body.contains(&home.data_folder()), "{body}");
+    assert!(!body.contains("os error"), "{body}");
+}
+
+/// Runs the Player's `open_viewer` for an item that was never bought, through
+/// the gateway with a Player launch token. The answer is one fixed
+/// sentence with no `detail`. This fixture reaches no error with a cause
+/// chain.
+#[tokio::test]
+async fn ped_player_open_viewer_denied_before_purchase_has_no_detail() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = gateway_router(library_test_state_without_content(dir.path()).await);
+    let authority = passkey_authority_with_name(dir.path(), Some("admin"));
+    let token = app_token_for_authority(dir.path(), ELACITY_PLAYER_CAPSULE_ID_FOR_TEST, &authority);
+    let (status, payload) = post_library(
+        app,
+        &token,
+        "open_viewer",
+        json!({ "mint_id": "00".repeat(32) }),
+    )
+    .await;
+    println!("PED-ANSWER open_viewer before purchase, capsule HTTP body: {status} {payload}");
+    assert_eq!(status, StatusCode::OK, "{payload}");
+    assert_eq!(
+        payload,
+        json!({
+            "status": "error",
+            "code": "library_error",
+            "message": "Runtime custody open is denied before purchase",
+        }),
+        "{payload}"
+    );
 }
