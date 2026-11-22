@@ -819,7 +819,7 @@ async fn passkey_add_complete_inner(
         &input.ceremony_id,
         &input.response,
     )?;
-    record_passkey_added_from(state, headers, &added.proof_binding_id)?;
+    record_passkey_added_from(&state.data_dir, headers, &added.proof_binding_id)?;
     Ok(PasskeyAddResponse {
         schema: PASSKEY_ADD_RESULT_SCHEMA.into(),
         proof_binding_id: added.proof_binding_id,
@@ -938,7 +938,7 @@ async fn owner_recovery_complete_inner(
         &input.response,
         &kit,
     )?;
-    record_passkey_added_from(state, headers, &grant.proof_binding_id)?;
+    record_passkey_added_from(&state.data_dir, headers, &grant.proof_binding_id)?;
     drop(manager);
     passkey_response_for_grant(state, grant)
 }
@@ -1076,13 +1076,13 @@ fn passkey_added_from(headers: &HeaderMap) -> Option<String> {
     Some(device.map_or_else(|| browser.into(), |device| format!("{browser} on {device}")))
 }
 
-fn record_passkey_added_from(
-    state: &GatewayState,
+pub(crate) fn record_passkey_added_from(
+    data_dir: &std::path::Path,
     headers: &HeaderMap,
     proof_binding_id: &str,
 ) -> anyhow::Result<()> {
     crate::auth::set_passkey_added_from(
-        &state.data_dir,
+        data_dir,
         proof_binding_id,
         passkey_added_from(headers).as_deref(),
     )
@@ -3860,7 +3860,7 @@ async fn passkey_register_complete_inner(
         crate::auth::now_ts(),
     )? {
         drop(manager);
-        record_passkey_added_from(state, headers, &grant.proof_binding_id)?;
+        record_passkey_added_from(&state.data_dir, headers, &grant.proof_binding_id)?;
         return passkey_response_for_grant(state, grant);
     }
     drop(manager);
@@ -3886,7 +3886,7 @@ async fn passkey_register_complete_inner(
             intent,
         )?;
         drop(manager);
-        record_passkey_added_from(state, headers, &grant.proof_binding_id)?;
+        record_passkey_added_from(&state.data_dir, headers, &grant.proof_binding_id)?;
         return passkey_response_for_grant(state, grant);
     }
     let outcome = manager.complete_registration(
@@ -3914,7 +3914,7 @@ async fn passkey_register_complete_inner(
             purpose: crate::auth::PasskeySessionPurpose::GuestRegistration,
         },
     )?;
-    record_passkey_added_from(state, headers, &grant.proof_binding_id)?;
+    record_passkey_added_from(&state.data_dir, headers, &grant.proof_binding_id)?;
     passkey_response_for_grant(state, grant)
 }
 
@@ -5477,19 +5477,25 @@ mod tests {
                     .unwrap();
                     router.layer(Extension(ConnectInfo(peer)))
                 };
-                let request =
-                    |path: &str, cookie: &str, ceremony: &str, body: serde_json::Value| {
-                        Request::builder()
-                            .method("POST")
-                            .uri(path)
-                            .header("origin", origin)
-                            .header("host", rp)
-                            .header("content-type", "application/json")
-                            .header("cookie", cookie)
-                            .header("x-elastos-owner-ceremony", ceremony)
-                            .body(Body::from(body.to_string()))
-                            .unwrap()
-                    };
+                let request = |path: &str,
+                               cookie: &str,
+                               ceremony: &str,
+                               body: serde_json::Value| {
+                    Request::builder()
+                        .method("POST")
+                        .uri(path)
+                        .header("origin", origin)
+                        .header("host", rp)
+                        .header(
+                            "user-agent",
+                            "Mozilla/5.0 (Macintosh; Intel Mac OS X) Version/18.0 Safari/605.1.15",
+                        )
+                        .header("content-type", "application/json")
+                        .header("cookie", cookie)
+                        .header("x-elastos-owner-ceremony", ceremony)
+                        .body(Body::from(body.to_string()))
+                        .unwrap()
+                };
                 let app = make_router();
                 let intent = json!({"purpose": "create", "public_name": "Shared Name"});
                 let begin_body = if direct {
@@ -5667,6 +5673,10 @@ mod tests {
                 assert_eq!(first["session_id"], replay["session_id"]);
                 let auth = crate::auth::load_auth_state(root.path()).unwrap();
                 let principal = &auth.principals[0];
+                assert_eq!(
+                    principal.passkey_added_from.as_deref(),
+                    Some("Safari on Mac")
+                );
                 let profile = crate::collaboration_profile_authority::load_profile_authority(
                     root.path(),
                     &principal.principal_id,
@@ -7209,11 +7219,10 @@ mod tests {
             .find(|key| passkey_proof_binding_id(key) == added_id)
             .unwrap();
         let session = local_profile_sign_in(temp.path(), &credential);
-        let http_list = passkey_list(
-            State(state.clone()),
-            home_token_headers(&session.home_token),
-        )
-        .await;
+        let session_token =
+            issue_home_launch_token_for_auth_grant(temp.path(), HOME_CAPSULE_ID, &session).unwrap();
+        let http_list =
+            passkey_list(State(state.clone()), home_token_headers(&session_token)).await;
         assert_eq!(http_list.status(), StatusCode::OK);
         let bytes = axum::body::to_bytes(http_list.into_body(), 65536)
             .await
@@ -7228,7 +7237,7 @@ mod tests {
                 .unwrap()["proof_binding_id"],
             added_id
         );
-        let second = passkey_list_inner(&state, &home_token_headers(&session.home_token))
+        let second = passkey_list_inner(&state, &home_token_headers(&session_token))
             .await
             .unwrap();
         assert_eq!(second.passkeys.iter().filter(|key| key.current).count(), 1);
