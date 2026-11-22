@@ -1,0 +1,2 @@
+# 2026-11-16, Anders: "and \"phone wallet\" doesnt make sense. dont need to call it anything. we follow walletconnect best practice"
+phone wallet

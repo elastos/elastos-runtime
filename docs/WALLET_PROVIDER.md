@@ -298,13 +298,13 @@ the current revision. Home owns window orchestration.
 The relay-only adapter returns an empty optional Reown Verify website
 attestation. That service uses direct HTTP and iframes outside Runtime's relay
 route. Runtime verifies the linking signature and each approval binding; a
-phone wallet may show the Home origin as unverified.
+wallet may show the Home origin as unverified.
 
-Mode A connects a phone wallet to sign Runtime challenges and approved requests.
+Mode A connects a wallet to sign Runtime challenges and approved requests.
 Mode B, where external dApps use ElastOS as a WalletConnect wallet, requires its
-own security decision. The phone holds signing keys and confirms each request.
+own security decision. The wallet holds signing keys and confirms each request.
 Isolation protects Home. A compromised SDK still holds its pairing session and
-could ask the phone to sign a different request; the phone's confirmation is the
+could ask the wallet to sign a different request; the wallet's confirmation is the
 last guard. Signup and sign-in remain candidates for the separate first-run
 authority decision.
 
@@ -315,7 +315,7 @@ approved, unfinished transaction visible with "This transaction may already have
 been sent. Check your wallet before sending again." Opening
 it again supplies recovery instructions and keeps the send control disabled.
 A returned transaction hash is passed to Runtime once even if the account,
-network or expiry changed during the phone prompt. An approved WalletConnect
+network or expiry changed during the wallet prompt. An approved WalletConnect
 transaction can complete once within 24 hours after expiry, in the same Runtime
 session. Wallet keeps an approved WalletConnect transaction in its request list.
 Its owner can use Dismiss in Wallet to close it and release its approval slot,
@@ -324,7 +324,7 @@ requests only. Runtime accepts dismissal through their owner-authorized actions
 if a pending card remains on screen after WalletConnect approves the send.
 The connector and requesting app keep their original authority. The requesting
 app keeps its rejection after dismissal. Completion keeps its original session
-binding. Dismiss does not cancel a phone transaction.
+binding. Dismiss does not cancel a wallet transaction.
 Runtime records one hash returned within the same grace period after dismissal,
 with the normal completion bindings. The request stays dismissed; Activity shows
 "Dismissed, but your wallet reported it as sent" with the hash and a sent mark.
@@ -334,7 +334,7 @@ An unfinished WalletConnect prompt expires after the grace period. Other
 connectors keep their signing TTL; [N3](#n3-outside-wallet-requests) defines
 MetaMask's receipt-only exception after this work.
 Runtime checks the returned
-transaction hash's format only. The phone wallet confirms the transaction;
+transaction hash's format only. The wallet confirms the transaction;
 the hash alone does not prove that it matches the approved payload. A completion error keeps the
 hash visible for checking before another send. Unused signatures and ownership
 proofs stop when their account, network or expiry changes. Typed-data requests
@@ -380,7 +380,7 @@ The native-Storage comparison and deterministic sandbox test cover Chromium and
 WebKit. The opt-in real-relay test, selected with
 `ELASTOS_WALLETCONNECT_PROJECT_FILE`, separately checks pairing, page reload and
 a fresh source-gateway process restart. Installed desktop acceptance and a real
-phone wallet require their own evidence.
+wallet require their own evidence.
 
 The connector is installed with Home and stays hidden and unroutable until
 `elastos.walletconnect.connector/v1` configuration and the matching hashed local

@@ -5,9 +5,38 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { checkProductData, parsePublishData, validatePublishData, validateCapsule, validateComponents, validateContracts, walletViewAssets, validateWalletViewAssets } from "./check-product-data.mjs";
+import { checkProductData, validateProductWording, parsePublishData, validatePublishData, validateCapsule, validateComponents, validateContracts, walletViewAssets, validateWalletViewAssets } from "./check-product-data.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
+
+test("product wording uses the rejected terms list across release, docs and capsule sources", () => {
+  const dir = mkdtempSync(join(tmpdir(), "product-wording-"));
+  try {
+    const put = (path, text) => {
+      mkdirSync(dirname(join(dir, path)), { recursive: true });
+      writeFileSync(join(dir, path), text);
+    };
+    put("scripts/rejected-terms.txt", '# 2026-11-16, Anders: "phone wallet"\nphone wallet\nrejected phrase\n');
+    const paths = ["elastos/CHANGELOG.md", "scripts/walletconnect/adapter.mjs", "docs/nested/wallet.md", "capsules/app/browser/view.js", "capsules/app/browser/src/view.ts", "capsules/provider/src/lib.rs", "capsules/_shared/view.mjs"];
+    for (const path of paths) put(path, "Connect wallet");
+    put("capsules/app/vendor/sdk.js", "phone wallet");
+    put("capsules/app/browser/vendor/sdk.js", "phone wallet");
+    put("capsules/provider/target/cache.txt", "phone wallet");
+    validateProductWording(dir);
+    for (const path of paths) {
+      for (const text of ["Your PHONE WALLET.", "Your phone\nwallet.", "A rejected phrase."]) {
+        put(path, text);
+        assert.throws(() => validateProductWording(dir), error => error.message.includes(`${path}:1: rejected term`));
+      }
+      put(path, "Connect wallet");
+    }
+    validateProductWording(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("shipped product wording contains no rejected terms", () => validateProductWording(root));
 const json = (path) => JSON.parse(readFileSync(resolve(root, path), "utf8"));
 const manifests = {};
 const paths = [];
@@ -243,7 +272,8 @@ function dataFixture() {
         for (const size of [32, 64, 128, 256]) copyFileSync(resolve(root, dirname(path), value.icon, `icon-${size}.png`), resolve(directory, value.icon, `icon-${size}.png`));
       }
     }
-    for (const path of ["components.json", "capsules/home/browser/manifest.webmanifest", "capsules/home/browser/elastos-home-icon-192.png", "capsules/home/browser/elastos-home-icon-512.png", "scripts/publish-release.sh", "elastos/crates/elastos-server/src/publish.rs"]) {
+    mkdirSync(resolve(fixture, "docs"));
+    for (const path of ["scripts/rejected-terms.txt", "scripts/walletconnect/adapter.mjs", "elastos/CHANGELOG.md", "components.json", "capsules/home/browser/manifest.webmanifest", "capsules/home/browser/elastos-home-icon-192.png", "capsules/home/browser/elastos-home-icon-512.png", "scripts/publish-release.sh", "elastos/crates/elastos-server/src/publish.rs"]) {
       mkdirSync(dirname(resolve(fixture, path)), { recursive: true });
       copyFileSync(resolve(root, path), resolve(fixture, path));
     }

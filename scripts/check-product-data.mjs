@@ -334,7 +334,37 @@ export function validateWalletViewAssets(repoRoot) {
   }
 }
 
+export function validateProductWording(repoRoot = root) {
+  const terms = readFileSync(resolve(repoRoot, "scripts/rejected-terms.txt"), "utf8")
+    .split(/\r?\n/).map(line => line.trim()).filter(line => line && !line.startsWith("#"));
+  assert(terms.length > 0, "rejected terms list must be nonempty");
+  const patterns = terms.map(term => [term, new RegExp(`\\b${term.split(/\s+/).map(word => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+")}\\b`, "i")]);
+  const files = ["elastos/CHANGELOG.md", "scripts/walletconnect/adapter.mjs"];
+  const walk = (directory, scan) => {
+    for (const entry of readdirSync(resolve(repoRoot, directory), { withFileTypes: true })) {
+      if (["vendor", "target", "node_modules"].includes(entry.name)) continue;
+      const path = `${directory}/${entry.name}`;
+      if (entry.isDirectory()) walk(path, scan || ["browser", "src", "_shared"].includes(entry.name));
+      else if (entry.isFile() && scan) files.push(path);
+    }
+  };
+  walk("docs", true);
+  walk("capsules", false);
+  const findings = [];
+  for (const path of files.sort()) {
+    const bytes = readFileSync(resolve(repoRoot, path));
+    if (bytes.includes(0)) continue;
+    const source = bytes.toString("utf8");
+    for (const [term, pattern] of patterns) {
+      const match = pattern.exec(source);
+      if (match) findings.push(`${path}:${source.slice(0, match.index).split("\n").length}: rejected term "${term}"`);
+    }
+  }
+  assert.equal(findings.length, 0, findings.join("\n"));
+}
+
 export function checkProductData(repoRoot = root) {
+  validateProductWording(repoRoot);
   const json = (path) => JSON.parse(readFileSync(resolve(repoRoot, path), "utf8"));
   const manifests = {};
   const manifestPaths = [];

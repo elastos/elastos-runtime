@@ -120,7 +120,10 @@ test("the shipped bundle matches the locked graph and current adapter sources", 
   const vendor = new URL("../capsules/wallet-walletconnect/vendor/", import.meta.url);
   const manifest = JSON.parse(await readFile(new URL("adapter.json", vendor)));
   const sha = bytes => createHash("sha256").update(bytes).digest("hex");
-  assert.equal(manifest.sdk_sha256, sha(await readFile(new URL("reown-appkit.js", vendor))));
+  const bundle = await readFile(new URL("reown-appkit.js", vendor));
+  assert.equal(manifest.sdk_sha256, sha(bundle));
+  assert.doesNotMatch(bundle.toString("utf8"), /phone\s+wallet/i);
+  assert.match(bundle.toString("utf8"), /Scan with your wallet\./);
   assert.equal(manifest.dependency_lock_sha256, sha(await readFile(new URL("walletconnect/package-lock.json", import.meta.url))));
   assert.deepEqual(manifest.source_sha256, Object.fromEntries(await Promise.all(
     ["adapter.mjs", "runtime-storage.mjs", "runtime-websocket.mjs", "../vendor-walletconnect-adapter.sh"].map(async file =>

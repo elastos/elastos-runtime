@@ -169,8 +169,8 @@
       "inventory": [
         "[mark: walletconnect.png] WalletConnect",
         "[QR code]",
-        "Scan this QR Code with your phone",
-        "Or paste the copied link into a wallet app on this computer.",
+        "Scan with your wallet.",
+        "Or paste the copied link into your wallet.",
         "Copy link [bordered secondary]",
         "Cancel [bordered secondary]"
       ],

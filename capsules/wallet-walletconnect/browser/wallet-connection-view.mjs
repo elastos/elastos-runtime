@@ -463,7 +463,7 @@ export function renderConnection(document, view) {
   }
   root.append(content);
   if(view.compact&&!approvalSite)root.append(feedback);
-  if(view.qrData){heading.hidden=true;content.replaceChildren();const dialog=el('section',null,'connection-dialog');dialog.setAttribute('role','dialog');dialog.setAttribute('aria-modal','true');dialog.setAttribute('aria-label','WalletConnect');const title=el('h2','WalletConnect');title.prepend(icon('walletconnect'));dialog.append(title);const qr=el('img',null,'connection-qr');qr.src=view.qrData;qr.alt='Wallet connection QR code';dialog.append(qr,el('p','Scan this QR code with the wallet app on your phone.'),el('p','Or paste the copied link into a wallet app on this computer.'));if(view.copyFeedback.length){const p=el('p',view.copyFeedback,'connection-copy-feedback');p.setAttribute('role','status');p.setAttribute('aria-live','polite');dialog.append(p);}if(!view.compact)dialog.append(controls);content.append(dialog);}
+  if(view.qrData){heading.hidden=true;content.replaceChildren();const dialog=el('section',null,'connection-dialog');dialog.setAttribute('role','dialog');dialog.setAttribute('aria-modal','true');dialog.setAttribute('aria-label','WalletConnect');const title=el('h2','WalletConnect');title.prepend(icon('walletconnect'));dialog.append(title);const qr=el('img',null,'connection-qr');qr.src=view.qrData;qr.alt='Wallet connection QR code';dialog.append(qr,el('p','Scan with your wallet.'),el('p','Or paste the copied link into your wallet.'));if(view.copyFeedback.length){const p=el('p',view.copyFeedback,'connection-copy-feedback');p.setAttribute('role','status');p.setAttribute('aria-live','polite');dialog.append(p);}if(!view.compact)dialog.append(controls);content.append(dialog);}
   return root;
 }
 
