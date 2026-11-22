@@ -43,8 +43,15 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 
 ### Security
 
-- Apps reach only the data of the person they were opened for, and Home checks more carefully what it starts.
-- Messages that apps see no longer show where files are stored on this computer.
+- Apps get stricter checks on whose data they reach, and Home checks more carefully which programs it starts.
+- Error messages from Home, Library, Inbox and System no longer show where files are stored on this computer.
+
+### Developer detail
+
+- The behaviour gate rejects incomplete or missing test results, early exits
+  and stalled files. Its completion supervisor reports the file and first
+  unfinished test, ends with one PASS or FAIL verdict, and stops its workers
+  when the gate exits. Plain smoke scripts finish naturally with process.exitCode.
 
 ## [2.0.2-rc.1] - 2026-11-21
 
@@ -83,8 +90,8 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 
 ### Security
 
-- Apps reach only the data of the person they were opened for, and Home checks more carefully what it starts.
-- Messages that apps see no longer show where files are stored on this computer.
+- Apps get stricter checks on whose data they reach, and Home checks more carefully which programs it starts.
+- Error messages from Home, Library, Inbox and System no longer show where files are stored on this computer.
 
 ## [2.0.1] - 2026-11-09
 
