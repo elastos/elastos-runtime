@@ -297,15 +297,15 @@ the current revision. Home owns window orchestration.
 
 The relay-only adapter returns an empty optional Reown Verify website
 attestation. That service uses direct HTTP and iframes outside Runtime's relay
-route. Runtime verifies the linking signature and each approval binding; a
-wallet may show the Home origin as unverified.
+route. Runtime verifies the linking signature and each approval binding.
+A wallet may show the Home origin as unverified.
 
 Mode A connects a wallet to sign Runtime challenges and approved requests.
 Mode B, where external dApps use ElastOS as a WalletConnect wallet, requires its
 own security decision. The wallet holds signing keys and confirms each request.
-Isolation protects Home. A compromised SDK still holds its pairing session and
-could ask the wallet to sign a different request; the wallet's confirmation is the
-last guard. Signup and sign-in remain candidates for the separate first-run
+Isolation protects Home. A compromised SDK still holds its pairing session.
+It could ask the wallet to sign a different request.
+The wallet's confirmation is the last guard. Signup and sign-in remain candidates for the separate first-run
 authority decision.
 
 Runtime supplies the exact principal, requesting actor, account, chain, payload
@@ -314,8 +314,8 @@ approved request and hash before completion. A closed connector window leaves an
 approved, unfinished transaction visible with "This transaction may already have
 been sent. Check your wallet before sending again." Opening
 it again supplies recovery instructions and keeps the send control disabled.
-A returned transaction hash is passed to Runtime once even if the account,
-network or expiry changed during the wallet prompt. An approved WalletConnect
+A returned transaction hash is passed to Runtime once. This applies even if the
+account, network or expiry changed during the wallet prompt. An approved WalletConnect
 transaction can complete once within 24 hours after expiry, in the same Runtime
 session. Wallet keeps an approved WalletConnect transaction in its request list.
 Its owner can use Dismiss in Wallet to close it and release its approval slot,
@@ -334,8 +334,8 @@ An unfinished WalletConnect prompt expires after the grace period. Other
 connectors keep their signing TTL; [N3](#n3-outside-wallet-requests) defines
 MetaMask's receipt-only exception after this work.
 Runtime checks the returned
-transaction hash's format only. The wallet confirms the transaction;
-the hash alone does not prove that it matches the approved payload. A completion error keeps the
+transaction hash's format only. The wallet confirms the transaction.
+The hash alone does not prove that it matches the approved payload. A completion error keeps the
 hash visible for checking before another send. Unused signatures and ownership
 proofs stop when their account, network or expiry changes. Typed-data requests
 stay pending because this connector's reviewed bundle does not support that method.

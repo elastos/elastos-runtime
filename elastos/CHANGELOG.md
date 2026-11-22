@@ -35,7 +35,7 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 - Apps load in Safari and other WebKit browsers.
 - Home repairs local Community connection failures, keeps trying while it runs, and shows the same reconnecting state in Chat and System.
 - Community posts keep arriving when one connection stalls.
-- To add another account from a linked wallet, choose Add account, switch account in the wallet, then scan a new QR code.
+- To add another account from a linked wallet, choose Add account. Switch account in your wallet, then scan a new QR code.
 - Wallet keeps showing your answer to a request when its request list refreshes.
 - You can dismiss an unfinished wallet payment in Wallet. Home can record a later wallet confirmation for up to 24 hours after the request expires.
 - Assistant opens from Marketplace and offers to get a model when none is installed.
@@ -87,7 +87,7 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 - Apps load in Safari and other WebKit browsers.
 - Home repairs local Community connection failures, keeps trying while it runs, and shows the same reconnecting state in Chat and System.
 - Community posts keep arriving when one connection stalls.
-- To add another account from a linked wallet, choose Add account, switch account in the wallet, then scan a new QR code.
+- To add another account from a linked wallet, choose Add account. Switch account in your wallet, then scan a new QR code.
 - Wallet keeps showing your answer to a request when its request list refreshes.
 - You can dismiss an unfinished wallet payment in Wallet. Home can record a later wallet confirmation for up to 24 hours after the request expires.
 - Assistant opens from Marketplace and offers to get a model when none is installed.
