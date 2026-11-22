@@ -163,12 +163,19 @@ function homeSummary() {
         launchable: true,
       }],
     },
-    appearance: {},
+    appearance: {
+      schema: "elastos.home.appearance/v1", revision: 0, theme: "dark",
+      accent: "blue", accent_custom: "#007aff", dock_auto_hide: false,
+      sounds: false, focus_mode: false,
+    },
     browser_state: {
       schema: "elastos.home.browser-state/v1",
       principal_id: principalId,
       layout: {
         desktop: {},
+        // Keep Marketplace on the phone grid, with Wallet in the Dock.
+        homeDock: ["wallet"],
+        homePages: [["marketplace"]],
         taskbar: [],
         desktopHidden: [],
         desktopIconsVisible: true,
@@ -538,7 +545,8 @@ function rectangleIntersectionRatio(subject, overlay) {
 }
 
 async function checkMarketplaceOpen(page, homeGui, pageErrors) {
-  if (process.env.MARKETPLACE_OPEN_CASE === "connectors-phone") {
+  const phone = process.env.MARKETPLACE_OPEN_CASE === "connectors-phone";
+  if (phone) {
     await homeGui.locator('.phone-home-app[data-target="marketplace"]').click();
   } else {
     await homeGui.locator('#launcher-toggle').click();
@@ -559,15 +567,19 @@ async function checkMarketplaceOpen(page, homeGui, pageErrors) {
         }
       });
     });
-    // Warm Home's normal hidden rail before checking refused requests. This
-    // also proves Open works when Wallet already has a mounted frame.
-    await homeGui.evaluate(async () => {
-      const {preloadWalletRail} = await import("./shell-wallet-rail.js?v=home-20261101d");
-      preloadWalletRail();
-    });
-    await waitFor(() => frameFor(page, "wallet"), 5000, "Home preloads Wallet rail");
-    await frameFor(page, "wallet").locator('[data-wallet-open-method="wallet-metamask"]')
-      .waitFor({state:"attached",timeout:5000});
+    if (!phone) {
+      // Desktop also proves Open works with Home's hidden Wallet rail mounted.
+      // Coarse pointers use a full Wallet window instead of this rail.
+      await homeGui.evaluate(async () => {
+        const {preloadWalletRail} = await import("./shell-wallet-rail.js?v=home-20261101d");
+        preloadWalletRail();
+      });
+      await waitFor(() => frameFor(page, "wallet"), 5000, "Home preloads Wallet rail");
+      await frameFor(page, "wallet").locator('[data-wallet-open-method="wallet-metamask"]')
+        .waitFor({state:"attached",timeout:5000});
+    } else {
+      assert(!frameFor(page, "wallet"), "phone starts without a preloaded Wallet rail");
+    }
     const walletLaunchesBefore = state.launches.wallet;
     await page.evaluate(() => {
       window.walletOpens = [];
@@ -597,6 +609,7 @@ async function checkMarketplaceOpen(page, homeGui, pageErrors) {
     assert(state.launches.wallet === walletLaunchesBefore && Object.keys(connectorTitles).every(target => state.launches[target] === 0),
       "direct connector launches and malformed or generic handoffs stay blocked");
     for (const destination of ["discover", "installed"]) {
+      if (phone) await marketplace.locator('[data-el-drawer-toggle="store-sidebar"]').click();
       await marketplace.locator(`.store-nav-item[data-destination="${destination}"]`).click();
       for (const [target, title] of Object.entries(connectorTitles)) {
         const row = marketplace.locator(`.store-row[data-app="${target}"]`).first();
@@ -609,6 +622,12 @@ async function checkMarketplaceOpen(page, homeGui, pageErrors) {
           await marketplace.locator('#detail-content [data-action="open"]').click({timeout:5000});
         }
         await waitFor(() => frameFor(page, target), 5000, `${title} connection window from Marketplace`);
+        if (phone) {
+          assert(state.launches.wallet === walletLaunchesBefore + 1,
+            "phone opens and reuses a full Wallet window for connector requests");
+          await homeGui.locator('.window[data-target="wallet"] iframe')
+            .waitFor({state:"visible",timeout:5000});
+        }
         const connector = frameFor(page, target);
         await connector.locator('[data-action="connect"]').waitFor({timeout:5000});
         await connector.locator('[data-action="connect"]').click({trial:true,timeout:5000});
@@ -641,10 +660,14 @@ async function checkMarketplaceOpen(page, homeGui, pageErrors) {
           await page.screenshot({path:join(process.env.MARKETPLACE_CONNECT_SCREENSHOTS,
             `${process.env.MARKETPLACE_OPEN_CASE}-${destination}-${target}.png`)});
         }
+        // A new connector can share the previous Close position. Home never
+        // sees the iframe's Open press, so wait out its 2600 ms ghost-click guard.
+        await page.waitForTimeout(2700);
         await homeGui.locator(`.window[data-target="${target}"] [data-action="close"]`).click();
         await waitFor(() => !frameFor(page, target), 5000, `${title} window closes`);
-        if (destination === "installed") {
-          await marketplace.locator('#detail-content [data-action="close-detail"]').first().click();
+        if (phone) {
+          // Close returns to Wallet. Minimize it to return to Marketplace.
+          await homeGui.locator('.window[data-target="wallet"] [data-action="minimize"]').click();
         }
       }
     }
@@ -659,8 +682,9 @@ async function checkMarketplaceOpen(page, homeGui, pageErrors) {
     await marketplace.locator('.store-row[data-app="wallet-metamask"] [data-action="open"]').first().click();
     await waitFor(() => frameFor(page, "wallet-metamask"), 5000, "connector Open after closing Wallet");
     await frameFor(page, "wallet-metamask").locator('[data-action="connect"]').click({trial:true,timeout:5000});
-    assert(state.launches.wallet === walletLaunchesBefore + 2,
-      "Home opens a fresh Wallet after both the rail and window have retired");
+    assert(state.launches.wallet === walletLaunchesBefore + (phone ? 2 : 1),
+      phone ? "Home opens a fresh Wallet after its phone window retires"
+        : "Home reuses the mounted Wallet rail after its separate window retires");
     await homeGui.locator('.window[data-target="wallet-metamask"] [data-action="close"]').click();
   } else {
     // A plain Open is distinct from a model selection. Model handoffs retain their narrow contract.
@@ -722,10 +746,15 @@ try {
   });
   const context = await browser.newContext(process.env.MARKETPLACE_OPEN_CASE
     ? { reducedMotion: "reduce", ...(process.env.MARKETPLACE_OPEN_CASE === "connectors-phone"
-      ? {viewport:{width:390,height:844}} : {}) } : {});
+      ? {viewport:{width:390,height:844},isMobile:true,hasTouch:true} : {}) } : {});
   const page = await context.newPage();
   const pageErrors = [];
   page.on("pageerror", (error) => pageErrors.push(String(error?.stack || error)));
+  page.on("console", message => {
+    if (message.type() === "error" && message.text().startsWith("home-gui summary failed")) {
+      pageErrors.push(message.text());
+    }
+  });
 
   await page.goto(`${origin}/apps/home/`, { waitUntil: "domcontentloaded" });
   await page.waitForFunction(
