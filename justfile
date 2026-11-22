@@ -183,6 +183,7 @@ verify:
     node scripts/run-node-tests.mjs scripts/home-phone-stage.test.mjs
     node scripts/run-node-tests.mjs scripts/home-sheet-handle.test.mjs
     node scripts/run-node-tests.mjs scripts/home-link-status.test.mjs
+    node scripts/run-node-tests.mjs scripts/home-notification-text.test.mjs
     node scripts/run-node-tests.mjs scripts/home-touch-long-press.test.mjs
     node scripts/run-node-tests.mjs scripts/home-fullscreen-toggle.test.mjs
     node scripts/run-node-tests.mjs scripts/home-phone-home.test.mjs
