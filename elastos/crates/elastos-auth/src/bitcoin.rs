@@ -1,7 +1,7 @@
 //! Bitcoin proof primitives shared by payment linking and account sign-in.
 use ::bitcoin::{
     absolute,
-    consensus::encode::{deserialize, serialize},
+    consensus::encode::deserialize,
     hashes::hash160,
     hashes::sha256,
     hashes::sha256d,

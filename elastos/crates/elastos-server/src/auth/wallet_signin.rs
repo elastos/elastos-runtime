@@ -191,20 +191,27 @@ fn reconcile(store: &mut Store, auth: &AuthState) {
             store.methods.clear();
             store.pending.clear();
             store.sessions.clear();
-        } else {
-            let reset_accounts: Vec<_> = auth
-                .audit_chain
-                .iter()
-                .filter(|l| l.sequence > store.audit_sequence)
-                .filter_map(|l| auth.audit.iter().find(|e| e.event_id == l.event_id))
-                .filter(|e| e.event_type.contains("recover") || e.event_type.contains("reassign"))
-                .filter_map(|e| e.principal_id.as_ref())
-                .collect();
-            store
-                .methods
-                .retain(|m| !reset_accounts.contains(&&m.account_id));
         }
     }
+    let reset_accounts: Vec<_> = auth
+        .audit_chain
+        .iter()
+        .filter(|l| l.sequence > store.audit_sequence)
+        .filter_map(|l| auth.audit.iter().find(|e| e.event_id == l.event_id))
+        .filter(|e| {
+            matches!(
+                e.event_type.as_str(),
+                "auth.owner.recovered"
+                    | "auth.principal.recovered"
+                    | "auth.recovery_kit.imported"
+                    | "auth.principal_root.reassigned"
+            )
+        })
+        .filter_map(|e| e.principal_id.as_ref())
+        .collect();
+    store
+        .methods
+        .retain(|m| !reset_accounts.contains(&&m.account_id));
     store.methods.retain(|m| eligible(auth, m));
     let live: Vec<_> = store
         .methods
@@ -212,7 +219,8 @@ fn reconcile(store: &mut Store, auth: &AuthState) {
         .map(|m| (m.method_id.clone(), m.generation.clone(), m.sign_in_enabled))
         .collect();
     for p in &mut store.pending {
-        if p.action != "add"
+        if p.result.is_none()
+            && p.action != "add"
             && p.action != "signin"
             && !live
                 .iter()
