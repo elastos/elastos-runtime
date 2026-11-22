@@ -238,7 +238,11 @@ pub async fn register_begin(
     require_existing_registration_authority(&manager, &session)?;
     require_guest_registration_policy(&state.data_dir)?;
     match manager.begin_registration(&session.token, &rp.id, &rp.origin) {
-        Ok(options) => Ok(Json(options).into_response()),
+        Ok(mut options) => {
+            crate::auth::name_passkey_registration(&mut options, "Account", &rp.origin)
+                .map_err(|e| error_response(StatusCode::BAD_REQUEST, &e.to_string()))?;
+            Ok(Json(options).into_response())
+        }
         Err(e) => Err(error_response(StatusCode::BAD_REQUEST, &e.to_string())),
     }
 }

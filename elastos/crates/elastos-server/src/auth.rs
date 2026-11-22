@@ -1296,6 +1296,59 @@ fn guest_registration_binding(
     .into())
 }
 
+/// Runtime owns the picker text; the opaque WebAuthn user handle stays unchanged.
+/// Keep both strings within the 64 UTF-8 bytes authenticators can store.
+pub(crate) fn name_passkey_registration(
+    options: &mut elastos_identity::CreationOptions,
+    account: &str,
+    origin: &str,
+) -> anyhow::Result<()> {
+    fn plain(value: &str) -> String {
+        value
+            .chars()
+            .filter(|ch| !ch.is_control() && !matches!(*ch,
+                '<' | '>' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{206f}'))
+            .collect::<String>()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+    fn prefix(value: &str, bytes: usize) -> &str {
+        let mut end = value.len().min(bytes);
+        while !value.is_char_boundary(end) {
+            end -= 1;
+        }
+        &value[..end]
+    }
+    let url = url::Url::parse(origin)?;
+    let address = &url[url::Position::BeforeHost..url::Position::AfterPort];
+    // Preserve the port even for a long hostname.
+    let address = if address.len() > 32 {
+        format!("…{}", &address[address.len() - 29..])
+    } else {
+        address.to_string()
+    };
+    let account = plain(account);
+    let account = if account.is_empty() {
+        "Account"
+    } else {
+        &account
+    };
+    let suffix = format!(" · ElastOS Home ({address})");
+    let label = format!("{}{suffix}", prefix(account, 64 - suffix.len()));
+    options.public_key.user.name.clone_from(&label);
+    options.public_key.user.display_name = label;
+    Ok(())
+}
+
+fn registration_account_name(intent: Option<&PasskeyEnrollmentIntent>) -> &str {
+    match intent {
+        Some(PasskeyEnrollmentIntent::Create { public_name }) => public_name,
+        Some(PasskeyEnrollmentIntent::Recover {}) => "Account recovery",
+        None => "Account",
+    }
+}
+
 pub(crate) fn begin_guest_registration(
     data_dir: &Path,
     identity: &mut elastos_identity::IdentityManager,
@@ -1323,12 +1376,18 @@ pub(crate) fn begin_guest_registration(
         if state.guest_registrations.len() >= MAX_GUEST_REGISTRATIONS {
             return Err(guest_registration_capacity_error(state, now));
         }
-        identity.begin_bound_principal_registration(
+        let mut options = identity.begin_bound_principal_registration(
             ceremony_id,
             request.rp_id,
             request.origin,
             binding,
-        )
+        )?;
+        name_passkey_registration(
+            &mut options,
+            registration_account_name(Some(intent)),
+            request.origin,
+        )?;
+        Ok(options)
     })
 }
 
@@ -1799,7 +1858,15 @@ pub(crate) fn begin_owner_recovery(
 ) -> anyhow::Result<elastos_identity::CreationOptions> {
     let binding = owner_recovery_binding(client)?;
     check_owner_recovery_code(data_dir, client)?;
-    identity.begin_bound_principal_registration(ceremony_id, client.rp_id, client.origin, binding)
+    let mut options = identity.begin_bound_principal_registration(
+        ceremony_id,
+        client.rp_id,
+        client.origin,
+        binding,
+    )?;
+    // The recovery code selects this Home. A Kit selects the account only at completion.
+    name_passkey_registration(&mut options, "Account recovery", client.origin)?;
+    Ok(options)
 }
 
 /// Registers the new passkey and moves the admin's root to it in one auth
@@ -2236,6 +2303,11 @@ pub(crate) fn begin_owner_enrollment_with_intent(
         }
         let mut options =
             identity.begin_principal_registration(ceremony_id, request.rp_id, request.origin)?;
+        name_passkey_registration(
+            &mut options,
+            registration_account_name(intent),
+            request.origin,
+        )?;
         // The durable record owns this challenge; remove the redundant RAM ceremony.
         identity.cancel_challenge(ceremony_id);
         match &record.phase {

@@ -164,7 +164,7 @@ test("adding a passkey takes a fresh approval first and carries the System launc
     body: {
       schema: "elastos.auth.passkey.add.begin/v1",
       ceremony_id: "add-1",
-      options: { publicKey: { challenge: "AA", user: { id: "AQ", name: "x", displayName: "x" } } },
+      options: { publicKey: { challenge: "AA", user: { id: "AQ", name: "Anders · ElastOS Home (localhost:8090)", displayName: "Anders · ElastOS Home (localhost:8090)" } } },
     },
   });
   routes["/api/auth/passkey/add/complete"] = () => ({
@@ -172,7 +172,13 @@ test("adding a passkey takes a fresh approval first and carries the System launc
   });
   credentials = {
     get: async () => { calls.push("approve"); return fakeCredential(); },
-    create: async () => { calls.push("create"); return fakeCredential(); },
+    create: async ({ publicKey }) => {
+      assert.equal(publicKey.user.name, "Anders · ElastOS Home (localhost:8090)");
+      assert.equal(publicKey.user.displayName, publicKey.user.name);
+      assert.deepEqual(new Uint8Array(publicKey.user.id), new Uint8Array([1]));
+      calls.push("create");
+      return fakeCredential();
+    },
   };
   assert.deepEqual(await addAccountPasskey("system-launch"), { role: "admin" });
   assert.deepEqual(calls, ["approve", "create"]);
@@ -220,4 +226,55 @@ test("recovery says it worked when only the Home's recovery record is missing", 
   }
   assert.match(recoveryImportIncompleteMessage(imported("complete", "absent", "complete")),
     /has no signed Profile or name/);
+});
+
+
+test("first-account and guest creation preserve Runtime's passkey label and user id", async () => {
+  for (const guest of [false, true]) {
+    routes["/api/auth/passkey/status"] = () => ({ body: { registered: guest, guest_registration_enabled: guest } });
+    const storage = new Map();
+    window.sessionStorage = {
+      getItem: (key) => storage.get(key) || null,
+      setItem: (key, value) => storage.set(key, value),
+      removeItem: (key) => storage.delete(key),
+    };
+    await showHomeUnlock(() => {});
+    if (guest) element("#home-unlock-create").click();
+    element("#home-unlock-name").value = "Anders";
+    const label = "Anders · ElastOS Home (localhost:61180)";
+    routes["/api/auth/passkey/register/begin"] = () => ({ body: {
+      schema: "elastos.auth.passkey.register.begin/v1", ceremony_id: "named-create",
+      options: { publicKey: { challenge: "AA", user: { id: "AQ", name: label, displayName: label } } },
+    } });
+    let created;
+    credentials = { create: async ({ publicKey }) => { created = publicKey.user; return null; } };
+    element("#home-unlock-primary").click();
+    await settle();
+    assert.equal(created?.name, label, `guest=${guest}`);
+    assert.equal(created.displayName, label);
+    assert.deepEqual(new Uint8Array(created.id), new Uint8Array([1]));
+  }
+});
+
+test("owner recovery preserves Runtime's passkey label and user id", async () => {
+  routes["/api/auth/passkey/status"] = () => ({ body: { registered: true, guest_registration_enabled: false } });
+  window.sessionStorage = { getItem: () => null, setItem() {}, removeItem() {} };
+  await showHomeUnlock(() => {});
+  element("#home-recover-owner").click();
+  element("#home-owner-recovery-code").value = "fixture-code";
+  const kit = JSON.stringify({ schema: "elastos.full-recovery-bundle/v1", people_identity: { profile_authority_bundle: {} } });
+  element("#home-recovery-file").files = [{ size: kit.length, text: async () => kit }];
+  await element("#home-recovery-file").listeners.get("change")();
+  const label = "Account recovery · ElastOS Home (localhost:61180)";
+  routes["/api/auth/owner-recovery/begin"] = () => ({ body: {
+    schema: "elastos.auth.passkey.register.begin/v1", ceremony_id: "named-recovery",
+    options: { publicKey: { challenge: "AA", user: { id: "AQ", name: label, displayName: label } } },
+  } });
+  let created;
+  credentials = { create: async ({ publicKey }) => { created = publicKey.user; return null; } };
+  element("#home-unlock-primary").click();
+  await settle();
+  assert.equal(created?.name, label);
+  assert.equal(created.displayName, label);
+  assert.deepEqual(new Uint8Array(created.id), new Uint8Array([1]));
 });

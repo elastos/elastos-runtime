@@ -368,8 +368,6 @@ export async function addAccountPasskey(appToken) {
     ) {
       throw new Error("invalid passkey add challenge");
     }
-    begin.options.publicKey.user.name = "ElastOS Home";
-    begin.options.publicKey.user.displayName = "ElastOS Home";
     stage = "create";
     const credential = await navigator.credentials.create(toCreationOptions(begin.options));
     if (!credential) {
@@ -824,9 +822,6 @@ async function runPasskeyCreate() {
       savePendingRegistration(pending);
       if (begin.options !== null) {
         if (!begin.options?.publicKey?.user) throw new Error("Home setup returned an invalid response.");
-        const label = pending.intent.public_name || "ElastOS Home";
-        begin.options.publicKey.user.name = label;
-        begin.options.publicKey.user.displayName = label;
         let credential;
         try {
           credential = await navigator.credentials.create(toCreationOptions(begin.options));
@@ -920,8 +915,6 @@ async function runOwnerRecovery() {
       || !begin.options?.publicKey?.user) {
       throw new Error("Home recovery returned an invalid response.");
     }
-    begin.options.publicKey.user.name = "ElastOS Home";
-    begin.options.publicKey.user.displayName = "ElastOS Home";
     const credential = await navigator.credentials.create(toCreationOptions(begin.options));
     if (!credential) throw new Error("Passkey creation was cancelled.");
     const body = { ceremony_id: begin.ceremony_id, response: serializeCreatedCredential(credential) };

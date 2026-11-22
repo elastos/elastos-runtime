@@ -775,7 +775,7 @@ async fn passkey_add_begin_inner(
     let ceremony_id = format!("passkey:add:{}", random_hex(16));
     let manager = state.identity_manager()?;
     let mut manager = manager.lock().await;
-    let options = crate::auth::begin_passkey_add(
+    let mut options = crate::auth::begin_passkey_add(
         &mut manager,
         &crate::auth::PasskeyAddClient {
             origin: &rp.origin,
@@ -786,6 +786,7 @@ async fn passkey_add_begin_inner(
         },
         &ceremony_id,
     )?;
+    crate::auth::name_passkey_registration(&mut options, &principal.display_name, &rp.origin)?;
     Ok(PasskeyBeginResponse {
         schema: "elastos.auth.passkey.add.begin/v1".into(),
         ceremony_id,
@@ -3809,10 +3810,9 @@ async fn passkey_register_begin_inner(
         cookie.set_sensitive(true);
         (options, Some(cookie))
     } else {
-        (
-            manager.begin_principal_registration(&ceremony_id, &rp.id, &rp.origin)?,
-            None,
-        )
+        let mut options = manager.begin_principal_registration(&ceremony_id, &rp.id, &rp.origin)?;
+        crate::auth::name_passkey_registration(&mut options, "Guest", &rp.origin)?;
+        (options, None)
     };
     Ok(PasskeyBeginResponse {
         schema: "elastos.auth.passkey.register.begin/v1".to_string(),
@@ -6782,6 +6782,148 @@ mod tests {
         assert!(response
             .downcast_ref::<crate::auth::OwnerEnrollmentDenied>()
             .is_some());
+    }
+
+    fn assert_passkey_registration_name(options: &CreationOptions, expected: &str) {
+        let user = &options.public_key.user;
+        assert_eq!(user.name, expected);
+        assert_eq!(user.display_name, expected);
+        assert!(user.name.len() <= 64);
+        assert!(!user.id.is_empty());
+        // Check the wire spelling consumed by all browser registration paths.
+        let wire = serde_json::to_value(options).unwrap();
+        assert_eq!(wire["publicKey"]["user"]["displayName"], expected);
+        assert_eq!(wire["publicKey"]["user"]["name"], expected);
+    }
+
+    #[tokio::test]
+    async fn passkey_registration_names_first_account_guest_and_ports() {
+        for port in [8090, 8091] {
+            let root = local_profile_fixture_root();
+            let state = test_gateway_state(root.path());
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                "origin",
+                format!("http://localhost:{port}").parse().unwrap(),
+            );
+            prepare_owner_claim(&mut headers, true).unwrap();
+            let intent = crate::auth::PasskeyEnrollmentIntent::Create {
+                public_name: "Anders".into(),
+            };
+            let owner = passkey_register_begin_inner(&state, &headers, true, Some(&intent))
+                .await
+                .unwrap();
+            let expected = format!("Anders · ElastOS Home (localhost:{port})");
+            assert_passkey_registration_name(owner.options.as_ref().unwrap(), &expected);
+            assert_eq!(
+                owner.options.as_ref().unwrap().public_key.rp.id,
+                "localhost"
+            );
+
+            let credential = test_credential();
+            store_test_credential(root.path(), credential.clone());
+            seed_test_passkey_principal(
+                &state,
+                &credential,
+                &format!("http://localhost:{port}"),
+                crate::auth::RuntimePrincipalRole::Admin,
+            );
+            crate::auth::set_guest_registration_enabled(root.path(), true, crate::auth::now_ts())
+                .unwrap();
+            let guest_intent = crate::auth::PasskeyEnrollmentIntent::Create {
+                public_name: "Sasha".into(),
+            };
+            let guest = passkey_register_begin_inner(&state, &headers, true, Some(&guest_intent))
+                .await
+                .unwrap();
+            assert_passkey_registration_name(
+                guest.options.as_ref().unwrap(),
+                &format!("Sasha · ElastOS Home (localhost:{port})"),
+            );
+            let recover_intent = crate::auth::PasskeyEnrollmentIntent::Recover {};
+            let guest_recovery =
+                passkey_register_begin_inner(&state, &headers, true, Some(&recover_intent))
+                    .await
+                    .unwrap();
+            assert_passkey_registration_name(
+                guest_recovery.options.as_ref().unwrap(),
+                &format!("Account recovery · ElastOS Home (localhost:{port})"),
+            );
+            let legacy_guest = passkey_register_begin_inner(&state, &headers, true, None)
+                .await
+                .unwrap();
+            assert_passkey_registration_name(
+                legacy_guest.options.as_ref().unwrap(),
+                &format!("Guest · ElastOS Home (localhost:{port})"),
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn passkey_registration_names_add_and_owner_recovery() {
+        let root = local_profile_fixture_root();
+        let state = test_gateway_state(root.path());
+        let account = passkey_add_account(
+            root.path(),
+            "named-owner",
+            crate::auth::RuntimePrincipalRole::Admin,
+        );
+        let approval = passkey_add_approval(root.path(), &account);
+        let add = begin_passkey_add_for(&state, &account, approval)
+            .await
+            .unwrap();
+        assert_passkey_registration_name(
+            add.options.as_ref().unwrap(),
+            "Account holder · ElastOS Home (localhost:61180)",
+        );
+        let code = crate::auth::arm_owner_recovery(
+            root.path(),
+            "http://localhost:61180",
+            "localhost",
+            300,
+        )
+        .unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert("origin", HeaderValue::from_static("http://localhost:61180"));
+        headers.insert(OWNER_RECOVERY_HEADER, code.parse().unwrap());
+        let recovery = owner_recovery_begin_inner(&state, &headers).await.unwrap();
+        assert_passkey_registration_name(
+            &recovery.options,
+            "Account recovery · ElastOS Home (localhost:61180)",
+        );
+    }
+
+    #[test]
+    fn passkey_registration_names_bound_utf8_plain_text_and_keep_user_id() {
+        let root = local_profile_fixture_root();
+        let mut manager = elastos_identity::IdentityManager::new(root.path().into()).unwrap();
+        let mut options = manager
+            .begin_principal_registration("label", "localhost", "http://localhost:8090")
+            .unwrap();
+        let id = options.public_key.user.id.clone();
+        for account in ["界".repeat(64), "<Anders>\n\u{202e}", String::new()] {
+            crate::auth::name_passkey_registration(&mut options, &account, "http://localhost:8090")
+                .unwrap();
+            assert!(options.public_key.user.name.len() <= 64);
+            assert!(options
+                .public_key
+                .user
+                .name
+                .ends_with(" · ElastOS Home (localhost:8090)"));
+            assert!(!options.public_key.user.name.chars().any(char::is_control));
+            assert!(!options
+                .public_key
+                .user
+                .name
+                .contains(['<', '>', '\u{202e}']));
+            assert_eq!(options.public_key.user.id, id);
+        }
+        let long_origin = format!("https://{}.example:8443", "long".repeat(20));
+        crate::auth::name_passkey_registration(&mut options, "Anders", &long_origin).unwrap();
+        assert!(options.public_key.user.name.len() <= 64);
+        assert!(options.public_key.user.name.ends_with(".example:8443)"));
+        assert!(!options.public_key.user.name.contains("https://"));
+        assert_eq!(options.public_key.user.id, id);
     }
 
     #[tokio::test]
