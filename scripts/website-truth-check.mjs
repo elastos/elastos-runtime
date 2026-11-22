@@ -9,7 +9,7 @@ import { validHostedReceipt, validIsolationClaims } from "./website-claims.mjs";
 import {
   checkKitMustNotClaimExternalWalletLinkRestore,
   checkKitMustNotClaimUserFileRestore,
-  checkKitPromiseNotBroaderThanCode,
+  checkRejectsListedKitCombinedUserRootEveryKeyWordings,
   checkRecoveryStolenDeviceStatements,
   checkUninstallScopeHonest,
 } from "./storage-documentation.test.mjs";
@@ -126,7 +126,7 @@ check("public website matches storage recovery statements", () => {
   const readTracked = (path) => readFileSync(resolve(repo, path), "utf8");
   const website = ["website/elastos/index.html"];
   checkRecoveryStolenDeviceStatements(website, readTracked);
-  checkKitPromiseNotBroaderThanCode(website, readTracked);
+  checkRejectsListedKitCombinedUserRootEveryKeyWordings(website, readTracked);
   checkKitMustNotClaimUserFileRestore(website, readTracked);
   checkKitMustNotClaimExternalWalletLinkRestore(website, readTracked);
   checkUninstallScopeHonest(website, readTracked);

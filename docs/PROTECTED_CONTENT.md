@@ -219,8 +219,10 @@ files. A file left over once that is spent is named as not checked in this
 pass and treated as damaged until a later pass checks it. They check three
 things: no unencrypted file was found, each encrypted file is labelled for this
 Home's current key and for the place where it is stored, and no interrupted
-encryption step is waiting. The size of an encrypted file and the total size do
-not stop Home; an unencrypted file in a protected folder does, whatever its size.
+encryption step is waiting. The size of an encrypted file does not stop Home.
+An unencrypted file stops Home when this pass classifies it, including a file
+larger than 16 MiB with no encryption label. A file this pass does not check
+does not stop Home, and that file stays unencrypted.
 File contents are checked when a file is opened: Home runs the full AES-GCM
 check over the whole file and uses none of it unless the check passes. A file
 that looks encrypted but does not carry a correct label is damaged. This

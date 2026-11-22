@@ -40,7 +40,7 @@ const STORAGE_TABLE_ROWS = [
   },
   {
     name: "Direct messages",
-    encrypted: "Yes",
+    encrypted: "Yes for a Chat service write. A copied plain file at this path stays plain, and Home still starts.",
     recovery: "Data key; files separate",
   },
   {
@@ -102,7 +102,7 @@ const STORAGE_TABLE_ROWS = [
 const STOLEN_DEVICE_FORBIDDEN = /stolen device or profile key requires a new identity/i;
 const PASSKEY_DOES_NOT_REPLACE =
   /new passkey[\s\S]{0,120}does not[\s\S]{0,24}replace/i;
-const KIT_PROMISE_BROADER =
+const KIT_REJECT_COMBINED_USER_ROOT_EVERY_KEY_WORDINGS =
   /restores the encrypted user root and every|encrypted user root and every recoverable/i;
 const KIT_REJECT_USER_FILE_RESTORE_WORDINGS =
   /(?:Recovery Kit|The Recovery Kit)\s+(?:restores|(?:will|can)\s+restore)\s+(?:all\s+)?(?:your\s+)?(?:(?:Library|library)\s+)?files\b|(?:Recovery Kit|The Recovery Kit)\s+restores\s+(?:all\s+)?(?:your\s+)?(?:documents|photos|Desktop files|files|everything|the\s+Library|the\s+whole\s+Home)\b|(?:Recovery Kit|The Recovery Kit)\s+restores\s+every\s+file\s+in\s+the\s+encrypted\s+user\s+root/i;
@@ -171,7 +171,7 @@ export function checkRecoveryStolenDeviceStatements(
   }
 }
 
-export function checkKitPromiseNotBroaderThanCode(
+export function checkRejectsListedKitCombinedUserRootEveryKeyWordings(
   paths = trackedDocumentationPaths(),
   readDocument = read,
 ) {
@@ -179,8 +179,8 @@ export function checkKitPromiseNotBroaderThanCode(
     const document = readDocument(path);
     assert.doesNotMatch(
       document,
-      KIT_PROMISE_BROADER,
-      `${path}: Kit must not promise an encrypted user root or every recoverable key beyond what export code includes`,
+      KIT_REJECT_COMBINED_USER_ROOT_EVERY_KEY_WORDINGS,
+      `${path}: Rejects the two listed combined encrypted-user-root/every-key wording patterns.`,
     );
   }
 }
@@ -333,6 +333,13 @@ test("the storage table check rejects false encrypted and recovery cells", () =>
   );
   assert.throws(() => checkStorageTableCells(mutatedRecovery), /recovery column/);
 
+  const messages = rowCells(security, "Direct messages");
+  const unqualifiedMessages = security.replace(
+    messages.row,
+    messages.row.replace(messages.encrypted, "Yes"),
+  );
+  assert.throws(() => checkStorageTableCells(unqualifiedMessages), /Direct messages: encrypted column/);
+
   const home = rowCells(security, "Home recovery authority");
   const mutatedHomeRecovery = security.replace(
     home.row,
@@ -382,7 +389,7 @@ test("Security Recovery Kit export markers, product name, and storage table cell
   checkStorageTableCells(security);
   checkPrincipalRootEncryptionLead(security);
   checkRecoveryStolenDeviceStatements();
-  checkKitPromiseNotBroaderThanCode();
+  checkRejectsListedKitCombinedUserRootEveryKeyWordings();
   checkRejectsListedKitUserFileRestoreWordings();
   checkRejectsListedKitExternalWalletLinkWordings();
   checkRejectsListedUninstallWholeComputerDeletionWordings();
@@ -407,8 +414,9 @@ test("the recovery stolen-device check rejects a restored new-identity claim", (
   );
 });
 
-test("the recovery stolen-device check scans every tracked doc and website file", () => {
+test("The stolen-device wording check scans tracked Markdown except elastos/CHANGELOG.md, plus tracked website files.", () => {
   checkRecoveryStolenDeviceStatements();
+  assert.ok(!trackedDocumentationPaths().includes("elastos/CHANGELOG.md"));
   const outsideEight = trackedDocumentationPaths().find(
     (path) => !["SECURITY.md", "docs/INSTALL.md", "docs/GLOSSARY.md", "docs/STORAGE_AND_ACCESS.md",
       "docs/ARCHITECTURE.md", "docs/CAPSULE_MODEL.md", "docs/CAPSULE_AUTHORING.md", "README.md"].includes(path)
@@ -422,17 +430,27 @@ test("the recovery stolen-device check scans every tracked doc and website file"
   );
 });
 
-test("the Kit user-root promise check rejects an encrypted-user-root claim outside the original eight", () => {
-  checkKitPromiseNotBroaderThanCode();
+test("the Kit wording check rejects the two listed combined encrypted-user-root/every-key patterns", () => {
+  checkRejectsListedKitCombinedUserRootEveryKeyWordings();
   const probe = "docs/WALLET_PROVIDER.md";
-  const mutated = read(probe).replace(
-    /System's Recovery Kit restores[\s\S]*?separate backups\./,
-    "`elastos.recovery-kit/v1` restores the encrypted user root and every recoverable built-in Wallet key included in the exported bundle.",
-  );
-  assert.throws(
-    () => checkKitPromiseNotBroaderThanCode([probe], () => mutated),
-    /Kit must not promise an encrypted user root/,
-  );
+  for (const wording of [
+    "The Recovery Kit restores the encrypted user root and every built-in Wallet key.",
+    "The Recovery Kit contains the encrypted user root and every recoverable key.",
+  ]) {
+    assert.throws(
+      () => checkRejectsListedKitCombinedUserRootEveryKeyWordings([probe], () => wording),
+      /Rejects the two listed combined encrypted-user-root\/every-key wording patterns/,
+    );
+  }
+  for (const wording of [
+    "The Recovery Kit restores the encrypted user root.",
+    "The Recovery Kit restores every recoverable key.",
+  ]) {
+    assert.doesNotThrow(
+      () => checkRejectsListedKitCombinedUserRootEveryKeyWordings([probe], () => wording),
+      "separate claims are outside this wording list; acceptance here is not a truth verdict",
+    );
+  }
 });
 
 test("the Kit user-file wording list rejects round-six counterexamples", () => {
