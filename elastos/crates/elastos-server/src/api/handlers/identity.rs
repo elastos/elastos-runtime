@@ -285,6 +285,12 @@ pub async fn register_complete(
             .status()
             .user_id
             .ok_or_else(|| owner_error(crate::auth::OwnerEnrollmentDenied.into()))?;
+        crate::api::auth_gateway::record_passkey_added_from(
+            &state.data_dir,
+            &headers,
+            &grant.proof_binding_id,
+        )
+        .map_err(owner_error)?;
         drop(manager);
         state
             .session_registry
@@ -304,6 +310,12 @@ pub async fn register_complete(
                 Ok(grant) => grant,
                 Err(err) => return Err(error_response(StatusCode::BAD_REQUEST, &err.to_string())),
             };
+            crate::api::auth_gateway::record_passkey_added_from(
+                &state.data_dir,
+                &headers,
+                &grant.proof_binding_id,
+            )
+            .map_err(owner_error)?;
             drop(manager);
             state
                 .session_registry
