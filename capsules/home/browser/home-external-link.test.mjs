@@ -408,3 +408,27 @@ test('frame renewal keeps an in-flight shared file and uses fresh authority for 
   assert.equal(checkToken, 'fresh');
   h.prompt.retire('fresh'); assert.equal(h.root.hidden, true);
 });
+
+test('Home passes the exact local size to Library instead of the rounded post size', async () => {
+  const { openHomeSharedFile } = await import('./home-external-link.js');
+  for (const size of [0, 1000000]) {
+    const opens = [];
+    await openHomeSharedFile({ cid, uri, size_bytes: 999999 }, {
+      fetchLocal: async () => new Response(Uint8Array.of(0), { headers: { 'content-length': String(size) } }),
+      openTarget: async (...args) => opens.push(args),
+    });
+    assert.equal(opens[0][1].query.size, String(size));
+  }
+});
+
+test('Home leaves an absent or invalid local size unknown', async () => {
+  const { openHomeSharedFile } = await import('./home-external-link.js');
+  for (const size of [undefined, '', '-1', 'bad', '9007199254740992']) {
+    const opens = [];
+    await openHomeSharedFile({ cid, uri }, {
+      fetchLocal: async () => new Response(Uint8Array.of(0), { headers: size === undefined ? {} : { 'content-length': size } }),
+      openTarget: async (...args) => opens.push(args),
+    });
+    assert.equal(opens[0][1].query.size, undefined);
+  }
+});

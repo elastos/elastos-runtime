@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 import { formatBytes, formatBytesOf } from "../capsules/_shared/byte-format.js";
 import { createTransferProgress, announceTransferProgress } from "../capsules/_shared/transfer-progress.js";
 import { createLibraryUploads } from "../capsules/library/browser/src/uploads.js";
@@ -202,4 +203,9 @@ test("unfinished transfers keep distinct displayed counts at each unit", () => {
       assert.equal(formatBytesOf(total, total), `${size} of ${size}`);
     }
   }
+});
+
+test("shared decimal size fixtures agree with the JavaScript formatter", () => {
+  const cases = JSON.parse(readFileSync(new URL("../capsules/_shared/byte-format-cases.json", import.meta.url)));
+  for (const [bytes, label] of cases) assert.equal(formatBytes(bytes), label);
 });

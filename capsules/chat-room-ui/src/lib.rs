@@ -7020,6 +7020,16 @@ mod tests {
         }
     }
 
+    #[test]
+    fn attachment_and_post_sizes_match_shared_decimal_fixtures() {
+        let cases: Vec<(u64, String)> =
+            serde_json::from_str(include_str!("../../_shared/byte-format-cases.json")).unwrap();
+        for (bytes, expected) in cases {
+            assert_eq!(super::format_bytes(bytes), expected);
+            assert_eq!(super::format_post_size(bytes), expected);
+        }
+    }
+
     use super::direct::{
         DirectConversationView, DirectMessageList, DirectMessageView, DirectUiState,
         PendingDirectSend,
@@ -8844,10 +8854,10 @@ mod tests {
     #[test]
     fn library_post_preview_keeps_the_post_message_size_format() {
         for (bytes, size) in [
-            (4, "4 bytes"),
-            (1_000_000, "976.6 KB"),
+            (4, "4 B"),
+            (1_000_000, "1.0 MB"),
             (1_048_576, "1.0 MB"),
-            (1_073_741_824, "1.0 GB"),
+            (1_073_741_824, "1.07 GB"),
         ] {
             let mut post = library_post_fixture(super::LibraryPostPhase::Posted {
                 link: "elastos://file".into(),
@@ -8899,7 +8909,7 @@ mod tests {
         assert_eq!(
             unknown.lines,
             vec![
-                "notes.txt · 30 bytes".to_string(),
+                "notes.txt · 30 B".to_string(),
                 "Couldn't confirm the post. Check Community, or try again.".to_string(),
             ]
         );
@@ -10548,21 +10558,9 @@ fn local_date_text(timestamp_secs: u64, same_year: bool) -> String {
         .unwrap_or_default()
 }
 
-// The size carried in Community messages, matching Runtime's post builder.
+// Community previews use the same decimal rule as attachments and Library.
 fn format_post_size(size_bytes: u64) -> String {
-    const KB: f64 = 1024.0;
-    const MB: f64 = KB * 1024.0;
-    const GB: f64 = MB * 1024.0;
-    let size = size_bytes as f64;
-    if size >= GB {
-        format!("{:.1} GB", size / GB)
-    } else if size >= MB {
-        format!("{:.1} MB", size / MB)
-    } else if size >= KB {
-        format!("{:.1} KB", size / KB)
-    } else {
-        format!("{size_bytes} bytes")
-    }
+    format_bytes(size_bytes)
 }
 
 fn format_bytes(size_bytes: u64) -> String {

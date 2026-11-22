@@ -15,3 +15,12 @@ test('Library escapes link text and never links the frame to /content', () => {
   assert.ok(!markup.includes('href='));
   assert.ok(!markup.includes('download='));
 });
+
+test('Library shows known shared-file sizes with the common decimal rule', () => {
+  for (const [bytes, label] of [[0, '0 B'], [999, '999 B'], [1000, '1.0 KB'], [1000000, '1.0 MB'], [144834897, '144.8 MB'], [1500000000, '1.50 GB']]) {
+    assert.ok(shared.sharedFileMarkup('cid', String(bytes)).includes(`<p>Size: ${label}</p>`));
+  }
+  for (const size of [null, undefined, '', 'bad', '-1']) {
+    assert.ok(!shared.sharedFileMarkup('cid', size).includes('<p>Size:'));
+  }
+});

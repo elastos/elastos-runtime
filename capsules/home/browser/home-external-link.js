@@ -148,6 +148,8 @@ export function requestHomeSharedContent({ context, data, prompt, fetchJson }) {
 export async function openHomeSharedFile({ cid, uri, name }, { openTarget, fetchLocal = globalThis.fetch, signal } = {}) {
   const response = await fetchLocal(`/content/${encodeURIComponent(cid)}`, { cache: "no-store", signal });
   if (!response.ok) throw new Error("Could not read the local file");
+  const sizeHeader = response.headers.get("content-length");
+  const size = sizeHeader !== null && /^\d+$/.test(sizeHeader) && Number.isSafeInteger(Number(sizeHeader)) ? sizeHeader : undefined;
   const reader = response.body.getReader();
   const sample = new Uint8Array(4096);
   let length = 0, complete = false;
@@ -171,7 +173,7 @@ export async function openHomeSharedFile({ cid, uri, name }, { openTarget, fetch
   if (signal?.aborted) return;
   const fileName = sharedFileName(name);
   return openTarget(text ? "documents" : "library", {
-    query: { cid, ...(text ? { uri, view: "read" } : {}), ...(fileName ? { name: fileName } : {}) },
+    query: { cid, ...(size !== undefined ? { size } : {}), ...(text ? { uri, view: "read" } : {}), ...(fileName ? { name: fileName } : {}) },
   });
 }
 
