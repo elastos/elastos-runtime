@@ -288,7 +288,7 @@ function startServer(scenario) {
         poll.latest_seq = 2;
       }
       if (trace.attachLibrary.some(request => request.posted)) {
-        poll.objects.push(historyMessage(3, `attached.txt · 30 bytes · ${sharedUri}`, "2026-03-09T12:02:00Z"));
+        poll.objects.push(historyMessage(3, `attached.txt · 1.0 MB · ${sharedUri}`, "2026-03-09T12:02:00Z"));
         poll.latest_seq = 3;
       }
     }
@@ -404,7 +404,7 @@ function startServer(scenario) {
           return;
         }
         const publication = { object: { uri: body.uri }, uri: sharedUri, cid: sharedCid, published_at: 1780000000 };
-        if (posted) json(response, { status: "ok", data: { publication, posted: true, name: "attached.txt", size_bytes: 30 } });
+        if (posted) json(response, { status: "ok", data: { publication, posted: true, name: "attached.txt", size_bytes: 1000000 } });
         else json(response, { status: "error", code: "post_failed", message: "Community send failed",
           data: { publication, posted: false } }, 502);
         return;
@@ -1121,7 +1121,7 @@ async function runScenario(scenario) {
       }
       // Chat acknowledges the picker before it asks, so Home's 30-second delivery
       // never waits on the person; the replayed delivery is ignored.
-      await page.evaluate(() => { window.fixtureFileSize = 30; window.fixturePickerReplies = []; });
+      await page.evaluate(() => { window.fixtureFileSize = 1000000; window.fixturePickerReplies = []; });
       await frame.locator('#attach-button').click();
       await page.waitForFunction(() => window.fixturePickerReplies.some(reply => reply.accepted));
       await panel.waitFor({ state: 'visible' });
@@ -1163,6 +1163,7 @@ async function runScenario(scenario) {
         "Retry post must reuse the request id", trace.attachLibrary);
       assert((await panelText()).includes(`Shared: ${sharedUri}`) && (await panelText()).includes('Posted in Community.'),
         "publication and posting must show apart");
+      assert((await panelText()).includes("attached.txt · 1.0 MB"), "Chat must show decimal file sizes");
       await frame.locator('#library-post-open-library').click();
       await page.waitForFunction(() => window.fixtureLibraryOpens.length === 1);
       assert(await page.evaluate(() => JSON.stringify(window.fixtureLibraryOpens[0])) ===

@@ -1,4 +1,4 @@
-import { sharedFileMarkup, sharedFileName } from "./shared-file.js?v=library-links-20261028b";
+import { sharedFileMarkup, sharedFileName } from "./shared-file.js?v=shared-size-20261122";
 import {
   archiveLibraryObjectPayload,
   canPublishObject,
@@ -1343,7 +1343,7 @@ import {
         const sharedCid = queryParams.get("cid");
         const sharedName = sharedFileName(queryParams.get("name"));
         if (state.mode === "browse" && sharedCid) {
-          elements.dialog.innerHTML = sharedFileMarkup(sharedCid);
+          elements.dialog.innerHTML = sharedFileMarkup(sharedCid, queryParams.get("size"));
           elements.dialog.classList.remove("hidden");
           elements.dialog.querySelector("[data-shared-download]").addEventListener("click", () => {
             setStatus("Downloading shared file...");
