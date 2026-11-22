@@ -1106,11 +1106,14 @@ fn passkey_registration_hint(
 ) -> Option<String> {
     let browser = passkey_added_from(headers);
     let saved = response.and_then(|response| {
-        if response
-            .response
-            .transports
-            .iter()
-            .any(|value| value == "hybrid")
+        // Transports describe supported access paths. Platform attachment
+        // identifies a local ceremony even when hybrid access is supported.
+        if response.authenticator_attachment.as_deref() != Some("platform")
+            && response
+                .response
+                .transports
+                .iter()
+                .any(|value| value == "hybrid")
         {
             Some("Saved on a phone or tablet")
         } else if let Some(provider) = response.passkey_provider() {
@@ -7413,12 +7416,12 @@ mod tests {
             passkey_registration_hint(&headers, Some(&response)).as_deref(),
             Some("Saved on a phone or tablet (added from Safari on Mac or iPad)")
         );
-        response.response.transports.clear();
         response.authenticator_attachment = Some("platform".into());
         assert_eq!(
             passkey_registration_hint(&headers, Some(&response)).as_deref(),
             Some("Device passkey (added from Safari on Mac or iPad)")
         );
+        response.response.transports.clear();
         response.authenticator_attachment = Some("cross-platform".into());
         assert_eq!(
             passkey_registration_hint(&HeaderMap::new(), Some(&response)).as_deref(),
