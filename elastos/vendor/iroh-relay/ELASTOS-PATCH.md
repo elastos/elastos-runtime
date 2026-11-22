@@ -5,6 +5,9 @@ Source: the crates.io `iroh-relay` 1.4.1 package, SHA-256
 The package's licences and source files are preserved. Registry marker files
 `.cargo-ok` and `.cargo_vcs_info.json` are omitted.
 
+The standalone lock file uses `url` 2.5.9 and `form_urlencoded` 1.2.3 to address
+RUSTSEC-2026-0592. The vendor provenance records this dependency update.
+
 The library emits only an `rlib`. Runtime and capsule workspaces share a build
 directory with different profiles; Cargo's combined `lib` and `cdylib` outputs
 use a fixed rlib filename that can replace another profile's dependency identity.

@@ -4,6 +4,10 @@ Source: the crates.io `iroh-gossip` 0.102.0 package, SHA-256
 `f78267c0d936a3f51b8aa24419a7a267e42d1800ac99315f48045f2540c57922`.
 Licences and packaged sources are preserved.
 
+The standalone lock file uses `url` 2.5.9 and `form_urlencoded` 1.2.3 to address
+RUSTSEC-2026-0592. Its `data-encoding-macro-internal` dependency now resolves to
+`syn` 2.0.119. The vendor provenance records these dependency changes.
+
 The library emits only an `rlib`. Runtime and capsule workspaces share a build
 directory with different profiles; Cargo's combined `rlib` and `cdylib` outputs
 use a fixed rlib filename that can replace another profile's dependency identity.
