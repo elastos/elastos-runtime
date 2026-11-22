@@ -6078,26 +6078,18 @@ impl std::fmt::Display for ProtectedRecordKeptElsewhere {
 
 impl std::error::Error for ProtectedRecordKeptElsewhere {}
 
-/// True when this Runtime verifies launches against another Runtime's
-/// sign-in state, and that state holds a protection record for this
-/// principal's root. On an ordinary Runtime both are the same folder, so this
-/// is false. The other Runtime's state is only read: no lock is taken and
-/// nothing is written there. If it cannot be read, the answer is true, so the
-/// save is refused rather than written without that protection.
+/// Read the launch Runtime's protection while the caller holds its lifecycle
+/// lock through the object commit. An unreadable state refuses the save.
 fn principal_root_protected_elsewhere(
-    data_dir: &Path,
+    launch_auth_dir: &Path,
     principal_id: &str,
     localhost_root: &str,
 ) -> bool {
-    let launch_auth_dir = crate::api::gateway::home_launch_auth_data_dir(data_dir);
-    if launch_auth_dir == data_dir {
-        return false;
-    }
     let read = || -> anyhow::Result<bool> {
-        let Some((bytes, _)) = read_auth_state_bytes(&launch_auth_dir)? else {
+        let Some((bytes, _)) = read_auth_state_bytes(launch_auth_dir)? else {
             return Ok(false);
         };
-        Ok(parse_auth_state(&launch_auth_dir, &bytes)?
+        Ok(parse_auth_state(launch_auth_dir, &bytes)?
             .principal_root_protections
             .iter()
             .any(|stored| {
@@ -6249,11 +6241,19 @@ fn write_principal_root_object_locked(
         }
     }
     let protection = load_principal_root_protection(data_dir, principal_id, localhost_root)?;
-    if protection.is_none()
-        && principal_root_protected_elsewhere(data_dir, principal_id, localhost_root)
-    {
-        return Err(ProtectedRecordKeptElsewhere.into());
-    }
+    // A child plaintext save and parent activation share one lifecycle lock.
+    // Keep it through every commit path; contention uses the existing refusal.
+    let launch_auth_dir = crate::api::gateway::home_launch_auth_data_dir(data_dir);
+    let _parent_lifecycle = if protection.is_none() && launch_auth_dir != data_dir {
+        let lifecycle = lock_principal_root_lifecycle(&launch_auth_dir)
+            .map_err(|_| ProtectedRecordKeptElsewhere)?;
+        if principal_root_protected_elsewhere(&launch_auth_dir, principal_id, localhost_root) {
+            return Err(ProtectedRecordKeptElsewhere.into());
+        }
+        Some(lifecycle)
+    } else {
+        None
+    };
     if options.require_protection && protection.is_none() {
         anyhow::bail!("protected principal-root object requires active principal-root protection");
     }
@@ -10837,6 +10837,12 @@ fn is_sha256_label(value: &str) -> bool {
     })
 }
 
+#[cfg(test)]
+thread_local! {
+    static OBJECT_COMMIT_TEST_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce(&Path)>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -10862,6 +10868,13 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     if let Err(err) = write_result {
         let _ = std::fs::remove_file(&temp);
         return Err(err);
+    }
+    #[cfg(test)]
+    {
+        let hook = OBJECT_COMMIT_TEST_HOOK.with(|hook| hook.borrow_mut().take());
+        if let Some(hook) = hook {
+            hook(path);
+        }
     }
     if let Err(err) = std::fs::rename(&temp, path) {
         let _ = std::fs::remove_file(&temp);
@@ -13195,6 +13208,208 @@ mod tests {
             )
             .unwrap(),
             b"plain body"
+        );
+    }
+
+    #[test]
+    fn child_save_activation_first_refuses_during_and_after_activation() {
+        let parent = tempfile::tempdir().unwrap();
+        let child = tempfile::tempdir().unwrap();
+        let principal = "person:local:activation-first";
+        let root = principal_localhost_root(principal);
+        let uri = format!("{root}/Documents/save.md");
+        let path = rooted_localhost_fs_path(child.path(), &uri).unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"first").unwrap();
+        let revision = principal_root_object_revision(principal, &uri, b"first");
+        let _launch = crate::api::gateway::set_test_home_launch_auth_data_dir(parent.path());
+        let mut activation = Some(
+            begin_declarative_principal_root_protection_activation_migrating_plaintext(
+                parent.path(),
+                principal,
+                &root,
+                &[],
+            )
+            .unwrap(),
+        );
+
+        // Check every entry into the shared writer while activation owns the
+        // file lock, and again after its protection record has been published.
+        for phase in ["locked", "protected"] {
+            for writer in ["plain", "create", "revision", "mutation", "protected"] {
+                let started = std::time::Instant::now();
+                let result = match writer {
+                    "create" => {
+                        let uri = format!("{root}/Documents/new.md");
+                        let path = rooted_localhost_fs_path(child.path(), &uri).unwrap();
+                        create_principal_root_object(
+                            child.path(),
+                            principal,
+                            &root,
+                            &uri,
+                            &path,
+                            b"second",
+                        )
+                    }
+                    "revision" => write_principal_root_object_if_revision(
+                        child.path(),
+                        principal,
+                        &root,
+                        &uri,
+                        &path,
+                        b"second",
+                        PrincipalRootObjectPrecondition::Revision(&revision),
+                    ),
+                    "mutation" => PrincipalRootObjectMutation::acquire(child.path())
+                        .unwrap()
+                        .write(principal, &root, &uri, &path, b"second"),
+                    "protected" => write_protected_principal_root_object(
+                        child.path(),
+                        principal,
+                        &root,
+                        &uri,
+                        &path,
+                        b"second",
+                    ),
+                    _ => write_principal_root_object(
+                        child.path(),
+                        principal,
+                        &root,
+                        &uri,
+                        &path,
+                        b"second",
+                    ),
+                };
+                assert!(started.elapsed() < std::time::Duration::from_secs(2));
+                let error = result.expect_err("activation owns the parent root");
+                assert!(
+                    error.is::<ProtectedRecordKeptElsewhere>(),
+                    "{phase}/{writer}: {error:#}"
+                );
+                assert_eq!(std::fs::read(&path).unwrap(), b"first");
+                let new_uri = format!("{root}/Documents/new.md");
+                assert!(!rooted_localhost_fs_path(child.path(), &new_uri)
+                    .unwrap()
+                    .exists());
+            }
+            if phase == "locked" {
+                store_test_principal_root_protection(parent.path(), principal);
+                drop(activation.take());
+            }
+        }
+    }
+
+    fn child_save_refuses_published_parent_protection(
+        parent: &Path,
+        child: &Path,
+        principal: &str,
+        root: &str,
+        uri: &str,
+        path: &Path,
+    ) {
+        assert!(load_principal_root_protection(parent, principal, root)
+            .unwrap()
+            .is_some());
+        let error =
+            write_principal_root_object(child, principal, root, uri, path, b"second").unwrap_err();
+        assert!(error.is::<ProtectedRecordKeptElsewhere>());
+        assert_eq!(std::fs::read(path).unwrap(), b"first");
+    }
+
+    #[test]
+    fn child_save_child_first_holds_parent_lifecycle_through_commit() {
+        let parent = tempfile::tempdir().unwrap();
+        let child = tempfile::tempdir().unwrap();
+        let principal = "person:local:child-first";
+        let root = principal_localhost_root(principal);
+        let uri = format!("{root}/Documents/save.md");
+        let path = rooted_localhost_fs_path(child.path(), &uri).unwrap();
+        let _launch = crate::api::gateway::set_test_home_launch_auth_data_dir(parent.path());
+        assert!(
+            load_principal_root_protection(child.path(), principal, &root)
+                .unwrap()
+                .is_none()
+        );
+        let (send, receive) = std::sync::mpsc::channel();
+        let parent_path = parent.path().to_path_buf();
+        let child_path = path.clone();
+        let activation_root = root.clone();
+        OBJECT_COMMIT_TEST_HOOK.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move |committing| {
+                assert_eq!(committing, child_path);
+                assert!(!committing.exists(), "child is paused before its rename");
+                let activation =
+                    begin_declarative_principal_root_protection_activation_migrating_plaintext(
+                        &parent_path,
+                        principal,
+                        &activation_root,
+                        &[],
+                    );
+                let refused = match activation {
+                    Err(error) => {
+                        assert_eq!(
+                            error
+                                .downcast_ref::<std::io::Error>()
+                                .map(|error| error.kind()),
+                            Some(ErrorKind::WouldBlock)
+                        );
+                        true
+                    }
+                    Ok(activation) => {
+                        // Without the fence, activation completes before the
+                        // paused child's plaintext commit, reproducing the race.
+                        store_test_principal_root_protection(&parent_path, principal);
+                        migrate_principal_root_plaintext_objects_under_activation(
+                            &activation.guard,
+                            &parent_path,
+                            principal,
+                            &activation_root,
+                            activation.plaintext_objects,
+                        )
+                        .unwrap();
+                        false
+                    }
+                };
+                send.send(refused).unwrap();
+            }));
+        });
+        PrincipalRootObjectMutation::acquire(child.path())
+            .unwrap()
+            .write(principal, &root, &uri, &path, b"first")
+            .unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"first");
+        assert!(
+            receive.try_recv().unwrap(),
+            "parent activation overtook the child commit"
+        );
+
+        // Once the save returns, activation can scan and finish. The child
+        // copy is outside that scan, but its complete write precedes it.
+        let activation =
+            begin_declarative_principal_root_protection_activation_migrating_plaintext(
+                parent.path(),
+                principal,
+                &root,
+                &[],
+            )
+            .unwrap();
+        store_test_principal_root_protection(parent.path(), principal);
+        migrate_principal_root_plaintext_objects_under_activation(
+            &activation.guard,
+            parent.path(),
+            principal,
+            &root,
+            activation.plaintext_objects,
+        )
+        .unwrap();
+        drop(activation.guard);
+        child_save_refuses_published_parent_protection(
+            parent.path(),
+            child.path(),
+            principal,
+            &root,
+            &uri,
+            &path,
         );
     }
 
