@@ -5,6 +5,11 @@ Source: the crates.io `iroh-relay` 1.4.1 package, SHA-256
 The package's licences and source files are preserved. Registry marker files
 `.cargo-ok` and `.cargo_vcs_info.json` are omitted.
 
+The library emits only an `rlib`. Runtime and capsule workspaces share a build
+directory with different profiles; Cargo's combined `lib` and `cdylib` outputs
+use a fixed rlib filename that can replace another profile's dependency identity.
+Rust consumers use the hashed rlib; the relay server binary target is unchanged.
+
 `QuicClient::new` in `src/quic.rs` sets
 `transport.datagram_receive_buffer_size(None)`. QUIC address discovery uses
 observed-address reports, so its client offers no application datagrams.

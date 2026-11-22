@@ -4,6 +4,11 @@ Source: the crates.io `iroh-gossip` 0.102.0 package, SHA-256
 `f78267c0d936a3f51b8aa24419a7a267e42d1800ac99315f48045f2540c57922`.
 Licences and packaged sources are preserved.
 
+The library emits only an `rlib`. Runtime and capsule workspaces share a build
+directory with different profiles; Cargo's combined `rlib` and `cdylib` outputs
+use a fixed rlib filename that can replace another profile's dependency identity.
+Rust consumers use the hashed rlib; this fork's dynamic library is unused.
+
 `Builder::received_addr_filter` filters incoming gossip route information before
 it enters the gossip address lookup. Runtime supplies its one relay-pin policy,
 including after each actor rebuild. This preserves direct route discovery while
