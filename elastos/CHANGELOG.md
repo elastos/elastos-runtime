@@ -49,7 +49,7 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 
 - Apps get stricter checks on whose data they reach, and Home checks more carefully which programs it starts.
 - Error messages from Home, Library, Inbox and System no longer show where files are stored on this computer.
-- Isolation status: apps open in separate browser sandboxes and need permission to reach private data. Home can still get every app's permissions. Background programs run with your account's rights; only the program that runs models is partly limited. See the isolation plan (#173).
+- Isolation status: apps open in separate browser sandboxes and need permission to reach private data. Home can still get every app's permissions. Background programs run with your account's rights; only the program that runs models is partly limited. Approvals are not yet shown on a screen only the Runtime controls, importing a Recovery Kit does not yet ask for your passkey again (#403), and on Linux the Browser helper is installed without a hash check (#406). See the isolation plan (#173).
 
 ### Developer detail
 
@@ -64,16 +64,21 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 
 - WalletConnect links a wallet app on your phone to Wallet. Scan the QR code, or copy the link into a wallet app on this computer.
 - Compatible browser wallets can link through the MetaMask option. When MetaMask is installed, the option uses MetaMask.
-- Chat marks a direct message as Delivery unconfirmed when the other Home has not confirmed it, and says what you can do.
+- To start Home without opening a browser window, use elastos home --browser --no-open. Updates and Undo keep this choice.
 
 ### Changed
 
+- Chat explains why a direct message is Delivery unconfirmed and what you can do, such as checking that both Homes and their networks are on.
 - MetaMask, UniSat and WalletConnect open in smaller windows that show one step at a time.
-- Wallet requests are headed by the action, such as Sign a message, and show the network and the website that asked.
+- Wallet requests are headed by the action, such as Sign a message, and show the network and the app or website that asked.
+- Inbox asks before WalletConnect uses the internet, and you can turn that access off in the same Inbox entry.
+- Before you remove a linked account, Wallet explains that your funds stay unchanged and removing it does not cancel a transaction in your wallet.
+- Linked accounts show the wallet's name when available, or Your wallet.
 - Marketplace says to connect MetaMask, UniSat and WalletConnect from Wallet.
 - Model downloads and Library uploads show their progress and use the same units for file sizes.
 - Inbox tells you when an update is available. System > About shows release notes and update download progress, and lets you turn automatic update checks on or off.
 - The Recovery Kit and backup screens say what a kit saves and when to save a new one.
+- Wallet, Inbox and System use plainer words for requests, settings and recovery steps.
 - Known issue: a direct message reaches a contact only when the two Homes can reach each other directly (#345).
 
 ### Fixed
@@ -90,13 +95,13 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 - After you refuse internet access, Browser asks again when you press Return, and returns to full screen when you allow it.
 - Browser keeps your page when its internet access is renewed.
 - Home keeps at least one admin passkey. Removing a passkey asks you to confirm and signs out the windows that used it.
-- Home started without opening a browser window stays that way after an update or Undo.
 - Updating works for a Home installed through a linked folder.
 
 ### Security
 
 - Apps get stricter checks on whose data they reach, and Home checks more carefully which programs it starts.
 - Error messages from Home, Library, Inbox and System no longer show where files are stored on this computer.
+- Isolation status: apps open in separate browser sandboxes and need permission to reach private data. Home can still get every app's permissions. Background programs run with your account's rights; only the program that runs models is partly limited. Approvals are not yet shown on a screen only the Runtime controls, importing a Recovery Kit does not yet ask for your passkey again (#403), and on Linux the Browser helper is installed without a hash check (#406). See the isolation plan (#173).
 
 ## [2.0.1] - 2026-11-09
 
