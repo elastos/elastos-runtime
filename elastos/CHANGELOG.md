@@ -22,7 +22,7 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 - Inbox asks before WalletConnect uses the internet, and you can turn that access off in the same Inbox entry.
 - Before you remove a linked account, Wallet explains that your funds stay unchanged and removing it does not cancel a transaction in your wallet.
 - A linked account without a name shows Your wallet.
-- Marketplace says to connect MetaMask, UniSat and WalletConnect from Wallet.
+- Marketplace opens the MetaMask, UniSat and WalletConnect connection windows through Wallet.
 - Model downloads and Library uploads show their progress and use the same units for file sizes.
 - Inbox tells you when an update is available. System > About shows release notes and update download progress, and lets you turn automatic update checks on or off.
 - The Recovery Kit and backup screens say what a kit saves and when to save a new one.
@@ -74,7 +74,7 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 - Inbox asks before WalletConnect uses the internet, and you can turn that access off in the same Inbox entry.
 - Before you remove a linked account, Wallet explains that your funds stay unchanged and removing it does not cancel a transaction in your wallet.
 - A linked account without a name shows Your wallet.
-- Marketplace says to connect MetaMask, UniSat and WalletConnect from Wallet.
+- Marketplace opens the MetaMask, UniSat and WalletConnect connection windows through Wallet.
 - Model downloads and Library uploads show their progress and use the same units for file sizes.
 - Inbox tells you when an update is available. System > About shows release notes and update download progress, and lets you turn automatic update checks on or off.
 - The Recovery Kit and backup screens say what a kit saves and when to save a new one.

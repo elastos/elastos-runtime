@@ -438,10 +438,9 @@ import { sharedModelOffers, REMOTE_MODEL_ID, detailPublisher, rowSubtitle } from
     const model = capsule.source === "signed-model-catalog";
     const role = String(capsule.role || "").toLowerCase();
     const installed = capsule.installed === true;
-    // Wallet owns connector windows and their account flow. A catalogue launch
-    // target alone does not make a connector a standalone app.
+    // Wallet owns connector windows. Marketplace asks Home to open through Wallet.
     const walletConnector = ["wallet-metamask", "wallet-unisat", "wallet-walletconnect"].includes(capsule.name);
-    const launchable = !model && !walletConnector && Boolean(capsule.launchable && capsule.launch_target);
+    const launchable = !model && Boolean(capsule.launchable && capsule.launch_target);
     const dependencies = (Array.isArray(capsule.requires) ? capsule.requires : [])
       .map((entry) => {
         const dependency = capsulesByName.get(String(entry && entry.name || ""));
@@ -974,9 +973,6 @@ import { sharedModelOffers, REMOTE_MODEL_ID, detailPublisher, rowSubtitle } from
   }
 
   function actionButton(app) {
-    if (app.walletConnector) {
-      return '<span class="store-row-sub">Connect in Wallet</span>';
-    }
     if (!app.launchable) {
       return "";
     }
@@ -1156,7 +1152,7 @@ import { sharedModelOffers, REMOTE_MODEL_ID, detailPublisher, rowSubtitle } from
     const items = [
       `Trust: ${trustLabel(app.trustState)}`,
       `Status: ${app.installed ? "Installed on this Home" : "Not installed on this Home"}`,
-      app.walletConnector ? "Use: Connect in Wallet"
+      app.walletConnector ? "Use: Open through Wallet"
         : `Launch: ${app.launchable ? "Open from Home available" : "Open from Home unavailable"}`,
     ];
     if (app.paymentState === "provider") {
@@ -1170,7 +1166,7 @@ import { sharedModelOffers, REMOTE_MODEL_ID, detailPublisher, rowSubtitle } from
 
   function availableActionItems(app) {
     if (app.walletConnector) {
-      return [`Open Wallet and choose Connect beside ${app.name}.`];
+      return [`Open the ${app.name} connection window through Wallet.`];
     }
     if (app.availableActions.length) {
       return app.availableActions.map((action) => action);
@@ -1246,7 +1242,8 @@ import { sharedModelOffers, REMOTE_MODEL_ID, detailPublisher, rowSubtitle } from
     }
     window.top.postMessage({
       type: "home:open-target",
-      target: app.launchTarget,
+      target: app.walletConnector ? "wallet" : app.launchTarget,
+      ...(app.walletConnector ? { query: { connect: app.id } } : {}),
       homeToken,
     }, homeParentOrigin);
   }
