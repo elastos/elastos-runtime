@@ -5363,6 +5363,12 @@ body.assistant-space-active #inbox-rail {
   z-index: 100006 !important;
 }
 
+/* Phone apps fill the stage. The active bounded window, such as a Wallet
+   connector, belongs in front of an inactive maximized app too. */
+body[data-form-factor="phone"] .window.window-active {
+  z-index: 100006 !important;
+}
+
 .window[data-maximized="true"] .window-head {
   border-radius: 0;
 }

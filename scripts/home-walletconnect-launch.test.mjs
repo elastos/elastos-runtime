@@ -12,3 +12,12 @@ test("Home forwards connector account hints to the kept-open Wallet in WebKit", 
     env: {...process.env, HOME_WALLET_CONNECTOR_ENGINE:"webkit"}, timeout:85000,
   });
 });
+
+for (const engine of ["chromium", "webkit"]) {
+  test(`Wallet's phone Connect path keeps each connector in front in ${engine}`, windowTestOptions(engine,90000), async () => {
+    const { stdout } = await promisify(execFile)(process.execPath, ["scripts/home-wallet-connector-launch-headless-smoke.mjs"], {
+      env: {...process.env, HOME_WALLET_CONNECTOR_ENGINE:engine, WALLET_PHONE_OPEN:"1"}, timeout:85000,
+    });
+    process.stdout.write(stdout);
+  });
+}

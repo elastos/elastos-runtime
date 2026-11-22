@@ -544,6 +544,40 @@ function rectangleIntersectionRatio(subject, overlay) {
   return (width * height) / area;
 }
 
+async function checkWalletPhoneOpen(page, homeGui) {
+  assert(!frameFor(page, "wallet"), "phone starts without a preloaded Wallet rail");
+  await homeGui.locator('.taskbar-item[data-target="wallet"]').tap();
+  await waitFor(() => frameFor(page, "wallet"), 15000, "phone Wallet frame");
+  const wallet = frameFor(page, "wallet");
+  for (const [target, title] of Object.entries(connectorTitles)) {
+    const button = wallet.locator(`[data-wallet-open-method="${target}"]`).first();
+    await button.waitFor({state:"visible",timeout:15000});
+    await button.tap();
+    await waitFor(() => frameFor(page, target), 5000, `${title} from Wallet on phone`);
+    await checkPhoneConnectorFront(page, homeGui, target);
+    console.log(`[wallet-phone] PASS ${title}: connector in front, Connect visible and clickable`);
+    await page.waitForTimeout(2700);
+    await homeGui.locator(`.window[data-target="${target}"] [data-action="close"]`).tap();
+    await waitFor(() => !frameFor(page, target), 5000, `${title} closes on phone`);
+  }
+}
+
+async function checkPhoneConnectorFront(page, homeGui, target) {
+  const connector = frameFor(page, target);
+  // Check the settled presentation as well as the Connect button hit target.
+  await page.waitForTimeout(1000);
+  const windows = await homeGui.evaluate(target => {
+    const connector = document.querySelector(`.window[data-target="${target}"]`);
+    const wallet = document.querySelector('.window[data-target="wallet"]');
+    return {active:connector?.classList.contains("window-active"),
+      connectorZ:Number(getComputedStyle(connector).zIndex), walletZ:Number(getComputedStyle(wallet).zIndex)};
+  }, target);
+  console.log(`[phone-window-order] ${target} ${JSON.stringify(windows)}`);
+  assert(windows.active && windows.connectorZ > windows.walletZ,
+    `${target} stays in front of Wallet on phone`, windows);
+  await connector.locator('[data-action="connect"]').click({trial:true,timeout:5000});
+}
+
 async function checkMarketplaceOpen(page, homeGui, pageErrors) {
   const phone = process.env.MARKETPLACE_OPEN_CASE === "connectors-phone";
   if (phone) {
@@ -626,20 +660,22 @@ async function checkMarketplaceOpen(page, homeGui, pageErrors) {
           assert(state.launches.wallet === walletLaunchesBefore + 1,
             "phone opens and reuses a full Wallet window for connector requests");
           await homeGui.locator('.window[data-target="wallet"] iframe')
-            .waitFor({state:"visible",timeout:5000});
+            .waitFor({state:"attached",timeout:5000});
         }
         const connector = frameFor(page, target);
         await connector.locator('[data-action="connect"]').waitFor({timeout:5000});
         await connector.locator('[data-action="connect"]').click({trial:true,timeout:5000});
+        if (phone) await checkPhoneConnectorFront(page, homeGui, target);
         assert(await (await connector.frameElement()).isVisible(), `${title} connection window is visible`);
         assert(state.launches[target] === launchesBefore + 1, `${title} uses one Runtime launch`);
         assert(await page.evaluate(target => window.walletOpens.at(-1) === target, target),
           `${title} launch comes from Wallet's existing open path`);
-        assert(state.launches.wallet === walletLaunchesBefore, "the mounted Wallet frame is reused");
+        assert(state.launches.wallet === walletLaunchesBefore + (phone ? 1 : 0), "the mounted Wallet frame is reused");
         assert(state.connectorEffects === 0, "opening a connection window leaves connection approval to the person");
         // A connector app cannot impersonate Marketplace, send Wallet commands,
         // or open another connector with its own valid launch token.
-        const totalBefore = Object.values(state.launches).reduce((a,b) => a+b, 0);
+        const launchesBeforeForgery = {...state.launches};
+        const totalBefore = Object.values(launchesBeforeForgery).reduce((a,b) => a+b, 0);
         await connector.evaluate(() => {
           const homeToken = new URLSearchParams(location.hash.slice(1)).get("home_token");
           const origin = new URLSearchParams(location.search).get("home_origin");
@@ -654,7 +690,7 @@ async function checkMarketplaceOpen(page, homeGui, pageErrors) {
         })));
         await page.waitForTimeout(200);
         assert(Object.values(state.launches).reduce((a,b) => a+b, 0) === totalBefore,
-          "another app and a forged Home command cannot start a connector");
+          "another app and a forged Home command cannot start a connector", {before:launchesBeforeForgery, after:state.launches});
         if (process.env.MARKETPLACE_CONNECT_SCREENSHOTS) {
           mkdirSync(process.env.MARKETPLACE_CONNECT_SCREENSHOTS, {recursive:true});
           await page.screenshot({path:join(process.env.MARKETPLACE_CONNECT_SCREENSHOTS,
@@ -666,26 +702,46 @@ async function checkMarketplaceOpen(page, homeGui, pageErrors) {
         await homeGui.locator(`.window[data-target="${target}"] [data-action="close"]`).click();
         await waitFor(() => !frameFor(page, target), 5000, `${title} window closes`);
         if (phone) {
-          // Close returns to Wallet. Minimize it to return to Marketplace.
-          await homeGui.locator('.window[data-target="wallet"] [data-action="minimize"]').click();
+          // The first Close returns to Wallet. Later requests reuse that
+          // minimized Wallet, so their Close already returns to Marketplace.
+          const walletWindow = homeGui.locator('.window[data-target="wallet"]');
+          if (await walletWindow.isVisible()) {
+            await walletWindow.locator('[data-action="minimize"]').click({timeout:5000});
+          }
+          assert(await homeGui.locator('.window[data-target="marketplace"]').isVisible(),
+            "closing the connector lets the person return to Marketplace");
         }
       }
     }
+    if (phone) {
+      // Retire the reused phone window through its controls before checking
+      // the Wallet card's ordinary Open, which creates a separate window.
+      await homeGui.locator('#phone-dock-handle').tap();
+      await homeGui.locator('.taskbar-item[data-target="wallet"]').tap();
+      await homeGui.locator('.window[data-target="wallet"] [data-action="close"]').tap();
+      await homeGui.locator('.window[data-target="wallet"]').waitFor({state:"detached",timeout:5000});
+    }
     // The Wallet app card still has its ordinary Open, without a connector query.
+    const walletsBeforePlainOpen = state.launches.wallet;
     await marketplace.locator('.store-row[data-app="wallet"] [data-action="open"]').first().click();
     await homeGui.locator('.window[data-target="wallet"] iframe').waitFor({state:"visible",timeout:5000});
     await homeGui.frameLocator('.window[data-target="wallet"] iframe')
       .locator('[data-wallet-open-method="wallet-metamask"]').waitFor({state:"attached",timeout:5000});
-    assert(state.launches.wallet === walletLaunchesBefore + 1, "ordinary Wallet Open uses its normal launch path");
+    assert(state.launches.wallet === walletsBeforePlainOpen + 1, "ordinary Wallet Open uses its normal launch path");
+    await page.waitForTimeout(2700);
     await homeGui.locator('.window[data-target="wallet"] [data-action="close"]').click();
-    await homeGui.locator('.window[data-target="wallet"]').waitFor({state:"detached"});
+    await homeGui.locator('.window[data-target="wallet"]').waitFor({state:"detached",timeout:5000});
+    const walletsBeforeReopen = state.launches.wallet;
     await marketplace.locator('.store-row[data-app="wallet-metamask"] [data-action="open"]').first().click();
     await waitFor(() => frameFor(page, "wallet-metamask"), 5000, "connector Open after closing Wallet");
     await frameFor(page, "wallet-metamask").locator('[data-action="connect"]').click({trial:true,timeout:5000});
-    assert(state.launches.wallet === walletLaunchesBefore + (phone ? 2 : 1),
+    assert(state.launches.wallet === walletsBeforeReopen + (phone ? 1 : 0),
       phone ? "Home opens a fresh Wallet after its phone window retires"
         : "Home reuses the mounted Wallet rail after its separate window retires");
+    if (phone) await checkPhoneConnectorFront(page, homeGui, "wallet-metamask");
+    await page.waitForTimeout(2700);
     await homeGui.locator('.window[data-target="wallet-metamask"] [data-action="close"]').click();
+    await waitFor(() => !frameFor(page, "wallet-metamask"), 5000, "reopened connector closes");
   } else {
     // A plain Open is distinct from a model selection. Model handoffs retain their narrow contract.
     for (const query of [null, [], {}, {offer_id:"model:private"}, {model_cid:"bad"}, {authority:"new"}]) {
@@ -744,8 +800,9 @@ try {
     ],
     } : {}),
   });
-  const context = await browser.newContext(process.env.MARKETPLACE_OPEN_CASE
-    ? { reducedMotion: "reduce", ...(process.env.MARKETPLACE_OPEN_CASE === "connectors-phone"
+  const phoneLayout = process.env.MARKETPLACE_OPEN_CASE === "connectors-phone" || process.env.WALLET_PHONE_OPEN === "1";
+  const context = await browser.newContext(process.env.MARKETPLACE_OPEN_CASE || phoneLayout
+    ? { reducedMotion: "reduce", ...(phoneLayout
       ? {viewport:{width:390,height:844},isMobile:true,hasTouch:true} : {}) } : {});
   const page = await context.newPage();
   const pageErrors = [];
@@ -764,6 +821,21 @@ try {
   );
   await waitFor(() => frameFor(page, "home-gui"), 15_000, "real Home GUI frame");
   const homeGui = frameFor(page, "home-gui");
+  if (phoneLayout) {
+    await homeGui.waitForFunction(() => document.body.dataset.formFactor === "phone", null, {timeout:15000});
+    const device = await homeGui.evaluate(() => ({width:innerWidth, touchPoints:navigator.maxTouchPoints,
+      coarse:matchMedia("(pointer: coarse)").matches, factor:document.body.dataset.formFactor}));
+    assert(device.width === 390 && device.touchPoints > 0 && device.coarse && device.factor === "phone",
+      "fixture uses the 390 px touch phone layout", device);
+    // Let the real idle warmup run: phones keep Wallet in its full window.
+    await page.waitForTimeout(2200);
+    assert(!frameFor(page, "wallet"), "phone idle warmup leaves the Wallet rail unmounted");
+  }
+  if (process.env.WALLET_PHONE_OPEN === "1") {
+    await checkWalletPhoneOpen(page, homeGui);
+    assert(state.serverErrors.length === 0 && pageErrors.length === 0, "phone Wallet source errors", {pageErrors, errors:state.serverErrors});
+    return;
+  }
   if (process.env.MARKETPLACE_OPEN_CASE) {
     await checkMarketplaceOpen(page, homeGui, pageErrors);
     assert(state.serverErrors.length === 0, "fixture server recorded errors", state.serverErrors);

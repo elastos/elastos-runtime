@@ -413,7 +413,7 @@ export function walletRailFrame() {
 
 /* Warm the Wallet iframe while the rail stays hidden — one launch, no remount on peek. */
 export function preloadWalletRail() {
-  if (!walletRailAvailable() || !frame || frame.dataset.route || launching) {
+  if (!finePointerHoverAvailable() || !walletRailAvailable() || !frame || frame.dataset.route || launching) {
     return;
   }
   void mountWalletFrame({ preload: true });
