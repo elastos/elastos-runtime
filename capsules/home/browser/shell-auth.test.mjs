@@ -177,7 +177,10 @@ test("adding a passkey takes a fresh approval first and carries the System launc
       assert.equal(publicKey.user.displayName, publicKey.user.name);
       assert.deepEqual(new Uint8Array(publicKey.user.id), new Uint8Array([1]));
       calls.push("create");
-      return fakeCredential();
+      const credential = fakeCredential();
+      credential.authenticatorAttachment = "cross-platform";
+      credential.response.getTransports = () => ["hybrid", "internal"];
+      return credential;
     },
   };
   assert.deepEqual(await addAccountPasskey("system-launch"), { role: "admin" });
@@ -188,6 +191,8 @@ test("adding a passkey takes a fresh approval first and carries the System launc
   assert.equal(byUrl["/api/auth/passkey/add/begin"].step_up_token, "fresh-approval");
   assert.equal(byUrl["/api/auth/passkey/add/begin"].app_token, "system-launch");
   assert.equal(byUrl["/api/auth/passkey/add/complete"].ceremony_id, "add-1");
+  assert.equal(byUrl["/api/auth/passkey/add/complete"].response.authenticatorAttachment, "cross-platform");
+  assert.deepEqual(byUrl["/api/auth/passkey/add/complete"].response.response.transports, ["hybrid", "internal"]);
   assert.equal(byUrl["/api/auth/passkey/add/complete"].app_token, "system-launch");
 });
 

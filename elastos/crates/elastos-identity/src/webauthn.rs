@@ -169,6 +169,8 @@ pub struct RegistrationResponse {
     pub _id: String,
     #[serde(rename = "rawId")]
     pub _raw_id: String, // base64url
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authenticator_attachment: Option<String>,
     pub response: AuthenticatorAttestationResponse,
     #[serde(rename = "type")]
     pub _type: String,
@@ -179,6 +181,40 @@ pub struct RegistrationResponse {
 pub struct AuthenticatorAttestationResponse {
     pub client_data_json: String,   // base64url
     pub attestation_object: String, // base64url
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub transports: Vec<String>,
+}
+
+impl RegistrationResponse {
+    /// A display hint only. The caller verifies registration before using it.
+    pub fn passkey_provider(&self) -> Option<&'static str> {
+        if self.response.attestation_object.len() > 32768 {
+            return None;
+        }
+        let bytes = URL_SAFE_NO_PAD
+            .decode(&self.response.attestation_object)
+            .ok()?;
+        let object: ciborium::Value = ciborium::from_reader(bytes.as_slice()).ok()?;
+        let data = extract_cbor_bytes(&object, "authData").ok()?;
+        if data.len() < 55 || data[32] & FLAG_ATTESTED_CREDENTIAL_DATA == 0 {
+            return None;
+        }
+        // Names and values: passkeydeveloper/passkey-authenticator-aaguids,
+        // aaguid.json at cd4f847a6144acb2281e6b7bd98326e3bac3fdc7:
+        // https://github.com/passkeydeveloper/passkey-authenticator-aaguids/blob/cd4f847a6144acb2281e6b7bd98326e3bac3fdc7/aaguid.json
+        // AAGUID is supplied by the authenticator, not a provider trust proof.
+        match hex::encode(&data[37..53]).as_str() {
+            "ea9b8d664d011d213ce4b6b48cb575d4" => Some("Google Password Manager"),
+            "08987058cadc4b81b6e130de50dcbe96"
+            | "9ddd1817af5a4672a2b93e3dd95000a9"
+            | "6028b017b1d44c02b4b3afcdafc96bb2" => Some("Windows Hello"),
+            "dd4ec289e01d41c9bb8970fa845d4bf2" => Some("iCloud Keychain (Managed)"),
+            "fbfc3007154e4ecc8c0b6e020557d7bd" => Some("Apple Passwords"),
+            "bada5566a7aa401fbd9645619a55120d" => Some("1Password"),
+            "d548826e79b4db40a3d811116f7e8349" => Some("Bitwarden"),
+            _ => None,
+        }
+    }
 }
 
 /// Browser → Server: authentication response
@@ -1143,6 +1179,7 @@ mod tests {
             _id: URL_SAFE_NO_PAD.encode(credential_id),
             _raw_id: URL_SAFE_NO_PAD.encode(credential_id),
             _type: "public-key".into(),
+            authenticator_attachment: None,
             response: AuthenticatorAttestationResponse {
                 client_data_json: URL_SAFE_NO_PAD.encode(
                     serde_json::json!({
@@ -1151,6 +1188,7 @@ mod tests {
                     .to_string(),
                 ),
                 attestation_object: URL_SAFE_NO_PAD.encode(attestation),
+                transports: Vec::new(),
             },
         }
     }
@@ -1692,6 +1730,54 @@ mod tests {
                 [1; 32]
             )
             .is_err());
+    }
+
+    #[test]
+    fn passkey_provider_uses_only_documented_attested_aaguids() {
+        let mut response = registration_response("AA", "localhost", "http://localhost");
+        assert_eq!(response.passkey_provider(), None); // Privacy-preserving zero AAGUID.
+        let bytes = URL_SAFE_NO_PAD
+            .decode(&response.response.attestation_object)
+            .unwrap();
+        let object: ciborium::Value = ciborium::from_reader(bytes.as_slice()).unwrap();
+        for (id, expected) in [
+            (
+                "ea9b8d664d011d213ce4b6b48cb575d4",
+                Some("Google Password Manager"),
+            ),
+            ("08987058cadc4b81b6e130de50dcbe96", Some("Windows Hello")),
+            ("9ddd1817af5a4672a2b93e3dd95000a9", Some("Windows Hello")),
+            ("6028b017b1d44c02b4b3afcdafc96bb2", Some("Windows Hello")),
+            (
+                "dd4ec289e01d41c9bb8970fa845d4bf2",
+                Some("iCloud Keychain (Managed)"),
+            ),
+            ("fbfc3007154e4ecc8c0b6e020557d7bd", Some("Apple Passwords")),
+            ("bada5566a7aa401fbd9645619a55120d", Some("1Password")),
+            ("d548826e79b4db40a3d811116f7e8349", Some("Bitwarden")),
+            ("ffffffffffffffffffffffffffffffff", None),
+        ] {
+            let mut object = object.clone();
+            let ciborium::Value::Map(entries) = &mut object else {
+                panic!("fixture map")
+            };
+            let (_, ciborium::Value::Bytes(data)) = entries
+                .iter_mut()
+                .find(|(key, _)| key.as_text() == Some("authData"))
+                .unwrap()
+            else {
+                panic!("fixture bytes")
+            };
+            data[37..53].copy_from_slice(&hex::decode(id).unwrap());
+            let mut bytes = Vec::new();
+            ciborium::ser::into_writer(&object, &mut bytes).unwrap();
+            response.response.attestation_object = URL_SAFE_NO_PAD.encode(bytes);
+            assert_eq!(response.passkey_provider(), expected);
+        }
+        response.response.attestation_object = "invalid".into();
+        assert_eq!(response.passkey_provider(), None);
+        response.response.attestation_object = "x".repeat(32769);
+        assert_eq!(response.passkey_provider(), None);
     }
 
     #[test]

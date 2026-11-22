@@ -561,9 +561,13 @@ function validatePendingRegistration(pending) {
   const validIntent = exactKeys(intent, ["purpose"]) && intent.purpose === "recover"
     || exactKeys(intent, ["purpose", "public_name"]) && intent.purpose === "create" && validName(intent.public_name);
   const response = pending?.response;
-  const validResponse = response === null || exactKeys(response, ["id", "rawId", "type", "response"])
+  const validResponse = response === null || exactKeys(response, ["id", "rawId", "type", "response", ...(Object.hasOwn(response || {}, "authenticatorAttachment") ? ["authenticatorAttachment"] : [])])
+    && (response.authenticatorAttachment === undefined || response.authenticatorAttachment === null
+      || ["platform", "cross-platform"].includes(response.authenticatorAttachment))
     && response.type === "public-key" && boundedString(response.id, 8192) && boundedString(response.rawId, 8192)
-    && exactKeys(response.response, ["clientDataJson", "attestationObject"])
+    && exactKeys(response.response, ["clientDataJson", "attestationObject", ...(Object.hasOwn(response.response || {}, "transports") ? ["transports"] : [])])
+    && (response.response.transports === undefined || Array.isArray(response.response.transports)
+      && response.response.transports.length <= 8 && response.response.transports.every(value => boundedString(value, 64)))
     && boundedString(response.response.clientDataJson, 4096) && boundedString(response.response.attestationObject, 32768);
   if (!exactKeys(pending, ["schema", "created_at", "expires_at", "intent", "ceremony_id", "response"])
     || pending.schema !== PENDING_REGISTRATION_KEY || !validIntent || !validResponse
@@ -1184,7 +1188,9 @@ function serializeCreatedCredential(credential) {
     id: credential.id,
     rawId: bufferToBase64Url(credential.rawId),
     type: credential.type,
+    authenticatorAttachment: credential.authenticatorAttachment ?? null,
     response: {
+      transports: credential.response.getTransports?.() ?? [],
       clientDataJson: bufferToBase64Url(credential.response.clientDataJSON),
       attestationObject: bufferToBase64Url(credential.response.attestationObject),
     },

@@ -62,8 +62,9 @@ function fixture({ guest = false, purpose = "create", terminalLoss = false, owne
         assert.equal(options.publicKey.user.displayName, passkeyName);
         assert.deepEqual(Array.from(new Uint8Array(options.publicKey.user.id)), [1]);
         await afterCreate();
-        return { id: "credential", rawId: new Uint8Array([1]).buffer, type: "public-key",
-          response: { clientDataJSON: new Uint8Array([2]).buffer, attestationObject: new Uint8Array([3]).buffer } };
+        return { id: "credential", rawId: new Uint8Array([1]).buffer, type: "public-key", authenticatorAttachment: "cross-platform",
+          response: { clientDataJSON: new Uint8Array([2]).buffer, attestationObject: new Uint8Array([3]).buffer,
+            getTransports: () => ["hybrid"] } };
       }, async get() {
         gets++;
         return { id: "existing", rawId: new Uint8Array([1]).buffer, type: "public-key",
@@ -335,12 +336,14 @@ for (const guest of [false, true]) for (const [name, reason] of [["NotAllowedErr
   assert.doesNotMatch(home.element("#home-unlock-copy").textContent, /Recovery Kit/);
   assert.match(home.element("#home-unlock-copy").textContent, /saved on this computer, a phone or a security key/);
 }
-for (const field of ["ceremony", "id", "rawId", "clientDataJson", "attestationObject", "name", "c1-start", "c1-end", "extra"]) {
+for (const field of ["ceremony", "id", "rawId", "clientDataJson", "attestationObject", "name", "c1-start", "c1-end", "extra", "transports", "attachment"]) {
   const f = fixture(), home = f.reload();
   await home.show(); await home.choose();
   await assert.rejects(home.api.runPasskeyCreate(), /response lost/);
   const pending = JSON.parse(f.values.get(key));
-  if (field === "ceremony") pending.ceremony_id = "x".repeat(129);
+  if (field === "transports") pending.response.response.transports = Array(9).fill("hybrid");
+  else if (field === "attachment") pending.response.authenticatorAttachment = "x".repeat(65);
+  else if (field === "ceremony") pending.ceremony_id = "x".repeat(129);
   else if (field === "id" || field === "rawId") pending.response[field] = "x".repeat(8193);
   else if (field === "name") pending.intent.public_name = "é".repeat(33);
   else if (field === "c1-start") pending.intent.public_name = "bad\u0080name";
@@ -359,6 +362,8 @@ for (const guest of [false, true]) {
   await assert.rejects(home.api.runPasskeyCreate(), /completion rejected/);
   const saved = f.values.get(key);
   assert.ok(JSON.parse(saved).response, "completion rejection discarded the credential response");
+  assert.deepEqual(JSON.parse(saved).response.response.transports, ["hybrid"]);
+  assert.equal(JSON.parse(saved).response.authenticatorAttachment, "cross-platform");
   const completion = f.requests.find(r => r.path.endsWith("/complete")).options.body;
   f.advance(600000); f.response("ok");
   const resumed = f.reload(); await resumed.show(); await resumed.api.runPasskeyCreate();

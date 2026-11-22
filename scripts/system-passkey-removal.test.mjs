@@ -247,14 +247,14 @@ test("System distinguishes two passkeys and identifies this window at desktop an
   await fixture(async ({ page, open, writes }) => {
     const created = Date.UTC(2026, 10, 22, 14, 5) / 1000;
     const second = { ...owner, proof_binding_id: "proof:passkey:backup", current: false,
-      created_at: created + 3600, added_from: "Chrome on Android" };
+      created_at: created + 3600, added_from: "Saved on a phone or tablet (added from Safari on Mac or iPad)" };
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: 900 });
-      let frame = await open([{ ...owner, created_at: created, added_from: "Safari on Mac" }, second]);
+      let frame = await open([{ ...owner, created_at: created, added_from: "Apple Passwords (added from Safari on Mac or iPad)" }, second]);
       const rows = frame.locator(".account-row");
       assert.equal(await rows.count(), 2);
-      assert.match(await rows.nth(0).locator(".passkey-added").textContent(), /^Added .+ in Safari on Mac$/);
-      assert.match(await rows.nth(1).locator(".passkey-added").textContent(), /^Added .+ in Chrome on Android$/);
+      assert.match(await rows.nth(0).locator(".passkey-added").textContent(), /^Added .+ · Apple Passwords \(added from Safari on Mac or iPad\)$/);
+      assert.match(await rows.nth(1).locator(".passkey-added").textContent(), /^Added .+ · Saved on a phone or tablet \(added from Safari on Mac or iPad\)$/);
       assert.equal(await rows.nth(0).locator(".passkey-current").textContent(), "This window signed in with this passkey");
       assert.notEqual(await rows.nth(0).locator(".account-used").textContent(), "Not used yet");
       assert.equal(await rows.nth(1).locator(".passkey-current").count(), 0);
@@ -266,8 +266,8 @@ test("System distinguishes two passkeys and identifies this window at desktop an
       }
       await screenshot(page, `passkey-names-${width}`);
       // Two additions from the same browser within a minute remain distinct.
-      frame = await open([{ ...owner, created_at: created, added_from: "Safari on Mac" },
-        { ...second, created_at: created + 1, added_from: "Safari on Mac" }]);
+      frame = await open([{ ...owner, created_at: created, added_from: "Apple Passwords (added from Safari on Mac or iPad)" },
+        { ...second, created_at: created + 1, added_from: "Apple Passwords (added from Safari on Mac or iPad)" }]);
       const labels = await frame.locator(".passkey-added").allTextContents();
       assert.notEqual(labels[0], labels[1]);
       // Old credentials retain their creation date, and the marker follows the session.

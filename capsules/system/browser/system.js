@@ -2573,7 +2573,7 @@ function accountRow(passkey, listState = {}) {
   const added = document.createElement("small");
   added.className = "passkey-added";
   const addedFrom = readText(passkey.added_from);
-  added.textContent = `Added ${formatTimestamp(passkey.created_at, { year: "numeric", second: "2-digit" })}${addedFrom ? ` in ${addedFrom}` : ""}`;
+  added.textContent = `Added ${formatTimestamp(passkey.created_at, { year: "numeric", second: "2-digit" })}${addedFrom ? ` · ${addedFrom}` : ""}`;
   nameWrap.append(added);
   if (passkey.current) {
     const current = document.createElement("small");

@@ -293,8 +293,8 @@ pub async fn register_complete(
             &state.data_dir,
             &headers,
             &grant.proof_binding_id,
-        )
-        .map_err(owner_error)?;
+            response.as_ref(),
+        );
         drop(manager);
         state
             .session_registry
@@ -318,8 +318,8 @@ pub async fn register_complete(
                 &state.data_dir,
                 &headers,
                 &grant.proof_binding_id,
-            )
-            .map_err(owner_error)?;
+                Some(response),
+            );
             drop(manager);
             state
                 .session_registry

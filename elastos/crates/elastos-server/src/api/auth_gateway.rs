@@ -833,7 +833,12 @@ async fn passkey_add_complete_inner(
         &input.ceremony_id,
         &input.response,
     )?;
-    record_passkey_added_from(&state.data_dir, headers, &added.proof_binding_id)?;
+    record_passkey_added_from(
+        &state.data_dir,
+        headers,
+        &added.proof_binding_id,
+        Some(&input.response),
+    );
     Ok(PasskeyAddResponse {
         schema: PASSKEY_ADD_RESULT_SCHEMA.into(),
         proof_binding_id: added.proof_binding_id,
@@ -952,7 +957,12 @@ async fn owner_recovery_complete_inner(
         &input.response,
         &kit,
     )?;
-    record_passkey_added_from(&state.data_dir, headers, &grant.proof_binding_id)?;
+    record_passkey_added_from(
+        &state.data_dir,
+        headers,
+        &grant.proof_binding_id,
+        Some(&input.response),
+    );
     drop(manager);
     passkey_response_for_grant(state, grant)
 }
@@ -1078,7 +1088,7 @@ fn passkey_added_from(headers: &HeaderMap) -> Option<String> {
     } else if ua.contains("Windows") {
         Some("Windows")
     } else if ua.contains("Macintosh") || ua.contains("Mac OS X") {
-        Some("Mac")
+        Some("Mac or iPad")
     } else if ua.contains("Linux") {
         Some("Linux")
     } else {
@@ -1090,16 +1100,54 @@ fn passkey_added_from(headers: &HeaderMap) -> Option<String> {
     Some(device.map_or_else(|| browser.into(), |device| format!("{browser} on {device}")))
 }
 
+fn passkey_registration_hint(
+    headers: &HeaderMap,
+    response: Option<&RegistrationResponse>,
+) -> Option<String> {
+    let browser = passkey_added_from(headers);
+    let saved = response.and_then(|response| {
+        if response
+            .response
+            .transports
+            .iter()
+            .any(|value| value == "hybrid")
+        {
+            Some("Saved on a phone or tablet")
+        } else if let Some(provider) = response.passkey_provider() {
+            Some(provider)
+        } else if response.authenticator_attachment.as_deref() == Some("platform") {
+            Some("Device passkey")
+        } else if response.authenticator_attachment.as_deref() == Some("cross-platform") {
+            Some("Another device or security key")
+        } else {
+            None
+        }
+    });
+    match (saved, browser) {
+        (Some(saved), Some(browser)) => Some(format!("{saved} (added from {browser})")),
+        (Some(saved), None) => Some(saved.into()),
+        (None, Some(browser)) => Some(format!("Added from {browser}")),
+        (None, None) => None,
+    }
+}
+
 pub(crate) fn record_passkey_added_from(
     data_dir: &std::path::Path,
     headers: &HeaderMap,
     proof_binding_id: &str,
-) -> anyhow::Result<()> {
-    crate::auth::set_passkey_added_from(
+    response: Option<&RegistrationResponse>,
+) {
+    if crate::auth::set_passkey_added_from(
         data_dir,
         proof_binding_id,
-        passkey_added_from(headers).as_deref(),
+        passkey_registration_hint(headers, response).as_deref(),
     )
+    .is_err()
+    {
+        // Registration and its session are already saved. This display hint
+        // cannot turn their success into a failed registration response.
+        tracing::warn!("Passkey registered; its display label could not be saved");
+    }
 }
 
 async fn passkey_list_inner(
@@ -3873,7 +3921,12 @@ async fn passkey_register_complete_inner(
         crate::auth::now_ts(),
     )? {
         drop(manager);
-        record_passkey_added_from(&state.data_dir, headers, &grant.proof_binding_id)?;
+        record_passkey_added_from(
+            &state.data_dir,
+            headers,
+            &grant.proof_binding_id,
+            input.response.as_ref(),
+        );
         return passkey_response_for_grant(state, grant);
     }
     drop(manager);
@@ -3899,7 +3952,12 @@ async fn passkey_register_complete_inner(
             intent,
         )?;
         drop(manager);
-        record_passkey_added_from(&state.data_dir, headers, &grant.proof_binding_id)?;
+        record_passkey_added_from(
+            &state.data_dir,
+            headers,
+            &grant.proof_binding_id,
+            input.response.as_ref(),
+        );
         return passkey_response_for_grant(state, grant);
     }
     let outcome = manager.complete_registration(
@@ -3927,7 +3985,12 @@ async fn passkey_register_complete_inner(
             purpose: crate::auth::PasskeySessionPurpose::GuestRegistration,
         },
     )?;
-    record_passkey_added_from(&state.data_dir, headers, &grant.proof_binding_id)?;
+    record_passkey_added_from(
+        &state.data_dir,
+        headers,
+        &grant.proof_binding_id,
+        input.response.as_ref(),
+    );
     passkey_response_for_grant(state, grant)
 }
 
@@ -5686,7 +5749,7 @@ mod tests {
                 let principal = &auth.principals[0];
                 assert_eq!(
                     principal.passkey_added_from.as_deref(),
-                    Some("Safari on Mac")
+                    Some("Added from Safari on Mac or iPad")
                 );
                 let profile = crate::collaboration_profile_authority::load_profile_authority(
                     root.path(),
@@ -6533,7 +6596,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn guided_guest_http_create_recover_keeps_role_and_replays_completion() {
+    async fn guided_guest_passkey_http_create_recover_keeps_role_and_replays_completion() {
         for intent in [
             json!({"purpose": "create", "public_name": "Alice"}),
             json!({"purpose": "recover"}),
@@ -6564,11 +6627,13 @@ mod tests {
             );
             assert!(cookie.starts_with("elastos-guest-registration="));
             assert!(!cookie.contains("owner-claim"));
-            let response = crate::auth::owner_attestation_for_test(
+            let mut response = crate::auth::owner_attestation_for_test(
                 begin["options"]["publicKey"]["challenge"].as_str().unwrap(),
                 "localhost",
                 "http://localhost:61180",
             );
+            response.response.transports = vec!["hybrid".into()];
+            response.authenticator_attachment = Some("cross-platform".into());
             let completion = json!({
                 "ceremony_id": begin["ceremony_id"],
                 "response": response,
@@ -6621,6 +6686,10 @@ mod tests {
                 .find(|principal| principal.principal_id != admin.principal_id)
                 .unwrap();
             assert_eq!(guest.role, crate::auth::RuntimePrincipalRole::Guest);
+            assert_eq!(
+                guest.passkey_added_from.as_deref(),
+                Some("Saved on a phone or tablet")
+            );
             let profile_before = crate::collaboration_profile_authority::load_profile_authority(
                 root.path(),
                 &guest.principal_id,
@@ -7015,7 +7084,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn allowed_https_guest_registration_binds_begin_origin() {
+    async fn allowed_https_guest_passkey_registration_binds_begin_origin() {
         let temp = local_profile_fixture_root();
         let state = test_gateway_state(temp.path());
         let credential = test_credential();
@@ -7078,12 +7147,14 @@ mod tests {
                 "id": URL_SAFE_NO_PAD.encode(credential_id),
                 "rawId": URL_SAFE_NO_PAD.encode(credential_id),
                 "type": "public-key",
+                "authenticatorAttachment": "cross-platform",
                 "response": {
                     "clientDataJson": URL_SAFE_NO_PAD.encode(json!({
                         "type": "webauthn.create", "challenge": challenge,
                         "origin": "https://home.example"
                     }).to_string()),
-                    "attestationObject": URL_SAFE_NO_PAD.encode(&attestation)
+                    "attestationObject": URL_SAFE_NO_PAD.encode(&attestation),
+                    "transports": ["hybrid"]
                 }
             }))
             .unwrap()
@@ -7109,6 +7180,10 @@ mod tests {
             crate::auth::load_principal_for_proof_binding(temp.path(), &result.proof_binding_id)
                 .unwrap();
         assert_eq!(guest_principal.display_name, "Private guest label");
+        assert_eq!(
+            guest_principal.passkey_added_from.as_deref(),
+            Some("Saved on a phone or tablet")
+        );
         assert_eq!(
             guest_principal.initial_profile_display_name.as_deref(),
             Some("Public guest name")
@@ -7290,7 +7365,7 @@ mod tests {
         for (agent, expected) in [
             (
                 "Mozilla/5.0 (Macintosh; Intel Mac OS X) Version/18.0 Safari/605.1.15",
-                Some("Safari on Mac"),
+                Some("Safari on Mac or iPad"),
             ),
             (
                 "Mozilla/5.0 (Linux; Android 14) Chrome/130.0 Safari/537.36",
@@ -7321,6 +7396,43 @@ mod tests {
         assert_eq!(passkey_added_from(&HeaderMap::new()), None);
     }
 
+    #[test]
+    fn passkey_registration_hint_uses_authenticator_and_survives_label_write_failure() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::USER_AGENT,
+            HeaderValue::from_static(
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X) Version/18 Safari/605.1",
+            ),
+        );
+        let mut response =
+            crate::auth::owner_attestation_for_test("AA", "localhost", "http://localhost");
+        response.authenticator_attachment = Some("cross-platform".into());
+        response.response.transports = vec!["hybrid".into(), "internal".into()];
+        assert_eq!(
+            passkey_registration_hint(&headers, Some(&response)).as_deref(),
+            Some("Saved on a phone or tablet (added from Safari on Mac or iPad)")
+        );
+        response.response.transports.clear();
+        response.authenticator_attachment = Some("platform".into());
+        assert_eq!(
+            passkey_registration_hint(&headers, Some(&response)).as_deref(),
+            Some("Device passkey (added from Safari on Mac or iPad)")
+        );
+        response.authenticator_attachment = Some("cross-platform".into());
+        assert_eq!(
+            passkey_registration_hint(&HeaderMap::new(), Some(&response)).as_deref(),
+            Some("Another device or security key")
+        );
+        // A file where the data directory belongs forces the real save to fail.
+        // The shared helper returns success to every registration completion path.
+        let root = tempfile::tempdir().unwrap();
+        let blocked = root.path().join("blocked");
+        std::fs::write(&blocked, b"fixture").unwrap();
+        assert!(crate::auth::set_passkey_added_from(&blocked, "fixture", Some("label")).is_err());
+        record_passkey_added_from(&blocked, &headers, "fixture", Some(&response));
+    }
+
     #[tokio::test]
     async fn passkey_http_stores_registration_hint_and_marks_only_this_windows_key() {
         let temp = tempfile::tempdir().unwrap();
@@ -7349,12 +7461,14 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{begin}");
-        let response = crate::auth::passkey_attestation_with_id_for_test(
+        let mut response = crate::auth::passkey_attestation_with_id_for_test(
             begin["options"]["publicKey"]["challenge"].as_str().unwrap(),
             "localhost",
             "http://localhost:61180",
             b"named-backup",
         );
+        response.response.transports = vec!["hybrid".into()];
+        response.authenticator_attachment = Some("cross-platform".into());
         let (status, _, added) = passkey_http(
             &app,
             "/api/auth/passkey/add/complete",
@@ -7371,7 +7485,7 @@ mod tests {
                 .unwrap()
                 .passkey_added_from
                 .as_deref(),
-            Some("Safari on Mac")
+            Some("Saved on a phone or tablet (added from Safari on Mac or iPad)")
         );
         let http_list = passkey_list(State(state.clone()), owner.host_headers.clone()).await;
         assert_eq!(http_list.status(), StatusCode::OK);
@@ -7386,7 +7500,7 @@ mod tests {
                 .iter()
                 .find(|key| key["proof_binding_id"] == added_id)
                 .unwrap()["added_from"],
-            "Safari on Mac"
+            "Saved on a phone or tablet (added from Safari on Mac or iPad)"
         );
         assert_eq!(
             listed["passkeys"]
@@ -7408,7 +7522,10 @@ mod tests {
             .find(|key| key.proof_binding_id == added_id)
             .unwrap();
         assert!(!backup.current);
-        assert_eq!(backup.added_from.as_deref(), Some("Safari on Mac"));
+        assert_eq!(
+            backup.added_from.as_deref(),
+            Some("Saved on a phone or tablet (added from Safari on Mac or iPad)")
+        );
         assert!(backup.created_at > 0);
         let old = first
             .passkeys
@@ -7462,7 +7579,7 @@ mod tests {
                 .unwrap()
                 .passkey_added_from
                 .as_deref(),
-            Some("Safari on Mac")
+            Some("Saved on a phone or tablet (added from Safari on Mac or iPad)")
         );
     }
 
