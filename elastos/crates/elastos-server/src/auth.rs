@@ -4429,18 +4429,29 @@ fn open_audit_chain_activation_lock(data_dir: &Path) -> anyhow::Result<File> {
     open_regular_lock_file(&path, "audit activation")
 }
 
-// Callers first hold the process-local object mutex. This separate file lock
-// fences migration and cleanup across processes without re-entering auth's
-// short state lock while protection or receipts are written.
-fn lock_principal_root_lifecycle(data_dir: &Path) -> anyhow::Result<FileLock> {
+// The launching Runtime prepares this file before issuing a child launch token.
+// Children only open it: a missing fence refuses their save.
+pub(crate) fn prepare_principal_root_lifecycle(data_dir: &Path) -> anyhow::Result<()> {
+    open_principal_root_lifecycle_file(data_dir, true).map(|_| ())
+}
+
+fn open_principal_root_lifecycle_file(data_dir: &Path, create: bool) -> anyhow::Result<File> {
     let path = auth_state_path(data_dir)?.with_file_name(PRINCIPAL_ROOT_LIFECYCLE_LOCK_FILE);
-    ensure_regular_auth_parent(
-        data_dir,
-        path.parent()
-            .ok_or_else(|| anyhow!("principal-root lifecycle lock parent is missing"))?,
-    )?;
+    if create {
+        ensure_regular_auth_parent(
+            data_dir,
+            path.parent()
+                .ok_or_else(|| anyhow!("principal-root lifecycle lock parent is missing"))?,
+        )?;
+    } else {
+        ensure_no_symlink_components(data_dir, &path)?;
+    }
     let mut options = OpenOptions::new();
-    options.create(true).truncate(false).read(true).write(true);
+    options
+        .create(create)
+        .truncate(false)
+        .read(true)
+        .write(true);
     #[cfg(unix)]
     options
         .mode(0o600)
@@ -4462,12 +4473,27 @@ fn lock_principal_root_lifecycle(data_dir: &Path) -> anyhow::Result<FileLock> {
             anyhow::bail!("principal-root lifecycle lock must be owner-only with one link");
         }
     }
+    Ok(file)
+}
+
+// Callers first hold the process-local object mutex. This separate file lock
+// fences migration and cleanup across processes without re-entering auth's
+// short state lock while protection or receipts are written.
+fn lock_principal_root_lifecycle(data_dir: &Path) -> anyhow::Result<FileLock> {
+    lock_principal_root_lifecycle_file(data_dir, true)
+}
+
+fn lock_principal_root_lifecycle_file(data_dir: &Path, create: bool) -> anyhow::Result<FileLock> {
+    let file = open_principal_root_lifecycle_file(data_dir, create)?;
+    #[cfg(unix)]
+    let metadata = file.metadata()?;
     let lock = FileLock::try_exclusive(file).context(
         "another process owns principal-root migration or cleanup; retry after it finishes",
     )?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
+        let path = auth_state_path(data_dir)?.with_file_name(PRINCIPAL_ROOT_LIFECYCLE_LOCK_FILE);
         let current = std::fs::symlink_metadata(&path)?;
         if !current.is_file() || current.dev() != metadata.dev() || current.ino() != metadata.ino()
         {
@@ -6245,7 +6271,7 @@ fn write_principal_root_object_locked(
     // Keep it through every commit path; contention uses the existing refusal.
     let launch_auth_dir = crate::api::gateway::home_launch_auth_data_dir(data_dir);
     let _parent_lifecycle = if protection.is_none() && launch_auth_dir != data_dir {
-        let lifecycle = lock_principal_root_lifecycle(&launch_auth_dir)
+        let lifecycle = lock_principal_root_lifecycle_file(&launch_auth_dir, false)
             .map_err(|_| ProtectedRecordKeptElsewhere)?;
         if principal_root_protected_elsewhere(&launch_auth_dir, principal_id, localhost_root) {
             return Err(ProtectedRecordKeptElsewhere.into());
@@ -13215,6 +13241,67 @@ mod tests {
     }
 
     #[test]
+    fn child_save_refuses_missing_parent_lifecycle_without_creating_files() {
+        for removed in [false, true] {
+            let parent = tempfile::tempdir().unwrap();
+            let child = tempfile::tempdir().unwrap();
+            let principal = "person:local:missing-parent-lock";
+            let root = principal_localhost_root(principal);
+            let uri = format!("{root}/Documents/save.md");
+            let path = rooted_localhost_fs_path(child.path(), &uri).unwrap();
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, b"first").unwrap();
+            let lock_path = auth_state_path(parent.path())
+                .unwrap()
+                .with_file_name(PRINCIPAL_ROOT_LIFECYCLE_LOCK_FILE);
+            if removed {
+                prepare_principal_root_lifecycle(parent.path()).unwrap();
+                std::fs::remove_file(&lock_path).unwrap();
+            }
+            let _launch = crate::api::gateway::set_test_home_launch_auth_data_dir(parent.path());
+            let error =
+                write_principal_root_object(child.path(), principal, &root, &uri, &path, b"second")
+                    .unwrap_err();
+            assert!(error.is::<ProtectedRecordKeptElsewhere>());
+            assert_eq!(std::fs::read(&path).unwrap(), b"first");
+            assert!(!lock_path.exists());
+            let unchanged = if removed {
+                lock_path.parent().unwrap()
+            } else {
+                parent.path()
+            };
+            assert_eq!(std::fs::read_dir(unchanged).unwrap().count(), 0);
+
+            // Only the parent can restore the fence. Activation still owns
+            // that same file before publishing protection.
+            let activation =
+                begin_declarative_principal_root_protection_activation_migrating_plaintext(
+                    parent.path(),
+                    principal,
+                    &root,
+                    &[],
+                )
+                .unwrap();
+            assert!(lock_path.is_file());
+            let error =
+                write_principal_root_object(child.path(), principal, &root, &uri, &path, b"second")
+                    .unwrap_err();
+            assert!(error.is::<ProtectedRecordKeptElsewhere>());
+            assert_eq!(std::fs::read(&path).unwrap(), b"first");
+            store_test_principal_root_protection(parent.path(), principal);
+            drop(activation);
+            child_save_refuses_published_parent_protection(
+                parent.path(),
+                child.path(),
+                principal,
+                &root,
+                &uri,
+                &path,
+            );
+        }
+    }
+
+    #[test]
     fn child_save_activation_first_refuses_during_and_after_activation() {
         let parent = tempfile::tempdir().unwrap();
         let child = tempfile::tempdir().unwrap();
@@ -13352,6 +13439,7 @@ mod tests {
         let parent = tempfile::tempdir().unwrap();
         let child = tempfile::tempdir().unwrap();
         let principal = "person:local:child-first";
+        prepare_principal_root_lifecycle(parent.path()).unwrap();
         let root = principal_localhost_root(principal);
         let uri = format!("{root}/Documents/save.md");
         let path = rooted_localhost_fs_path(child.path(), &uri).unwrap();
