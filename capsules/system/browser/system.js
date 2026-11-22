@@ -2570,13 +2570,24 @@ function accountRow(passkey, listState = {}) {
   title.textContent = label;
 
   nameWrap.append(title);
+  const added = document.createElement("small");
+  added.className = "passkey-added";
+  const addedFrom = readText(passkey.added_from);
+  added.textContent = `Added ${formatTimestamp(passkey.created_at, { year: "numeric", second: "2-digit" })}${addedFrom ? ` in ${addedFrom}` : ""}`;
+  nameWrap.append(added);
+  if (passkey.current) {
+    const current = document.createElement("small");
+    current.className = "passkey-current";
+    current.textContent = "This window signed in with this passkey";
+    nameWrap.append(current);
+  }
   nameCell.append(nameWrap);
 
   const roleCell = accountCell("Role", "account-role-cell");
   const roleBadge = document.createElement("span");
   roleBadge.className = "account-role";
   roleBadge.dataset.role = readText(passkey.role) || "guest";
-  roleBadge.textContent = passkey.current ? `${role} · current` : role;
+  roleBadge.textContent = role;
   roleCell.append(roleBadge);
 
   const methodCell = accountCell("Sign-in", "account-method");
@@ -2653,7 +2664,7 @@ function accountCell(label, className) {
   return cell;
 }
 
-function formatTimestamp(timestamp) {
+function formatTimestamp(timestamp, options = {}) {
   const seconds = Number(timestamp);
   if (!Number.isFinite(seconds) || seconds <= 0) {
     return "recently";
@@ -2663,6 +2674,7 @@ function formatTimestamp(timestamp) {
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
+    ...options,
   }).format(new Date(seconds * 1000));
 }
 
@@ -3683,6 +3695,7 @@ function setAccessPolicy(access) {
   // Only an owner (admin) adds passkeys; the server refuses anyone else.
   if (passkeyAddButton) {
     passkeyAddButton.hidden = !hasShellAccess() || currentAccess.role !== "admin";
+    document.getElementById("passkey-add-help").hidden = passkeyAddButton.hidden;
   }
 }
 

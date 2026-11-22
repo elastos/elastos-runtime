@@ -1008,6 +1008,9 @@ pub struct PrincipalRecord {
     pub display_name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initial_profile_display_name: Option<String>,
+    /// Browser and device used at registration; descriptive, never authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub passkey_added_from: Option<String>,
     #[serde(default)]
     pub role: RuntimePrincipalRole,
     #[serde(default)]
@@ -1940,6 +1943,7 @@ pub(crate) fn complete_owner_recovery(
             proof_binding,
             display_name,
             initial_profile_display_name: None,
+            passkey_added_from: None,
             role: RuntimePrincipalRole::Admin,
             created_at: now,
             updated_at: now,
@@ -2096,6 +2100,7 @@ pub(crate) fn complete_passkey_add(
             proof_binding,
             display_name: signer.display_name.clone(),
             initial_profile_display_name: None,
+            passkey_added_from: None,
             role: RuntimePrincipalRole::Admin,
             created_at: now,
             updated_at: now,
@@ -2498,6 +2503,7 @@ pub(crate) fn complete_owner_enrollment_with_intent(
             proof_binding: binding,
             display_name: verification.display_name.unwrap_or_default(),
             initial_profile_display_name: verification.profile_display_name.clone(),
+            passkey_added_from: None,
             role: RuntimePrincipalRole::Admin,
             created_at: now,
             updated_at: now,
@@ -4300,6 +4306,7 @@ fn grant_passkey_session_in_state(
                     proof_binding: binding,
                     display_name: display_name.unwrap_or_default(),
                     initial_profile_display_name: profile_display_name,
+                    passkey_added_from: None,
                     role: RuntimePrincipalRole::Guest,
                     created_at: now,
                     updated_at: now,
@@ -5196,6 +5203,7 @@ pub fn upsert_principal_for_binding_as_role_named(
             proof_binding: binding,
             display_name: display_name.unwrap_or_default(),
             initial_profile_display_name: None,
+            passkey_added_from: None,
             role,
             localhost_root,
             created_at: now,
@@ -5203,6 +5211,28 @@ pub fn upsert_principal_for_binding_as_role_named(
         };
         state.principals.push(record.clone());
         Ok(record)
+    })
+}
+
+/// Save a registration hint on this credential's record, preserving it on retries.
+pub(crate) fn set_passkey_added_from(
+    data_dir: &Path,
+    proof_binding_id: &str,
+    added_from: Option<&str>,
+) -> anyhow::Result<()> {
+    let Some(added_from) = added_from else {
+        return Ok(());
+    };
+    mutate_auth_state(data_dir, |state| {
+        let record = state
+            .principals
+            .iter_mut()
+            .find(|record| record.proof_binding_id == proof_binding_id)
+            .ok_or(OwnerEnrollmentDenied)?;
+        if record.passkey_added_from.is_none() {
+            record.passkey_added_from = Some(added_from.into());
+        }
+        Ok(())
     })
 }
 

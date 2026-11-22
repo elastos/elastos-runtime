@@ -177,6 +177,7 @@ pub struct PasskeyView {
     pub proof_binding_id: String,
     pub principal_id: String,
     pub display_name: String,
+    pub added_from: Option<String>,
     pub role: String,
     pub localhost_root: String,
     pub rp_id: String,
@@ -818,6 +819,7 @@ async fn passkey_add_complete_inner(
         &input.ceremony_id,
         &input.response,
     )?;
+    record_passkey_added_from(state, headers, &added.proof_binding_id)?;
     Ok(PasskeyAddResponse {
         schema: PASSKEY_ADD_RESULT_SCHEMA.into(),
         proof_binding_id: added.proof_binding_id,
@@ -936,6 +938,7 @@ async fn owner_recovery_complete_inner(
         &input.response,
         &kit,
     )?;
+    record_passkey_added_from(state, headers, &grant.proof_binding_id)?;
     drop(manager);
     passkey_response_for_grant(state, grant)
 }
@@ -1035,6 +1038,56 @@ fn sign_out_session_inner(
     })
 }
 
+// Keep only a short description, rather than storing the full user agent.
+// This describes where registration ran, not where a synced passkey is saved.
+fn passkey_added_from(headers: &HeaderMap) -> Option<String> {
+    let ua = headers.get(axum::http::header::USER_AGENT)?.to_str().ok()?;
+    let browser = if ua.contains("Edg/") || ua.contains("EdgiOS/") || ua.contains("EdgA/") {
+        "Edge"
+    } else if ua.contains("OPR/") || ua.contains("OPiOS/") {
+        "Opera"
+    } else if ua.contains("Firefox/") || ua.contains("FxiOS/") {
+        "Firefox"
+    } else if ua.contains("Chrome/") || ua.contains("CriOS/") {
+        "Chrome"
+    } else if ua.contains("Safari/") {
+        "Safari"
+    } else {
+        "Browser"
+    };
+    let device = if ua.contains("iPhone") {
+        Some("iPhone")
+    } else if ua.contains("iPad") {
+        Some("iPad")
+    } else if ua.contains("Android") {
+        Some("Android")
+    } else if ua.contains("Windows") {
+        Some("Windows")
+    } else if ua.contains("Macintosh") || ua.contains("Mac OS X") {
+        Some("Mac")
+    } else if ua.contains("Linux") {
+        Some("Linux")
+    } else {
+        None
+    };
+    if browser == "Browser" && device.is_none() {
+        return None;
+    }
+    Some(device.map_or_else(|| browser.into(), |device| format!("{browser} on {device}")))
+}
+
+fn record_passkey_added_from(
+    state: &GatewayState,
+    headers: &HeaderMap,
+    proof_binding_id: &str,
+) -> anyhow::Result<()> {
+    crate::auth::set_passkey_added_from(
+        &state.data_dir,
+        proof_binding_id,
+        passkey_added_from(headers).as_deref(),
+    )
+}
+
 async fn passkey_list_inner(
     state: &GatewayState,
     headers: &HeaderMap,
@@ -1077,6 +1130,7 @@ async fn passkey_list_inner(
             proof_binding_id: proof_binding_id.clone(),
             principal_id: principal.principal_id.clone(),
             display_name: principal.display_name.clone(),
+            added_from: principal.passkey_added_from.clone(),
             role: principal_role_label(principal.role).to_string(),
             localhost_root: principal.localhost_root.clone(),
             rp_id: credential.rp_id,
@@ -3806,6 +3860,7 @@ async fn passkey_register_complete_inner(
         crate::auth::now_ts(),
     )? {
         drop(manager);
+        record_passkey_added_from(state, headers, &grant.proof_binding_id)?;
         return passkey_response_for_grant(state, grant);
     }
     drop(manager);
@@ -3831,6 +3886,7 @@ async fn passkey_register_complete_inner(
             intent,
         )?;
         drop(manager);
+        record_passkey_added_from(state, headers, &grant.proof_binding_id)?;
         return passkey_response_for_grant(state, grant);
     }
     let outcome = manager.complete_registration(
@@ -3858,6 +3914,7 @@ async fn passkey_register_complete_inner(
             purpose: crate::auth::PasskeySessionPurpose::GuestRegistration,
         },
     )?;
+    record_passkey_added_from(state, headers, &grant.proof_binding_id)?;
     passkey_response_for_grant(state, grant)
 }
 
@@ -7007,6 +7064,188 @@ mod tests {
         assert_ne!(
             first_principal.localhost_root,
             second_principal.localhost_root
+        );
+    }
+
+    #[test]
+    fn passkey_registration_hint_uses_request_platform_and_browser() {
+        for (agent, expected) in [
+            (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X) Version/18.0 Safari/605.1.15",
+                Some("Safari on Mac"),
+            ),
+            (
+                "Mozilla/5.0 (Linux; Android 14) Chrome/130.0 Safari/537.36",
+                Some("Chrome on Android"),
+            ),
+            (
+                "Mozilla/5.0 (iPhone; CPU iPhone OS) CriOS/130.0 Mobile Safari/604.1",
+                Some("Chrome on iPhone"),
+            ),
+            (
+                "Mozilla/5.0 (Windows NT 10.0) Chrome/130.0 Safari/537.36 Edg/130.0",
+                Some("Edge on Windows"),
+            ),
+            (
+                "Mozilla/5.0 (iPad) FxiOS/130.0 Safari/605.1",
+                Some("Firefox on iPad"),
+            ),
+            ("<script>unknown</script>", None),
+            ("", None),
+        ] {
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                axum::http::header::USER_AGENT,
+                HeaderValue::from_str(agent).unwrap(),
+            );
+            assert_eq!(passkey_added_from(&headers).as_deref(), expected);
+        }
+        assert_eq!(passkey_added_from(&HeaderMap::new()), None);
+    }
+
+    #[tokio::test]
+    async fn passkey_http_stores_registration_hint_and_marks_only_this_windows_key() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut owner = passkey_add_account(
+            temp.path(),
+            "owner",
+            crate::auth::RuntimePrincipalRole::Admin,
+        );
+        owner.host_headers.insert(
+            axum::http::header::USER_AGENT,
+            HeaderValue::from_static(
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X) Version/18.0 Safari/605.1.15",
+            ),
+        );
+        let old_binding = records_for(temp.path(), &owner.principal_id)[0]
+            .proof_binding_id
+            .clone();
+        let state = test_gateway_state(temp.path());
+        let app = passkey_removal_test_router(state.clone());
+        let (status, _, begin) = passkey_http(
+            &app,
+            "/api/auth/passkey/add/begin",
+            &owner.host_headers,
+            json!({"schema": PASSKEY_ADD_BEGIN_REQUEST_SCHEMA, "app_token": owner.system_token,
+                "step_up_token": passkey_add_approval(temp.path(), &owner)}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{begin}");
+        let response = crate::auth::passkey_attestation_with_id_for_test(
+            begin["options"]["publicKey"]["challenge"].as_str().unwrap(),
+            "localhost",
+            "http://localhost:61180",
+            b"named-backup",
+        );
+        let (status, _, added) = passkey_http(
+            &app,
+            "/api/auth/passkey/add/complete",
+            &owner.host_headers,
+            json!({"schema": PASSKEY_ADD_COMPLETE_REQUEST_SCHEMA, "app_token": owner.system_token,
+                "ceremony_id": begin["ceremony_id"], "response": response}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{added}");
+        let added_id = added["proof_binding_id"].as_str().unwrap();
+        // Read persisted facts afresh, rather than relying on a response or cache.
+        assert_eq!(
+            crate::auth::load_principal_for_proof_binding(temp.path(), added_id)
+                .unwrap()
+                .passkey_added_from
+                .as_deref(),
+            Some("Safari on Mac")
+        );
+        let http_list = passkey_list(State(state.clone()), owner.host_headers.clone()).await;
+        assert_eq!(http_list.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(http_list.into_body(), 65536)
+            .await
+            .unwrap();
+        let listed: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            listed["passkeys"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|key| key["proof_binding_id"] == added_id)
+                .unwrap()["added_from"],
+            "Safari on Mac"
+        );
+        assert_eq!(
+            listed["passkeys"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|key| key["current"] == true)
+                .unwrap()["proof_binding_id"],
+            old_binding
+        );
+        let first = passkey_list_inner(&state, &owner.host_headers)
+            .await
+            .unwrap();
+        assert_eq!(first.passkeys.len(), 2);
+        assert_eq!(first.passkeys.iter().filter(|key| key.current).count(), 1);
+        let backup = first
+            .passkeys
+            .iter()
+            .find(|key| key.proof_binding_id == added_id)
+            .unwrap();
+        assert!(!backup.current);
+        assert_eq!(backup.added_from.as_deref(), Some("Safari on Mac"));
+        assert!(backup.created_at > 0);
+        let old = first
+            .passkeys
+            .iter()
+            .find(|key| key.proof_binding_id == old_binding)
+            .unwrap();
+        assert!(old.current);
+        assert_eq!(old.added_from, None);
+        let credential = state
+            .identity_manager()
+            .unwrap()
+            .lock()
+            .await
+            .credentials()
+            .into_iter()
+            .find(|key| passkey_proof_binding_id(key) == added_id)
+            .unwrap();
+        let session = local_profile_sign_in(temp.path(), &credential);
+        let http_list = passkey_list(
+            State(state.clone()),
+            home_token_headers(&session.home_token),
+        )
+        .await;
+        assert_eq!(http_list.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(http_list.into_body(), 65536)
+            .await
+            .unwrap();
+        let listed: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            listed["passkeys"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|key| key["current"] == true)
+                .unwrap()["proof_binding_id"],
+            added_id
+        );
+        let second = passkey_list_inner(&state, &home_token_headers(&session.home_token))
+            .await
+            .unwrap();
+        assert_eq!(second.passkeys.iter().filter(|key| key.current).count(), 1);
+        assert!(
+            second
+                .passkeys
+                .iter()
+                .find(|key| key.proof_binding_id == added_id)
+                .unwrap()
+                .current
+        );
+        assert_eq!(
+            crate::auth::load_principal_for_proof_binding(temp.path(), added_id)
+                .unwrap()
+                .passkey_added_from
+                .as_deref(),
+            Some("Safari on Mac")
         );
     }
 
