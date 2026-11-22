@@ -3277,7 +3277,7 @@ async fn community_attach_publishes_the_library_file_then_posts_its_link_once() 
     assert_eq!(objects[0]["kind"], "text");
     assert_eq!(
         objects[0]["body"],
-        format!("notes.txt · 4 bytes · elastos://{CID}")
+        format!("notes.txt · 4 B · elastos://{CID}")
     );
     assert_eq!(objects[0]["conversation_id"], "file-community");
     assert_eq!(home.port.test_live_unresolved_outgoing().unwrap(), 1);
