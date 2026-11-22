@@ -204,7 +204,7 @@ fn reconcile(store: &mut Store, auth: &AuthState) {
                 "auth.owner.recovered"
                     | "auth.principal.recovered"
                     | "auth.recovery_kit.imported"
-                    | "auth.principal_root.reassigned"
+                    | "auth.recovery_kit.reassigned"
             )
         })
         .filter_map(|e| e.principal_id.as_ref())
@@ -1368,7 +1368,7 @@ mod tests {
             RuntimeAuditEventV1 {
                 schema: RuntimeAuditEventV1::SCHEMA.into(),
                 event_id: format!("audit:{}", random_secret_hex()),
-                event_type: "auth.principal.recovered".into(),
+                event_type: "auth.recovery_kit.reassigned".into(),
                 principal_id: Some(f.actor.principal_id.clone()),
                 proof_binding_id: Some(f.actor.proof_binding_id.clone()),
                 session_id: None,
