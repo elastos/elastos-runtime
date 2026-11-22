@@ -6,7 +6,8 @@ import { chromium, jsonResponse, textResponse, makeAppearanceRecord, makeSystemS
 import { productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 
 const explanation = "Add another admin passkey before removing this one.";
-const owner = { principal_id: "alex", proof_binding_id: "proof:passkey:alex", display_name: "Alex", role: "admin", current: true };
+const owner = { principal_id: "alex", proof_binding_id: "proof:passkey:alex", display_name: "Alex", role: "admin", current: true,
+  last_used_at: Date.UTC(2026, 10, 22, 16, 5) / 1000 };
 const guest = { principal_id: "sam", proof_binding_id: "proof:passkey:sam", display_name: "Sam", role: "guest", current: false };
 
 async function fixture(run) {
@@ -255,6 +256,7 @@ test("System distinguishes two passkeys and identifies this window at desktop an
       assert.match(await rows.nth(0).locator(".passkey-added").textContent(), /^Added .+ in Safari on Mac$/);
       assert.match(await rows.nth(1).locator(".passkey-added").textContent(), /^Added .+ in Chrome on Android$/);
       assert.equal(await rows.nth(0).locator(".passkey-current").textContent(), "This window signed in with this passkey");
+      assert.notEqual(await rows.nth(0).locator(".account-used").textContent(), "Not used yet");
       assert.equal(await rows.nth(1).locator(".passkey-current").count(), 0);
       assert.equal(await frame.getByText("Your browser will offer where to save the passkey, including a phone or tablet.", { exact: true }).isVisible(), true);
       for (const label of await frame.locator(".passkey-added, .passkey-current").all()) {
