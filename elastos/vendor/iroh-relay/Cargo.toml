@@ -109,10 +109,8 @@ tls-ring = [
 
 [lib]
 name = "iroh_relay"
-crate-type = [
-    "lib",
-    "cdylib",
-]
+# Rust consumers need hashed rlibs when workspaces share a build directory.
+crate-type = ["rlib"]
 path = "src/lib.rs"
 
 [[bin]]

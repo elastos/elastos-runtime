@@ -72,10 +72,8 @@ test-utils = [
 
 [lib]
 name = "iroh_gossip"
-crate-type = [
-    "cdylib",
-    "rlib",
-]
+# Rust consumers need hashed rlibs when workspaces share a build directory.
+crate-type = ["rlib"]
 path = "src/lib.rs"
 
 [[bin]]
