@@ -1,0 +1,38 @@
+.signin-dialog {
+  box-sizing: border-box; width: min(480px, calc(100vw - 24px)); max-height: calc(100dvh - 24px);
+  margin: auto; padding: 28px; overflow: auto; color: var(--el-text); background: var(--el-surface-raised);
+  border: 1px solid var(--el-hairline-strong); border-radius: var(--el-radius-xl); box-shadow: var(--el-shadow-3);
+  font: 14px/1.5 var(--el-font);
+}
+.signin-dialog::backdrop { background: rgba(0,0,0,.64); }
+.signin-dialog > * { margin: 0 0 16px; }
+.signin-dialog h2 { font-size: 24px; line-height: 1.25; }
+.signin-eyebrow { color: var(--el-muted); font-size: 12px; }
+.signin-button { display: block; width: 100%; min-height: 44px; padding: 12px 16px; cursor: pointer;
+  font: inherit; font-weight: 600; border: 1px solid var(--el-hairline-strong); border-radius: var(--el-radius-md);
+  background: var(--el-accent); color: var(--el-accent-ink); margin: 10px 0; }
+.signin-secondary { background: var(--el-inset); color: var(--el-text); }
+.signin-button small { display: block; font-size: 12px; font-weight: 400; color: var(--el-muted); }
+.signin-button:focus-visible, .signin-dialog summary:focus-visible { outline: 3px solid var(--el-focus); outline-offset: 2px; }
+.signin-details { padding: 14px; background: var(--el-inset); border-radius: var(--el-radius-md); }
+.signin-details div + div { margin-top: 12px; }
+.signin-details dt { color: var(--el-muted); font-size: 12px; }
+.signin-details dd { margin: 2px 0 0; overflow-wrap: anywhere; unicode-bidi: plaintext; }
+.signin-dialog pre { font: 12px/1.6 var(--el-font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.signin-dialog summary { min-height: 44px; cursor: pointer; }
+.signin-note, .signin-expiry { color: var(--el-muted); font-size: 13px; }
+.signin-error { color: var(--el-danger); }
+.signin-qr { display: block; width: min(100%, 280px); height: auto; margin: 0 auto 16px; }
+.signin-method-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.signin-switch { display: inline-flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 110px;
+  min-height: 44px; padding: 10px 12px; border: 1px solid var(--el-hairline-strong); border-radius: var(--el-radius-md);
+  color: var(--el-text); background: var(--el-inset); font: inherit; cursor: pointer; }
+.signin-switch::after { content: 'Off'; color: var(--el-muted); }
+.signin-switch[aria-checked=true]::after { content: 'On'; color: var(--el-ok); }
+.signin-switch:disabled { cursor: default; opacity: .65; }
+.signin-method-note { display: block; font-size: 12px; color: var(--el-muted); margin-top: 6px; overflow-wrap: anywhere; }
+.signin-method-list { display: grid; gap: 12px; }
+.signin-method-card { border: 1px solid var(--el-hairline); border-radius: var(--el-radius-md); padding: 16px; overflow-wrap: anywhere; }
+.signin-method-card .signin-method-controls { margin-top: 12px; }
+.signin-method-card button { min-height: 44px; }
+@media (max-width: 480px) { .signin-dialog { padding: 20px; } }

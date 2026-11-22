@@ -1,3 +1,4 @@
+import { readWalletSigninMethods, requestWalletSigninChange, walletSigninTableRow, watchWalletSigninMethods } from "/apps/home/wallet-signin-methods.mjs?v=wallet-signin-1";
 import { createTransferProgress, announceTransferProgress } from "./transfer-progress.js?v=download-progress-20261112";
 import {
   gatePreviewAuditView,
@@ -36,6 +37,8 @@ const dockAutoHideInput = document.querySelector("#dock-autohide");
 const uiSoundsInput = document.querySelector("#ui-sounds");
 const passkeyStatusNode = document.querySelector('[data-field="passkey-status"]');
 const accountListNode = document.querySelector("#account-list");
+let walletSigninMethods = {account_id:"", methods:[]};
+const walletAddButton = document.querySelector("#wallet-signin-add");
 const passkeyAddButton = document.querySelector("#passkey-add");
 const passkeyRemoveDialog = document.querySelector("#passkey-remove-dialog");
 const LAST_ADMIN_PASSKEY_REMOVAL_MESSAGE = "Add another admin passkey before removing this one.";
@@ -1367,6 +1370,8 @@ function configurePasskeyAccess() {
     return;
   }
   if (accountListNode) {
+    watchWalletSigninMethods(() => refreshAccountList().catch(error => showError(error)), homeParentOrigin);
+    walletAddButton?.addEventListener("click", () => changeWalletSignin("add"));
     accountListNode.addEventListener("click", onAccountListClick);
   }
   passkeyAddButton?.addEventListener("click", onPasskeyAdd);
@@ -2501,14 +2506,29 @@ function joinWords(values) {
   return `${words.slice(0, -1).join(", ")} and ${words.at(-1)}`;
 }
 
+async function changeWalletSignin(action, methodId = "") {
+  try {
+    const result = await requestWalletSigninChange({action, methodId, token:apiHomeToken, origin:homeParentOrigin});
+    await refreshAccountList();
+    if (["failed", "changed", "busy"].includes(result?.status)) throw new Error("Refresh the sign-in methods and try again.");
+  } catch (error) { showError(error.message); }
+}
+
 async function refreshAccountList() {
-  if (!accountListNode || !hasShellAccess()) {
-    return;
+  if (!accountListNode || !hasShellAccess()) return;
+  const data = await fetchJson("/api/auth/passkeys", {headers:shellHeaders()});
+  try {
+    walletSigninMethods = await readWalletSigninMethods(apiHomeToken);
+    renderAccounts(Array.isArray(data.passkeys) ? data.passkeys : []);
+  } catch {
+    walletSigninMethods = {account_id:"", methods:[]};
+    renderAccounts(Array.isArray(data.passkeys) ? data.passkeys : []);
+    const retry = document.createElement("button");
+    retry.type = "button"; retry.className = "system-button system-button-secondary";
+    retry.textContent = "Try again"; retry.onclick = () => refreshAccountList().catch(error => showError(error.message));
+    const error = document.createElement("p"); error.textContent = "Home could not load wallet sign-in methods.";
+    accountListNode.append(error, retry);
   }
-  const data = await fetchJson("/api/auth/passkeys", {
-    headers: shellHeaders(),
-  });
-  renderAccounts(Array.isArray(data.passkeys) ? data.passkeys : []);
 }
 
 function renderAccounts(accounts) {
@@ -2549,7 +2569,14 @@ function renderAccounts(accounts) {
       adminPasskeyCount,
       adminAccountCount,
       currentPrincipalId,
+      ownPasskeyCount:activeAccounts.filter(row => row.principal_id === currentPrincipalId).length,
     }));
+  }
+  const ownPasskey = activeAccounts.find(row => row.principal_id === walletSigninMethods.account_id);
+  for (const method of walletSigninMethods.methods) {
+    body.append(walletSigninTableRow(method, {account:ownPasskey?.display_name || currentProfileName,
+      role:passkeyRoleLabel(ownPasskey?.role),canManage:currentAccess.role === "admin",onAction:changeWalletSignin,
+      buttonClass:"system-button system-button-secondary"}));
   }
   table.append(body);
   accountListNode.append(table);
@@ -2592,6 +2619,10 @@ function accountRow(passkey, listState = {}) {
 
   const methodCell = accountCell("Sign-in", "account-method");
   methodCell.textContent = "Passkey";
+  const enabled = document.createElement("span");
+  enabled.className = "signin-method-note";
+  enabled.textContent = "Sign in on";
+  methodCell.append(enabled);
 
   const usedCell = accountCell("Last used", "account-used");
   usedCell.textContent = passkey.last_used_at ? formatTimestamp(passkey.last_used_at) : "Not used yet";
@@ -2637,11 +2668,14 @@ function accountRow(passkey, listState = {}) {
   const protectsLastAdmin = readText(passkey.role) === "admin"
     && Number(listState.adminPasskeyCount) <= 1;
   remove.disabled = !remove.dataset.passkeyRevoke || !hasShellAccess() || protectsLastAdmin;
-  if (protectsLastAdmin) {
+  const protectsLastMethod = ownAccount && Number(listState.ownPasskeyCount) <= 1
+    && !walletSigninMethods.methods.some(method => method.sign_in_enabled);
+  if (protectsLastMethod) remove.disabled = true;
+  if (protectsLastAdmin || protectsLastMethod) {
     const explanation = document.createElement("p");
     explanation.className = "passkey-removal-note";
     explanation.id = `passkey-removal-${passkey.proof_binding_id}`;
-    explanation.textContent = LAST_ADMIN_PASSKEY_REMOVAL_MESSAGE;
+    explanation.textContent = protectsLastAdmin ? LAST_ADMIN_PASSKEY_REMOVAL_MESSAGE : "Add another sign-in method before removing this one.";
     nameWrap.append(explanation);
     remove.title = explanation.textContent;
     remove.setAttribute("aria-describedby", explanation.id);
@@ -3692,6 +3726,7 @@ function setAccessPolicy(access) {
     guest_registration_enabled: access && access.guest_registration_enabled === true,
   };
   setGuestRegistrationControlState();
+  if (walletAddButton) walletAddButton.hidden = !hasShellAccess() || currentAccess.role !== "admin";
   // Only an owner (admin) adds passkeys; the server refuses anyone else.
   if (passkeyAddButton) {
     passkeyAddButton.hidden = !hasShellAccess() || currentAccess.role !== "admin";

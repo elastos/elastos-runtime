@@ -955,3 +955,15 @@ function replyToConnector(event, requestId, connectorId, result, error = "", wal
   }
   event.source.postMessage(payload, OPAQUE_FRAME_TARGET);
 }
+
+// Sign-in uses the same bounded browser-wallet discovery as payment linking.
+// The caller retains the selected provider for one ceremony only.
+export function signinBrowserWallets() {
+  const entries = discoverWallets();
+  if (entries.length) return entries;
+  const legacy = window.ethereum;
+  if (!legacy || typeof legacy.request !== 'function') return [];
+  const providers = Array.isArray(legacy.providers) ? legacy.providers.slice(0, 8) : [legacy];
+  return [...new Set(providers)].filter(provider => typeof provider?.request === 'function')
+    .map((provider, index) => ({provider, name: provider.isMetaMask ? 'MetaMask' : `Browser wallet ${index + 1}`, uuid: `legacy-${index}`}));
+}

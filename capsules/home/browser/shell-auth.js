@@ -1,3 +1,4 @@
+import { createHomeWalletSignin } from "./wallet-signin-view.mjs?v=wallet-signin-1";
 import {
   clearHomeAuthorityToken,
   fetchJson,
@@ -58,6 +59,15 @@ let sessionRefreshInFlight = null;
 let unlockClockTimer = 0;
 let unlockLeaveTimer = 0;
 let unlockPersonLabel = "";
+
+const walletSignin = createHomeWalletSignin({
+  approve: requestPasskeyStepUp,
+  onSignin: async response => {
+    setHomeAuthorityToken(response.app_token, response);
+    await unlockComplete(response);
+  },
+});
+export function manageWalletSignin(options) { return walletSignin.start(options); }
 
 export function isHomeAuthError(error) {
   const status = Number(error && error.status);
@@ -124,6 +134,7 @@ export function hideHomeUnlock() {
   if (!unlockPanel) {
     return;
   }
+  void walletSignin.cancel();
   clearRecoverySelection();
   recoverySession = null;
   recoveryTerminalToken = "";
@@ -154,6 +165,7 @@ export function hideHomeUnlock() {
 export function bindHomeUnlock() {
   recoveryFile?.addEventListener("change", selectRecoveryKit);
   window.addEventListener("pagehide", () => {
+    void walletSignin.cancel();
     clearRecoverySelection();
     recoverySession = null;
     recoveryTerminalToken = "";
@@ -198,6 +210,9 @@ export function bindHomeUnlock() {
     }
     runPasskeySignIn().catch(reportUnlockError);
   };
+  for (const button of document.querySelectorAll("[data-home-wallet-signin]")) {
+    button.addEventListener("click", () => { if (!busy) void walletSignin.start({action:"signin"}); });
+  }
   unlockPrimary?.addEventListener("click", startUnlock);
   unlockPerson?.addEventListener("click", startUnlock);
   // First-visit entry on the lock face: the same guest enrollment the card's
@@ -280,7 +295,7 @@ export async function signOutHome() {
   }
 }
 
-export async function requestPasskeyStepUp(appToken, operation, request) {
+export async function requestPasskeyStepUp(appToken, operation, request, { signal } = {}) {
   if (!window.PublicKeyCredential) {
     throw new Error("Passkey verification is unavailable in this browser.");
   }
@@ -303,7 +318,7 @@ export async function requestPasskeyStepUp(appToken, operation, request) {
     ) {
       throw new Error("Passkey verification returned an invalid challenge.");
     }
-    const credential = await navigator.credentials.get(toRequestOptions(begin.options));
+    const credential = await navigator.credentials.get({ ...toRequestOptions(begin.options), signal });
     if (!credential) {
       throw new Error("Passkey verification was cancelled.");
     }
@@ -446,6 +461,9 @@ function renderUnlockChecking() {
 }
 
 function renderUnlockMode({ registered, guestRegistrationEnabled }) {
+  for (const button of document.querySelectorAll("[data-home-wallet-signin]")) {
+    button.hidden = !registered || !["signin", "signin_guest_enabled", "unsupported"].includes(unlockMode);
+  }
   const resumingOwner = unlockMode === "resume_owner";
   const resumingRegistration = unlockMode === "resume_registration";
   const recoveringOwner = unlockMode === "recover_owner";

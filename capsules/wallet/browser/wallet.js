@@ -1,3 +1,4 @@
+import { readWalletSigninMethods, requestWalletSigninChange, renderWalletSigninCards, watchWalletSigninMethods } from "/apps/home/wallet-signin-methods.mjs?v=wallet-signin-1";
 import { createWalletActivity } from "./wallet-activity.js?v=wallet-20261115a";
 import {
   createWalletApi,
@@ -103,6 +104,7 @@ const { fetchJson, notifyHomeSummaryChanged, requestPasskeyStepUp, shellHeaders 
   getHomeToken: () => activeHomeToken,
 });
 const { showStatus } = createWalletRender({ statusNode });
+watchWalletSigninMethods(refreshWalletSignin, homeParentOrigin);
 const {
   closeModal,
   flowRow,
@@ -523,6 +525,31 @@ async function refreshWalletState() {
   return refreshWalletStateInFlight;
 }
 
+async function refreshWalletSignin() {
+  const mount = document.querySelector("#wallet-signin-methods");
+  if (!mount || !activeHomeToken) return;
+  try {
+    const [data, passkeys] = await Promise.all([
+      readWalletSigninMethods(activeHomeToken),
+      fetchJson("/api/auth/passkeys", {headers:shellHeaders()}),
+    ]);
+    const ownPasskey = passkeys.passkeys?.find(row => row.principal_id === data.account_id && !row.revoked_at);
+    renderWalletSigninCards(mount, data.methods, {canManage:ownPasskey?.role === "admin",
+      buttonClass:"wallet-button wallet-button-secondary",
+      onAction:async (action, methodId) => {
+        try {
+          const result = await requestWalletSigninChange({action, methodId, token:activeHomeToken, origin:homeParentOrigin});
+          await refreshWalletSignin();
+          if (["failed", "changed", "busy"].includes(result?.status)) showStatus("Refresh the sign-in methods and try again.", "error");
+        } catch (error) { showStatus(error.message, "error"); }
+      }});
+  } catch {
+    mount.replaceChildren(textNode("p", "Home could not load sign-in methods.", "signin-method-note"));
+    const retry = textNode("button", "Try again", "wallet-button wallet-button-secondary");
+    retry.type = "button";retry.onclick = refreshWalletSignin;mount.append(retry);
+  }
+}
+
 async function loadWalletState() {
   if (!activeHomeToken) {
     currentAccounts = [];
@@ -569,6 +596,7 @@ function renderAll() {
   renderAccounts(allAccounts);
   renderWalletReviewRequests();
   renderMethods(allAccounts, currentApprovalMethods);
+  void refreshWalletSignin();
   renderActivity(currentRequests);
   renderApprovalsBadge(pending.length);
   updateFlowButtons(allAccounts);

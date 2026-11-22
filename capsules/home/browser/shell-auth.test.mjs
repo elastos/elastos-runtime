@@ -39,6 +39,7 @@ const element = (selector) => {
 globalThis.document = {
   body: { dataset: {} },
   querySelector: element,
+  querySelectorAll: () => [],
   getElementById: (id) => element(`#${id}`),
 };
 globalThis.location = new URL("http://localhost:61180/home/");
