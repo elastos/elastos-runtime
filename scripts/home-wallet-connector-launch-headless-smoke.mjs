@@ -788,7 +788,9 @@ try {
   await homeGui.locator('#launcher-toggle').click();
   await homeGui.locator('#launcher-grid [data-target="wallet"]').click();
   await waitFor(() => frameFor(page, "wallet"), 15_000, "real Wallet frame");
-  const wallet = frameFor(page, "wallet");
+  const walletFrame = homeGui.locator('.window[data-target="wallet"] iframe');
+  await walletFrame.waitFor({state:"attached",timeout:15000});
+  const wallet = await (await walletFrame.elementHandle()).contentFrame();
   // The static Settings button can exist before Wallet's module binds handlers.
   await wallet.waitForLoadState("domcontentloaded", { timeout: 15_000 });
   await wallet.waitForSelector("#wallet-settings-open", { timeout: 15_000 });
@@ -1025,7 +1027,12 @@ try {
   }
 
   assert(state.launches["home-gui"] === 1, "Home launched multiple GUI roots", state);
-  assert(state.launches.wallet === 1, "Home launched Wallet more than once", state);
+  // A valid summary also permits Home's idle desktop rail preload. Each
+  // mounted Wallet surface gets one launch; connector opens reuse the window.
+  const railMounted = await homeGui.locator('#wallet-rail-frame')
+    .evaluate(frame => Boolean(frame.dataset.route));
+  assert(state.launches.wallet === 1 + Number(railMounted),
+    "Home launched Wallet once per mounted surface", state);
   assert(
     state.launches["wallet-metamask"] === 2 &&
       state.launches["wallet-unisat"] === 1 && state.launches["wallet-walletconnect"] === 3,
