@@ -1936,3 +1936,9 @@ input[type="file"].visually-hidden {
 :root[data-el-form-factor="phone"] [data-settings="models"] summary {
   line-height: var(--el-touch-target);
 }
+
+.account-name-wrap .passkey-added,
+.account-name-wrap .passkey-current {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}

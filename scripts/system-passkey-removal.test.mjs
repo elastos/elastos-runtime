@@ -240,3 +240,40 @@ test("System opens passkey removal with Cancel focused and no cross-origin autof
     assert.deepEqual(consoleErrors.filter(message => /autofocus/i.test(message)), []);
   });
 });
+
+
+test("System distinguishes two passkeys and identifies this window at desktop and phone widths", async () => {
+  await fixture(async ({ page, open, writes }) => {
+    const created = Date.UTC(2026, 10, 22, 14, 5) / 1000;
+    const second = { ...owner, proof_binding_id: "proof:passkey:backup", current: false,
+      created_at: created + 3600, added_from: "Chrome on Android" };
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      let frame = await open([{ ...owner, created_at: created, added_from: "Safari on Mac" }, second]);
+      const rows = frame.locator(".account-row");
+      assert.equal(await rows.count(), 2);
+      assert.match(await rows.nth(0).locator(".passkey-added").textContent(), /^Added .+ in Safari on Mac$/);
+      assert.match(await rows.nth(1).locator(".passkey-added").textContent(), /^Added .+ in Chrome on Android$/);
+      assert.equal(await rows.nth(0).locator(".passkey-current").textContent(), "This window signed in with this passkey");
+      assert.equal(await rows.nth(1).locator(".passkey-current").count(), 0);
+      assert.equal(await frame.getByText("Your browser will offer where to save the passkey, including a phone or tablet.", { exact: true }).isVisible(), true);
+      for (const label of await frame.locator(".passkey-added, .passkey-current").all()) {
+        const bounds = await label.boundingBox();
+        assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= width);
+        assert.equal(await label.evaluate(node => node.scrollWidth <= node.clientWidth), true);
+      }
+      await screenshot(page, `passkey-names-${width}`);
+      // Two additions from the same browser within a minute remain distinct.
+      frame = await open([{ ...owner, created_at: created, added_from: "Safari on Mac" },
+        { ...second, created_at: created + 1, added_from: "Safari on Mac" }]);
+      const labels = await frame.locator(".passkey-added").allTextContents();
+      assert.notEqual(labels[0], labels[1]);
+      // Old credentials retain their creation date, and the marker follows the session.
+      frame = await open([{ ...owner, created_at: created, current: false }, { ...second, current: true }]);
+      assert.match(await frame.locator(".passkey-added").first().textContent(), /^Added /);
+      assert.doesNotMatch(await frame.locator(".passkey-added").first().textContent(), / in /);
+      assert.equal(await frame.locator(".account-row").nth(1).locator(".passkey-current").count(), 1);
+    }
+    assert.equal(writes.length, 0);
+  });
+});
