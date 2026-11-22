@@ -8811,6 +8811,10 @@ fn text_names_a_local_path(text: &str) -> bool {
                     | b'\''
                     | b'('
                     | b'['
+                    | b'{'
+                    | b'<'
+                    | b'|'
+                    | b'@'
                     | b'`'
                     | b'='
                     | b':'
@@ -8820,7 +8824,8 @@ fn text_names_a_local_path(text: &str) -> bool {
                     | b'\n'
             )
         );
-        let file_uri_path = bytes[..at].ends_with(b"file://");
+        let file_uri_path =
+            bytes[..at].ends_with(b"file://") || bytes[..at].ends_with(b"file://localhost");
         let unix = byte == b'/'
             && (starts_word || file_uri_path)
             && after.is_some_and(|next| {
@@ -8911,6 +8916,34 @@ mod tests {
             "D:\\data",
         ] {
             assert!(super::text_names_a_local_path(named), "{named}");
+        }
+    }
+
+    #[test]
+    fn provider_error_path_spellings_use_fixed_response() {
+        let mut shown = Vec::new();
+        for text in [
+            "prefix{/data/private}",
+            "prefix</data/private>",
+            "prefix|/data/private",
+            "prefix@/data/private",
+            "file://localhost/data/private",
+        ] {
+            let error = anyhow::anyhow!("{text}");
+            let answer = super::provider_error_from("library_error", &error);
+            if answer["message"] != super::LIBRARY_INTERNAL_ERROR_MESSAGE {
+                shown.push(text);
+            }
+            assert_eq!(answer["code"], "library_error");
+            assert_eq!(answer["status"], "error");
+        }
+        assert!(shown.is_empty(), "paths shown: {shown:?}");
+        for kept in [
+            "resource localhost://Users/person/Documents/a.txt",
+            "Documents/a.txt needs recovery",
+        ] {
+            let answer = super::provider_error_from("library_error", &anyhow::anyhow!(kept));
+            assert_eq!(answer["message"], kept);
         }
     }
 

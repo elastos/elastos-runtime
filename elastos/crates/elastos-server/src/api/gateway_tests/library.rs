@@ -12175,6 +12175,47 @@ async fn ped_home_inbox_and_system_mappers_answer_without_a_local_path() {
     }
 }
 
+#[test]
+fn gateway_path_spellings_keep_status_and_use_fixed_response() {
+    let mut shown = Vec::new();
+    for text in [
+        "prefix{/data/private}",
+        "prefix</data/private>",
+        "prefix|/data/private",
+        "prefix@/data/private",
+        "file://localhost/data/private",
+    ] {
+        for (prefix, expected_status) in [
+            ("failed", StatusCode::INTERNAL_SERVER_ERROR),
+            ("home launch token required", StatusCode::FORBIDDEN),
+            (
+                "library provider unavailable",
+                StatusCode::SERVICE_UNAVAILABLE,
+            ),
+            ("not found", StatusCode::NOT_FOUND),
+            ("invalid", StatusCode::BAD_REQUEST),
+        ] {
+            let (status, message) = super::super::gateway_provider_error_tuple(
+                "library",
+                anyhow::anyhow!("{prefix}: {text}"),
+            );
+            assert_eq!(status, expected_status, "{text}");
+            if message != "library request failed on this Runtime; the Runtime log has the cause" {
+                shown.push((prefix, text));
+            }
+        }
+    }
+    assert!(shown.is_empty(), "paths shown: {shown:?}");
+    for kept in [
+        "resource localhost://Users/person/Documents/a.txt",
+        "Documents/a.txt needs recovery",
+    ] {
+        let (_, message) =
+            super::super::gateway_provider_error_tuple("library", anyhow::anyhow!(kept));
+        assert_eq!(message, kept);
+    }
+}
+
 #[tokio::test]
 async fn ped_shared_mappers_keep_typed_refusals() {
     type Mapper = fn(anyhow::Error) -> axum::response::Response;
