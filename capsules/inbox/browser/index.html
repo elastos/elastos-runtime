@@ -313,12 +313,12 @@
     }
 
     .entry-row-title {
-      overflow: hidden;
+      min-width: 0;
+      overflow-wrap: anywhere;
       font-size: 13px;
       font-weight: 600;
       letter-spacing: 0;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      white-space: normal;
     }
 
     .entry-row-time {
@@ -329,12 +329,11 @@
     }
 
     .entry-row-snippet {
-      overflow: hidden;
+      overflow-wrap: anywhere;
       color: var(--muted);
       font-size: 12px;
       letter-spacing: 0;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      white-space: pre-line;
     }
 
     .entry-row-unread .entry-row-title::before {
@@ -506,18 +505,6 @@
       border: 1px solid var(--line);
       border-radius: 8px;
       background: var(--panel-soft);
-    }
-
-    html[data-inbox-presentation="rail"] .entry-rail-card .entry-row-title {
-      white-space: normal;
-    }
-
-    html[data-inbox-presentation="rail"] .entry-rail-card .entry-row-snippet {
-      display: -webkit-box;
-      white-space: normal;
-      -webkit-box-orient: vertical;
-      -webkit-line-clamp: 3;
-      overflow: hidden;
     }
 
     html[data-inbox-presentation="rail"] .entry-rail-card .entry-actions {
