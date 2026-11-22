@@ -49,9 +49,6 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 
 - Apps get stricter checks on whose data they reach, and Home checks more carefully which programs it starts.
 - Error messages from Home, Library, Inbox and System no longer show where files are stored on this computer.
-
-### Isolation status
-
 - Isolation status: apps open in separate browser sandboxes and need permission to reach private data. Home can still get every app's permissions. Background programs run with your account's rights; only the program that runs models is partly limited. See the isolation plan (#173).
 
 ### Developer detail
