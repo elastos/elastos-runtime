@@ -2596,6 +2596,17 @@ pub(super) fn principal_root_protected_object_inventory(
     ]
 }
 
+fn transaction_effect_read_error(err: anyhow::Error) -> (StatusCode, String) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        gateway_shown_text(
+            "transaction",
+            format!("failed to read Runtime transaction effects: {err}"),
+            &err,
+        ),
+    )
+}
+
 fn load_transaction_effect_store(
     state: &GatewayState,
     principal_id: &str,
@@ -2611,16 +2622,7 @@ fn load_transaction_effect_store(
         &uri,
         &path,
     )
-    .map_err(|err| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            gateway_shown_text(
-                "transaction",
-                format!("failed to read Runtime transaction effects: {err}"),
-                &err,
-            ),
-        )
-    })?;
+    .map_err(transaction_effect_read_error)?;
     if bytes.len() > MAX_TRANSACTION_EFFECT_STORE_BYTES {
         return Err((
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -3134,6 +3136,38 @@ mod approved_request_resume_tests {
     use tokio::sync::Mutex;
 
     use super::*;
+
+    #[test]
+    fn transaction_read_path_spellings_use_fixed_response() {
+        let mut shown = Vec::new();
+        for text in [
+            "prefix{/data/private}",
+            "prefix</data/private>",
+            "prefix|/data/private",
+            "prefix@/data/private",
+            "file://localhost/data/private",
+        ] {
+            let (status, message) = transaction_effect_read_error(anyhow::anyhow!(text));
+            assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+            if message
+                != "transaction request failed on this Runtime; the Runtime log has the cause"
+            {
+                shown.push(text);
+            }
+        }
+        assert!(shown.is_empty(), "paths shown: {shown:?}");
+        for kept in [
+            "resource localhost://Users/person/Documents/a.txt",
+            "Documents/a.txt needs recovery",
+        ] {
+            let (status, message) = transaction_effect_read_error(anyhow::anyhow!(kept));
+            assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+            assert_eq!(
+                message,
+                format!("failed to read Runtime transaction effects: {kept}")
+            );
+        }
+    }
 
     #[test]
     fn transaction_effect_damaged_store_keeps_guidance_without_disk_path() {
