@@ -230,8 +230,10 @@ fn trim_link_end(candidate: &str) -> &str {
     link
 }
 
-/// The size a Chat file post states (`name · size · elastos://<cid>`), in
-/// bytes as the sender's Home formatted it.
+/// A display estimate from a Chat file post (`name · size · elastos://<cid>`).
+/// Scaled labels use decimal units, including stored posts with the same labels;
+/// old `N bytes` labels remain readable. Content retrieval verifies the CID
+/// independently of this rounded estimate.
 fn stated_post_size(body: &str, uri: &str) -> Option<u64> {
     let mut parts = body.rsplitn(3, " · ");
     if parts.next()? != uri {
@@ -572,6 +574,29 @@ mod tests {
         assert_eq!(stated_post_size(&format!("see {uri}"), &uri), None);
         assert_eq!(format_shared_file_size(30), "30 B");
         assert_eq!(format_shared_file_size(3_565_158), "3.6 MB");
+    }
+
+    #[test]
+    fn shared_file_post_size_is_a_decimal_estimate_and_reads_legacy_bytes() {
+        let uri = format!("elastos://{V1}");
+        for (label, estimate) in [
+            ("0 B", 0),
+            ("4 B", 4),
+            ("1.0 KB", 1_000),
+            ("1.0 MB", 1_000_000),
+            ("1.50 GB", 1_500_000_000),
+            ("1.0 TB", 1_000_000_000_000),
+            // Stored posts carry rounded text, with no unit-version marker.
+            ("976.6 KB", 976_600),
+            ("30 bytes", 30),
+            ("1023 bytes", 1023),
+        ] {
+            assert_eq!(
+                stated_post_size(&format!("a · b.txt · {label} · {uri}"), &uri),
+                Some(estimate),
+                "{label}"
+            );
+        }
     }
 
     #[test]
