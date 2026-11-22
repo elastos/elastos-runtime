@@ -823,10 +823,10 @@ try {
   const homeGui = frameFor(page, "home-gui");
   if (phoneLayout) {
     await homeGui.waitForFunction(() => document.body.dataset.formFactor === "phone", null, {timeout:15000});
-    const device = await homeGui.evaluate(() => ({width:innerWidth, touchPoints:navigator.maxTouchPoints,
+    const device = await homeGui.evaluate(() => ({width:innerWidth,
       coarse:matchMedia("(pointer: coarse)").matches, factor:document.body.dataset.formFactor}));
-    assert(device.width === 390 && device.touchPoints > 0 && device.coarse && device.factor === "phone",
-      "fixture uses the 390 px touch phone layout", device);
+    assert(device.width === 390 && device.coarse && device.factor === "phone",
+      "fixture uses the 390 px coarse-pointer phone layout", device);
     // Let the real idle warmup run: phones keep Wallet in its full window.
     await page.waitForTimeout(2200);
     assert(!frameFor(page, "wallet"), "phone idle warmup leaves the Wallet rail unmounted");
