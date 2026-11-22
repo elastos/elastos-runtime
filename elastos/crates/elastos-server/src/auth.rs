@@ -10838,8 +10838,11 @@ fn is_sha256_label(value: &str) -> bool {
 }
 
 #[cfg(test)]
+type ObjectCommitTestHook = Box<dyn FnOnce(&Path)>;
+
+#[cfg(test)]
 thread_local! {
-    static OBJECT_COMMIT_TEST_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce(&Path)>>> =
+    static OBJECT_COMMIT_TEST_HOOK: std::cell::RefCell<Option<ObjectCommitTestHook>> =
         const { std::cell::RefCell::new(None) };
 }
 
@@ -13233,10 +13236,25 @@ mod tests {
             .unwrap(),
         );
 
+        assert!(activation.as_ref().unwrap().plaintext_objects.is_empty());
+        assert!(
+            load_principal_root_protection(parent.path(), principal, &root)
+                .unwrap()
+                .is_none()
+        );
+
         // Check every entry into the shared writer while activation owns the
-        // file lock, and again after its protection record has been published.
+        // file lock before publishing protection, and after releasing the lock
+        // with protection published. The child is outside the parent's scan.
         for phase in ["locked", "protected"] {
-            for writer in ["plain", "create", "revision", "mutation", "protected"] {
+            for writer in [
+                "plain",
+                "create",
+                "absent",
+                "revision",
+                "mutation",
+                "protected",
+            ] {
                 let started = std::time::Instant::now();
                 let result = match writer {
                     "create" => {
@@ -13249,6 +13267,19 @@ mod tests {
                             &uri,
                             &path,
                             b"second",
+                        )
+                    }
+                    "absent" => {
+                        let uri = format!("{root}/Documents/new.md");
+                        let path = rooted_localhost_fs_path(child.path(), &uri).unwrap();
+                        write_principal_root_object_if_revision(
+                            child.path(),
+                            principal,
+                            &root,
+                            &uri,
+                            &path,
+                            b"second",
+                            PrincipalRootObjectPrecondition::Absent,
                         )
                     }
                     "revision" => write_principal_root_object_if_revision(
@@ -13330,6 +13361,11 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+        assert!(
+            load_principal_root_protection(parent.path(), principal, &root)
+                .unwrap()
+                .is_none()
+        );
         let (send, receive) = std::sync::mpsc::channel();
         let parent_path = parent.path().to_path_buf();
         let child_path = path.clone();
@@ -13358,15 +13394,9 @@ mod tests {
                     Ok(activation) => {
                         // Without the fence, activation completes before the
                         // paused child's plaintext commit, reproducing the race.
+                        assert!(activation.plaintext_objects.is_empty());
                         store_test_principal_root_protection(&parent_path, principal);
-                        migrate_principal_root_plaintext_objects_under_activation(
-                            &activation.guard,
-                            &parent_path,
-                            principal,
-                            &activation_root,
-                            activation.plaintext_objects,
-                        )
-                        .unwrap();
+                        drop(activation);
                         false
                     }
                 };
@@ -13393,16 +13423,9 @@ mod tests {
                 &[],
             )
             .unwrap();
+        assert!(activation.plaintext_objects.is_empty());
         store_test_principal_root_protection(parent.path(), principal);
-        migrate_principal_root_plaintext_objects_under_activation(
-            &activation.guard,
-            parent.path(),
-            principal,
-            &root,
-            activation.plaintext_objects,
-        )
-        .unwrap();
-        drop(activation.guard);
+        drop(activation);
         child_save_refuses_published_parent_protection(
             parent.path(),
             child.path(),

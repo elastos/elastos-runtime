@@ -159,6 +159,8 @@ use gateway_home_terminal::*;
 pub(crate) use gateway_home_token::home_launch_auth_data_dir;
 #[cfg(test)]
 pub(super) use gateway_home_token::home_session_cookie_name;
+#[cfg(test)]
+pub(crate) use gateway_home_token::set_test_home_launch_auth_data_dir;
 pub(super) use gateway_home_token::HomeLaunchTokenContext;
 pub(crate) use gateway_home_token::RuntimeWalletAuthority;
 pub(super) use gateway_home_token::{
@@ -185,8 +187,7 @@ pub(super) use gateway_home_system_ai_provider::{
 #[cfg(test)]
 pub(in crate::api) use gateway_home_token::{
     issue_expired_home_launch_token_with_context, issue_home_launch_token,
-    issue_home_launch_token_with_context, local_home_launch_token_context,
-    set_test_home_launch_auth_data_dir, uuid_like_token,
+    issue_home_launch_token_with_context, local_home_launch_token_context, uuid_like_token,
 };
 use gateway_home_wallet_connector::*;
 use gateway_inbox::*;
