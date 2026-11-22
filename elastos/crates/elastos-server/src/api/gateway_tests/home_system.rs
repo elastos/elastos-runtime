@@ -4833,6 +4833,12 @@ async fn test_recovery_readiness_projects_unavailable_and_first_profile_fails_cl
     auth_state.principal_root_protections.push(protection);
     crate::auth::save_auth_state(dir.path(), &auth_state, None).unwrap();
     let before = file_snapshot(dir.path());
+    assert_eq!(
+        before
+            .get("ElastOS/System/Auth/principal-root-lifecycle.lock")
+            .map(Vec::as_slice),
+        Some(&[][..])
+    );
 
     for (path, token, origin) in [
         (
@@ -4871,12 +4877,7 @@ async fn test_recovery_readiness_projects_unavailable_and_first_profile_fails_cl
         .unwrap();
     let text = String::from_utf8(body.to_vec()).unwrap();
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{text}");
-    let mut after = file_snapshot(dir.path());
-    assert_eq!(
-        after.remove("ElastOS/System/Auth/principal-root-lifecycle.lock"),
-        Some(Vec::new())
-    );
-    assert_eq!(after, before);
+    assert_eq!(file_snapshot(dir.path()), before);
     assert!(
         crate::collaboration_profile_authority::load_profile_authority(
             dir.path(),
