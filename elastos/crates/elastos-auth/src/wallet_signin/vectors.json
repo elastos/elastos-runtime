@@ -1,0 +1,40 @@
+{
+  "provenance": {
+    "standard": "https://eips.ethereum.org/EIPS/eip-4361#examples",
+    "signer": "viem 2.57.19",
+    "phone_source": "scripts/lib/walletconnect-phone-wallet.mjs:27",
+    "method": "account.signMessage({message:{raw:hexUtf8Message}})",
+    "key": "Disposable existing test key: 32 bytes each 0x07; never a Home or production key",
+    "note": "EIP examples retain their published address; their signatures recover the disposable signer, not that address. They test EIP-191 recovery. The phone vector also tests the complete Home proof."
+  },
+  "vectors": [
+    {
+      "name": "phone",
+      "message": "https://home.example wants you to sign in with your Ethereum account:\n0x4a62316623ad457F02cDC5D997deD67a383EC569\n\nCreate an account on this Home.\n\nURI: https://home.example/login\nVersion: 1\nChain ID: 8453\nNonce: 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b\nIssued At: 2027-01-15T08:00:00Z\nExpiration Time: 2027-01-15T08:05:00Z\nResources:\n- urn:elastos:home:686f6d652d31\n- urn:elastos:ceremony:bac4b8122fed6187e1b493a932761b8f5e720a439bf85730cf31869ea30ced4e",
+      "signature": "0x010a0271b3d70153bb5738bc3024e0ab071d2826f9b6a3dc1deceb8cd39489201dc84c80bfbf19f07f634be27c224b754cb1bf1cd1745c17bce2317e0af1a86e1b",
+      "hash": "0xfc6ac24d017546104e36cdb261f55bdab7940c60dd2c3a91da34fc14c7ee00b9",
+      "signer": "0x4a62316623ad457F02cDC5D997deD67a383EC569"
+    },
+    {
+      "name": "eip4361-0",
+      "message": "example.com wants you to sign in with your Ethereum account:\n0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2\n\nI accept the ExampleOrg Terms of Service: https://example.com/tos\n\nURI: https://example.com/login\nVersion: 1\nChain ID: 1\nNonce: 32891756\nIssued At: 2021-09-30T16:25:24Z\nResources:\n- ipfs://bafybeiemxf5abjwjbikoz4mc3a3dla6ual3jsgpdr4cjr3oz3evfyavhwq/\n- https://example.com/my-web2-claim.json",
+      "signature": "0x5f3abddf73baac7c2f9dfde2e3b275cb042835f24919df8977d0785a452080721a7fc1e9876c166fe451341b0eb33ef20fd6eae89b4c187f3834abd0c27d272c1b",
+      "hash": "0xc84148344eb461be363f0b49a7c73bb603f78113b25c2fc4624873716fce2daa",
+      "signer": "0x4a62316623ad457F02cDC5D997deD67a383EC569"
+    },
+    {
+      "name": "eip4361-1",
+      "message": "example.com:3388 wants you to sign in with your Ethereum account:\n0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2\n\nI accept the ExampleOrg Terms of Service: https://example.com/tos\n\nURI: https://example.com/login\nVersion: 1\nChain ID: 1\nNonce: 32891756\nIssued At: 2021-09-30T16:25:24Z\nResources:\n- ipfs://bafybeiemxf5abjwjbikoz4mc3a3dla6ual3jsgpdr4cjr3oz3evfyavhwq/\n- https://example.com/my-web2-claim.json",
+      "signature": "0x36579e2933b2c93fea46181b34baee00a9b440b4f2624bfd8007297aa9c0b297289d709bc2412214f50e4d01ee5a837547ea4b3066927a2c74cbf9549b5b98b41b",
+      "hash": "0x52ae82fc64e654a15e377707039d9984f29030ba4fe1cc2139d81833438cf86e",
+      "signer": "0x4a62316623ad457F02cDC5D997deD67a383EC569"
+    },
+    {
+      "name": "eip4361-2",
+      "message": "https://example.com wants you to sign in with your Ethereum account:\n0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2\n\nI accept the ExampleOrg Terms of Service: https://example.com/tos\n\nURI: https://example.com/login\nVersion: 1\nChain ID: 1\nNonce: 32891756\nIssued At: 2021-09-30T16:25:24Z\nResources:\n- ipfs://bafybeiemxf5abjwjbikoz4mc3a3dla6ual3jsgpdr4cjr3oz3evfyavhwq/\n- https://example.com/my-web2-claim.json",
+      "signature": "0x47125df776e10b1d7e5b722e345ef4b35d930f47beb860b5ca95038d6b80f0e1726550eabee32370060edd98e8b14a17d1e70bdcac29ed2227116fa2872496571c",
+      "hash": "0x350dfcaad4b160adc5119ecb0c4d738be4e0aea9fd4e7a0beee6bd2ccaaacb97",
+      "signer": "0x4a62316623ad457F02cDC5D997deD67a383EC569"
+    }
+  ]
+}

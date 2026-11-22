@@ -10,6 +10,8 @@ name = "elastos_auth"
 path = "src/lib.rs"
 
 [dependencies]
+base64 = "0.22"
+bitcoin = { version = "0.32", default-features = false, features = ["std"] }
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 hex = "0.4"
 k256 = { version = "0.13", features = ["ecdsa"] }
