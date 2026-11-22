@@ -1874,11 +1874,11 @@ body[data-home-link="reconnecting"] .notification-center-link {
 }
 
 .notification-center-item-title {
-  overflow: hidden;
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-size: 12.5px;
   font-weight: 600;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  white-space: normal;
 }
 
 .notification-center-item-time {
@@ -1890,10 +1890,8 @@ body[data-home-link="reconnecting"] .notification-center-link {
 
 .notification-center-item-body {
   margin: 3px 0 0;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.35;
@@ -1968,22 +1966,19 @@ body[data-home-link="reconnecting"] .notification-center-link {
 }
 
 .home-notification-copy strong {
-  overflow: hidden;
+  overflow-wrap: anywhere;
   color: var(--text);
   font-size: 13px;
   line-height: 1.25;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .home-notification-copy span {
-  display: -webkit-box;
-  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.35;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
 }
 
 .home-notification-actions {

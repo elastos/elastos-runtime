@@ -165,7 +165,7 @@ function rememberSetupReminder() {
     title: unavailable ? "Check Home setup" : profileReady ? "Save your Recovery Kit" : "Continue recovery",
     body: unavailable ? "Open System to check setup."
       : profileReady
-      ? "Open System to save it. Without it, losing this device can mean losing your identity and keys. Keep copies of your files elsewhere."
+      ? "Save your kit in System to recover your identity and keys if you lose this device. Back up your files separately."
       : "Open System to finish setup or restore your Profile from a Recovery Kit.",
   });
 }
