@@ -127,6 +127,16 @@ fn sign_in_route(path: &str, method: &Method) -> bool {
                     | "/api/auth/passkey/register/complete"
                     | "/api/auth/passkey/authenticate/begin"
                     | "/api/auth/passkey/authenticate/complete"
+                    | "/api/auth/wallet/signin/begin"
+                    | "/api/auth/wallet/signin/select"
+                    | "/api/auth/wallet/signin/complete"
+                    | "/api/auth/wallet/cancel"
+                    | "/api/auth/wallet/register/begin"
+                    | "/api/auth/wallet/register/complete"
+                    | "/api/auth/wallet/recover/begin"
+                    | "/api/auth/wallet/recover/complete"
+                    | "/api/auth/wallet/approve/begin"
+                    | "/api/auth/wallet/approve/complete"
                     | "/api/auth/owner-recovery/begin"
                     | "/api/auth/owner-recovery/complete"
             )
@@ -216,10 +226,18 @@ pub(super) async fn gateway_admission(
             );
         let content_read =
             path.starts_with("/content/") && matches!(requested_method, Some("GET" | "HEAD"));
+        let attempt_preflight = gateway_walletconnect::attempt_route(
+            path,
+            &Method::from_bytes(requested_method.unwrap_or("").as_bytes())
+                .unwrap_or(Method::OPTIONS),
+        ) && requested_headers
+            .split(',')
+            .any(|h| h.trim().eq_ignore_ascii_case("x-elastos-wallet-attempt"));
         if origin == Some("null")
-            && requested_headers
-                .split(',')
-                .any(|h| h.trim().eq_ignore_ascii_case("x-elastos-home-token"))
+            && (attempt_preflight
+                || requested_headers
+                    .split(',')
+                    .any(|h| h.trim().eq_ignore_ascii_case("x-elastos-home-token")))
             && (api || content_read)
         {
             let mut response = StatusCode::NO_CONTENT.into_response();
@@ -234,7 +252,7 @@ pub(super) async fn gateway_admission(
             );
             response.headers_mut().insert(
                 "access-control-allow-headers",
-                HeaderValue::from_static("content-type,x-elastos-home-token,last-event-id,x-elastos-upload-offset,x-elastos-recovery-terminal,if-match,if-none-match,range"),
+                HeaderValue::from_static("content-type,x-elastos-home-token,x-elastos-wallet-attempt,x-elastos-wallet-instance,last-event-id,x-elastos-upload-offset,x-elastos-recovery-terminal,if-match,if-none-match,range"),
             );
             return response;
         }
@@ -251,6 +269,11 @@ pub(super) async fn gateway_admission(
         && (public_read(path)
             || public_publisher_bootstrap(&state.data_dir, path, request.uri().query()));
     let sign_in = sign_in_route(path, method) && same_gateway_origin(headers);
+    let wallet_attempt = origin == Some("null")
+        && gateway_walletconnect::attempt_route(path, method)
+        && gateway_walletconnect::admit_attempt(&state, headers)
+            .await
+            .is_ok();
     let ticket =
         read && gateway_home_terminal::admitted_terminal_ticket(path, request.uri().query()).await;
     // An opaque connector cannot send a launch-token header on a WebSocket.
@@ -277,7 +300,13 @@ pub(super) async fn gateway_admission(
     // or lost its session. Another app's token stays the generic refusal, and
     // so does every other route.
     let mut browser_launch_renewal = None;
-    if !public && !sign_in && !ticket && !walletconnect_transport && !runtime_session {
+    if !public
+        && !sign_in
+        && !wallet_attempt
+        && !ticket
+        && !walletconnect_transport
+        && !runtime_session
+    {
         match gateway_home_token::require_gateway_launch(&state.data_dir, headers) {
             Ok(()) => {}
             Err(_) if browser_api_path(path) => {
@@ -303,12 +332,18 @@ pub(super) async fn gateway_admission(
             return *response;
         }
     }
+    let private_wallet = path.starts_with("/api/auth/wallet") || wallet_attempt;
     let opaque = origin == Some("null");
     let mut response = if let Some(response) = browser_launch_renewal {
         response
     } else {
         next.run(request).await
     };
+    if private_wallet {
+        response
+            .headers_mut()
+            .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    }
     if opaque && (public || !sign_in) {
         apply_capsule_cors_headers(response.headers_mut(), &HeaderValue::from_static("null"));
         response.headers_mut().insert(

@@ -31,6 +31,8 @@ use sha2::{Digest, Sha256};
 
 use crate::host_lock::FileLock;
 
+pub(crate) mod wallet_signin;
+
 const AUTH_STATE_SCHEMA: &str = "elastos.auth.state/v1";
 pub(crate) const AUTH_SESSION_TTL_SECS: u64 = 12 * 60 * 60;
 const AUTH_STATE_ROOT: &str = "ElastOS/System/Auth";
@@ -4578,6 +4580,7 @@ fn mutate_auth_state<T>(
     ensure_audit_chain_state(data_dir, &mut state)?;
     let value = mutation(&mut state)?;
     save_auth_state(data_dir, &state, Some(&baseline))?;
+    wallet_signin::observe_auth_commit(data_dir, &state)?;
     for principal in previous_principals {
         if !state.principals.iter().any(|p| p.principal_id == principal)
             && crate::api::gateway::clear_walletconnect_principal_storage(data_dir, &principal)
@@ -4833,7 +4836,11 @@ fn write_secret_bytes_atomic(
 }
 
 pub fn load_auth_state(data_dir: &Path) -> anyhow::Result<AuthState> {
-    load_auth_state_with_identity(data_dir).map(|(state, _)| state)
+    let mut state = load_auth_state_with_identity(data_dir)?.0;
+    state
+        .sessions
+        .extend(wallet_signin::sessions(data_dir, &state)?);
+    Ok(state)
 }
 
 fn load_auth_state_with_identity(
@@ -5306,6 +5313,14 @@ pub fn store_session_grant(data_dir: &Path, grant: AuthSessionGrantV1) -> anyhow
 }
 
 pub fn renew_session_grant(data_dir: &Path, grant: AuthSessionGrantV1) -> anyhow::Result<()> {
+    if grant.session_id.starts_with("auth:wallet:") {
+        return wallet_signin::update_session(
+            data_dir,
+            &grant.session_id.clone(),
+            Some(grant),
+            None,
+        );
+    }
     mutate_auth_state(data_dir, |state| renew_session_in_state(state, grant))
 }
 
@@ -5342,6 +5357,10 @@ pub(crate) fn renew_session_grant_with_audit(
         || event.session_id.as_deref() != Some(grant.session_id.as_str())
     {
         anyhow::bail!("auth session refresh audit binding mismatch");
+    }
+    if grant.session_id.starts_with("auth:wallet:") {
+        append_audit_event(data_dir, event)?;
+        return renew_session_grant(data_dir, grant);
     }
     let event = sign_audit_event(data_dir, event)?;
     mutate_auth_state(data_dir, |state| {
@@ -5385,6 +5404,9 @@ pub fn revoke_session_grant(
     session_id: &str,
     revoked_at: u64,
 ) -> anyhow::Result<()> {
+    if session_id.starts_with("auth:wallet:") {
+        return wallet_signin::update_session(data_dir, session_id, None, Some(revoked_at));
+    }
     mutate_auth_state(data_dir, |state| {
         let stored = state
             .sessions
@@ -6556,6 +6578,9 @@ pub fn load_principal_for_proof_binding(
     data_dir: &Path,
     proof_binding_id: &str,
 ) -> anyhow::Result<PrincipalRecord> {
+    if proof_binding_id.starts_with("proof:signin-wallet:") {
+        return wallet_signin::principal(data_dir, proof_binding_id);
+    }
     let state = load_auth_state(data_dir)?;
     state
         .principals

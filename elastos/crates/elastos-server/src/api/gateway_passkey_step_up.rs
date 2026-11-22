@@ -63,6 +63,8 @@ pub(super) fn step_up_is_stale(error: &anyhow::Error) -> bool {
 pub(super) struct PasskeyStepUpBeginRequest {
     schema: String,
     app_token: String,
+    #[serde(default)]
+    approving_passkey_id: Option<String>,
     operation: String,
     request: serde_json::Value,
 }
@@ -114,6 +116,8 @@ struct PasskeyStepUpPayload {
     principal_id: String,
     session_id: String,
     proof_binding_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    approving_passkey_id: Option<String>,
     grant_id: String,
     operation: String,
     request_sha256: String,
@@ -140,6 +144,8 @@ struct PendingPasskeyStepUp {
     principal_id: String,
     session_id: String,
     proof_binding_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    approving_passkey_id: Option<String>,
     grant_id: String,
     credential_id: String,
     credential_public_key_sha256: String,
@@ -248,11 +254,17 @@ async fn passkey_step_up_begin_inner(
             return Err(gateway_walletconnect::ConsentConflict.into());
         }
         stored
+    } else if operation == crate::auth::wallet_signin::OPERATION {
+        gateway_wallet_signin::approval_for_launch(state, &launch, &input.request)?
     } else {
         input.request
     };
     let request_sha256 = canonical_request_sha256(&request)?;
-    let passkey = passkey_for_launch(&state.data_dir, &launch)?;
+    let passkey = passkey_for_launch_selected(
+        &state.data_dir,
+        &launch,
+        input.approving_passkey_id.as_deref(),
+    )?;
     let rp = super::super::handlers::identity::derive_rp(headers)?;
     if passkey.rp_id != rp.id {
         anyhow::bail!("passkey step-up relying party mismatch");
@@ -267,7 +279,17 @@ async fn passkey_step_up_begin_inner(
         launch_context: launch.launch_context,
         principal_id: launch.context.principal_id,
         session_id: launch.context.session_id,
-        proof_binding_id: passkey_proof_binding_id(&passkey),
+        proof_binding_id: launch
+            .context
+            .proof_binding_id
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("missing session proof"))?,
+        approving_passkey_id: (!launch
+            .context
+            .proof_binding_id
+            .as_deref()
+            .is_some_and(|id| id.starts_with("proof:passkey:")))
+        .then(|| passkey_proof_binding_id(&passkey)),
         grant_id: launch.context.grant_id,
         credential_id: passkey.credential_id.clone(),
         credential_public_key_sha256: hex::encode(Sha256::digest(passkey.public_key.as_bytes())),
@@ -372,7 +394,10 @@ async fn passkey_step_up_complete_inner(
             created_at: 0,
             last_used_at: 0,
             revoked_at: None,
-        }) != pending.proof_binding_id
+        }) != pending
+            .approving_passkey_id
+            .as_deref()
+            .unwrap_or(&pending.proof_binding_id)
     {
         anyhow::bail!("passkey step-up used a different registered passkey");
     }
@@ -550,10 +575,16 @@ fn consume_passkey_step_up_for_effect(
     }
     let principal = crate::auth::load_principal_for_proof_binding(
         &auth_data_dir,
-        &envelope.payload.proof_binding_id,
+        envelope
+            .payload
+            .approving_passkey_id
+            .as_deref()
+            .unwrap_or(&envelope.payload.proof_binding_id),
     )?;
     crate::auth::ensure_proof_binding_not_revoked(&principal)?;
-    if principal.proof_binding.passkey.is_none() {
+    if principal.principal_id != envelope.payload.principal_id
+        || principal.proof_binding.passkey.is_none()
+    {
         anyhow::bail!("passkey step-up proof binding is not a passkey");
     }
 
@@ -661,6 +692,7 @@ pub(crate) fn issue_passkey_step_up_token_at_for_test(
             principal_id: launch.context.principal_id,
             session_id: launch.context.session_id,
             proof_binding_id: passkey_proof_binding_id(&passkey),
+            approving_passkey_id: None,
             grant_id: launch.context.grant_id,
             credential_id: passkey.credential_id,
             credential_public_key_sha256: hex::encode(Sha256::digest(
@@ -691,8 +723,7 @@ pub(in crate::api) fn require_hosted_step_up_launch(
     let Some(proof_binding_id) = launch.context.proof_binding_id.as_deref() else {
         anyhow::bail!("passkey step-up requires a proof-bound original launch");
     };
-    if !proof_binding_id.starts_with("proof:passkey:")
-        || host_context.principal_id != launch.context.principal_id
+    if host_context.principal_id != launch.context.principal_id
         || host_context.session_id != launch.context.session_id
         || host_context.proof_binding_id.as_deref() != Some(proof_binding_id)
         || host_context.grant_id != launch.context.grant_id
@@ -702,28 +733,54 @@ pub(in crate::api) fn require_hosted_step_up_launch(
     Ok(())
 }
 
+#[cfg(test)]
 fn passkey_for_launch(
     data_dir: &Path,
     launch: &RequiredHomeLaunchToken,
 ) -> anyhow::Result<PasskeyWebAuthnBinding> {
-    let proof_binding_id =
-        launch.context.proof_binding_id.as_deref().ok_or_else(|| {
-            anyhow::anyhow!("passkey step-up requires a proof-bound original launch")
-        })?;
-    if !proof_binding_id.starts_with("proof:passkey:") {
-        anyhow::bail!("passkey step-up requires the original registered passkey");
-    }
+    passkey_for_launch_selected(data_dir, launch, None)
+}
+fn passkey_for_launch_selected(
+    data_dir: &Path,
+    launch: &RequiredHomeLaunchToken,
+    selected: Option<&str>,
+) -> anyhow::Result<PasskeyWebAuthnBinding> {
+    let session_proof = launch
+        .context
+        .proof_binding_id
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("missing session proof"))?;
     let auth_data_dir = home_launch_auth_data_dir(data_dir);
-    let principal =
-        crate::auth::load_principal_for_proof_binding(&auth_data_dir, proof_binding_id)?;
-    crate::auth::ensure_proof_binding_not_revoked(&principal)?;
-    if principal.principal_id != launch.context.principal_id {
-        anyhow::bail!("passkey step-up principal binding mismatch");
-    }
+    let session_principal =
+        crate::auth::load_principal_for_proof_binding(&auth_data_dir, session_proof)?;
+    crate::auth::ensure_proof_binding_not_revoked(&session_principal)?;
+    anyhow::ensure!(
+        session_principal.principal_id == launch.context.principal_id,
+        "passkey step-up principal binding mismatch"
+    );
+    let principal = if session_proof.starts_with("proof:passkey:") {
+        anyhow::ensure!(
+            selected.is_none_or(|id| id == session_proof),
+            "original passkey required"
+        );
+        session_principal
+    } else {
+        anyhow::ensure!(
+            session_proof.starts_with("proof:signin-wallet:"),
+            "passkey authority required"
+        );
+        crate::auth::active_passkey_principals(&auth_data_dir)?
+            .into_iter()
+            .find(|p| {
+                p.principal_id == launch.context.principal_id
+                    && selected.is_none_or(|id| id == p.proof_binding_id)
+            })
+            .ok_or_else(|| anyhow::anyhow!("this account's passkey is unavailable"))?
+    };
     principal
         .proof_binding
         .passkey
-        .ok_or_else(|| anyhow::anyhow!("original proof binding is not a registered passkey"))
+        .ok_or_else(|| anyhow::anyhow!("approving proof is not a passkey"))
 }
 
 fn issue_step_up_token(
@@ -740,6 +797,7 @@ fn issue_step_up_token(
         principal_id: pending.principal_id.clone(),
         session_id: pending.session_id.clone(),
         proof_binding_id: pending.proof_binding_id.clone(),
+        approving_passkey_id: pending.approving_passkey_id.clone(),
         grant_id: pending.grant_id.clone(),
         operation: pending.operation.clone(),
         request_sha256: pending.request_sha256.clone(),
@@ -868,7 +926,12 @@ impl PasskeyStepUpPayload {
         validate_authority_value(&self.grant_id, "grant")?;
         validate_step_up_operation(&self.operation)?;
         validate_sha256(&self.request_sha256)?;
-        if !self.proof_binding_id.starts_with("proof:passkey:") {
+        if !self
+            .approving_passkey_id
+            .as_deref()
+            .unwrap_or(&self.proof_binding_id)
+            .starts_with("proof:passkey:")
+        {
             anyhow::bail!("passkey step-up is not bound to a registered passkey");
         }
         if !self.non_delegatable
@@ -1559,6 +1622,7 @@ mod tests {
     fn begin_request(fixture: &StepUpFixture) -> PasskeyStepUpBeginRequest {
         PasskeyStepUpBeginRequest {
             schema: PASSKEY_STEP_UP_BEGIN_REQUEST_SCHEMA.to_string(),
+            approving_passkey_id: None,
             app_token: fixture.app_token.clone(),
             operation: "inspect.approve".to_string(),
             request: serde_json::json!({ "request_id": "inspect-action-1" }),
@@ -1578,6 +1642,7 @@ mod tests {
             principal_id: fixture.context.principal_id.clone(),
             session_id: fixture.context.session_id.clone(),
             proof_binding_id: fixture.context.proof_binding_id.clone().unwrap(),
+            approving_passkey_id: None,
             grant_id: fixture.context.grant_id.clone(),
             credential_id: fixture.credential_id.clone(),
             credential_public_key_sha256: hex::encode(Sha256::digest(b"step-up-test-public-key")),

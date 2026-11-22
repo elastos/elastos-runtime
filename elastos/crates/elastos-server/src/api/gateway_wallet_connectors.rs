@@ -5,6 +5,13 @@ pub(in crate::api::gateway) async fn wallet_connector_config(
     Path(wallet_connector): Path<String>,
     headers: HeaderMap,
 ) -> Response {
+    if gateway_walletconnect::attempt_headers_present(&headers) {
+        return if wallet_connector == WALLET_WALLETCONNECT_CAPSULE_ID {
+            gateway_walletconnect::attempt_config(&state, &headers).await
+        } else {
+            StatusCode::FORBIDDEN.into_response()
+        };
+    }
     let context = match require_wallet_connector_launch_context(
         &state.data_dir,
         &headers,

@@ -119,6 +119,8 @@ mod gateway_transaction_effects;
 mod gateway_wallet;
 #[path = "gateway_wallet_adapter.rs"]
 mod gateway_wallet_adapter;
+#[path = "gateway_wallet_signin.rs"]
+mod gateway_wallet_signin;
 #[path = "gateway_walletconnect.rs"]
 mod gateway_walletconnect;
 #[cfg(test)]
@@ -705,6 +707,58 @@ fn gateway_router_with_api_url(state: GatewayState, gateway_api_url: String) -> 
             "/api/auth/passkey/authenticate/complete",
             post(super::auth_gateway::passkey_authenticate_complete)
                 .layer(DefaultBodyLimit::max(96 * 1024)),
+        )
+        .route(
+            "/api/auth/wallet-methods",
+            get(gateway_wallet_signin::list).layer(DefaultBodyLimit::max(96 * 1024)),
+        )
+        .route(
+            "/api/auth/wallet-methods/begin",
+            post(gateway_wallet_signin::method_begin).layer(DefaultBodyLimit::max(96 * 1024)),
+        )
+        .route(
+            "/api/auth/wallet-methods/complete",
+            post(gateway_wallet_signin::method_complete).layer(DefaultBodyLimit::max(96 * 1024)),
+        )
+        .route(
+            "/api/auth/wallet/signin/begin",
+            post(gateway_wallet_signin::signin_begin).layer(DefaultBodyLimit::max(96 * 1024)),
+        )
+        .route(
+            "/api/auth/wallet/signin/select",
+            post(gateway_wallet_signin::select).layer(DefaultBodyLimit::max(96 * 1024)),
+        )
+        .route(
+            "/api/auth/wallet/signin/complete",
+            post(gateway_wallet_signin::signin_complete).layer(DefaultBodyLimit::max(96 * 1024)),
+        )
+        .route(
+            "/api/auth/wallet/cancel",
+            post(gateway_wallet_signin::cancel).layer(DefaultBodyLimit::max(96 * 1024)),
+        )
+        .route(
+            "/api/auth/wallet/register/begin",
+            post(gateway_wallet_signin::disabled),
+        )
+        .route(
+            "/api/auth/wallet/register/complete",
+            post(gateway_wallet_signin::disabled),
+        )
+        .route(
+            "/api/auth/wallet/recover/begin",
+            post(gateway_wallet_signin::disabled),
+        )
+        .route(
+            "/api/auth/wallet/recover/complete",
+            post(gateway_wallet_signin::disabled),
+        )
+        .route(
+            "/api/auth/wallet/approve/begin",
+            post(gateway_wallet_signin::disabled),
+        )
+        .route(
+            "/api/auth/wallet/approve/complete",
+            post(gateway_wallet_signin::disabled),
         )
         .route(
             "/api/auth/passkey-step-up/begin",

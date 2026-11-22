@@ -27,7 +27,9 @@ impl CeremonyKind {
             "/api/auth/passkey/register/begin"
             | "/api/auth/owner-recovery/begin"
             | "/api/auth/owner-recovery/complete" => Some(Self::Registration),
-            "/api/auth/passkey/authenticate/begin" => Some(Self::Authentication),
+            "/api/auth/wallet/signin/begin" | "/api/auth/passkey/authenticate/begin" => {
+                Some(Self::Authentication)
+            }
             _ => None,
         }
     }
