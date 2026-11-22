@@ -4,7 +4,8 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 for (const [kind, title] of [
-  ["connectors", "Marketplace lists all three connectors with Wallet directions and no standalone Open"],
+  ["connectors", "Marketplace Open uses Wallet to show each connector and preserves launch authority"],
+  ["connectors-phone", "Marketplace Open shows each connector on a phone"],
   ["assistant", "Marketplace Open shows Assistant on screen and preserves model handoff validation"],
 ]) {
   test(title, { timeout: 75000 }, async () => {

@@ -299,6 +299,12 @@ function boot() {
   window.addEventListener("message", onWalletRefreshMessage);
   window.addEventListener("message", onShellMenuCommand);
   window.addEventListener("message", onWalletChromeCommand);
+  window.addEventListener("message", onHomeConnectCommand);
+  window.addEventListener("pagehide", () => {
+    if (activeHomeToken && homeParentOrigin && window.top !== window) {
+      window.top.postMessage({type:"home:app-retired", homeToken:activeHomeToken}, homeParentOrigin);
+    }
+  }, {once:true});
   refreshWalletState().catch((error) => showStatus(String(error.message || error), "error"));
 }
 
@@ -409,6 +415,15 @@ function onShellMenuCommand(event) {
       return;
     default:
   }
+}
+
+function onHomeConnectCommand(event) {
+  if (event.source !== window.top || event.origin !== homeParentOrigin) return;
+  const message = event.data;
+  if (message?.type !== "elastos.wallet.connect/v1"
+    || Object.keys(message).length !== 2
+    || !["wallet-metamask", "wallet-unisat", "wallet-walletconnect"].includes(message.target)) return;
+  openApprovalMethod(message.target);
 }
 
 function onWalletChromeCommand(event) {

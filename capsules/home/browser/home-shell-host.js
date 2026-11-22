@@ -917,11 +917,12 @@ async function deliverMessageToHomeGuiTargetFrame(target, payload, sender = null
     });
   }
   const contexts = [...launchedAppContexts.values()].reverse();
-  const context = contexts.find((candidate) => candidate.targetId === target && candidate.source);
+  const context = contexts.find((candidate) => candidate.targetId === target
+    && candidate.source && !candidate.source.closed);
   if (!context) {
     return false;
   }
-  context.source.postMessage(payload, context.origin);
+  context.source.postMessage(payload, OPAQUE_FRAME_TARGET);
   return true;
 }
 
@@ -1771,6 +1772,12 @@ window.addEventListener("message", (event) => {
     }
     return;
   }
+  if (data.type === "home:app-retired") {
+    if (context.kind === "app-frame" && hasExactMessageKeys(data, ["type", "homeToken"])) {
+      retireLaunchedAppContext(context.homeToken);
+    }
+    return;
+  }
   if (data.type === "home:app-ready") {
     if (context.kind === "app-frame" && ["documents", "library", "archive-manager", "gba-emulator", "chat-room"].includes(context.targetId) &&
         hasExactMessageKeys(data, ["type", "homeToken"])) {
@@ -2184,6 +2191,19 @@ window.addEventListener("message", (event) => {
   if (!target) {
     return;
   }
+  // Marketplace selects a connection window; Wallet remains its launch owner.
+  // Home constructs the payload, so app queries cannot become Wallet commands.
+  if (context.kind === "app-frame" && context.targetId === "marketplace" && target === "wallet"
+    && Object.hasOwn(data, "query")) {
+    if (!hasExactMessageKeys(data, ["type", "target", "query", "homeToken"])
+      || !data.query || typeof data.query !== "object" || Array.isArray(data.query)
+      || !hasExactMessageKeys(data.query, ["connect"])
+      || !WALLET_CONNECTOR_TARGETS.has(data.query.connect)) return;
+    openHomeGuiTargetWithPayload("wallet", {
+      type: "elastos.wallet.connect/v1", target: data.query.connect,
+    }).catch((error) => console.error("home Wallet connection open failed", error));
+    return;
+  }
   if (!canOpenTargetFromHomeMessage(context, target)) {
     console.warn("home ignored unauthorized open-target message", context.targetId, target);
     return;
@@ -2509,8 +2529,10 @@ function canOpenTargetFromHomeMessage(context, target) {
   if (context.kind === "home") {
     return true;
   }
-  // Inbox returns the user to the connector after its internet consent step.
-  if (context.kind === "app-frame" && context.targetId === "inbox" && target === "wallet-walletconnect") return true;
+  if (WALLET_CONNECTOR_TARGETS.has(target)) {
+    return context.kind === "app-frame" && (context.targetId === "wallet"
+      || context.targetId === "inbox" && target === "wallet-walletconnect");
+  }
   const policy = SHELL_MESSAGE_OPEN_TARGET_SOURCES[context.targetId];
   if (!policy) {
     return false;

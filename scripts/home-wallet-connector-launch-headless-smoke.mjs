@@ -12,6 +12,22 @@ import { importProductSmokePlaywright, productSmokeLaunchOptions } from "./produ
 const engine = process.env.HOME_WALLET_CONNECTOR_ENGINE || "chromium";
 const {skip} = windowTestOptions(engine);
 if (skip) console.log(`Home wallet connector launch smoke in ${engine} # SKIP ${skip}`);
+else if (process.env.MARKETPLACE_CONNECT_BEFORE === "1") {
+  // One isolated regression run checks the pinned source and the candidate.
+  let baselineFailed = false;
+  try { await runSmoke(); }
+  catch (error) {
+    if (!String(error.message).includes("Home refuses direct connector targets before sending a GUI launch command")) throw error;
+    baselineFailed = true;
+    console.log(`[marketplace-connect] baseline FAIL: ${error.message}`);
+  }
+  if (!baselineFailed) throw new Error("The pinned baseline unexpectedly passed the connector regression");
+  delete process.env.MARKETPLACE_CONNECT_BEFORE;
+  for (const kind of ["connectors", "connectors-phone", "assistant", ""]) {
+    process.env.MARKETPLACE_OPEN_CASE = kind;
+    await runSmoke();
+  }
+}
 else await runSmoke();
 
 async function runSmoke() {
@@ -227,8 +243,8 @@ function requireToken(req, token, res) {
 
 async function handleApi(req, res, url) {
   if (url.pathname === "/api/capsules/catalog" && req.method === "GET") {
-    json(res, 200, { capsules: ["assistant", ...Object.keys(connectorTitles)].map(name => ({
-      name, title: connectorTitles[name] || "Assistant", role: "app", installed: true,
+    json(res, 200, { capsules: ["assistant", "wallet", ...Object.keys(connectorTitles)].map(name => ({
+      name, title: connectorTitles[name] || (name === "wallet" ? "Wallet" : "Assistant"), role: "app", installed: true,
       launchable: true, launch_target: name,
     })) });
     return true;
@@ -359,7 +375,10 @@ const server = createServer(async (req, res) => {
       return;
     }
     const beforePath = relative(repoRoot, path);
-    const body = process.env.MARKETPLACE_OPEN_BEFORE === "1"
+    const body = process.env.MARKETPLACE_CONNECT_BEFORE === "1"
+      && ["capsules/marketplace/browser/marketplace.js", "capsules/home/browser/home-shell-host.js", "capsules/wallet/browser/wallet.js"].includes(beforePath)
+      ? execFileSync("git", ["show", `73394822a053272452f561ec0344344598ecc16c:${beforePath}`])
+      : process.env.MARKETPLACE_OPEN_BEFORE === "1"
       && ["capsules/marketplace/browser/marketplace.js", "capsules/home/browser/home-shell-host.js"].includes(beforePath)
       ? execFileSync("git", ["show", `5cc6f5b8cd55c0ae3d37bd3a56e57c04315e44a1:${beforePath}`])
       : process.env.HOME_WALLET_REFRESH_BEFORE === "1" && path === join(repoRoot, "capsules/home/browser/home-shell-host.js")
@@ -519,32 +538,130 @@ function rectangleIntersectionRatio(subject, overlay) {
 }
 
 async function checkMarketplaceOpen(page, homeGui, pageErrors) {
-  await homeGui.locator('#launcher-toggle').click();
-  await homeGui.locator('#launcher-grid [data-target="marketplace"]').click();
+  if (process.env.MARKETPLACE_OPEN_CASE === "connectors-phone") {
+    await homeGui.locator('.phone-home-app[data-target="marketplace"]').click();
+  } else {
+    await homeGui.locator('#launcher-toggle').click();
+    await homeGui.locator('#launcher-grid [data-target="marketplace"]').click();
+  }
   await waitFor(() => frameFor(page, "marketplace"), 15000, "Marketplace frame");
   const marketplace = frameFor(page, "marketplace");
   await marketplace.locator('.store-row[data-app="assistant"]').first().waitFor({timeout:5000}).catch(async error => {
     throw new Error(`${error.message}\nMarketplace: ${await marketplace.locator("body").innerText()}\nPage errors: ${JSON.stringify(pageErrors)}`);
   });
-  if (process.env.MARKETPLACE_OPEN_CASE === "connectors") {
+  if (process.env.MARKETPLACE_OPEN_CASE.startsWith("connectors")) {
+    await homeGui.evaluate(() => {
+      window.directConnectorOpens = [];
+      window.addEventListener("message", event => {
+        if (event.source === window.top && event.data?.type === "home:gui-command"
+          && event.data.command === "open-target" && event.data.target?.startsWith("wallet-")) {
+          window.directConnectorOpens.push(event.data.target);
+        }
+      });
+    });
+    // Warm Home's normal hidden rail before checking refused requests. This
+    // also proves Open works when Wallet already has a mounted frame.
+    await homeGui.evaluate(async () => {
+      const {preloadWalletRail} = await import("./shell-wallet-rail.js?v=home-20261101d");
+      preloadWalletRail();
+    });
+    await waitFor(() => frameFor(page, "wallet"), 5000, "Home preloads Wallet rail");
+    await frameFor(page, "wallet").locator('[data-wallet-open-method="wallet-metamask"]')
+      .waitFor({state:"attached",timeout:5000});
+    const walletLaunchesBefore = state.launches.wallet;
+    await page.evaluate(() => {
+      window.walletOpens = [];
+      window.addEventListener("message", event => {
+        if (event.data?.type === "home:open-target" && event.data.homeToken?.startsWith("fixture-wallet-token-")) {
+          window.walletOpens.push(event.data.target);
+        }
+      });
+    });
+    // Even a valid Marketplace token cannot launch a connector directly or
+    // turn a malformed Wallet query into a connection command.
+    await marketplace.evaluate(targets => {
+      const homeToken = new URLSearchParams(location.hash.slice(1)).get("home_token");
+      const origin = new URLSearchParams(location.search).get("home_origin");
+      const send = message => top.postMessage({homeToken, ...message}, origin);
+      for (const target of targets) send({type:"home:open-target", target});
+      for (const query of [null, [], {}, {connect:"browser"}, {connect:targets[0], extra:true}]) {
+        send({type:"home:open-target", target:"wallet", query});
+      }
+      for (const type of ["home:deliver-to-target", "home:open-target-with-payload"]) {
+        send({type, target:"wallet", payload:{type:"elastos.wallet.connect/v1", target:targets[0]}});
+      }
+    }, Object.keys(connectorTitles));
+    await page.waitForTimeout(300);
+    assert(await homeGui.evaluate(() => window.directConnectorOpens.length === 0),
+      "Home refuses direct connector targets before sending a GUI launch command");
+    assert(state.launches.wallet === walletLaunchesBefore && Object.keys(connectorTitles).every(target => state.launches[target] === 0),
+      "direct connector launches and malformed or generic handoffs stay blocked");
     for (const destination of ["discover", "installed"]) {
       await marketplace.locator(`.store-nav-item[data-destination="${destination}"]`).click();
       for (const [target, title] of Object.entries(connectorTitles)) {
-        const row = marketplace.locator(`.store-row[data-app="${target}"]`);
-        assert(await row.count() >= 1, `${title} stays listed in ${destination}`);
-        assert(await row.locator('[data-action="open"]').count() === 0,
-          `${title} must direct the person to Wallet instead of offering Open`);
-        assert((await row.first().innerText()).includes("Connect in Wallet"), `${title} row explains where to connect`);
-        await row.locator('.store-row-title').first().click();
-        await marketplace.locator('#detail-modal').waitFor({state:"visible"});
-        const detail = marketplace.locator('#detail-content');
-        assert(await detail.locator('[data-action="open"]').count() === 0, `${title} detail offers no standalone Open`);
-        assert((await detail.innerText()).includes(`Open Wallet and choose Connect beside ${title}.`),
-          `${title} detail gives the complete next step`);
-        await detail.locator('[data-action="close-detail"]').first().click();
+        const row = marketplace.locator(`.store-row[data-app="${target}"]`).first();
+        assert(await row.count() === 1, `${title} stays listed in ${destination}`);
+        const launchesBefore = state.launches[target];
+        if (destination === "discover") {
+          await row.locator('[data-action="open"]').click({timeout:5000});
+        } else {
+          await row.locator('.store-row-title').click();
+          await marketplace.locator('#detail-content [data-action="open"]').click({timeout:5000});
+        }
+        await waitFor(() => frameFor(page, target), 5000, `${title} connection window from Marketplace`);
+        const connector = frameFor(page, target);
+        await connector.locator('[data-action="connect"]').waitFor({timeout:5000});
+        await connector.locator('[data-action="connect"]').click({trial:true,timeout:5000});
+        assert(await (await connector.frameElement()).isVisible(), `${title} connection window is visible`);
+        assert(state.launches[target] === launchesBefore + 1, `${title} uses one Runtime launch`);
+        assert(await page.evaluate(target => window.walletOpens.at(-1) === target, target),
+          `${title} launch comes from Wallet's existing open path`);
+        assert(state.launches.wallet === walletLaunchesBefore, "the mounted Wallet frame is reused");
+        assert(state.connectorEffects === 0, "opening a connection window leaves connection approval to the person");
+        // A connector app cannot impersonate Marketplace, send Wallet commands,
+        // or open another connector with its own valid launch token.
+        const totalBefore = Object.values(state.launches).reduce((a,b) => a+b, 0);
+        await connector.evaluate(() => {
+          const homeToken = new URLSearchParams(location.hash.slice(1)).get("home_token");
+          const origin = new URLSearchParams(location.search).get("home_origin");
+          top.postMessage({type:"home:open-target-with-payload", target:"wallet",
+            payload:{type:"elastos.wallet.connect/v1", target:"wallet-metamask"}, homeToken}, origin);
+          top.postMessage({type:"home:open-target", target:"wallet-unisat", homeToken}, origin);
+        });
+        const wallet = frameFor(page, "wallet");
+        await wallet.evaluate(() => window.dispatchEvent(new MessageEvent("message", {
+          origin:new URLSearchParams(location.search).get("home_origin"), source:window,
+          data:{type:"elastos.wallet.connect/v1", target:"wallet-metamask"},
+        })));
+        await page.waitForTimeout(200);
+        assert(Object.values(state.launches).reduce((a,b) => a+b, 0) === totalBefore,
+          "another app and a forged Home command cannot start a connector");
+        if (process.env.MARKETPLACE_CONNECT_SCREENSHOTS) {
+          mkdirSync(process.env.MARKETPLACE_CONNECT_SCREENSHOTS, {recursive:true});
+          await page.screenshot({path:join(process.env.MARKETPLACE_CONNECT_SCREENSHOTS,
+            `${process.env.MARKETPLACE_OPEN_CASE}-${destination}-${target}.png`)});
+        }
+        await homeGui.locator(`.window[data-target="${target}"] [data-action="close"]`).click();
+        await waitFor(() => !frameFor(page, target), 5000, `${title} window closes`);
+        if (destination === "installed") {
+          await marketplace.locator('#detail-content [data-action="close-detail"]').first().click();
+        }
       }
     }
-    assert(Object.keys(connectorTitles).every(target => state.launches[target] === 0), "Browsing connectors launches none");
+    // The Wallet app card still has its ordinary Open, without a connector query.
+    await marketplace.locator('.store-row[data-app="wallet"] [data-action="open"]').first().click();
+    await homeGui.locator('.window[data-target="wallet"] iframe').waitFor({state:"visible",timeout:5000});
+    await homeGui.frameLocator('.window[data-target="wallet"] iframe')
+      .locator('[data-wallet-open-method="wallet-metamask"]').waitFor({state:"attached",timeout:5000});
+    assert(state.launches.wallet === walletLaunchesBefore + 1, "ordinary Wallet Open uses its normal launch path");
+    await homeGui.locator('.window[data-target="wallet"] [data-action="close"]').click();
+    await homeGui.locator('.window[data-target="wallet"]').waitFor({state:"detached"});
+    await marketplace.locator('.store-row[data-app="wallet-metamask"] [data-action="open"]').first().click();
+    await waitFor(() => frameFor(page, "wallet-metamask"), 5000, "connector Open after closing Wallet");
+    await frameFor(page, "wallet-metamask").locator('[data-action="connect"]').click({trial:true,timeout:5000});
+    assert(state.launches.wallet === walletLaunchesBefore + 2,
+      "Home opens a fresh Wallet after both the rail and window have retired");
+    await homeGui.locator('.window[data-target="wallet-metamask"] [data-action="close"]').click();
   } else {
     // A plain Open is distinct from a model selection. Model handoffs retain their narrow contract.
     for (const query of [null, [], {}, {offer_id:"model:private"}, {model_cid:"bad"}, {authority:"new"}]) {
@@ -564,6 +681,13 @@ async function checkMarketplaceOpen(page, homeGui, pageErrors) {
     assert(await (await assistant.frameElement()).isVisible(), "Assistant app frame is visible");
     const query = new URL(assistant.url()).searchParams;
     assert(!query.has("model_cid") && !query.has("offer_id"), "plain Open selects no model");
+    await assistant.evaluate(() => top.postMessage({type:"home:open-target", target:"wallet",
+      query:{connect:"wallet-metamask"},
+      homeToken:new URLSearchParams(location.hash.slice(1)).get("home_token")},
+      new URLSearchParams(location.search).get("home_origin")));
+    await page.waitForTimeout(200);
+    assert(Object.keys(connectorTitles).every(target => state.launches[target] === 0),
+      "another app cannot use Marketplace's Wallet connection handoff");
     const bounds = await homeGui.locator('#assistant-face').boundingBox();
     const viewport = await homeGui.evaluate(() => ({width:innerWidth,height:innerHeight}));
     assert(bounds && bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= viewport.width
@@ -596,7 +720,9 @@ try {
     ],
     } : {}),
   });
-  const context = await browser.newContext(process.env.MARKETPLACE_OPEN_CASE ? { reducedMotion: "reduce" } : {});
+  const context = await browser.newContext(process.env.MARKETPLACE_OPEN_CASE
+    ? { reducedMotion: "reduce", ...(process.env.MARKETPLACE_OPEN_CASE === "connectors-phone"
+      ? {viewport:{width:390,height:844}} : {}) } : {});
   const page = await context.newPage();
   const pageErrors = [];
   page.on("pageerror", (error) => pageErrors.push(String(error?.stack || error)));
