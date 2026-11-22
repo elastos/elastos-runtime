@@ -329,6 +329,7 @@ fn issue_home_launch_token_at_with_identity(
             .min(expiry),
         None => grant_bound_token_expiry(data_dir, context, issued_at, HOME_LAUNCH_TOKEN_TTL_SECS)?,
     };
+    crate::auth::prepare_principal_root_lifecycle(data_dir)?;
     let (signing_key, _did) = elastos_identity::load_or_create_did(data_dir)?;
     let envelope = HomeLaunchTokenEnvelope {
         payload: HomeLaunchTokenPayload {
