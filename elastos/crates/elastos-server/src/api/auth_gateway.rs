@@ -5477,11 +5477,9 @@ mod tests {
                     .unwrap();
                     router.layer(Extension(ConnectInfo(peer)))
                 };
-                let request = |path: &str,
-                               cookie: &str,
-                               ceremony: &str,
-                               body: serde_json::Value| {
-                    Request::builder()
+                let request =
+                    |path: &str, cookie: &str, ceremony: &str, body: serde_json::Value| {
+                        Request::builder()
                         .method("POST")
                         .uri(path)
                         .header("origin", origin)
@@ -5495,7 +5493,7 @@ mod tests {
                         .header("x-elastos-owner-ceremony", ceremony)
                         .body(Body::from(body.to_string()))
                         .unwrap()
-                };
+                    };
                 let app = make_router();
                 let intent = json!({"purpose": "create", "public_name": "Shared Name"});
                 let begin_body = if direct {
