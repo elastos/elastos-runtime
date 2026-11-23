@@ -319,9 +319,9 @@ fs.writeFileSync(output + '/signing-input.json', JSON.stringify({ source: { comm
     args() { return JSON.parse(readFileSync(env.ARGUMENT_LOG)); } };
 }
 
-// Match the supervisor's 20-minute file ceiling; each command retains its
-// own 60-second deadline while fixtures share the Mac with the behaviour suite.
-describe('release publication', { concurrency: 6, timeout: 1_200_000 }, () => {
+// Six concurrent fixtures took 108.05s on the Mac. Allow 180s (66%
+// headroom) under the shared build lease; each command keeps its 60s deadline.
+describe('release publication', { concurrency: 6, timeout: 180_000 }, () => {
 for (const selected of [[], ['aarch64-darwin', 'x86_64-linux'], ['aarch64-darwin']]) {
   test(`prepare passes each platform once: ${selected.join(',') || 'all'}`, async t => {
     const f = fixture(t);

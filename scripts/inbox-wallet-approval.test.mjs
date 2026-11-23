@@ -7,6 +7,38 @@ import {extname,resolve} from "node:path";
 import {requireProductSmokePlaywright} from "./product-smoke-browser.mjs";
 const root=resolve(import.meta.dirname,"..");
 
+// Read declarations as data; the browser test below executes the real client.
+// Resolve Runtime constants at their definitions so changes there also fail parity.
+test("Inbox client and Runtime use the same positive action prefixes and exact actions", async()=>{
+ const [client,runtime,lens,gateway]=await Promise.all([
+  "capsules/inbox/browser/inbox.js",
+  "elastos/crates/elastos-server/src/api/gateway_inbox.rs",
+  "elastos/crates/elastos-server/src/jev_approval_lens.rs",
+  "elastos/crates/elastos-server/src/api/gateway.rs",
+ ].map(path=>readFile(resolve(root,path),"utf8")));
+ const constant=(source,name)=>{
+  const match=source.match(new RegExp(`const ${name}: &str = "([^"\\n]+)";`));
+  assert.ok(match,`${name} has one string definition`);
+  return match[1];
+ };
+ const constants={
+  "crate::jev_approval_lens::HOSTED_HTTP_APPROVE_PREFIX":constant(lens,"HOSTED_HTTP_APPROVE_PREFIX"),
+  WALLET_PRICE_HTTP_APPROVE_ACTION_ID:constant(gateway,"WALLET_PRICE_HTTP_APPROVE_ACTION_ID"),
+ };
+ const declaration=source=>{
+  const match=source.match(/(?:const|let) positive = \[([\s\S]*?)\]\s*\.(?:some|iter)[\s\S]*?\|\| action(?:_id|Id) ===? ([^;]+);/);
+  assert.ok(match,"positive action declaration has prefixes and an exact action");
+  const value=token=>{
+   token=token.trim();
+   if(/^"[^"\n]+"$/.test(token))return JSON.parse(token);
+   assert.ok(Object.hasOwn(constants,token),`known Runtime constant: ${token}`);
+   return constants[token];
+  };
+  return {prefixes:match[1].split(",").map(s=>s.trim()).filter(Boolean).map(value).sort(),exact:value(match[2])};
+ };
+ assert.deepEqual(declaration(client),declaration(runtime));
+});
+
 test("Inbox wallet sessions approve each positive permission with its exact action and recover from Cancel", async()=>{
  const positives=["community-presence-always:test","community-presence-open:test","contact-accept-request:test","room-approve-request:test","capability-approve-request:test","service-approve-request:test","model-egress-approve:test","hosted-http-approve:test","wallet-price-http-approve:coingecko"];
  let action=positives[0],wallet=true;const writes=[];

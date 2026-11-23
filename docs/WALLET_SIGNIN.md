@@ -208,7 +208,7 @@ Existing add-passkey and full Recovery Kit export contracts retain their step-up
 token fields. Wallet sessions use their account's passkey for those approvals.
 Kit recovery continues through the passkey recovery path.
 
-WalletConnect add may begin with an empty address and chain_id 0, then call the
+WalletConnect add begins with an empty address and chain_id 20, then calls the
 same `/api/auth/wallet/signin/select` route with the management ceremony and its
 browser secret. Runtime retains the account and action across selection. Removal
 and switch off grant zero temporary relay authority. Wallet responses include

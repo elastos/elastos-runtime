@@ -1,7 +1,7 @@
 {
   "$comment": "N1 and N2 messages have not yet had their human security review and may change. Test data grants no authority. All accept labels assume the exact registered source, opaque origin, current token, nonce/generation and lifetime checks pass. N4 fields are additions to an otherwise verified body; N7 summaries are private display projections, not proof.",
   "schema": "elastos.test.wallet-connector-v2-messages/v1",
-  "contractCommit": "c81a0c6db58dd13df1512e4bec43aca9941c2642",
+  "contractCommit": "b8dd43c3d3c71c5d57f87a3978aa314152d99454",
   "contracts": {
     "docs/HOME_SHELL_HOST_CONTRACT.md": "b2e46723d9a7355efeb710b9f7a3dcd291801c90a6806e6ea5a5a75cc7cdff0e",
     "docs/WALLET_PROVIDER.md": "8ed4f4a25b0f9367a4e812cf79db8d81b130033925a26997a7a5ebffaa82039f"

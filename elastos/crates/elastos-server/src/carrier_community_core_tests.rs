@@ -761,9 +761,13 @@ async fn community_core_real_more_than_120_rebuilds_release_owned_resources() {
         "only the current gossip connection remains"
     );
     if let (Some(before), Some(after)) = (before_sockets, after_sockets) {
+        // /proc/self/fd includes sockets from parallel tests. Allow a fixed
+        // 16-socket scheduling margin (observed noise: 1-5), well below the
+        // >120 rebuilds: leaking even one socket per rebuild still fails.
+        // Fixture-owned actor, task, connection and lookup checks stay exact.
         assert!(
-            after <= before,
-            "socket descriptors stay bounded: {before} -> {after}"
+            after.saturating_sub(before) <= 16,
+            "socket descriptors stay bounded (growth <= 16): {before} -> {after}"
         );
     }
     assert!(rebuilt > 120, "rebuilds continue:{rebuilt}");
