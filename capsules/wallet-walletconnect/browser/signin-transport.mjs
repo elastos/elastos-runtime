@@ -1,5 +1,6 @@
 // One opaque document owns one temporary SDK and its Runtime transport.
 import { connectWithView } from './walletconnect-pairing.mjs';
+import { createSigninTransportApi } from './signin-transport-api.mjs';
 const homeOrigin=new URLSearchParams(location.search).get('home_origin');
 let provider,adapter,identity,connecting=false;
 const fault=code=>Object.assign(new Error(code),{code});
@@ -19,15 +20,7 @@ const check=async()=>{
 async function connect(transport) {
   if(connecting || provider)throw fault('invalid');connecting=true;
   if(typeof transport?.attempt_token!=='string' || typeof transport.instance_id!=='string' || (!Number.isSafeInteger(transport.storage_revision)||transport.storage_revision<0))throw fault('invalid');
-  const api=async(resource,init={})=>{
-    if(!['wallet/config','storage','relay-admission'].includes(resource))throw fault('invalid');
-    const response=await fetch(`${homeOrigin}/api/apps/wallet-walletconnect/${resource}`,{
-      ...init,signal:AbortSignal.timeout(15000),headers:{'content-type':'application/json','x-elastos-wallet-attempt':transport.attempt_token,'x-elastos-wallet-instance':transport.instance_id,
-        'if-match':`"${transport.storage_revision}"`,...init.headers},
-    });
-    if(!response.ok)throw Object.assign(new Error('Runtime transport refused'),{status:response.status});
-    return response.json();
-  };
+  const api=createSigninTransportApi(homeOrigin,transport);
   transportExpiry=Math.min(Date.now()/1000+180,transport.expires_at);
   const config=await api('wallet/config');
   adapter=await import('./vendor/reown-appkit.js');

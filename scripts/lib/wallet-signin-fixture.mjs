@@ -10,7 +10,7 @@ export async function signinFixture() {
   const state={methods:['metamask','unisat','walletconnect'].map(connector=>sampleMethod(connector,true)),calls:[],ceremonies:new Map(),scenario:'normal',signed:false,passkeyCount:1,serial:0,role:'admin',stepUps:new Map()};
   let origin;
   const server=http.createServer(async(req,res)=>{
-    res.setHeader('access-control-allow-origin','*');res.setHeader('access-control-allow-headers','content-type,x-elastos-home-token,x-elastos-step-up-token,x-elastos-wallet-attempt,x-elastos-wallet-instance,if-match');res.setHeader('access-control-allow-methods','GET,POST,DELETE,OPTIONS');
+    res.setHeader('access-control-allow-origin','*');res.setHeader('access-control-expose-headers','etag');res.setHeader('access-control-allow-headers','content-type,x-elastos-home-token,x-elastos-step-up-token,x-elastos-wallet-attempt,x-elastos-wallet-instance,if-match');res.setHeader('access-control-allow-methods','GET,POST,DELETE,OPTIONS');
     let call;const json=(body,status=200)=>{if(call)call.status=status;res.writeHead(status,{'content-type':'application/json'}).end(JSON.stringify(body));};
     if(req.method==='OPTIONS'){res.writeHead(204).end();return;}
     const url=new URL(req.url,origin),path=url.pathname;
@@ -111,7 +111,13 @@ export async function signinFixture() {
         if(path.startsWith('/api/apps/wallet-walletconnect/')) {
           const c=[...state.ceremonies.values()].find(c=>c.instance_id===req.headers['x-elastos-wallet-instance']);
           if(!c||c.cancelled||now>=c.expires_at||req.headers['x-elastos-wallet-attempt']!==c.attempt_token)return json({},403);
-          if(req.headers['if-match']!=='"0"')return json({},409);
+          call.transportRevision=c.revision||0;
+          if(req.headers['if-match']!==`"${call.transportRevision}"`)return json({},409);
+          if(path.endsWith('/storage')) {
+            c.values ||= {};
+            if(req.method==='POST'){if(body.value===null)delete c.values[body.key];else c.values[body.key]=body.value;c.revision=call.transportRevision+1;}
+            res.setHeader('etag',`"${c.revision||0}"`);return json(c.values);
+          }
         }
         if(path==='/api/apps/wallet-walletconnect/wallet/config')return json({walletconnect:{project_id:'fixture-project'}});
         if(path==='/api/apps/wallet-walletconnect/storage')return json({});
@@ -162,7 +168,7 @@ const provider={connected:false,session:null,signer:{client:{core:{relayer:{tran
  async connect(){listeners.get('display_uri')?.('wc:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@2?relay-protocol=irn&symKey=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');await new Promise(resolve=>callback=resolve);this.connected=true;this.session={expiry:Date.now()/1000+180};},
  async request({method,params}){await fetch('/api/fixture-sdk',{method:'POST',body:JSON.stringify({method,params})});if(method==='eth_accounts')return [account];if(method==='eth_chainId')return chainOverride??chain;if(method==='personal_sign'){if(holdSignature)await new Promise(()=>{});return 'fixture-signature';}}};
 addEventListener('message',event=>{if(event.source!==parent)return;if(event.data==='fixture-pair')callback?.();if(event.data==='fixture-sign-pending')holdSignature=true;if(event.data?.type==='fixture-network')chainOverride=event.data.chain;if(event.data==='fixture-account-change'){account='0x'+'34'.repeat(20);listeners.get('accountsChanged')?.([account]);}});
-export async function restoreWalletConnectEvm(options){if(options.authenticationOnly!==true)throw new Error('Sign-in needs authentication-only pairing');await options.api('storage');await options.api('relay-admission',{method:'POST'});return provider;}
+export async function restoreWalletConnectEvm(options){if(options.authenticationOnly!==true)throw new Error('Sign-in needs authentication-only pairing');await options.api('storage');await Promise.all([options.api('storage',{method:'POST',body:JSON.stringify({key:'fixture:first',value:1})}),options.api('storage',{method:'POST',body:JSON.stringify({key:'fixture:second',value:2})}),options.api('relay-admission',{method:'POST'})]);return provider;}
 `);return;
       }
       let file;
