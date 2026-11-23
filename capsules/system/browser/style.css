@@ -963,24 +963,74 @@ input[type="file"].visually-hidden {
   font-size: 12px;
 }
 
+.account-toolbar,
+.account-add-actions,
+.account-header,
+.account-identity,
+.account-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.account-toolbar,
+.account-header {
+  justify-content: space-between;
+}
+
+.account-toolbar {
+  margin-bottom: 16px;
+}
+
+.account-add-actions {
+  gap: 8px;
+}
+
+.account-add-actions .system-button {
+  min-width: 108px;
+  min-height: 44px;
+}
+
 .account-list {
-  overflow-x: auto;
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.account-block {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--el-hairline);
+  border-radius: 8px;
+}
+
+.account-header {
+  padding: 16px;
+  border-bottom: 1px solid var(--el-hairline);
+}
+
+.account-identity {
+  min-width: 0;
+  gap: 8px;
+}
+
+.account-identity h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 .account-table {
   width: 100%;
-  min-width: 34rem;
   border-collapse: collapse;
-  background: var(--el-inset);
-  border: 1px solid var(--el-hairline);
-  border-radius: 8px;
-  overflow: hidden;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .account-table th,
 .account-table td {
-  padding: 8px 10px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--el-hairline);
   text-align: left;
   vertical-align: middle;
@@ -988,10 +1038,9 @@ input[type="file"].visually-hidden {
 
 .account-table th {
   color: var(--el-muted);
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
 }
 
 .account-table tr:last-child td {
@@ -1000,49 +1049,56 @@ input[type="file"].visually-hidden {
 
 .account-name-wrap {
   display: grid;
-  gap: 2px;
+  justify-items: start;
+  gap: 4px;
   min-width: 0;
-}
-
-.account-name-wrap strong,
-.account-name-wrap small {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .account-name-wrap strong {
   color: var(--el-text);
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 500;
 }
 
 .account-name-wrap small,
 .account-used {
   color: var(--el-muted);
-  font-size: 11px;
+  font-size: 12px;
+}
+
+.account-used {
+  white-space: nowrap;
+}
+
+.account-name-wrap .passkey-current {
+  color: var(--el-text);
 }
 
 .account-role {
-  display: inline-flex;
-  align-items: center;
-  max-width: 100%;
-  padding: 3px 7px;
-  border: 1px solid var(--el-hairline);
-  border-radius: 999px;
-  background: var(--el-inset);
   color: var(--el-muted);
-  font-size: 11px;
+  font-size: 12px;
   white-space: nowrap;
 }
 
 .passkey-removal-note {
-  max-width: 24rem;
+  max-width: 13rem;
   margin: 4px 0 0;
   color: var(--el-muted);
   font-size: 12px;
-  line-height: 1.5;
+  line-height: 1.4;
   overflow-wrap: anywhere;
+}
+
+.account-block .system-button,
+.account-block .signin-switch {
+  min-height: 44px;
+}
+
+:root .account-block button:focus-visible:not(:disabled),
+:root .account-add-actions button:focus-visible:not(:disabled) {
+  outline: 2px solid var(--el-focus);
+  outline-offset: 2px;
 }
 
 #passkey-remove-dialog {
@@ -1079,27 +1135,39 @@ input[type="file"].visually-hidden {
   margin-top: 20px;
 }
 
-.account-role[data-role="admin"] {
-  border-color: color-mix(in srgb, var(--el-brand) 45%, transparent);
-  background: color-mix(in srgb, var(--el-brand) 16%, transparent);
-  color: var(--el-brand-strong);
-}
-
 .account-actions-cell {
   width: 1%;
 }
 
 .account-actions {
-  display: inline-flex;
-  flex-wrap: nowrap;
-  gap: 4px;
-  justify-content: flex-end;
-  white-space: nowrap;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
 }
 
-.passkey-promote,
-.passkey-demote,
-.passkey-remove,
+.account-actions > button {
+  flex-shrink: 0;
+}
+
+.account-actions:has(.passkey-removal-note) {
+  min-width: 11rem;
+}
+
+.account-header-actions {
+  margin-left: auto;
+  justify-content: flex-end;
+}
+
+.account-block .signin-method-controls {
+  display: grid;
+  grid-template-columns: auto auto;
+}
+
+.account-block .signin-method-note {
+  grid-column: 1 / -1;
+  white-space: normal;
+}
+
 .recovery-pending-actions .pc2-btn {
   padding: 4px 8px;
 }
@@ -1738,8 +1806,8 @@ input[type="file"].visually-hidden {
     min-width: 0;
   }
 
-  .account-list {
-    overflow-x: visible;
+  .account-header {
+    align-items: flex-start;
   }
 
   .account-table,
@@ -1756,28 +1824,37 @@ input[type="file"].visually-hidden {
   }
 
   .account-table tr {
-    margin-bottom: 6px;
-    padding: 8px;
-    border: 1px solid var(--el-hairline);
-    border-radius: 8px;
-    background: var(--el-inset);
+    padding: 16px;
+    border-bottom: 1px solid var(--el-hairline);
   }
 
-  .account-table td {
-    display: grid;
-    grid-template-columns: 5rem minmax(0, 1fr);
-    gap: 8px;
-    padding: 4px 0;
+  .account-table tr:last-child {
     border-bottom: 0;
   }
 
-  .account-table td::before {
-    content: attr(data-label);
-    color: var(--el-muted);
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0;
+  .account-table td {
+    padding: 0;
+    border: 0;
+  }
+
+  .account-table .account-used {
+    margin: 8px 0 12px;
+  }
+
+  .account-used::before {
+    content: "Last used: ";
+  }
+
+  .account-actions {
+    align-items: flex-start;
+  }
+
+  .account-header-actions {
+    margin-left: 0;
+  }
+
+  .account-block .signin-method-controls {
+    justify-content: start;
   }
 
   .network-row,
@@ -1935,10 +2012,4 @@ input[type="file"].visually-hidden {
 
 :root[data-el-form-factor="phone"] [data-settings="models"] summary {
   line-height: var(--el-touch-target);
-}
-
-.account-name-wrap .passkey-added,
-.account-name-wrap .passkey-current {
-  white-space: normal;
-  overflow-wrap: anywhere;
 }

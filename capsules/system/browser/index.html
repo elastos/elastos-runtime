@@ -79,16 +79,14 @@
             <h1 id="accounts-title" class="pc2-section-title">Accounts</h1>
             <div class="pc2-group">
               <div class="pc2-group-row">
-                <div class="pc2-card-row">
-                  <div>
-                    <div class="pc2-card-label">Sign-in methods</div>
-                    <div class="pc2-card-sublabel">Passkeys and wallets for your Home account.</div>
+                <div class="account-toolbar">
+                  <div class="pc2-card-label">Sign-in methods</div>
+                  <div class="account-add-actions">
+                    <button id="wallet-signin-add" class="system-button system-button-secondary" type="button" hidden>Add wallet</button>
+                    <button id="passkey-add" class="system-button system-button-secondary" type="button" hidden>Add passkey</button>
                   </div>
-                  <span class="pc2-card-value system-value-muted" data-field="passkey-status" hidden></span>
-                  <button id="wallet-signin-add" class="system-button system-button-secondary" type="button" hidden>Add wallet</button>
-                  <button id="passkey-add" class="system-button system-button-secondary" type="button" hidden>Add passkey</button>
                 </div>
-                <p id="passkey-add-help" class="pc2-card-sublabel" hidden>Your browser will offer where to save the passkey, including a phone or tablet.</p>
+                <p class="system-value-muted" data-field="passkey-status" hidden></p>
                 <div id="account-list" class="account-list" aria-live="polite">Loading sign-in methods…</div>
                 <dl class="system-fields compact-proof">
                   <div><dt>Accounts</dt><dd></dd></div>

@@ -1,4 +1,5 @@
-import { readWalletSigninMethods, requestWalletSigninChange, walletSigninTableRow, watchWalletSigninMethods } from "/apps/home/wallet-signin-methods.mjs?v=wallet-signin-1";
+import { readWalletSigninMethods, requestWalletSigninChange, walletSigninControls, watchWalletSigninMethods } from "/apps/home/wallet-signin-methods.mjs?v=wallet-signin-1";
+import { connectorName, walletNetwork, shortWalletAddress } from "/apps/home/wallet-signin-flow.mjs?v=wallet-signin-1";
 import { createTransferProgress, announceTransferProgress } from "./transfer-progress.js?v=download-progress-20261112";
 import {
   gatePreviewAuditView,
@@ -2574,109 +2575,106 @@ function renderAccounts(accounts) {
     .filter((account) => readText(account.role) === "admin")
     .map((account) => readText(account.principal_id))).size;
   const currentPrincipalId = walletSigninMethods.account_id || readText(activeAccounts.find((account) => account.current)?.principal_id);
-  const table = document.createElement("table");
-  table.className = "account-table";
-  table.innerHTML = `
-    <thead>
-      <tr>
-        <th scope="col">Account</th>
-        <th scope="col">Role</th>
-        <th scope="col">Sign-in</th>
-        <th scope="col">Last used</th>
-        <th scope="col">Actions</th>
-      </tr>
-    </thead>
-  `;
-  const body = document.createElement("tbody");
-  for (const account of activeAccounts) {
-    body.append(accountRow(account, {
-      adminPasskeyCount,
-      adminAccountCount,
-      currentPrincipalId,
-      accountPasskeyCount:activeAccounts.filter(row => row.principal_id === account.principal_id).length,
-    }));
+  const groups = new Map();
+  for (const passkey of activeAccounts) {
+    const id = readText(passkey.principal_id);
+    if (!groups.has(id)) groups.set(id, []);
+    groups.get(id).push(passkey);
   }
-  const ownPasskey = activeAccounts.find(row => row.principal_id === walletSigninMethods.account_id);
-  for (const method of walletSigninMethods.methods) {
-    body.append(walletSigninTableRow(method, {account:ownPasskey?.display_name || currentProfileName,
-      role:passkeyRoleLabel(ownPasskey?.role),formatUsedAt:formatTimestamp,canManage:currentAccess.role === "admin",onAction:changeWalletSignin,
-      buttonClass:"system-button system-button-secondary"}));
+  for (const [id, passkeys] of groups) {
+    const account = passkeys[0];
+    const block = document.createElement("section");
+    block.className = "account-block";
+    const header = document.createElement("div");
+    header.className = "account-header";
+    const identity = document.createElement("div");
+    identity.className = "account-identity";
+    const name = document.createElement("h2");
+    name.textContent = readText(account.display_name)
+      || (id === currentPrincipalId ? currentProfileName || "Current account" : "Account");
+    const role = document.createElement("span");
+    role.className = "account-role";
+    role.dataset.role = readText(account.role) || "guest";
+    role.textContent = passkeyRoleLabel(account.role);
+    identity.append(name, role);
+    const accountActions = document.createElement("div");
+    accountActions.className = "account-header-actions";
+    header.append(identity, accountActions);
+    const table = document.createElement("table");
+    table.className = "account-table";
+    table.setAttribute("aria-label", `${name.textContent}: sign-in methods`);
+    table.innerHTML = `<thead><tr><th scope="col">Method</th><th scope="col">Last used</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>`;
+    const body = document.createElement("tbody");
+    const labels = passkeys.map(passkey => readText(passkey.added_from).split(" (added from ")[0] || "Passkey");
+    for (const [index, passkey] of passkeys.entries()) {
+      const label = labels[index];
+      const repeated = labels.filter(value => value === label).length > 1;
+      body.append(accountRow(passkey, {
+        adminPasskeyCount, adminAccountCount, currentPrincipalId,
+        accountPasskeyCount: passkeys.length,
+        accountActions: index === 0 ? accountActions : null,
+        methodName: repeated ? `${label} ${labels.slice(0, index + 1).filter(value => value === label).length}` : label,
+      }));
+    }
+    if (id === walletSigninMethods.account_id) {
+      for (const method of walletSigninMethods.methods) body.append(walletAccountRow(method));
+    }
+    table.append(body);
+    block.append(header, table);
+    accountListNode.append(block);
   }
-  table.append(body);
-  accountListNode.append(table);
 }
 
 function accountRow(passkey, listState = {}) {
   const row = document.createElement("tr");
   row.className = "account-row";
-
-  const nameCell = accountCell("Account", "account-name");
+  const nameCell = accountCell("Method", "account-name");
   const nameWrap = document.createElement("div");
   nameWrap.className = "account-name-wrap";
-
   const title = document.createElement("strong");
-  const role = passkeyRoleLabel(passkey.role);
-  const label = readText(passkey.display_name)
-    || (passkey.current ? currentProfileName || "Current account" : "Account");
-  title.textContent = label;
-
+  title.className = "passkey-name";
+  title.textContent = listState.methodName;
   nameWrap.append(title);
   const added = document.createElement("small");
   added.className = "passkey-added";
-  const addedFrom = readText(passkey.added_from);
-  added.textContent = `Added ${formatTimestamp(passkey.created_at, { year: "numeric", second: "2-digit" })}${addedFrom ? ` · ${addedFrom}` : ""}`;
+  added.textContent = `Added ${formatAccountDate(passkey.created_at)}`;
+  nameWrap.title = `${readText(passkey.added_from) || "Passkey"} · Added ${formatTimestamp(passkey.created_at, { year: "numeric" })}`;
   nameWrap.append(added);
   if (passkey.current) {
     const current = document.createElement("small");
     current.className = "passkey-current";
-    current.textContent = "This window signed in with this passkey";
+    current.textContent = "This passkey";
     nameWrap.append(current);
   }
   nameCell.append(nameWrap);
-
-  const roleCell = accountCell("Role", "account-role-cell");
-  const roleBadge = document.createElement("span");
-  roleBadge.className = "account-role";
-  roleBadge.dataset.role = readText(passkey.role) || "guest";
-  roleBadge.textContent = role;
-  roleCell.append(roleBadge);
-
-  const methodCell = accountCell("Sign-in", "account-method");
-  methodCell.textContent = "Passkey";
-
   const usedCell = accountCell("Last used", "account-used");
-  usedCell.textContent = passkey.last_used_at ? formatTimestamp(passkey.last_used_at) : "Not used yet";
-
+  usedCell.textContent = passkey.last_used_at ? formatAccountDate(passkey.last_used_at) : "Not used yet";
   const actions = document.createElement("div");
   actions.className = "account-actions";
-
   const passkeyRole = readText(passkey.role);
   const canManagePasskeyRoles = currentAccess.role === "admin";
   const adminAccountCount = Number(listState.adminAccountCount);
   const ownAccount = Boolean(listState.currentPrincipalId)
     && readText(passkey.principal_id) === listState.currentPrincipalId;
-  if (canManagePasskeyRoles && passkeyRole === "guest") {
+  if (listState.accountActions && canManagePasskeyRoles && passkeyRole === "guest") {
     const promote = document.createElement("button");
     promote.className = "system-button system-button-secondary passkey-promote";
     promote.type = "button";
     promote.textContent = "Make admin";
     promote.dataset.passkeyPromote = passkey.proof_binding_id || "";
     promote.disabled = !promote.dataset.passkeyPromote || !hasShellAccess();
-    actions.append(promote);
+    listState.accountActions.append(promote);
   }
-  if (canManagePasskeyRoles && passkeyRole === "admin" && !passkey.current && !ownAccount) {
+  if (listState.accountActions && canManagePasskeyRoles && passkeyRole === "admin" && !passkey.current && !ownAccount) {
     const demote = document.createElement("button");
     demote.className = "system-button system-button-secondary passkey-demote";
     demote.type = "button";
     demote.textContent = "Make guest";
     demote.dataset.passkeyDemote = passkey.proof_binding_id || "";
     demote.disabled = !demote.dataset.passkeyDemote || !hasShellAccess() || adminAccountCount <= 1;
-    if (adminAccountCount <= 1) {
-      demote.title = "At least one admin must remain.";
-    }
-    actions.append(demote);
+    if (adminAccountCount <= 1) demote.title = "At least one admin must remain.";
+    listState.accountActions.append(demote);
   }
-
   const remove = document.createElement("button");
   remove.className = "system-button system-button-secondary passkey-remove";
   remove.type = "button";
@@ -2691,16 +2689,16 @@ function accountRow(passkey, listState = {}) {
   remove.disabled = !remove.dataset.passkeyRevoke || !hasShellAccess() || protectsLastAdmin;
   const protectsLastPasskey = Number(listState.accountPasskeyCount) <= 1;
   if (protectsLastPasskey) remove.disabled = true;
+  actions.append(remove);
   if (protectsLastAdmin || protectsLastPasskey) {
     const explanation = document.createElement("p");
     explanation.className = "passkey-removal-note";
     explanation.id = `passkey-removal-${passkey.proof_binding_id}`;
-    explanation.textContent = protectsLastAdmin ? LAST_ADMIN_PASSKEY_REMOVAL_MESSAGE : LAST_ACCOUNT_PASSKEY_REMOVAL_MESSAGE;
-    nameWrap.append(explanation);
+    explanation.textContent = protectsLastAdmin ? "Add another admin passkey first." : "Keep one passkey, or remove the account.";
+    actions.append(explanation);
     remove.title = explanation.textContent;
     remove.setAttribute("aria-describedby", explanation.id);
   }
-  actions.append(remove);
   if (protectsLastPasskey && (ownAccount || canManagePasskeyRoles)) {
     const removeAccount = document.createElement("button");
     removeAccount.className = "system-button system-button-secondary account-remove";
@@ -2709,24 +2707,64 @@ function accountRow(passkey, listState = {}) {
     Object.assign(removeAccount.dataset, remove.dataset, { passkeyAccountRemove: remove.dataset.passkeyRevoke });
     delete removeAccount.dataset.passkeyRevoke;
     removeAccount.disabled = !removeAccount.dataset.passkeyAccountRemove || !hasShellAccess() || protectsLastAdmin;
-    if (protectsLastAdmin) removeAccount.title = LAST_ADMIN_PASSKEY_REMOVAL_MESSAGE;
-    actions.append(removeAccount);
+    const accountAction = document.createElement("div");
+    accountAction.className = "account-actions";
+    accountAction.append(removeAccount);
+    if (protectsLastAdmin) {
+      const reason = document.createElement("p");
+      reason.className = "passkey-removal-note";
+      reason.id = `account-removal-${passkey.proof_binding_id}`;
+      reason.textContent = "Add another admin account first.";
+      removeAccount.title = reason.textContent;
+      removeAccount.setAttribute("aria-describedby", reason.id);
+      accountAction.append(reason);
+    }
+    listState.accountActions.append(accountAction);
   }
-
   const actionsCell = accountCell("Actions", "account-actions-cell");
   actionsCell.append(actions);
+  row.append(nameCell, usedCell, actionsCell);
+  return row;
+}
 
-  row.append(nameCell, roleCell, methodCell, usedCell, actionsCell);
+function walletAccountRow(method) {
+  const row = document.createElement("tr");
+  row.className = "account-row";
+  row.dataset.walletMethod = method.method_id;
+  const identity = accountCell("Method", "account-name");
+  const name = document.createElement("div");
+  name.className = "account-name-wrap";
+  const title = document.createElement("strong");
+  title.textContent = connectorName(method.connector);
+  const address = document.createElement("small");
+  address.textContent = `${shortWalletAddress(method.address)} · ${walletNetwork(method)}`;
+  name.title = method.address;
+  name.append(title, address);
+  identity.append(name);
+  const used = accountCell("Last used", "account-used");
+  used.textContent = method.last_used_at ? formatAccountDate(method.last_used_at) : "Not used yet";
+  const actions = accountCell("Actions", "account-actions-cell");
+  const controls = walletSigninControls(method, { canManage: currentAccess.role === "admin", onAction: changeWalletSignin,
+    buttonClass: "system-button system-button-secondary" });
+  // A Guest can turn an enabled method off. Explain only the disabled switch.
+  if (method.sign_in_enabled) controls.querySelector(".signin-method-note")?.remove();
+  actions.append(controls);
+  row.append(identity, used, actions);
   return row;
 }
 
 function accountCell(label, className) {
   const cell = document.createElement("td");
   cell.dataset.label = label;
-  if (className) {
-    cell.className = className;
-  }
+  cell.className = className;
   return cell;
+}
+
+function formatAccountDate(timestamp) {
+  const seconds = Number(timestamp);
+  return Number.isFinite(seconds) && seconds > 0
+    ? new Date(seconds * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+    : "recently";
 }
 
 function formatTimestamp(timestamp, options = {}) {
@@ -3780,7 +3818,6 @@ function setAccessPolicy(access) {
   // Only an owner (admin) adds passkeys; the server refuses anyone else.
   if (passkeyAddButton) {
     passkeyAddButton.hidden = !hasShellAccess() || currentAccess.role !== "admin";
-    document.getElementById("passkey-add-help").hidden = passkeyAddButton.hidden;
   }
 }
 
