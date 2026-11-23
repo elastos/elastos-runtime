@@ -38,11 +38,11 @@ export function walletSigninControls(method,{canManage,onAction,buttonClass=''})
 export function walletSigninTableRow(method,options) {
   const row=document.createElement('tr');row.className='account-row';row.dataset.walletMethod=method.method_id;
   const cell=(label,className)=>{const el=document.createElement('td');el.dataset.label=label;el.className=className;row.append(el);return el;};
-  const identity=cell('Account','account-name');identity.append(text('strong',options.account||'Your account'),text('small',`${connectorName(method.connector)} · ${shortWalletAddress(method.address)} · ${walletNetwork(method)}`,'signin-method-note'));
+  const identity=cell('Account','account-name'),name=text('div','','account-name-wrap');name.append(text('strong',options.account||'Your account'),text('small',`${connectorName(method.connector)} · ${shortWalletAddress(method.address)} · ${walletNetwork(method)}`,'signin-method-note'));identity.append(name);
   identity.title=method.address;
   cell('Role','account-role-cell').textContent=options.role||'Admin';
   const signin=cell('Sign-in','account-method');signin.append(text('span',connectorName(method.connector)));
-  cell('Last used','account-used').textContent=used(method.last_used_at);
+  cell('Last used','account-used').textContent=options.formatUsedAt&&method.last_used_at?options.formatUsedAt(method.last_used_at):used(method.last_used_at);
   cell('Actions','account-actions-cell').append(walletSigninControls(method,options));return row;
 }
 export function renderWalletSigninCards(mount,methods,options) {

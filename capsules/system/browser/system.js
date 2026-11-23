@@ -2592,7 +2592,7 @@ function renderAccounts(accounts) {
   const ownPasskey = activeAccounts.find(row => row.principal_id === walletSigninMethods.account_id);
   for (const method of walletSigninMethods.methods) {
     body.append(walletSigninTableRow(method, {account:ownPasskey?.display_name || currentProfileName,
-      role:passkeyRoleLabel(ownPasskey?.role),canManage:currentAccess.role === "admin",onAction:changeWalletSignin,
+      role:passkeyRoleLabel(ownPasskey?.role),formatUsedAt:formatTimestamp,canManage:currentAccess.role === "admin",onAction:changeWalletSignin,
       buttonClass:"system-button system-button-secondary"}));
   }
   table.append(body);
