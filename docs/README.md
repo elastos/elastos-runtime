@@ -74,16 +74,16 @@ Each top-level ledger has one job:
   cancellation, recovery, and terminal outcomes
 - [Chain provider](CHAIN_PROVIDER.md): typed chain reads, proofs, and transactions
 - [Wallet provider](WALLET_PROVIDER.md): account, proof, approval, and signing authority
-- [Protected content](PROTECTED_CONTENT.md): sealed object access sequence
+- [Protected content](PROTECTED_CONTENT.md): pool sessions, chain access, private
+  content delivery and public metadata
 - [Object protection implementation](OBJECT_PROTECTION_IMPLEMENTATION.md):
   replaceable dKMS/dDRM boundary, migration rules, delivery slices, and acceptance
 - [Protected-content v1 contracts](PROTECTED_CONTENT_CONTRACTS_V1.md): canonical
-  identity, rights, custody and release schemas
-- [Rights provider](RIGHTS_PROVIDER.md): canonical role and provisional capsule
-  retirement state
-- [Key provider](KEY_PROVIDER.md): provisional provider retirement notice
-- [Decrypt provider](DECRYPT_PROVIDER.md): canonical role and provisional
-  capsule retirement state
+  identity, rights, custody and release schemas, with the active pool-session
+  layer distinguished from v1 primitives
+- [Rights evaluation](RIGHTS_PROVIDER.md): Runtime-owned Chain rights evidence
+- [Decrypt provider](DECRYPT_PROVIDER.md): Runtime-only decrypt and media read
+  boundary
 - [Archive policy](ARCHIVE_POLICY.md): archive dependencies and family enablement
 
 ## Browser contracts and decisions

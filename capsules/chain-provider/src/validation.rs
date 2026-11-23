@@ -1,5 +1,5 @@
 use super::*;
-use elastos_protected_content_contracts::{CanonicalContract, RuntimeOperationIssuerKeyV1};
+use elastos_protected_content_contracts::RuntimeOperationIssuerKeyV1;
 use sha2::Digest;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -115,11 +115,13 @@ pub(super) fn decode_hex(
     Ok(decoded)
 }
 
-pub(super) fn decode_contract_hex<T: CanonicalContract>(
+/// Lowercase `0x` hex of at most `max_bytes` bytes, before any contract
+/// decode.
+pub(super) fn decode_contract_hex_bytes(
     value: &str,
     max_bytes: usize,
     label: &str,
-) -> Result<T, String> {
+) -> Result<Vec<u8>, String> {
     if value.strip_prefix("0x").is_none_or(|raw| {
         raw.chars()
             .any(|ch| !ch.is_ascii_lowercase() && !ch.is_ascii_digit())
@@ -130,7 +132,7 @@ pub(super) fn decode_contract_hex<T: CanonicalContract>(
     if bytes.is_empty() || bytes.len() > max_bytes {
         return Err(format!("{label} size is invalid"));
     }
-    T::from_canonical_bytes(&bytes).map_err(|err| err.to_string())
+    Ok(bytes)
 }
 
 pub(super) fn parse_runtime_issuer(value: &Value) -> Result<RuntimeOperationIssuerKeyV1, String> {

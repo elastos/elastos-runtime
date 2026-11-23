@@ -20,12 +20,19 @@ export const MAX_HOME_CLIPBOARD_TARGET_ID_CODE_UNITS = 64;
 export const MAX_HOME_CLIPBOARD_PURPOSE_CODE_UNITS = 64;
 export const MAX_HOME_CLIPBOARD_TEXT_UTF8_BYTES = 65_536;
 export const MAX_HOME_CLIPBOARD_IDENTIFIER_UTF8_BYTES = 2_048;
+// A Custody pool address: "elastos-pool:" and base64url of the signed
+// address, which can carry a Carrier connect ticket.
+export const MAX_HOME_CLIPBOARD_POOL_ADDRESS_UTF8_BYTES = 4_096;
 
 const TOKEN_PATTERN = /^[A-Za-z0-9:_-]+$/;
 const RESOURCE_URI_PATTERN =
   /^[A-Za-z][A-Za-z0-9+.-]{0,31}:[^\u0000-\u0020\u007f]+$/;
 const RESOURCE_IDENTIFIER_PATTERN =
   /^[A-Za-z0-9][A-Za-z0-9._~:/?#@!$&'()*+,;=%\[\]-]*$/u;
+// A whole fingerprint digest as Runtime reports it, never its short display.
+const FINGERPRINT_PATTERN = /^sha256:[0-9a-f]{64}$/u;
+// A pool address as Runtime encodes it: the prefix, then base64url.
+const POOL_ADDRESS_PATTERN = /^elastos-pool:[A-Za-z0-9_-]+$/u;
 
 const HOME_CLIPBOARD_RESULT_ERRORS = new Set([
   "busy",
@@ -126,6 +133,26 @@ const HOME_CLIPBOARD_TARGET_PURPOSE_POLICY = Object.freeze({
       kind: "resource-uri",
     }),
   }),
+  custody: Object.freeze({
+    // Runtime issuer, Home IDs and a node's Carrier address: ASCII tokens.
+    "custody.identifier": Object.freeze({
+      operations: Object.freeze(["write"]),
+      maxUtf8Bytes: MAX_HOME_CLIPBOARD_IDENTIFIER_UTF8_BYTES,
+      kind: "resource-identifier",
+    }),
+    // A key's, card's or pool's whole SHA-256: "sha256:" and 64 hex.
+    "custody.fingerprint": Object.freeze({
+      operations: Object.freeze(["write"]),
+      maxUtf8Bytes: 71,
+      kind: "fingerprint",
+    }),
+    // The owner's pool address, for another Home to add the pool.
+    "custody.pool_address": Object.freeze({
+      operations: Object.freeze(["write"]),
+      maxUtf8Bytes: MAX_HOME_CLIPBOARD_POOL_ADDRESS_UTF8_BYTES,
+      kind: "pool-address",
+    }),
+  }),
 });
 
 export function homeClipboardExactKeys(value, expected) {
@@ -207,6 +234,12 @@ export function homeClipboardValidWriteText(
       text === text.trim() &&
       RESOURCE_URI_PATTERN.test(text)
     );
+  }
+  if (policy.kind === "fingerprint") {
+    return FINGERPRINT_PATTERN.test(text);
+  }
+  if (policy.kind === "pool-address") {
+    return POOL_ADDRESS_PATTERN.test(text);
   }
   if (policy.kind === "resource-identifier") {
     return (

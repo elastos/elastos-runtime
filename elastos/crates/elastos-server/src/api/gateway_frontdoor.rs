@@ -234,7 +234,7 @@ pub(super) async fn gateway_admission(
             );
             response.headers_mut().insert(
                 "access-control-allow-headers",
-                HeaderValue::from_static("content-type,x-elastos-home-token,last-event-id,x-elastos-upload-offset,x-elastos-recovery-terminal,if-match,if-none-match,range"),
+                HeaderValue::from_static("content-type,x-elastos-home-token,x-elastos-action-id,last-event-id,x-elastos-upload-offset,x-elastos-recovery-terminal,if-match,if-none-match,range"),
             );
             return response;
         }

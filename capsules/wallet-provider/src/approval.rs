@@ -26,14 +26,55 @@ impl WalletProvider {
                     .iter()
                     .find(|request| request.request_id == wallet_request.request_id)?;
                 let authority_binding = wallet_authority_binding(&wallet_request.authority);
+                // Who is asking, and on whose authority, can never differ --
+                // that is substitution, and no state of the existing request
+                // excuses it.
                 if existing.principal_id != wallet_request.authority.principal_id
-                    || existing.wallet_request_sha256 != wallet_request.request_sha256
                     || existing.authority_binding != authority_binding
                 {
                     return Some(Response::error(
                         "approval_identity_conflict",
                         "Wallet approval identity was reused with substituted semantics or authority",
                     ));
+                }
+                if existing.wallet_request_sha256 != wallet_request.request_sha256 {
+                    // A DELIBERATE narrowing of replay protection, and the
+                    // only case where one request id may carry two different
+                    // requests.
+                    //
+                    // An approval request carries its own expiry, so asking
+                    // again after one lapses necessarily digests differently.
+                    // Without this, a request id that expired could never be
+                    // asked again -- and the effect bound to it is stranded
+                    // for good, together with everything already done for it:
+                    // a mint keeps its published content and provisioned
+                    // custody with no way back to a prompt, because nobody
+                    // answered within ten minutes.
+                    //
+                    // What this gives up: for a request whose approval has
+                    // lapsed, the id no longer pins one exact request, so a
+                    // replay carrying altered content is accepted where it
+                    // would previously have been refused. It is bounded to a
+                    // lapsed request under an identical principal and
+                    // authority, and a lapsed approval never produced a
+                    // signature -- but it is a real narrowing and is written
+                    // down as one rather than discovered later.
+                    //
+                    // Rejected is NOT included. Declining is an answer, and
+                    // re-asking under the same identity would let a caller
+                    // keep asking until it got a different one.
+                    let lapsed = existing.status == ApprovalStatus::Expired
+                        || (existing.status == ApprovalStatus::Pending
+                            && existing.expires_at <= now_ts());
+                    if !lapsed {
+                        return Some(Response::error(
+                            "approval_identity_conflict",
+                            "Wallet approval identity was reused with substituted semantics or authority",
+                        ));
+                    }
+                    // Fall through: the lapsed record is replaced rather than
+                    // replayed.
+                    return None;
                 }
                 Some(Response::ok(json!({
                     "approval_request": existing,
@@ -193,17 +234,29 @@ impl WalletProvider {
             );
         }
         if input.intent == "transaction_intent" {
-            if let Err(err) = validate_eip155_transaction_intent_payload(&input.payload, &account) {
+            if let Err(err) = validate_eip155_transaction_intent_payload(&input.payload, &account)
+                .and_then(|()| {
+                    validate_transaction_intent_chain(&input.payload, &input.chain_namespace)
+                })
+            {
                 return Response::error("invalid_transaction_intent", err);
             }
         }
         if input.intent == "browser_personal_sign" {
-            if let Err(err) = validate_browser_personal_sign_payload(&input.payload, &account) {
+            if let Err(err) = validate_browser_personal_sign_payload(&input.payload, &account)
+                .and_then(|()| {
+                    validate_browser_signature_chain(&input.payload, &input.chain_namespace)
+                })
+            {
                 return Response::error("invalid_browser_personal_sign", err);
             }
         }
         if input.intent == "browser_typed_data_sign" {
-            if let Err(err) = validate_browser_typed_data_sign_payload(&input.payload, &account) {
+            if let Err(err) = validate_browser_typed_data_sign_payload(&input.payload, &account)
+                .and_then(|()| {
+                    validate_browser_signature_chain(&input.payload, &input.chain_namespace)
+                })
+            {
                 return Response::error("invalid_browser_typed_data_sign", err);
             }
         }
@@ -258,6 +311,26 @@ impl WalletProvider {
                 "too many active wallet approval requests for this principal",
             );
         }
+
+        // An approval that lapsed is replaced, not duplicated.
+        //
+        // The request id is derived from what is being approved, so a second
+        // attempt at the same thing arrives under the same id. Pushing beside
+        // the lapsed record would leave two approvals sharing one identity,
+        // and the exact-effect lookup treats that as a conflict and refuses --
+        // which would wedge the very retry this exists to allow.
+        //
+        // Only a request that expired is replaced. An approval the person
+        // rejected stays exactly where it is: declining is an answer, and
+        // overwriting it would let a caller ask again until it got a
+        // different one. Note this does drop the lapsed record from the
+        // resolved history that `ListApprovals` reports, which is the cost of
+        // reusing one identity across attempts.
+        // `prune_store` above has already marked anything elapsed as expired,
+        // so this sees the lapsed record in its settled state.
+        self.store.approval_requests.retain(|existing| {
+            existing.request_id != input.request_id || existing.status != ApprovalStatus::Expired
+        });
 
         let request = WalletApprovalRequest {
             schema: "elastos.wallet.approval_request/v1".to_string(),
@@ -705,7 +778,7 @@ impl WalletProvider {
             }) else {
                 return Response::error("not_found", "active linked account not found");
             };
-            let (rights_request, canonical_bytes) =
+            let (rights_request, _canonical_bytes) =
                 match protected_content_rights_request_from_payload(&request_snapshot.payload) {
                     Ok(value) => value,
                     Err(err) => return Response::error("invalid_request", err),
@@ -715,7 +788,18 @@ impl WalletProvider {
             {
                 return Response::error("invalid_request", err);
             }
-            let hash = ethereum_signed_message_hash(&canonical_bytes);
+            // Recovered against the same message the wallet was shown, taken
+            // from the one definition in the contracts crate rather than
+            // hashed here, so producer and verifier cannot drift apart.
+            let hash = match rights_request.signing_hash() {
+                Ok(hash) => hash,
+                Err(err) => {
+                    return Response::error(
+                        "invalid_request",
+                        format!("rights request has no signing hash: {err:?}"),
+                    )
+                }
+            };
             let recovered = match recover_evm_address_from_hash(&hash, signature) {
                 Ok(recovered) => recovered,
                 Err(err) => return Response::error("invalid_signature", err),
@@ -729,9 +813,9 @@ impl WalletProvider {
                 Err(err) => return Response::error("invalid_signature", err),
             };
             let signed_request =
-                match WalletSignedRightsRequestV1::new(rights_request, canonical_signature) {
+                match wallet_signed_rights_request(rights_request, canonical_signature) {
                     Ok(value) => value,
-                    Err(err) => return Response::error("invalid_signature", err.to_string()),
+                    Err(err) => return Response::error("invalid_signature", err),
                 };
             let signed_request_hex = match signed_request.canonical_bytes() {
                 Ok(bytes) => hex::encode(bytes),
@@ -882,8 +966,16 @@ impl WalletProvider {
                 "approved request requires an external wallet signature handoff",
             );
         }
+        // One EVM key is one address on every EVM chain, so an EVM account
+        // signs for any EVM chain it was approved on. Every other namespace
+        // signs only on its own.
+        if !chain_namespaces_compatible(&account.chain_namespace, &request.chain_namespace) {
+            return Response::error(
+                "signing_error",
+                "This account cannot sign on the requested network.",
+            );
+        }
         if request.proof_binding_id != account.proof_binding_id
-            || request.chain_namespace != account.chain_namespace
             || request.address != account.address
             || request.proof_type != account.proof_type
             || request.connector_id != account.connector_id
@@ -894,17 +986,28 @@ impl WalletProvider {
             );
         }
         if request.intent == "browser_personal_sign" {
-            if let Err(err) = validate_browser_personal_sign_payload(&request.payload, account) {
+            if let Err(err) = validate_browser_personal_sign_payload(&request.payload, account)
+                .and_then(|()| {
+                    validate_browser_signature_chain(&request.payload, &request.chain_namespace)
+                })
+            {
                 return Response::error("invalid_browser_personal_sign", err);
             }
         }
         if request.intent == "browser_typed_data_sign" {
-            if let Err(err) = validate_browser_typed_data_sign_payload(&request.payload, account) {
+            if let Err(err) = validate_browser_typed_data_sign_payload(&request.payload, account)
+                .and_then(|()| {
+                    validate_browser_signature_chain(&request.payload, &request.chain_namespace)
+                })
+            {
                 return Response::error("invalid_browser_typed_data_sign", err);
             }
         }
         if request.intent == "transaction_intent" {
             if let Err(err) = validate_eip155_transaction_intent_payload(&request.payload, account)
+                .and_then(|()| {
+                    validate_transaction_intent_chain(&request.payload, &request.chain_namespace)
+                })
             {
                 return Response::error("invalid_transaction_intent", err);
             }

@@ -7,10 +7,10 @@ use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
 
 use super::super::{
-    RuntimeCustodyListingOrigin, RuntimeCustodyListingRecord, RuntimeCustodyPurchaseProgress,
-    RuntimeCustodyPurchaseRecord, RuntimeCustodyViewerLifecycleStatus, RuntimeCustodyViewerRecord,
-    RUNTIME_LISTING_SCHEMA_V1, RUNTIME_PORTABLE_LISTING_SCHEMA_V1, RUNTIME_PURCHASE_SCHEMA_V1,
-    RUNTIME_VIEWER_SCHEMA_V1,
+    RuntimeCustodyAcquisitionV1, RuntimeCustodyListingOrigin, RuntimeCustodyListingRecord,
+    RuntimeCustodyPurchaseProgress, RuntimeCustodyPurchaseRecord,
+    RuntimeCustodyViewerLifecycleStatus, RuntimeCustodyViewerRecord, RUNTIME_LISTING_SCHEMA_V1,
+    RUNTIME_PORTABLE_LISTING_SCHEMA_V1, RUNTIME_PURCHASE_SCHEMA_V1, RUNTIME_VIEWER_SCHEMA_V1,
 };
 
 const LISTING_LOCAL_V1: &[u8] = include_bytes!("../testdata/runtime-custody-listing-local-v1.json");
@@ -57,13 +57,23 @@ fn imported_listing_record_v1_keeps_reading() {
 
 #[test]
 fn pending_purchase_record_v1_keeps_reading() {
-    let record: RuntimeCustodyPurchaseRecord = decode_exact(PURCHASE_PENDING_V1);
+    // A record written before minted copies: `buy_stage` reads as the
+    // acquisition stage and the copy is a bought one.
+    let stored: Value = serde_json::from_slice(PURCHASE_PENDING_V1).expect("fixture is JSON");
+    let record: RuntimeCustodyPurchaseRecord =
+        serde_json::from_slice(PURCHASE_PENDING_V1).expect("fixture decodes");
+    assert_eq!(
+        serde_json::to_value(&record.acquisition_stage).expect("stage encodes"),
+        stored["buy_stage"]
+    );
+    assert_eq!(record.acquisition, RuntimeCustodyAcquisitionV1::Bought);
     assert_eq!(record.schema, RUNTIME_PURCHASE_SCHEMA_V1);
     assert!(record.approval_stage.is_some());
     assert!(matches!(
         record.progress,
         RuntimeCustodyPurchaseProgress::Pending {
-            confirmed_buy: None
+            confirmed_approval: None,
+            confirmed_buy: None,
         }
     ));
 }
@@ -123,7 +133,8 @@ fn listing_record_v1_loads_from_its_runtime_path() {
 #[test]
 fn purchase_record_v1_loads_from_its_runtime_path() {
     let (_temp, data) = owner_only_data_dir();
-    let decoded: RuntimeCustodyPurchaseRecord = decode_exact(PURCHASE_PENDING_V1);
+    let decoded: RuntimeCustodyPurchaseRecord =
+        serde_json::from_slice(PURCHASE_PENDING_V1).expect("fixture decodes");
     let mint_id = super::super::parse_mint_id_hex(&decoded.mint_id).expect("mint id");
     super::super::write_owner_only_bytes(
         &super::super::runtime_purchase_path(data.as_path(), &decoded.principal_id, mint_id),

@@ -171,6 +171,12 @@ fn validate_protected_content_creator_mint(network: &ChainNetwork) -> Result<(),
     validate_evm_address(&mint.ledger)?;
     validate_evm_address(&mint.pay_token)?;
     validate_evm_address(&mint.asset_created_emitter)?;
+    if mint.mint_confirmations < PROTECTED_CONTENT_MINT_CONFIRMATIONS_FLOOR {
+        return Err(format!(
+            "network {} protected_content_creator_mint.mint_confirmations is {}; the floor is {}",
+            network.id, mint.mint_confirmations, PROTECTED_CONTENT_MINT_CONFIRMATIONS_FLOOR
+        ));
+    }
     Ok(())
 }
 

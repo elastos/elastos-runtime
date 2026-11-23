@@ -103,6 +103,9 @@ const server = createServer(async (req, res) => {
       if (url.pathname === "/api/capsules/catalog") { json(catalog()); return; }
       if (url.pathname === "/api/capsules/interfaces") { json({ interfaces: [] }); return; }
       if (url.pathname === "/api/apps/home/state") { json({}); return; }
+      // The Marketplace reads its price tokens on load; this is the route's own
+      // answer when no table is configured.
+      if (url.pathname === "/api/apps/marketplace/pay-tokens") { json({ payTokens: [] }); return; }
       if (url.pathname === "/api/provider/model/offers_list") { json({ offers: [], remote_services: [] }); return; }
       if (url.pathname === "/api/provider/object/list_runtime_custody") {
         json({ schema: "elastos.library.runtime-custody-listings/v1", listings: [], truncated: false }); return;

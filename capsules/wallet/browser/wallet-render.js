@@ -56,8 +56,19 @@ export function createWalletRender({ statusNode }) {
   };
 }
 
+// Refusals the Wallet provider words for people. They reach the person even
+// when the gateway wraps them in a raw request error.
+const READABLE_WALLET_REFUSALS = Object.freeze([
+  "This account cannot sign on the requested network.",
+  "This transaction is for a different network than the one approved.",
+]);
+
 export function publicWalletText(value, fallback = "Wallet action could not be completed.") {
   const message = String(value || "").trim();
+  const readable = READABLE_WALLET_REFUSALS.find((text) => message.includes(text));
+  if (readable) {
+    return readable;
+  }
   if (!message || /\b(schema|projection|provider|adapter|capability|affordance|runtime-owned|launch token|hostcall|request failed|failed to fetch|unauthorized|forbidden|[45]\d\d)\b|engine_[a-z_]+/i.test(message)) {
     return fallback;
   }
