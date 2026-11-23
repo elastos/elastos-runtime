@@ -64,11 +64,12 @@ test("System wallet sessions approve the exact Guest and Community choices befor
     ]);
     await page.evaluate(() => window.refuseApproval = true);
     const before = writes.length;
-    await frame.locator("#guest-registration").uncheck({force:true});
-    await frame.waitForFunction(() => !document.querySelector("#guest-registration").disabled);
+    // A refused choice restores the checkbox before Playwright can observe it.
+    await frame.locator("#guest-registration").click({force:true});
+    await frame.waitForFunction(() => document.querySelector('[data-field="guest-registration-status"]').textContent === "Passkey verification cancelled." && !document.querySelector("#guest-registration").disabled);
     assert.equal(await frame.locator("#guest-registration").isChecked(), true);
     await frame.locator('[data-presence-mode="always"]').click();
-    await frame.locator('[data-field="community-presence-status"]').waitFor({state:"visible"});
+    await frame.waitForFunction(() => document.querySelector('[data-field="community-presence-status"]').textContent === "Passkey verification cancelled." && !document.querySelector('[data-presence-mode="always"]').disabled);
     assert.equal(await frame.locator('[data-presence-mode="hidden"]').getAttribute("aria-checked"), "true");
     assert.equal(writes.length, before, "cancelled passkey approval sends neither write");
     role = "guest"; frame = await open();
