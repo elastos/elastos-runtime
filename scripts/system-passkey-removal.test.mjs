@@ -23,6 +23,10 @@ async function fixture(run) {
         jsonResponse(response, summary);
         return true;
       }
+      if (url.pathname === "/api/auth/wallet-methods") {
+        jsonResponse(response, { account_id: passkeys.find(key => key.current)?.principal_id || owner.principal_id, methods: [] });
+        return true;
+      }
       if (url.pathname === "/api/auth/passkeys") {
         listReads++;
         jsonResponse(response, { passkeys });
@@ -151,7 +155,7 @@ test("every allowed removal asks first and returns focus after Cancel or Escape"
     // The same confirmation protects a guest leaving and an owner replacing a key.
     for (const role of ["guest", "admin"]) {
       const current = { ...owner, role };
-      const keys = role === "guest" ? [current] : [current, { ...owner, proof_binding_id: "proof:passkey:replacement", current: false }];
+      const keys = [current, { ...current, proof_binding_id: "proof:passkey:replacement", current: false }];
       const frame = await open(keys, { role });
       const before = writes.length;
       await frame.locator(".passkey-remove").first().click();

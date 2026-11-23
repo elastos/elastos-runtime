@@ -1713,7 +1713,7 @@ window.addEventListener("message", (event) => {
   if (!context) {
     return;
   }
-  if (handleWalletSigninRequest(event, context, {
+  if (data.type === "home:wallet-signin-request" && handleWalletSigninRequest(event, context, {
     authorityToken: getHomeAuthorityToken,
     api: (path, body, token) => path === "/api/auth/passkeys"
       ? fetchJson(path, {headers:{"x-elastos-home-token":token}}) : walletSigninApi(path, body, token),
