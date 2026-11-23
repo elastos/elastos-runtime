@@ -530,16 +530,37 @@ pub async fn passkey_revoke(
     State(state): State<GatewayState>,
     Path(proof_binding_id): Path<String>,
     headers: HeaderMap,
-    input: Option<Json<PasskeyRevokeRequest>>,
+    body: axum::body::Bytes,
 ) -> Response {
-    match passkey_revoke_scoped_inner(
-        &state,
-        &headers,
-        proof_binding_id,
-        input.map(|Json(r)| r).unwrap_or_default(),
-    )
-    .await
-    {
+    if body.len() > 96 * 1024 {
+        return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+    }
+    let input = if body.is_empty() {
+        PasskeyRevokeRequest::default()
+    } else {
+        if !headers
+            .get("content-type")
+            .and_then(|h| h.to_str().ok())
+            .is_some_and(|h| h.starts_with("application/json"))
+        {
+            return (
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "account removal requires JSON",
+            )
+                .into_response();
+        }
+        match serde_json::from_slice::<PasskeyRevokeRequest>(&body) {
+            Ok(input) => input,
+            Err(_) => {
+                return (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "invalid passkey removal request",
+                )
+                    .into_response()
+            }
+        }
+    };
+    match passkey_revoke_scoped_inner(&state, &headers, proof_binding_id, input).await {
         Ok((response, clear_current_cookie)) => {
             let mut http_response = Json(response).into_response();
             if clear_current_cookie {
@@ -1270,21 +1291,21 @@ pub(in crate::api) fn wallet_session_approval(
     operation: &str,
     request: &Value,
 ) -> anyhow::Result<()> {
+    if matches!(
+        operation,
+        "auth.account.promote" | "auth.account.demote" | "auth.account.guest-registration"
+    ) {
+        let current_actor = require_active_principal_for_context(state, context)?;
+        anyhow::ensure!(
+            crate::auth::is_admin(&current_actor),
+            "admin passkey required for account administration"
+        );
+    }
     if context
         .proof_binding_id
         .as_deref()
         .is_some_and(|id| id.starts_with("proof:signin-wallet:"))
     {
-        if matches!(
-            operation,
-            "auth.account.promote" | "auth.account.demote" | "auth.account.guest-registration"
-        ) {
-            let current_actor = require_active_principal_for_context(state, context)?;
-            anyhow::ensure!(
-                crate::auth::is_admin(&current_actor),
-                "admin passkey required for account administration"
-            );
-        }
         let launch = require_home_launch_token_binding(
             &state.data_dir,
             headers,
