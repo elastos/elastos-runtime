@@ -1094,6 +1094,14 @@ input[type="file"].visually-hidden {
   min-height: 44px;
 }
 
+.account-block .account-remove-action {
+  min-height: 44px;
+  padding: 8px 12px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--el-muted);
+}
+
 :root .account-block button:focus-visible:not(:disabled),
 :root .account-add-actions button:focus-visible:not(:disabled) {
   outline: 2px solid var(--el-focus);

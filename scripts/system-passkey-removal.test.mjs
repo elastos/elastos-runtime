@@ -264,7 +264,7 @@ test("System distinguishes two passkeys and identifies this window at desktop an
       assert.equal(await rows.nth(0).locator(".passkey-name").textContent(), "Apple Passwords");
       assert.match(await rows.nth(0).locator(".account-name-wrap").getAttribute("title"), /added from Safari on Mac or iPad/);
       assert.equal(await rows.nth(1).locator(".passkey-name").textContent(), "Saved on a phone or tablet");
-      assert.equal(await rows.nth(0).locator(".passkey-current").textContent(), "This passkey");
+      assert.equal(await rows.nth(0).locator(".passkey-current").textContent(), "Current");
       assert.notEqual(await rows.nth(0).locator(".account-used").textContent(), "Not used yet");
       assert.equal(await rows.nth(1).locator(".passkey-current").count(), 0);
       assert.equal(await frame.locator("#passkey-add-help").count(), 0);
@@ -308,8 +308,16 @@ test("Accounts groups methods beneath their owner with equal add controls in bot
         assert.equal(await block.count(), 1);
         assert.equal(await block.locator(".account-header h2").textContent(), "Alex");
         assert.equal(await block.locator(".account-row").count(), keys.length + (options.methods?.length || 0));
-        assert.equal(await frame.getByText("This passkey", { exact: true }).count(), 1);
+        assert.equal(await block.locator(".passkey-current").count(), 1);
         assert.equal(await frame.locator("#passkey-add-help").count(), 0);
+        assert.equal(await block.getByText("Signs in", {exact:true}).count(), 0);
+        for (const action of await block.locator('.passkey-remove, .account-remove, .signin-method-controls button').all()) {
+          const style=await action.evaluate(node=>{const s=getComputedStyle(node);return {background:s.backgroundColor,border:s.borderTopColor,height:node.getBoundingClientRect().height,padding:s.padding};});
+          assert.equal(style.background,"rgba(0, 0, 0, 0)","destructive actions have a quiet background");
+          assert.equal(style.border,"rgba(0, 0, 0, 0)","destructive actions have no visible border");
+          assert.ok(style.height>=44);
+          assert.equal(style.padding,"8px 12px","all destructive actions use the same padding");
+        }
         const add = frame.locator(".account-add-actions button");
         if (options.role === "guest") assert.equal(await frame.locator(".account-add-actions button:visible").count(), 0);
         else {

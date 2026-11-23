@@ -2643,7 +2643,7 @@ function accountRow(passkey, listState = {}) {
   if (passkey.current) {
     const current = document.createElement("small");
     current.className = "passkey-current";
-    current.textContent = "This passkey";
+    current.textContent = "Current";
     nameWrap.append(current);
   }
   nameCell.append(nameWrap);
@@ -2676,7 +2676,7 @@ function accountRow(passkey, listState = {}) {
     listState.accountActions.append(demote);
   }
   const remove = document.createElement("button");
-  remove.className = "system-button system-button-secondary passkey-remove";
+  remove.className = "system-button account-remove-action passkey-remove";
   remove.type = "button";
   remove.textContent = "Remove";
   remove.dataset.passkeyRevoke = passkey.proof_binding_id || "";
@@ -2701,7 +2701,7 @@ function accountRow(passkey, listState = {}) {
   }
   if (protectsLastPasskey && (ownAccount || canManagePasskeyRoles)) {
     const removeAccount = document.createElement("button");
-    removeAccount.className = "system-button system-button-secondary account-remove";
+    removeAccount.className = "system-button account-remove-action account-remove";
     removeAccount.type = "button";
     removeAccount.textContent = "Remove account";
     Object.assign(removeAccount.dataset, remove.dataset, { passkeyAccountRemove: remove.dataset.passkeyRevoke });
@@ -2745,7 +2745,7 @@ function walletAccountRow(method) {
   used.textContent = method.last_used_at ? formatAccountDate(method.last_used_at) : "Not used yet";
   const actions = accountCell("Actions", "account-actions-cell");
   const controls = walletSigninControls(method, { canManage: currentAccess.role === "admin", onAction: changeWalletSignin,
-    buttonClass: "system-button system-button-secondary" });
+    buttonClass: "system-button account-remove-action" });
   actions.append(controls);
   row.append(identity, used, actions);
   return row;

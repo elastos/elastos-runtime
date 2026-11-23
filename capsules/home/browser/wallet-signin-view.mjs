@@ -57,7 +57,7 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
   }
   async function connected() {
     const request=epoch;
-    try{const methods=await initial.loadConnected();if(request===epoch&&dialog)options(methods);}
+    try{const methods=await initial.loadConnected();if(request===epoch&&dialog){if(initial.action==='add'&&!methods.length){currentState={...currentState,methods};await openConnector('wallet');}else options(methods);}}
     catch{if(request===epoch&&dialog)render({stage:'list-error',action:initial.action,message:'Home could not load your wallets.'});}
   }
   async function openConnector(kind) {
@@ -87,13 +87,18 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
     }
     const hadFocus=dialog.contains(document.activeElement);
     dialog.dataset.state=state.stage;dialog.replaceChildren();
+    const body=node('div',null,'signin-body'),footer=node('footer',null,'signin-footer');dialog.append(body,footer);
     if(state.stage==='pairing') {
-      // The connector's shared QR screen owns its markup and controls.
+      // Reuse the connector QR with Home's sign-in context and fixed controls.
       const view=connectionView({window:'walletconnect',stage:'qr-shown',qrData:state.pairing.qr});
       const shared=renderConnection(document,view);
-      shared.querySelector('h2').id='wallet-signin-title';
+      const title=shared.querySelector('h2');title.id='wallet-signin-title';title.textContent=titles[state.action]||'Sign in';
+      title.after(node('p',location.origin,'signin-destination'));
+      const instructions=shared.querySelectorAll('.connection-dialog > p:not(.signin-destination)');
+      instructions[0].textContent='Scan with your wallet, or paste the copied link into your wallet.';instructions[1].remove();
+      footer.append(shared.querySelector('.connection-actions'));
       const qrDialog=shared.querySelector('.connection-dialog');qrDialog.removeAttribute('role');qrDialog.removeAttribute('aria-modal');qrDialog.removeAttribute('aria-label');
-      shared.addEventListener('click',async event=>{
+      footer.addEventListener('click',async event=>{
         const action=event.target.closest('[data-action]')?.dataset.action;
         if(action==='cancel')void flow.cancel();
         if(action==='copy-link') {
@@ -102,36 +107,38 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
           catch{control.textContent='Try copying again';}finally{control.disabled=false;}
         }
       });
-      dialog.append(shared);
+      body.append(shared);
     } else {
-      const title=node('h2',titles[state.action]||'Sign in');title.id='wallet-signin-title';dialog.append(title);
+      const title=node('h2',titles[state.action]||'Sign in');title.id='wallet-signin-title';body.append(title);
       if(state.stage==='options') {
         const list=node('div',null,'connection-card connection-options-list');
         if(state.action==='signin'&&initial.availability?.passkey!==false){const passkey=option('Passkey','','passkey',()=>chooseSignin(null));passkey.disabled=!window.PublicKeyCredential;list.append(passkey);}
-        for(const method of state.methods||[])list.append(option(state.action==='signin'?(method.connector==='walletconnect'?'Phone wallet':method.displayName||connectorName(method.connector)):(method.displayName||connectorName(method.connector)),state.action==='signin'?(method.connector==='walletconnect'?initial.availability?.relayNotice||'':''):`${shortWalletAddress(method.address)} · ${walletNetwork(method)}`,method.connector==='metamask'&&method.providerId&&method.providerId!=='io.metamask'?'wallet':method.connector,()=>state.action==='signin'?chooseSignin(method):chooseConnected(method)));
+        const phoneNotice=initial.availability?.relayNotice?"Connects through a relay that can see this computer's internet address.":'';
+        for(const method of state.methods||[])list.append(option(state.action==='signin'?(method.connector==='walletconnect'?'Phone wallet':method.displayName||connectorName(method.connector)):(method.displayName||connectorName(method.connector)),state.action==='signin'?(method.connector==='walletconnect'?phoneNotice:''):`${shortWalletAddress(method.address)} · ${walletNetwork(method)}`,method.connector==='metamask'&&method.providerId&&method.providerId!=='io.metamask'?'wallet':method.connector,()=>state.action==='signin'?chooseSignin(method):chooseConnected(method)));
         if(state.action!=='signin')list.append(option('New wallet','','wallet',()=>openConnector('wallet')));
-        dialog.append(list);
+        body.append(list);
         if(state.action==='signin') {
-          const label=node('label',null,'signin-remember'),input=node('input');input.type='checkbox';input.checked=remember;input.onchange=()=>{remember=input.checked;if(!remember)saveSigninChoice('');};label.append(input,document.createTextNode('Remember my choice'));dialog.append(label);
+          const label=node('label',null,'signin-remember'),input=node('input');input.type='checkbox';input.checked=remember;input.onchange=()=>{remember=input.checked;if(!remember)saveSigninChoice('');};label.append(input,document.createTextNode('Remember my choice'));body.append(label);
         }
       }
-      if(state.wallet&&state.stage!=='review')dialog.append(node('p',`${connectorName(state.wallet.connector)} · ${shortWalletAddress(state.wallet.address)} · ${walletNetwork(state.wallet)}`,'connection-note'));
-      const statuses={choice:'Opening wallet…',loading:'Loading wallets…',connecting:'Open your wallet.',signing:'Sign the message in your wallet.',approval:'Confirm with your passkey.',passkey:state.action==='remove'?'Confirm with your passkey to remove this wallet and end its sign-in sessions.':'Confirm with your passkey.',completing:state.action==='signin'?'Checking sign-in…':'Saving change…'};
-      if(state.message||statuses[state.stage]){const status=node('p',state.message||statuses[state.stage],'connection-note');status.setAttribute('role','status');dialog.append(status);}
-      if(state.approvalNotice&&state.wallet?.connector==='walletconnect')dialog.append(node('p',state.approvalNotice,'connection-note'));
+      if(state.wallet&&state.stage!=='review')body.append(node('p',`${connectorName(state.wallet.connector)} · ${shortWalletAddress(state.wallet.address)} · ${walletNetwork(state.wallet)}`,'connection-note'));
+      const walletName=state.wallet?.connector==='walletconnect'?'your phone wallet':state.wallet?.displayName||connectorName(state.wallet?.connector);
+      const statuses={choice:'Opening wallet…',loading:'Loading wallets…',connecting:`Continue in ${walletName}`,signing:`Continue in ${walletName}`,approval:'Confirm with your passkey.',passkey:state.action==='remove'?'Confirm with your passkey to remove this wallet and end its sign-in sessions.':'Confirm with your passkey.',completing:state.action==='signin'?'Checking sign-in…':'Saving change…'};
+      if(state.message||statuses[state.stage]){const status=node('p',state.message||statuses[state.stage],'connection-note');status.setAttribute('role','status');body.append(status);}
+      if(state.approvalNotice&&state.wallet?.connector==='walletconnect')body.append(node('p',state.approvalNotice,'connection-note'));
       if(state.signingMessage) {
-        const details=node('details');details.append(node('summary','Details'),node('p',location.origin),node('pre',state.signingMessage));dialog.append(details);
-      }
-      if(state.stage==='approval')dialog.append(button('Use passkey',()=>flow.approve()));
-      if(state.stage==='unknown')dialog.append(button('Check again',()=>flow.retry()));
-      if(state.stage==='error'||state.stage==='list-error') {
-        if(state.retryable!==false)dialog.append(button('Try again',()=>state.stage==='list-error'?connected():restart()));
-        if(state.action==='signin'&&onPasskey&&state.allowPasskey!==false&&initial.availability?.passkey!==false)dialog.append(button('Use passkey',()=>chooseSignin(null,{saveChoice:false}),true));
+        const details=node('details');details.append(node('summary','Message details'),node('p',location.origin),node('pre',state.signingMessage));body.append(details);
       }
       const actions=node('div',null,'connection-actions');
-      actions.append(button('Cancel',()=>flow.cancel(),true));dialog.append(actions);
+      if(state.stage==='approval')actions.append(button('Use passkey',()=>flow.approve()));
+      if(state.stage==='unknown')actions.append(button('Check again',()=>flow.retry()));
+      if(state.stage==='error'||state.stage==='list-error') {
+        if(state.retryable!==false)actions.append(button('Try again',()=>state.stage==='list-error'?connected():restart()));
+        if(state.action==='signin'&&onPasskey&&state.allowPasskey!==false&&initial.availability?.passkey!==false)actions.append(button('Use passkey',()=>chooseSignin(null,{saveChoice:false}),true));
+      }
+      actions.append(button('Cancel',()=>flow.cancel(),true));footer.append(actions);
     }
-    if(state.action==='signin')dialog.append(node('p','Continue only if you started this sign-in in this browser.','connection-note signin-presence'));
+    if(state.action==='signin')footer.append(node('p','Continue only if you started this sign-in in this browser.','connection-note signin-presence'));
     if(hadFocus)dialog.querySelector('button')?.focus();
   }
   return {

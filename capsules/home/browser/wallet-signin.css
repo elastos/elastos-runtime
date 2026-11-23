@@ -1,12 +1,16 @@
 .signin-dialog {
   box-sizing: border-box; width: min(440px, calc(100vw - 32px)); max-height: calc(100dvh - 32px);
-  margin: auto; padding: 24px; overflow: auto; color: var(--el-text); background: var(--el-surface-raised);
+  margin: auto; padding: 24px; overflow: hidden; color: var(--el-text); background: var(--el-surface-raised);
   border: 1px solid var(--el-hairline-strong); border-radius: var(--el-radius-xl); box-shadow: var(--el-shadow-3);
   font: 14px/1.5 var(--el-font);
 }
 .signin-dialog::backdrop { background: rgba(0,0,0,.6); }
-.signin-dialog > * { margin: 0 0 16px; }
-.signin-dialog > :last-child { margin-bottom: 0; }
+.signin-dialog[open] { display: flex; flex-direction: column; }
+.signin-body { min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.signin-body > * { margin: 0 0 16px; }
+.signin-body > :last-child { margin-bottom: 0; }
+.signin-footer { flex-shrink: 0; }
+.signin-footer > :last-child { margin-bottom: 0; }
 .signin-dialog h2 { font-size: var(--el-text-xl); font-weight: 600; }
 .signin-dialog .connection-actions { margin-top: 16px; }
 .signin-dialog .connection-option .connection-note { display: block; font-size: 12px; overflow-wrap: anywhere; }
