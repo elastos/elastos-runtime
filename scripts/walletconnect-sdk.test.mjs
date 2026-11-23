@@ -55,7 +55,14 @@ test("the locked SDK reaches QR through Home, stores its keys through Runtime, a
         fits: document.querySelector("dialog").getBoundingClientRect().width <= innerWidth,
       }));
       assert.equal(state.homeOnly, true, "SDK sockets terminate at Home");
-      assert.deepEqual(state.methods,authenticationOnly?['personal_sign']:['personal_sign','eth_sendTransaction']);
+      if(authenticationOnly)assert.deepEqual(state.methods,['personal_sign']);
+      else assert.deepEqual(state.methods,[
+        'eth_accounts','eth_requestAccounts','eth_sendRawTransaction','eth_sign','eth_signTransaction',
+        'eth_signTypedData','eth_signTypedData_v3','eth_signTypedData_v4','eth_sendTransaction','personal_sign',
+        'wallet_switchEthereumChain','wallet_addEthereumChain','wallet_getPermissions','wallet_requestPermissions',
+        'wallet_registerOnboarding','wallet_watchAsset','wallet_scanQRCode','wallet_sendCalls',
+        'wallet_getCapabilities','wallet_getCallsStatus','wallet_showCallsStatus',
+      ],'payment pairing keeps the locked SDK’s existing proposal');
       assert.equal(state.proposed, true, "the pinned SDK publishes its pairing proposal through Home");
       assert.equal(state.runtimeKeys, true, "SDK keychain reaches the Runtime storage adapter");
       assert.equal(state.localKeys, 0);

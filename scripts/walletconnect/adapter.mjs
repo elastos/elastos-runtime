@@ -41,7 +41,9 @@ export async function restoreWalletConnectEvm(options) {
     chains: [],
     optionalChains: options.chains,
     methods: options.authenticationOnly ? ["personal_sign"] : ["personal_sign", "eth_sendTransaction"],
-    optionalMethods: [],
+    // With optional chains, the SDK ignores required methods and expands an
+    // empty optional list to its defaults. Authentication supplies its own list.
+    optionalMethods: options.authenticationOnly ? ["personal_sign"] : [],
     disableProviderPing: true,
     events: ["accountsChanged", "chainChanged"],
     showQrModal: false,

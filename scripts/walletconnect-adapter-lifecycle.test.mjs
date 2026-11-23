@@ -100,7 +100,7 @@ test('authentication-only pairing proposes personal_sign while payment pairing k
       const api=async()=>({});
       await restoreWalletConnectEvm({contextKey:`methods-${authenticationOnly}`,chains:[20,8453],authenticationOnly,api});
       assert.deepEqual(proposed.methods,authenticationOnly?['personal_sign']:['personal_sign','eth_sendTransaction']);
-      assert.deepEqual(proposed.optionalMethods,[]);
+      assert.deepEqual(proposed.optionalMethods,authenticationOnly?['personal_sign']:[]);
       await disconnectWalletConnectEvm({api});
     }
   } finally {delete globalThis.walletConnectSdkFixture;}
