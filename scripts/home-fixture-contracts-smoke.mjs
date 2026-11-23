@@ -121,6 +121,11 @@ test("product data refuses missing input and missing declared install assets", (
     const capsuleRoot = join(fixture, "capsules/assistant");
     mkdirSync(join(capsuleRoot, "browser"), { recursive: true });
     mkdirSync(join(fixture, "elastos/capsules"), { recursive: true });
+    mkdirSync(join(fixture, "docs"));
+    mkdirSync(join(fixture, "scripts/walletconnect"), { recursive: true });
+    writeFileSync(join(fixture, "scripts/rejected-terms.txt"), read("scripts/rejected-terms.txt"));
+    writeFileSync(join(fixture, "scripts/walletconnect/adapter.mjs"), "");
+    writeFileSync(join(fixture, "elastos/CHANGELOG.md"), "");
     const manifestPath = join(capsuleRoot, "capsule.json");
     writeFileSync(manifestPath, read("capsules/assistant/capsule.json"));
     assert.throws(() => checkProductData(fixture), /missing entrypoint/);
