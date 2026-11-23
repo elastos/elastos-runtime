@@ -775,3 +775,82 @@ async fn wallet_guest_room_approval_stays_refused_with_a_valid_passkey() {
     assert!(!status.is_success());
     assert!(result.to_string().contains("admin"), "{result}");
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn wallet_hosted_permission_can_be_approved_then_ended_or_denied() {
+    use crate::api::model_provider_egress_decision as egress;
+    let f = wallet_fixture::fixture();
+    wallet_fixture::enabled(&f);
+    let session = wallet_fixture::signin(&f);
+    let (approver, credential) =
+        install_real_approver(f.data.path(), "person:local:alice", b"egress-approver");
+    let app = gateway_router(test_state(f.data.path()));
+    let home =
+        issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &session).unwrap();
+    let inbox =
+        issue_home_launch_token_for_auth_grant(f.data.path(), INBOX_CAPSULE_ID, &session).unwrap();
+    let scope = egress::EgressScope {
+        offer_id: "local:hosted:test".into(),
+        effect: "model.http.request".into(),
+        method: "POST".into(),
+        url: "https://example.com/v1/chat".into(),
+        origin: "https://example.com".into(),
+        recipient: "example.com".into(),
+        payer: "this Home".into(),
+        provider: "test".into(),
+        purpose: "test request".into(),
+        configuration_id: "a".repeat(64),
+    };
+    let id = egress::request(f.data.path(), &scope, Some(&session.proof_binding_id)).unwrap();
+    let action = format!("model-egress-approve:{id}");
+    let approval = real_step_up_for_launch(
+        &app,
+        &home,
+        &inbox,
+        "inbox.approve",
+        &json!({"action_id":action}),
+        &approver,
+        &credential,
+        1,
+    )
+    .await;
+    let (status, result) = call(
+        &app,
+        "/api/apps/inbox/actions",
+        Some(&inbox),
+        Some(json!({"action_id":action,"step_up_token":approval})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    assert!(egress::active(f.data.path(), &scope, Some(&session.proof_binding_id)).is_ok());
+    let (status, result) = call(
+        &app,
+        "/api/apps/inbox/actions",
+        Some(&inbox),
+        Some(json!({"action_id":format!("model-egress-end:{id}")})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    assert!(egress::active(f.data.path(), &scope, Some(&session.proof_binding_id)).is_err());
+    let mut next = scope.clone();
+    next.url.push_str("/next");
+    let id = egress::request(f.data.path(), &next, Some(&session.proof_binding_id)).unwrap();
+    let (status, result) = call(
+        &app,
+        "/api/apps/inbox/actions",
+        Some(&inbox),
+        Some(json!({"action_id":format!("model-egress-deny:{id}")})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    assert!(egress::active(f.data.path(), &next, Some(&session.proof_binding_id)).is_err());
+    let (other, _) = install_real_approver(f.data.path(), "person:local:bob", b"egress-other");
+    let mut third = scope;
+    third.url.push_str("/other");
+    let id = egress::request(f.data.path(), &third, Some(&session.proof_binding_id)).unwrap();
+    assert!(
+        egress::approve(f.data.path(), &id, &other).is_err(),
+        "other account approved wallet-bound request"
+    );
+}
