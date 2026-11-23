@@ -658,6 +658,14 @@ async fn wallet_inbox_positive_permissions_require_exact_fresh_passkey() {
     let home =
         issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &session).unwrap();
     let inbox = wallet_app_token(f.data.path(), INBOX_CAPSULE_ID, &session);
+    let (status, summary) = call(&app, "/api/apps/inbox/summary", Some(&inbox), None).await;
+    assert_eq!(status, StatusCode::OK, "{summary}");
+    assert_eq!(summary["wallet_session"], true);
+    let passkey_inbox =
+        issue_home_launch_token_for_auth_grant(f.data.path(), INBOX_CAPSULE_ID, &f.actor).unwrap();
+    let (status, summary) = call(&app, "/api/apps/inbox/summary", Some(&passkey_inbox), None).await;
+    assert_eq!(status, StatusCode::OK, "{summary}");
+    assert_eq!(summary["wallet_session"], false);
     for action_id in [
         "community-presence-always:test",
         "community-presence-open:test",

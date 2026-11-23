@@ -308,3 +308,9 @@ Runtime rechecks current account authority while it commits the revocation.
 Screens implement explicit Remove account controls and route sensitive permission
 decisions through Home's passkey approval bridge before the combined product is
 accepted. Runtime applies the exact approved intent when it commits each effect.
+
+Inbox summary includes `wallet_session`, derived from the live launch context.
+Inbox uses it to ask Home for `inbox.approve` with the exact `action_id` before
+a positive permission decision. Runtime checks the live session and consumes
+the approval when it saves the decision. Passkey sessions keep their existing
+action-specific approval flow.

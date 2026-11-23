@@ -14,6 +14,7 @@
       requestedSelectionId: requestedNotificationId.trim(),
       selectedId: requestedNotificationId.trim(),
       walletconnectInternet: null,
+      walletSession: false,
       readGeneration: 0,
       walletAcknowledgement: null,
       focusWalletAcknowledgement: false,
@@ -78,6 +79,7 @@
             const payload = await api("/api/apps/inbox/summary");
             if (current() && !elements.refresh.disabled) {
               state.entries = inboxEntries(payload);
+              state.walletSession = payload.wallet_session === true;
               state.requestedSelectionId = data.query.notification_id;
               state.selectedId = "";
               setFilter("all");
@@ -343,6 +345,16 @@
     }
 
     async function inboxAction(actionId, fields = {}) {
+      const positive = [
+        "community-presence-always:", "community-presence-open:",
+        "contact-accept-request:", "room-approve-request:",
+        "capability-approve-request:", "service-approve-request:",
+        "model-egress-approve:", "hosted-http-approve:",
+      ].some(prefix => actionId.startsWith(prefix)) || actionId === "wallet-price-http-approve:coingecko";
+      if (state.walletSession && positive) {
+        const stepUpToken = await requestPasskeyStepUp("inbox.approve", { action_id: actionId });
+        fields = { ...fields, step_up_token: stepUpToken };
+      }
       return api("/api/apps/inbox/actions", {
         method: "POST",
         body: JSON.stringify(Object.assign({ action_id: actionId }, fields)),
@@ -359,6 +371,7 @@
       }
       if (generation !== state.readGeneration) return;
       state.entries = entries;
+      state.walletSession = payload.wallet_session === true;
       state.walletconnectInternet = permission;
       renderInbox();
       markVisibleRead();

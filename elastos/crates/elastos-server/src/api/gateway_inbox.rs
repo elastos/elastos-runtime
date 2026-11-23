@@ -50,6 +50,10 @@ pub(super) async fn inbox_summary(
         Err(err) => return inbox_error_response(err),
     };
     Json(InboxSummaryResponse {
+        wallet_session: context
+            .proof_binding_id
+            .as_deref()
+            .is_some_and(|id| id.starts_with("proof:signin-wallet:")),
         app: HomeCapsuleIdentity {
             id: INBOX_CAPSULE_ID.to_string(),
             route: "/apps/inbox/".to_string(),

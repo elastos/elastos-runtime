@@ -566,6 +566,7 @@ struct HomeAppearanceSummary {
 #[derive(Serialize)]
 struct InboxSummaryResponse {
     app: HomeCapsuleIdentity,
+    wallet_session: bool,
     notifications: HomeNotificationsSummary,
     #[cfg(unix)]
     hosted_routes: Vec<super::model_provider_egress_decision::HostedRouteSummary>,
