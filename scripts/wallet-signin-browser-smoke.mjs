@@ -30,7 +30,7 @@ async function exercise(engine,width) {
   });
   async function state(stage){
     await page.locator(`.signin-dialog[data-state="${stage}"]`).waitFor({timeout:15000});
-    if(stage==='done')assert(['Wallet added. Sign in is off.','Wallet sign-in is on.','Wallet sign-in is off.','Wallet removed.'].includes(await page.locator('.signin-dialog [role=status]').innerText()),'Confirmed completion replaces prior errors');
+    if(stage==='done')assert(['Wallet added.','Wallet removed.'].includes(await page.locator('.signin-dialog [role=status]').innerText()),'Confirmed completion replaces prior errors');
   }
   async function capture(name,scope=page) {
     await page.evaluate(()=>document.fonts.ready);
@@ -191,29 +191,31 @@ async function exercise(engine,width) {
     assert.equal(await page.locator('iframe[title=WalletConnect]').count(),0,'Cancel removes the temporary SDK document');
     await home();await page.getByRole('button',{name:'Use passkey',exact:true}).click();await page.waitForFunction(()=>window.openedPrincipal==='principal:alex');
     assert.equal(fixture.state.walletSession,false,'method management starts from a passkey session');
-    fixture.state.methods=[sampleMethod('metamask',false)];await page.evaluate(()=>window.showFixtureApps());
+    fixture.state.methods=[];await page.evaluate(()=>window.showFixtureApps());
     const system=page.frameLocator('iframe[title=system]');
     await system.getByRole('button',{name:'Add wallet',exact:true}).waitFor();
-    await system.locator('[data-wallet-method]').waitFor();await capture('system-methods',await page.frames().find(f=>f.url().includes('/apps/system/')));
     await system.getByText('Safari on Mac',{exact:false}).waitFor();
-    await system.locator('[data-wallet-method]').scrollIntoViewIfNeeded();await capture('system-wallet-row');
     await system.locator('[data-passkey-revoke]').isDisabled().then(disabled=>assert(disabled,'last Admin passkey protected'));
-    await system.getByRole('switch').click();await state('review');await page.getByText(relayNotice,{exact:true}).waitFor();await capture('enable-review');
-    await page.locator('.signin-dialog').getByRole('button',{name:'Sign message',exact:true}).click();await state('approval');await capture('enable-approval');
+    await system.getByRole('button',{name:'Add wallet',exact:true}).click();await state('choice');
+    await page.locator('.signin-dialog').getByRole('button',{name:'MetaMask',exact:false}).click();
+    await state('review');await page.getByText(relayNotice,{exact:true}).waitFor();await capture('add-review');
+    await page.locator('.signin-dialog').getByRole('button',{name:'Sign message',exact:true}).click();await state('approval');
     await page.evaluate(()=>window.walletFixture.passkeyMode='pending');await page.locator('.signin-dialog').getByRole('button',{name:'Use passkey',exact:true}).click();await state('passkey');await capture('passkey-pending');await cancel();
-    assert.equal(fixture.state.methods[0].sign_in_enabled,false,'cancelled passkey leaves switch off');
+    assert.equal(fixture.state.methods.length,0,'cancelled approval creates no method');
     await page.evaluate(()=>window.walletFixture.passkeyMode='cancelled');
-    await system.getByRole('switch').click();await state('review');await page.locator('.signin-dialog').getByRole('button',{name:'Sign message',exact:true}).click();await state('approval');await page.locator('.signin-dialog').getByRole('button',{name:'Use passkey',exact:true}).click();await state('approval');await page.getByText('Home could not confirm your passkey.',{exact:false}).waitFor();await capture('passkey-cancelled');
-    await page.evaluate(()=>window.walletFixture.passkeyMode='normal');await page.locator('.signin-dialog').getByRole('button',{name:'Use passkey',exact:true}).click();await state('done');await capture('enable-done');await page.locator('.signin-dialog').getByRole('button',{name:'Done',exact:true}).click();
-    await system.locator('[role=switch][aria-checked=true]').waitFor();await capture('system-enabled');
-    await page.locator('#show-wallet').click();const wallet=page.frameLocator('iframe[title=wallet]');await wallet.locator('#wallet-signin-methods [role=switch][aria-checked=true]').waitFor();await wallet.locator('#wallet-signin-methods').scrollIntoViewIfNeeded();await capture('wallet-methods',page.frames().find(f=>f.url().includes('/apps/wallet/')));
-    await wallet.locator('#wallet-signin-methods [role=switch]').click();await state('review');await capture('disable-review');
-    await page.locator('.signin-dialog').getByRole('button',{name:'Use passkey',exact:true}).click();await state('done');await capture('disable-done');await page.locator('.signin-dialog').getByRole('button',{name:'Done',exact:true}).click();
-    await page.locator('#show-system').click();await system.locator('[role=switch][aria-checked=false]').waitFor();
-    await system.locator('[data-wallet-method]').getByRole('button',{name:'Remove',exact:true}).click();await state('review');await capture('remove-review');await page.locator('.signin-dialog').getByRole('button',{name:'Use passkey',exact:true}).click();await state('done');await capture('remove-done');await page.locator('.signin-dialog').getByRole('button',{name:'Done',exact:true}).click();
+    await system.getByRole('button',{name:'Add wallet',exact:true}).click();await state('choice');
+    await page.locator('.signin-dialog').getByRole('button',{name:'MetaMask',exact:false}).click();await state('review');
+    await page.locator('.signin-dialog').getByRole('button',{name:'Sign message',exact:true}).click();await state('approval');
+    await page.locator('.signin-dialog').getByRole('button',{name:'Use passkey',exact:true}).click();await state('approval');await capture('passkey-cancelled');
+    await page.evaluate(()=>window.walletFixture.passkeyMode='normal');await page.locator('.signin-dialog').getByRole('button',{name:'Use passkey',exact:true}).click();await state('done');await capture('add-done');await page.locator('.signin-dialog').getByRole('button',{name:'Done',exact:true}).click();
+    await system.locator('[data-wallet-method]').getByText('Signs in',{exact:true}).waitFor();await capture('system-methods');
+    await page.locator('#show-wallet').click();const wallet=page.frameLocator('iframe[title=wallet]');
+    await wallet.locator('#wallet-signin-methods').getByText('Signs in',{exact:true}).waitFor();await capture('wallet-methods');
+    await wallet.locator('[data-wallet-method]').getByRole('button',{name:'Remove',exact:true}).click();await state('review');await capture('remove-review');
+    await page.locator('.signin-dialog').getByRole('button',{name:'Use passkey',exact:true}).click();await state('done');await capture('remove-done');await page.locator('.signin-dialog').getByRole('button',{name:'Done',exact:true}).click();
     assert.equal(fixture.state.methods.length,0);
-    await page.locator('#show-wallet').click();await wallet.locator('[data-wallet-method="payment:payment:one"] [role=switch]').waitFor();
-    assert(await wallet.locator('[data-wallet-method="payment:payment:one"] [role=switch]').isDisabled());await wallet.locator('#wallet-signin-methods').scrollIntoViewIfNeeded();await capture('wallet-payment-only');
+    await wallet.locator('[data-wallet-method="payment:payment:one"]').getByRole('button',{name:'Add wallet',exact:true}).waitFor();
+    await capture('wallet-connected-payment');
     const methodReads=fixture.state.calls.filter(c=>c.path==='/api/auth/wallet-methods').length;
     const account=wallet.locator('[data-wallet-account-detail] .wallet-card-name').first();
     await wallet.locator('#wallet-signin-methods').evaluate(el=>{window.signinCardsBefore=el.firstChild;});
@@ -235,37 +237,28 @@ async function exercise(engine,width) {
       if(connector==='walletconnect'){await internetNotice();await state('pairing');await pair();}
       await state('review');await capture(`add-${connector}-review`);await page.locator('.signin-dialog').getByRole('button',{name:'Sign message',exact:true}).click();await state('approval');await page.locator('.signin-dialog').getByRole('button',{name:'Use passkey',exact:true}).click();await state('done');await capture(`add-${connector}-done`);await page.locator('.signin-dialog').getByRole('button',{name:'Done',exact:true}).click();
       assert.equal(fixture.state.calls.filter(c=>c.path==='/api/auth/wallet/signin/begin').length,publicBegins,'Add uses signed-in pairing only');
-      assert.equal(fixture.state.methods.find(m=>m.connector===connector).sign_in_enabled,false,'added wallet defaults off');
+      assert.equal(fixture.state.methods.find(m=>m.connector===connector).sign_in_enabled,true,'added wallet can sign in');
       assert.equal(fixture.state.methods.find(m=>m.connector===connector).last_used_at,null,'new method has never signed in');
       await system.locator(`[data-wallet-method="wallet:${connector}"]`).getByText('Not used yet',{exact:true}).waitFor();
-    }
-    for(const connector of ['unisat','walletconnect']) {
-      const row=system.locator(`[data-wallet-method="wallet:${connector}"]`);
-      await row.getByRole('switch').click();
-      if(connector==='walletconnect'){await internetNotice();await state('pairing');await pair();}
-      await state('review');await capture(`${connector}-enable-review`);
-      await page.locator('.signin-dialog').getByRole('button',{name:'Sign message',exact:true}).click();await state('approval');await capture(`${connector}-enable-approval`);
-      await page.locator('.signin-dialog').getByRole('button',{name:'Use passkey',exact:true}).click();await state('done');await capture(`${connector}-enable-done`);await page.locator('.signin-dialog').getByRole('button',{name:'Done',exact:true}).click();
     }
     fixture.state.scenario='unknown';
     await system.locator('[data-wallet-method="wallet:metamask"]').getByRole('button',{name:'Remove',exact:true}).click();await state('review');await page.locator('.signin-dialog').getByRole('button',{name:'Use passkey',exact:true}).click();await state('unknown');await capture('remove-result-retry');
     await page.locator('.signin-dialog').getByRole('button',{name:'Check again',exact:true}).click();await state('done');await page.locator('.signin-dialog').getByRole('button',{name:'Done',exact:true}).click();fixture.state.scenario='normal';
-    checks.push(`${engine}/${width}: add all three connectors, enable, disable, remove, passkey cancel/retry, one record across System and Wallet`);
-    for(const action of ['add','enable','disable','remove'])for(const outcome of ['busy','refused','unknown']) {
-      fixture.state.methods=action==='add'?[]:[sampleMethod('metamask',['disable','remove'].includes(action))];
+    checks.push(`${engine}/${width}: add all three connectors and remove, passkey cancel/retry, one record across System and Wallet`);
+    for(const action of ['add','remove'])for(const outcome of ['busy','refused','unknown']) {
+      fixture.state.methods=action==='add'?[]:[sampleMethod('metamask',true)];
       fixture.state.scenario='normal';
       await page.evaluate(()=>document.querySelector('iframe[title=system]').contentWindow.postMessage({type:'home:wallet-signin-changed'},'*'));
       if(action==='add')await system.locator('[data-wallet-method]').first().waitFor({state:'detached'});
-      else await system.locator(`[data-wallet-method="wallet:metamask"] [role=switch][aria-checked=${['disable','remove'].includes(action)}]`).waitFor();
+      else await system.locator('[data-wallet-method="wallet:metamask"]').waitFor();
       fixture.state.scenario=outcome;
       if(action==='add') {
         await system.getByRole('button',{name:'Add wallet',exact:true}).click();await state('choice');await page.locator('.signin-dialog').getByRole('button',{name:'MetaMask',exact:false}).click();
       } else if(action==='remove')await system.locator('[data-wallet-method="wallet:metamask"]').getByRole('button',{name:'Remove',exact:true}).click();
-      else await system.locator('[data-wallet-method="wallet:metamask"]').getByRole('switch').click();
       if(outcome!=='busy') {
         await state('review');
-        await page.locator('.signin-dialog').getByRole('button',{name:['disable','remove'].includes(action)?'Use passkey':'Sign message',exact:true}).click();
-        if(['add','enable'].includes(action)){await state('approval');await page.locator('.signin-dialog').getByRole('button',{name:'Use passkey',exact:true}).click();}
+        await page.locator('.signin-dialog').getByRole('button',{name:action==='remove'?'Use passkey':'Sign message',exact:true}).click();
+        if(action==='add'){await state('approval');await page.locator('.signin-dialog').getByRole('button',{name:'Use passkey',exact:true}).click();}
       }
       await state(outcome==='unknown'?'unknown':'error');await capture(`${action}-${outcome}`);
       if(outcome==='unknown') {
@@ -277,9 +270,9 @@ async function exercise(engine,width) {
       fixture.state.scenario='normal';
       checks.push(`${engine}/${width} ${action}: ${outcome}`);
     }
-    fixture.state.methods=[sampleMethod('metamask',false)];fixture.state.scenario='normal';
+    fixture.state.methods=[sampleMethod('metamask',true)];fixture.state.scenario='normal';
     await page.evaluate(()=>document.querySelector('iframe[title=system]').contentWindow.postMessage({type:'home:wallet-signin-changed'},'*'));
-    await system.locator('[data-wallet-method="wallet:metamask"] [role=switch][aria-checked=false]').waitFor();
+    await system.locator('[data-wallet-method="wallet:metamask"]').waitFor();
     await system.getByRole('button',{name:'Add wallet',exact:true}).click();await state('choice');await page.locator('.signin-dialog').getByRole('button',{name:'MetaMask',exact:false}).click();await state('error');await capture('add-already-added');
     await page.locator('.signin-dialog').getByRole('button',{name:'Refresh',exact:true}).click();await page.locator('.signin-dialog').waitFor({state:'detached'});await system.locator('[data-wallet-method="wallet:metamask"]').waitFor();
     await home({methods:[sampleMethod('metamask',true)]});await start();await state('review');await page.locator('.signin-dialog').getByRole('button',{name:'Sign in with wallet',exact:true}).click();await page.waitForFunction(()=>window.openedPrincipal==='principal:alex');
@@ -325,27 +318,23 @@ async function exercise(engine,width) {
     fixture.state.scenario='normal';await system.locator('#account-list').getByRole('button',{name:'Try again',exact:true}).click();await system.getByText('Safari on Mac',{exact:false}).waitFor();await capture('system-reloaded');
     fixture.state.scenario='load-failed';await page.evaluate(()=>{for(const f of document.querySelectorAll('#fixture-desktop iframe'))f.contentWindow.postMessage({type:'home:wallet-signin-changed'},'*');});await system.getByText('Home could not load wallet sign-in methods.',{exact:true}).waitFor();await capture('system-load-failed');
     fixture.state.role='guest';await home({methods:[sampleMethod('metamask',true)]});await page.evaluate(()=>window.showFixtureApps());
-    const guestSystem=page.frameLocator('iframe[title=system]');await guestSystem.locator('[data-wallet-method] [role=switch]').waitFor();
-    assert(!(await guestSystem.locator('[data-wallet-method] [role=switch]').isDisabled()),'Guest can turn off own method');assert.equal(await guestSystem.getByRole('button',{name:'Add wallet',exact:true}).count(),0);
+    const guestSystem=page.frameLocator('iframe[title=system]');await guestSystem.locator('[data-wallet-method]').waitFor();
+    assert.equal(await guestSystem.getByRole('button',{name:'Add wallet',exact:true}).count(),0);
     assert(!(await guestSystem.locator('[data-wallet-method]').getByRole('button',{name:'Remove',exact:true}).isDisabled()),'Guest can remove own method');
     assert.equal(await guestSystem.getByText('Only an Admin can turn sign-in on.',{exact:true}).count(),0);
     assert(await guestSystem.locator('[data-passkey-revoke="passkey:0"]').isDisabled(),'an enabled wallet keeps the final-passkey protection');
     await guestSystem.getByText('Keep one passkey, or remove the account.',{exact:true}).waitFor();
     await guestSystem.locator('[data-wallet-method]').scrollIntoViewIfNeeded();await capture('system-guest-last-method');
-    await guestSystem.locator('[data-wallet-method] [role=switch]').click();await state('review');
-    await page.locator('.signin-dialog').getByRole('button',{name:'Use passkey',exact:true}).click();await state('done');await page.locator('.signin-dialog').getByRole('button',{name:'Done',exact:true}).click();
-    const guestOff=guestSystem.locator('[data-wallet-method] [role=switch][aria-checked=false]');await guestOff.waitFor();assert(await guestOff.isDisabled(),'Guest cannot enable');await capture('system-guest-off');
     await guestSystem.locator('[data-wallet-method]').getByRole('button',{name:'Remove',exact:true}).click();await state('review');
     await page.locator('.signin-dialog').getByRole('button',{name:'Use passkey',exact:true}).click();await state('done');await page.locator('.signin-dialog').getByRole('button',{name:'Done',exact:true}).click();assert.equal(fixture.state.methods.length,0);
     fixture.state.methods=[sampleMethod('metamask',true)];
     await page.locator('#show-wallet').click();const guestWallet=page.frameLocator('iframe[title=wallet]');const guestCard=guestWallet.locator('[data-wallet-method="wallet:metamask"]');
-    await guestCard.locator('[role=switch][aria-checked=true]').waitFor();assert(!(await guestCard.getByRole('switch').isDisabled()));assert(!(await guestCard.getByRole('button',{name:'Remove',exact:true}).isDisabled()));
-    await guestWallet.locator('#wallet-signin-methods').scrollIntoViewIfNeeded();await capture('wallet-guest');
-    await guestCard.getByRole('switch').click();await state('review');await page.locator('.signin-dialog').getByRole('button',{name:'Use passkey',exact:true}).click();await state('done');await page.locator('.signin-dialog').getByRole('button',{name:'Done',exact:true}).click();
-    await guestCard.locator('[role=switch][aria-checked=false]').waitFor();assert(await guestCard.getByRole('switch').isDisabled());await capture('wallet-guest-off');
+    await guestCard.getByText('Signs in',{exact:true}).waitFor();
+    assert(!(await guestCard.getByRole('button',{name:'Remove',exact:true}).isDisabled()));
+    await capture('wallet-guest');
     await guestCard.getByRole('button',{name:'Remove',exact:true}).click();await state('review');await page.locator('.signin-dialog').getByRole('button',{name:'Use passkey',exact:true}).click();await state('done');await page.locator('.signin-dialog').getByRole('button',{name:'Done',exact:true}).click();
     const payment=guestWallet.locator('[data-wallet-method="payment:payment:one"]');await payment.waitFor();assert(await payment.getByRole('button',{name:'Add wallet',exact:true}).isDisabled());assert.equal(fixture.state.methods.length,0);await capture('wallet-guest-payment-only');
-    checks.push(`${engine}/${width}: Guest and demoted Admin can disable and remove; Add and Enable require Admin`);
+    checks.push(`${engine}/${width}: Guest and demoted Admin can remove; Add requires Admin`);
     assert.deepEqual(outside,[],'all traffic uses fixture Runtime');
     assert.deepEqual(errors,[],'no page errors');
     const signerPaths=fixture.state.calls.filter(c=>c.path.startsWith('/api/auth/wallet-methods'));

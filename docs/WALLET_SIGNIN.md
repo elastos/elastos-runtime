@@ -6,18 +6,17 @@ sign-in. Account IDs, roots, Profiles and passkey added-from labels stay unchang
 
 ## Rules
 
-An Admin adds and enables his own wallet methods. Each account can disable or
-remove its own methods, including after demotion to Guest. Accounts uses
-`add_signin` to add a wallet with sign-in on. The Wallet app uses `add`, which
-leaves sign-in off. Turning sign-in on requires a fresh signature from that wallet and fresh passkey
-approval for the exact action. Turning it off or removing it requires fresh
-passkey approval. Payment links acquire sign-in authority only through this
-explicit operation. Wallet sessions can use Home; passkeys approve sensitive actions.
+An Admin adds his own wallet methods with one wallet signature and one fresh
+passkey approval for the exact action. Each added method can sign in. Each
+account can remove its own methods with fresh passkey approval, including after
+demotion to Guest. Wallet owns payment links and their separate permissions;
+Runtime adds sign-in authority only through the explicit `add` operation.
+Wallet sessions can use Home; passkeys approve sensitive actions.
 Ordinary passkey removal keeps every account's final active passkey, including
 accounts with wallet sign-in enabled. A separate passkey-approved Remove account
 intent revokes that account's passkeys and clears its wallet access. Before
 removing an Admin account, another account must retain an active Admin passkey.
-Removal and switch off end the wallet's sessions and pending sign-in attempts. Concurrent changes are
+Removal ends the wallet's sessions and pending sign-in attempts. Concurrent changes are
 serialized. Recovery Kit recovery keeps the passkey recovery flow and clears the
 recovered account's wallets.
 
@@ -44,7 +43,7 @@ Errors use HTTP 413 for an oversized body, 415 for an unsupported content type,
 addresses, browser secrets or refused authority/proof, 409 for
 changed state or conflicting ownership, 429 for capacity and 503 for unavailable
 transport. JSON is `{"error":"wallet_signin_refused"}` for unknown wallet, wrong
-browser, expired/replayed proof and disabled method. Signed-out responses disclose
+browser, expired/replayed proof and removed method. Signed-out responses disclose
 no account names or ownership. A refused completion grants no session. A lost
 completion response may be retried with identical input while the ceremony is
 live; it returns the same result. After expiry, start again. Cancel is idempotent.
@@ -54,7 +53,7 @@ live; it returns the same result. After expiry, start again. Cancel is idempoten
 `GET /api/auth/wallet-methods` returns the caller's account only:
 
 ```json
-{"account_id":"principal:…","methods":[{"method_id":"wallet:…","connector":"metamask","address":"0x…","chain_id":20,"network":"","sign_in_enabled":false,"created_at":1800000000,"last_used_at":null}]}
+{"account_id":"principal:…","methods":[{"method_id":"wallet:…","connector":"metamask","address":"0x…","chain_id":20,"network":"","sign_in_enabled":true,"created_at":1800000000,"last_used_at":null}]}
 ```
 
 Passkeys remain available from the existing passkey list API, with existing
@@ -68,45 +67,43 @@ Bitcoin ownership is network and address.
 {"action":"add","connector":"metamask","address":"0x…","chain_id":20,"network":"","browser_secret":"<64 hex characters>"}
 ```
 
-Accounts uses `action: "add_signin"` with the same wallet fields to add the wallet
-with sign-in enabled in one operation. Runtime requires a live Admin at begin,
-passkey approval and completion. The wallet message says that this wallet can
-sign in to this Home for this account. Its distinct `AddSignInMethod` proof purpose
-and the approval's `action: "add_signin"` bind that combined effect. An `add`
-proof cannot complete `add_signin`, and an `add_signin` proof cannot complete `add`.
-Runtime saves the method, current ownership witnesses and sign-in permission in
-one transaction after wallet verification and exact passkey approval.
+Runtime supports two method actions: `add` and `remove`. An added wallet can
+sign in to its account. `add` requires a live Admin at begin, passkey approval
+and completion. The wallet message says that this wallet can sign in to this
+Home for this account. The `AddSignInMethod` proof purpose and the approval's
+`action: "add"` bind that effect. Runtime saves the method and current ownership
+witnesses in one transaction after wallet verification and exact passkey approval.
 
-For the first WalletConnect Add or Add-and-sign-in, use this authenticated
-management route with `action: "add"` or `"add_signin"`,
-`connector: "walletconnect"`, an empty address, chain_id 20, network `""`,
-browser_secret and `allow_temporary_internet: true`. Show the short
-connection disclosure first. Begin returns the temporary pairing transport.
+For WalletConnect enrollment, use this authenticated management route with
+`action: "add"`, `connector: "walletconnect"`, an empty address, chain_id 20,
+network `""`, browser_secret and `allow_temporary_internet: true`. Show Runtime's
+relay disclosure before approval. Begin returns temporary pairing transport.
 After pairing, call `/api/auth/wallet/signin/select` with the same ceremony_id,
 browser_secret, selected address and chain_id to obtain the exact action-bound
-message.
-Selection replaces the initial chain_id with the wallet's chosen supported chain.
-Keep the management launch header on these calls. Then sign and approve Add as
-below. Anonymous sign-in pairing requires an already enabled compatible method;
-authenticated Add creates the first method without that prerequisite.
+message. Selection replaces the initial chain_id with the wallet's chosen
+supported chain. Keep the management launch header on these calls.
+Authenticated enrollment can create the first method; anonymous pairing requires
+an existing compatible method.
 
-For `enable`, `disable` and `remove`, send the owned `method_id` returned by Add
-instead of connector, address, chain_id and network. A payment wallet first uses
-Add, which leaves Sign in off, then Enable with that method ID. Enable requires
-an existing method; wallet identity fields alone cannot create or enable one.
+For `remove`, send the owned `method_id` instead of the wallet identity fields.
+A Guest, including an account demoted from Admin, can remove its own method.
+Removal requires a fresh same-account passkey approval, revokes that method's
+sessions and pending proofs, and ends anonymous WalletConnect pairing when the
+final compatible method is removed, including before address selection. Payment
+connections and their Inbox permissions keep their separate lifecycle.
+
 Begin returns:
 
 ```json
-{"ceremony_id":"wallet:…","message":"Home-built message, empty for disable/remove","expires_at":1800000180,"approval":{"operation":"auth.wallet.method","request":{"ceremony_id":"wallet:…","account_id":"principal:…","action":"add","method_id":"wallet:…","connector":"metamask","address":"0x…","chain_id":20,"network":"","authorizes_short_public_walletconnect":false},"notice":"Confirm this wallet sign-in method change with your passkey."}}
+{"ceremony_id":"wallet:…","message":"Home-built message, empty for remove","expires_at":1800000180,"approval":{"operation":"auth.wallet.method","request":{"ceremony_id":"wallet:…","account_id":"principal:…","action":"add","method_id":"wallet:…","connector":"metamask","address":"0x…","chain_id":20,"network":"","authorizes_short_public_walletconnect":true},"notice":"Runtime relay disclosure"},"instance_id":"…","storage_revision":0}
 ```
 
 Show the account, Home origin, full wallet address, network, exact message and
-effect before requesting the signature or passkey. Add-and-sign-in and Enable
-show Runtime's `approval.notice` before passkey approval. Home echoes the full Runtime-bound
-approval request unchanged when it asks for passkey approval.
-For add/add_signin/enable sign the exact `message` using personal_sign
-(EVM) or UniSat signMessage (Bitcoin). Then use existing
-`POST /api/auth/passkey-step-up/begin` with its existing schema, app_token and the
+effect before requesting the signature or passkey. Show Runtime's
+`approval.notice` before passkey approval. Home echoes the complete Runtime-bound
+approval request unchanged. For `add`, sign the exact message with personal_sign
+(EVM) or UniSat signMessage (Bitcoin), then use
+`POST /api/auth/passkey-step-up/begin` with its existing schema, app_token and
 returned approval operation/request. Complete WebAuthn through
 `/api/auth/passkey-step-up/complete` to obtain `step_up_token`.
 
@@ -116,22 +113,21 @@ returned approval operation/request. Complete WebAuthn through
 {"ceremony_id":"wallet:…","browser_secret":"<same secret>","signature":"0x…","signature_type":"personal_sign","public_key":"","step_up_token":"…"}
 ```
 
-`signature`, `signature_type` and `public_key` are optional for disable/remove.
+`signature`, `signature_type` and `public_key` are optional for `remove`.
 Bitcoin uses `bip322_simple` or `bitcoin_signed_message`; public_key is supplied
-where that proof mode needs it. The response is
-`{"status":"complete","method_id":"wallet:…","sign_in_enabled":false}`.
-For `add_signin` and `enable`, the response has `sign_in_enabled: true`:
+where that proof mode needs it. The `add` response is:
 
 ```json
 {"status":"complete","method_id":"wallet:…","sign_in_enabled":true}
 ```
 
-The response for remove has `status: "removed"`. `add` continues to create a
-payment-only method with sign-in off; its separate `enable` operation stays
-available. A new method change needs new approval. An identical completion retry
-returns its saved result while the ceremony is live, without another approval
-or authority change. Reusing the proof for a different ceremony is refused.
-Begin never changes wallet authority.
+Removal returns `{"status":"removed","method_id":"wallet:…","sign_in_enabled":false}`.
+The list and completion retain the `sign_in_enabled` field for callers; every
+listed method has the value `true`. Each new method change needs new approval.
+An identical completion retry returns its saved result while the ceremony and
+original authority remain live, without another approval or authority change.
+A proof from another ceremony or the earlier enrollment contract is refused.
+Begin leaves wallet authority unchanged.
 
 ## Signed-out sign-in
 
@@ -143,7 +139,7 @@ and chain_id after pairing to obtain the message. Selection is bound once.
 
 `POST /api/auth/wallet/signin/complete` accepts ceremony_id, browser_secret,
 signature, signature_type and public_key. Runtime verifies the Home-built proof,
-current switch and ownership, then issues the existing Home authentication result
+current method and ownership, then issues the existing Home authentication result
 (session_id, principal_id, proof_binding_id, expires_at, app_token) and session
 cookie. Home opens the same account directly. Runtime binds the proof to the
 sign-in purpose, Home origin and ceremony; the browser secret binds completion
@@ -184,20 +180,23 @@ passkey from the same account; it cannot approve by signing with a wallet.
 
 Wallet records use a separate additive file under the Runtime auth root. The old
 binary reads its unchanged auth state and preserves the wallet file. On forward
-update Runtime checks every wallet against current passkey account state. Account
+update Runtime checks every wallet against current passkey account state.
+Runtime deletes stored disabled methods from trial Homes on load and logs the
+number deleted. Each retained method already has sign-in authority. Saved
+ceremonies from the earlier contract are invalid, including saved completions;
+the caller starts a fresh ceremony. Earlier unbound enrollment proofs cannot
+complete the current bound enrollment. Account
 removal or replacement recovery invalidates the old wallet generation. New wallet
 sessions use an additive session store which the old binary ignores. Undo keeps
 passkey access and forward update retains eligible wallet records.
 
 ## Screen states
 
-Accounts Add wallet (`add_signin`): select signer → pair/select address → review →
-wallet signature → passkey approval → added, sign-in on. Wallet app Add (`add`):
-the same sequence → added, sign-in off. Enable: review → fresh wallet signature → passkey
-approval → on. Disable/remove: review effect → passkey approval → complete.
-Sign-in: signer choice → pair/select → review → sign → Home. Every pending state
-has Cancel and an expiry path. An uncertain response is retried with the same
-ceremony; a refused or expired ceremony starts from signer choice.
+Add wallet (`add`): select signer → pair/select address → review → wallet
+signature → passkey approval → added. Remove: review effect → passkey approval
+→ complete. Sign-in: signer choice → pair/select → review → sign → Home. Every
+pending state has Cancel and an expiry path. An uncertain response is retried
+with the same ceremony; a refused or expired ceremony starts from signer choice.
 
 ## Account actions from a wallet session
 
@@ -234,12 +233,12 @@ Kit recovery continues through the passkey recovery path.
 WalletConnect add begins with an empty address and chain_id 20, then calls the
 same `/api/auth/wallet/signin/select` route with the management ceremony and its
 browser secret. Runtime retains the account and action across selection. Removal
-and switch off grant zero temporary relay authority. Wallet responses include
+grants zero temporary relay authority. Wallet responses include
 `home_token` and `system_token`; `app_token` is an alias for `home_token`.
 
 Method changes and response retries require a live original session. Revocation
 wins over a cached success. Session renewal keeps the ceremony's session/grant
-identity and its original deadline. A browser with an uncertain disabled-method
+identity and its original deadline. A browser with an uncertain method-removal
 response can sign in with its passkey and read the current list.
 
 The additive record stores current passkey witnesses and a checkpoint in the
@@ -251,7 +250,7 @@ file refuses wallet access while passkey access remains available.
 
 ## Short WalletConnect sign-in permission
 
-The Add-and-sign-in and Enable reviews display `approval.notice` before passkey
+The Add review displays `approval.notice` before passkey
 approval. The
 `approval.request.authorizes_short_public_walletconnect` field is true for an
 ordinary EVM wallet on Elastos Smart Chain (20) or Base (8453), whether it was
@@ -260,7 +259,7 @@ bounded sign-in relay connections. The relay service can see the Home
 computer's internet address. Runtime binds this effect to the fresh approval.
 Payment connections keep their separate Inbox permission.
 
-A WalletConnect add/add_signin/enable/sign-in begin sends `allow_temporary_internet: true`
+A WalletConnect add/sign-in begin sends `allow_temporary_internet: true`
 only after the person continues past a plain notice that the wallet is reached
 over the internet. The field defaults to false and records consent; authentication
 comes from the signed wallet proof and Runtime's current account state.
@@ -268,7 +267,7 @@ Signed-out pairing also requires at least one enabled compatible EVM method on
 this Home, on chain 20 or 8453, through either MetaMask or WalletConnect.
 `has_relay_method` checks this Home-wide condition; it does not require a prior
 WalletConnect method or the selected address. Runtime checks the condition
-during relay admission and use. Switching off the final compatible method also
+during relay admission and use. Removing the final compatible method also
 ends pairing attempts that have yet to select an address.
 
 For wallet sessions, `/api/apps/system/access/guest-registration` requires a

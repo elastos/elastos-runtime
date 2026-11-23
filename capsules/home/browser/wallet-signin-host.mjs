@@ -17,7 +17,7 @@ export function handleWalletSigninRequest(event,context,{api,manage,current,chan
     || context.source!==event.source || context.homeToken!==data.homeToken
     || Object.keys(data).length!==keys.length || keys.some(key=>!Object.hasOwn(data,key))
     || typeof data.requestId!=='string' || !data.requestId || data.requestId.length>128
-    || !['list','add','enable','disable','remove'].includes(data.action)
+    || !['list','add','remove'].includes(data.action)
     || typeof data.methodId!=='string' || data.methodId.length>256
     || (['list','add'].includes(data.action)?data.methodId!=='':!data.methodId))return true;
   const token=authorityToken();

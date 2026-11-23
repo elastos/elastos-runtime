@@ -1,8 +1,8 @@
 import {createWalletSigninFlow,connectorName,walletNetwork,walletSigninOriginAllowed} from './wallet-signin-flow.mjs';
 import {copyHomeWalletConnectionLink} from './home-clipboard-host.js?v=home-20260726a';
 import {selectSigninWallet} from './wallet-signin-signers.mjs';
-const titles={signin:'Sign in with wallet',add:'Add wallet',enable:'Turn on wallet sign-in',disable:'Turn off wallet sign-in',remove:'Remove wallet'};
-const effects={signin:'This wallet opens your existing Home account. Approvals need your passkey.',add:'Home will add this wallet to your account with Sign in off.',enable:'This wallet will be able to sign in to your Home account.',disable:'Home will turn off sign-in for this wallet and end its sign-in sessions. Wallet keeps its payment connections.',remove:'Home will remove this sign-in method and end its sign-in sessions. Wallet keeps its payment connections.'};
+const titles={signin:'Sign in with wallet',add:'Add wallet',remove:'Remove wallet'};
+const effects={signin:'This wallet opens your existing Home account. Approvals need your passkey.',add:'This wallet will be able to sign in to your Home account.',remove:'Home will remove this sign-in method and end its sign-in sessions. Wallet keeps its payment connections.'};
 function node(tag,text,className) {const el=document.createElement(tag);if(text)el.textContent=text;if(className)el.className=className;return el;}
 export async function walletSigninApi(path,body,token='') {
   const response=await fetch(path,{
@@ -45,7 +45,7 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
     dialog.append(node('p','Home','signin-eyebrow'));
     const title=node('h2',titles[state.action]);title.id='wallet-signin-title';dialog.append(title);
     if(state.stage==='choice') {
-      dialog.append(node('p',state.action==='signin'?'Choose a wallet you added to your account.':'Choose the wallet to add. Sign in starts off.'));
+      dialog.append(node('p',state.action==='signin'?'Choose a wallet you added to your account.':'Choose the wallet to add.'));
       const choices=node('div',null,'signin-choices');
       for(const connector of ['walletconnect','metamask','unisat']) {
         const choice=button(connectorName(connector),()=>flow.choose(connector),true);
@@ -84,15 +84,15 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
       if(state.approvalNotice)dialog.append(node('p',state.approvalNotice,'signin-note'));
       if(state.stage==='review') {
         if(state.action==='signin')dialog.append(node('p','Continue only if you started this sign-in in this browser.','signin-note'));
-        if(['signin','add','enable'].includes(state.action)) {
+        if(['signin','add'].includes(state.action)) {
           dialog.append(node('p','Review the message before signing.','signin-note'));
           const message=node('details');message.append(node('summary','Message'),node('pre',flowMessage()));dialog.append(message);
         }
-        dialog.append(button(['disable','remove'].includes(state.action)?'Use passkey':state.action==='signin'?'Sign in with wallet':'Sign message',()=>flow.confirm()));
+        dialog.append(button(state.action==='remove'?'Use passkey':state.action==='signin'?'Sign in with wallet':'Sign message',()=>flow.confirm()));
       } else if(state.stage==='approval')dialog.append(button('Use passkey',()=>flow.approve()));
       else if(state.stage==='unknown')dialog.append(button('Check again',()=>flow.retry()));
     }
-    const statuses={connecting:state.connector==='walletconnect'?'Connecting to WalletConnect…':'Select an account in your wallet.',signing:'Sign the message in your wallet.',approval:'Confirm this change with your passkey.',passkey:'Confirm with your passkey.',completing:state.action==='signin'?'Checking sign-in…':'Saving change…',done:({add:'Wallet added. Sign in is off.',enable:'Wallet sign-in is on.',disable:'Wallet sign-in is off.',remove:'Wallet removed.'})[state.action]};
+    const statuses={connecting:state.connector==='walletconnect'?'Connecting to WalletConnect…':'Select an account in your wallet.',signing:'Sign the message in your wallet.',approval:'Confirm this change with your passkey.',passkey:'Confirm with your passkey.',completing:state.action==='signin'?'Checking sign-in…':'Saving change…',done:({add:'Wallet added.',remove:'Wallet removed.'})[state.action]};
     const status=node('p',state.message||statuses[state.stage]||'',state.stage==='error'?'signin-error':'signin-note');status.setAttribute('role','status');dialog.append(status);
     if(state.stage==='error') {
       if(state.refresh)dialog.append(button('Refresh',()=>flow.cancel()));

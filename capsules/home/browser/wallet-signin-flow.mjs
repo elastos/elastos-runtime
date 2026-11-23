@@ -64,10 +64,10 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
       const method=state.method;
       let ceremony;
       if(state.action!=='signin' && state.action!=='add') {
-        ceremony=await begin(current,'/api/auth/wallet-methods/begin',{action:state.action,method_id:method.method_id,...(connector==='walletconnect'&&state.action==='enable'?{allow_temporary_internet:true}:{})});
+        ceremony=await begin(current,'/api/auth/wallet-methods/begin',{action:state.action,method_id:method.method_id});
         current.target=method;
       }
-      if(['signin','add','enable'].includes(state.action)) {
+      if(['signin','add'].includes(state.action)) {
         let transport=ceremony;
         if(connector==='walletconnect' && !transport) transport=await begin(current,state.action==='add'?'/api/auth/wallet-methods/begin':'/api/auth/wallet/signin/begin',{
           ...(state.action==='add'?{action:'add'}:{}),connector,address:'',chain_id:20,network:'',allow_temporary_internet:true,
@@ -100,7 +100,7 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
         }
       }
       assertLive(current);
-      if(!ceremony || typeof ceremony.message!=='string' || ceremony.message.length>32768 || ['signin','add','enable'].includes(state.action)&&!ceremony.message) throw fault('invalid');
+      if(!ceremony || typeof ceremony.message!=='string' || ceremony.message.length>32768 || ['signin','add'].includes(state.action)&&!ceremony.message) throw fault('invalid');
       if(state.action!=='signin') {
         const approval=ceremony.approval, request=approval?.request;
         if(approval?.operation!=='auth.wallet.method' || request?.ceremony_id!==ceremony.ceremony_id || request?.action!==state.action
@@ -124,7 +124,7 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
       if(!live(current))return;
       if(state.action==='signin' ? !result?.app_token || !result?.session_id || !result?.principal_id || !result?.proof_binding_id
         : result?.status!==(state.action==='remove'?'removed':'complete') || result?.method_id!==current.ceremony.approval.request.method_id
-          || state.action!=='remove' && result.sign_in_enabled!==(state.action==='enable')) throw fault('invalid');
+          || state.action!=='remove' && result.sign_in_enabled!==(state.action==='add')) throw fault('invalid');
       clearTimeout(timer);run=null;stopLocal(current);
       // Runtime retires the transport. Cancel would revoke the confirmed session.
       show('done',{result});await onComplete(result,state.action);
@@ -137,6 +137,7 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
   return {
     get state(){return state;},
     async start({action='signin',method=null,account='',accountId='',token='' }={}) {
+      if(!['signin','add','remove'].includes(action))throw fault('invalid');
       const previous=run;run=null;clearTimeout(timer);void clear(previous);
       const current=run={secret:randomSecret(),controller:new AbortController(),ceremonies:new Map(),deadline:now()+180};
       state={stage:'choice',action,method,account,accountId,token,walletconnectAvailable:action==='signin'?null:true};show('choice');deadline(current,current.deadline);
@@ -148,7 +149,7 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
         if(state.stage==='choice')show('choice');
       }
       if(method && live(current)) {
-        if(method.connector==='walletconnect'&&['add','enable'].includes(action))show('internet-notice',{connector:method.connector});
+        if(method.connector==='walletconnect'&&['add'].includes(action))show('internet-notice',{connector:method.connector});
         else await prepare(current,method.connector);
       }
     },
@@ -164,14 +165,14 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
       const current=run;if(!current || state.stage!=='review')return;
       try {
         assertLive(current);
-        if(['signin','add','enable'].includes(state.action)) {
+        if(['signin','add'].includes(state.action)) {
           show('signing');await current.wallet.check();assertLive(current);
           current.proof=await current.wallet.sign(current.ceremony.message);assertLive(current);await current.wallet.check();assertLive(current);
         }
         if(state.action==='signin') {
           current.completion=JSON.stringify({ceremony_id:current.ceremony.ceremony_id,browser_secret:current.secret,...current.proof});
           await complete(current);
-        } else if(['disable','remove'].includes(state.action)) await this.approve();
+        } else if(state.action==='remove') await this.approve();
         else show('approval');
       } catch(error) { fail(current,error); }
     },

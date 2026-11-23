@@ -6,11 +6,12 @@ use subtle::ConstantTimeEq;
 const FILE: &str = "wallet-signin.json";
 const SCHEMA: &str = "elastos.auth.wallet-signin/v1";
 const TTL: u64 = 180;
+const CONTRACT_VERSION: u32 = 1;
 const MAX_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_PENDING: usize = 64;
 const MAX_METHODS: usize = 128;
 pub(crate) const OPERATION: &str = "auth.wallet.method";
-const RELAY_NOTICE: &str = "Turning Sign in on lets visitors start short WalletConnect sign-in connections to this Home. The relay service can see this Home computer's internet address. Payment connections keep their separate Inbox permission.";
+const RELAY_NOTICE: &str = "Adding this wallet lets visitors start short WalletConnect sign-in connections to this Home. The relay service can see this Home computer's internet address. Payment connections keep their separate Inbox permission.";
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -32,6 +33,8 @@ pub(crate) struct Method {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Pending {
+    #[serde(default)]
+    contract_version: u32,
     id: String,
     action: String,
     // Read saved ceremonies from the older contract without granting authority.
@@ -224,6 +227,21 @@ fn reconcile(store: &mut Store, auth: &AuthState) {
     reconcile_through(store, auth, u64::MAX);
 }
 fn reconcile_through(store: &mut Store, auth: &AuthState, revocations_through: u64) {
+    let trial_methods = store.methods.iter().filter(|m| !m.sign_in_enabled).count();
+    store.methods.retain(|m| m.sign_in_enabled);
+    if trial_methods > 0 {
+        tracing::warn!(
+            count = trial_methods,
+            "Deleted disabled trial wallet sign-in methods"
+        );
+    }
+    for pending in &mut store.pending {
+        if pending.contract_version != CONTRACT_VERSION
+            || !matches!(pending.action.as_str(), "add" | "remove" | "signin")
+        {
+            pending.cancelled = true;
+        }
+    }
     let last = auth.audit_chain.last();
     if store.audit_sequence > 0 {
         let continuation = auth
@@ -316,7 +334,7 @@ fn reconcile_through(store: &mut Store, auth: &AuthState, revocations_through: u
             p.cancelled = true;
         }
         if p.result.is_none()
-            && !matches!(p.action.as_str(), "add" | "add_signin")
+            && p.action != "add"
             && p.action != "signin"
             && !live
                 .iter()
@@ -519,7 +537,7 @@ fn same_wallet(a: &Method, b: &Method) -> bool {
     a.address == b.address && a.chain_id == b.chain_id && a.network == b.network
 }
 fn approval(p: &Pending) -> Value {
-    serde_json::json!({"ceremony_id":p.id,"account_id":p.method.account_id,"action":p.action,"method_id":p.method.method_id,"connector":p.method.connector,"address":p.method.address,"chain_id":p.method.chain_id,"network":p.method.network,"authorizes_short_public_walletconnect":matches!(p.action.as_str(), "add_signin" | "enable") && compatible_relay_method(&p.method)})
+    serde_json::json!({"ceremony_id":p.id,"account_id":p.method.account_id,"action":p.action,"method_id":p.method.method_id,"connector":p.method.connector,"address":p.method.address,"chain_id":p.method.chain_id,"network":p.method.network,"authorizes_short_public_walletconnect":p.action == "add" && compatible_relay_method(&p.method)})
 }
 fn purpose(p: &Pending) -> WalletProofPurpose {
     if p.action == "signin" {
@@ -532,7 +550,7 @@ fn purpose(p: &Pending) -> WalletProofPurpose {
             "{}:{}:{}:{}",
             p.id, p.action, p.method.method_id, p.method.generation
         ));
-        if p.action == "add_signin" {
+        if p.action == "add" {
             WalletProofPurpose::AddSignInMethod {
                 account_id,
                 method_digest,
@@ -562,13 +580,13 @@ fn challenge(p: &Pending) -> anyhow::Result<WalletProofChallenge> {
     )?)
 }
 fn message(p: &Pending) -> anyhow::Result<String> {
-    if matches!(p.action.as_str(), "remove" | "disable") || p.method.address.is_empty() {
+    if p.action == "remove" || p.method.address.is_empty() {
         return Ok(String::new());
     }
     if p.method.connector != "unisat" {
         return Ok(challenge(p)?.message().into());
     }
-    Ok(format!("{} wants you to {} with your Bitcoin account:\n{}\n\nHome: {}\nNetwork: {}\nAction: {}\nIntent: {}\nNonce: {}\nBrowser: {}\nIssued At: {}\nExpiration Time: {}",p.origin,if p.action == "signin" {"sign in".into()} else if p.action == "add_signin" {format!("add this wallet so it can sign in to this Home for account {}", p.method.account_id)} else {"add a sign-in method".into()},p.method.address,p.home,p.method.network,p.action,hex::encode(digest(&approval(p).to_string())),hex::encode(p.nonce),hex::encode(digest(&hex::encode(p.proof_secret))),p.issued_at,p.expires_at))
+    Ok(format!("{} wants you to {} with your Bitcoin account:\n{}\n\nHome: {}\nNetwork: {}\nAction: {}\nIntent: {}\nNonce: {}\nBrowser: {}\nIssued At: {}\nExpiration Time: {}",p.origin,if p.action == "signin" {"sign in".into()} else if p.action == "add" {format!("add this wallet so it can sign in to this Home for account {}", p.method.account_id)} else {"add a sign-in method".into()},p.method.address,p.home,p.method.network,p.action,hex::encode(digest(&approval(p).to_string())),hex::encode(p.nonce),hex::encode(digest(&hex::encode(p.proof_secret))),p.issued_at,p.expires_at))
 }
 fn begin_result(p: &Pending, token: Option<String>) -> anyhow::Result<BeginResult> {
     Ok(BeginResult {
@@ -578,7 +596,7 @@ fn begin_result(p: &Pending, token: Option<String>) -> anyhow::Result<BeginResul
         approval: p
             .actor
             .as_ref()
-            .map(|_| serde_json::json!({"operation":OPERATION,"request":approval(p),"notice":if matches!(p.action.as_str(), "add_signin" | "enable") && compatible_relay_method(&p.method) {RELAY_NOTICE} else {"Confirm this wallet sign-in method change with your passkey."}})),
+            .map(|_| serde_json::json!({"operation":OPERATION,"request":approval(p),"notice":if p.action == "add" && compatible_relay_method(&p.method) {RELAY_NOTICE} else {"Confirm this wallet sign-in method change with your passkey."}})),
         attempt_token: token,
         instance_id: p.instance_id.clone(),
         storage_revision: 0,
@@ -597,19 +615,11 @@ pub(crate) fn begin(
     } else {
         require(input.action != "signin")?;
     }
-    require(matches!(
-        input.action.as_str(),
-        "signin" | "add" | "add_signin" | "enable" | "disable" | "remove"
-    ))?;
+    require(matches!(input.action.as_str(), "signin" | "add" | "remove"))?;
     let now = now_ts();
     mutate(data, |auth, store| {
         if let Some(actor) = &actor {
-            require_actor(
-                auth,
-                store,
-                actor,
-                matches!(input.action.as_str(), "add" | "add_signin" | "enable"),
-            )?;
+            require_actor(auth, store, actor, input.action == "add")?;
         } else {
             require(auth.principals.iter().any(active_passkey))?;
         }
@@ -628,7 +638,7 @@ pub(crate) fn begin(
         {
             return Err(Capacity.into());
         }
-        let mut method = if matches!(input.action.as_str(), "enable" | "disable" | "remove") {
+        let mut method = if input.action == "remove" {
             store
                 .methods
                 .iter()
@@ -640,8 +650,7 @@ pub(crate) fn begin(
                 .cloned()
                 .ok_or(Refused)?
         } else {
-            let (address, network) = if (actor.is_none()
-                || matches!(input.action.as_str(), "add" | "add_signin"))
+            let (address, network) = if (actor.is_none() || input.action == "add")
                 && input.connector == "walletconnect"
                 && input.address.is_empty()
             {
@@ -678,18 +687,14 @@ pub(crate) fn begin(
                 method.connector = input.connector.clone();
             }
         }
-        if matches!(input.action.as_str(), "add" | "add_signin") {
+        if input.action == "add" {
             if store.methods.len() >= MAX_METHODS {
                 return Err(Capacity.into());
             }
             method.witnesses = witnesses(auth, &method.account_id);
             method.root_key = root_key(auth, &method.account_id);
         }
-        if method.connector == "walletconnect"
-            && matches!(
-                input.action.as_str(),
-                "signin" | "add" | "add_signin" | "enable"
-            )
+        if method.connector == "walletconnect" && matches!(input.action.as_str(), "signin" | "add")
         {
             require(input.allow_temporary_internet)?;
             if actor.is_none() {
@@ -698,6 +703,7 @@ pub(crate) fn begin(
         }
         let token = random_secret_hex();
         let mut pending = Pending {
+            contract_version: CONTRACT_VERSION,
             id: format!("wallet:{}", random_secret_hex()),
             action: input.action,
             _legacy_creates_method: false,
@@ -726,10 +732,7 @@ pub(crate) fn begin(
         let result = begin_result(
             &pending,
             (pending.method.connector == "walletconnect"
-                && matches!(
-                    pending.action.as_str(),
-                    "signin" | "add" | "add_signin" | "enable"
-                ))
+                && matches!(pending.action.as_str(), "signin" | "add"))
             .then_some(token),
         )?;
         store.pending.push(pending);
@@ -761,12 +764,7 @@ pub(crate) fn intent(
 ) -> anyhow::Result<Value> {
     mutate(data, |auth, store| {
         let p = pending(store, id, browser, origin)?;
-        require_actor(
-            auth,
-            store,
-            actor,
-            matches!(p.action.as_str(), "add" | "add_signin" | "enable"),
-        )?;
+        require_actor(auth, store, actor, p.action == "add")?;
         require(same_actor(p.actor.as_ref(), Some(actor)))?;
         Ok(approval(p))
     })
@@ -855,12 +853,7 @@ pub(crate) fn complete(
         let p = pending(store, &input.ceremony_id, &input.browser_secret, origin)?.clone();
         require(same_actor(p.actor.as_ref(), actor))?;
         if let Some(actor) = actor {
-            require_actor(
-                auth,
-                store,
-                actor,
-                matches!(p.action.as_str(), "add" | "add_signin" | "enable"),
-            )?;
+            require_actor(auth, store, actor, p.action == "add")?;
         }
         let response_digest = hex::encode(digest(&format!(
             "{}:{}:{}",
@@ -876,10 +869,7 @@ pub(crate) fn complete(
             }
             return Ok(result.clone());
         }
-        if matches!(
-            p.action.as_str(),
-            "add" | "add_signin" | "enable" | "signin"
-        ) {
+        if matches!(p.action.as_str(), "add" | "signin") {
             verify(store, &p, input)?;
         }
         let result = if p.action == "signin" {
@@ -918,7 +908,7 @@ pub(crate) fn complete(
         } else {
             // Consume passkey approval only after proof/ownership validation. A
             // failed write leaves authority unchanged; retry needs new approval.
-            let creates_method = matches!(p.action.as_str(), "add" | "add_signin");
+            let creates_method = p.action == "add";
             if creates_method {
                 if store.methods.len() >= MAX_METHODS {
                     return Err(Capacity.into());
@@ -938,20 +928,12 @@ pub(crate) fn complete(
                 let mut method = p.method.clone();
                 method.witnesses = witnesses(auth, &method.account_id);
                 method.root_key = root_key(auth, &method.account_id);
-                method.sign_in_enabled = p.action == "add_signin";
+                method.sign_in_enabled = true;
                 store.methods.push(method);
             } else if p.action == "remove" {
                 store.methods.retain(|m| m.method_id != p.method.method_id);
-            } else {
-                let m = store
-                    .methods
-                    .iter_mut()
-                    .find(|m| m.method_id == p.method.method_id)
-                    .ok_or(Refused)?;
-                m.sign_in_enabled = p.action == "enable";
-                m.generation = random_secret_hex();
             }
-            if matches!(p.action.as_str(), "remove" | "disable") {
+            if p.action == "remove" {
                 for s in &mut store.sessions {
                     if s.grant.proof_binding_id == p.method.method_id {
                         s.revoked_at = Some(now_ts());
@@ -966,7 +948,7 @@ pub(crate) fn complete(
                     }
                 }
             }
-            serde_json::json!({"status":if p.action == "remove" {"removed"} else {"complete"},"method_id":p.method.method_id,"sign_in_enabled":matches!(p.action.as_str(), "add_signin" | "enable")})
+            serde_json::json!({"status":if p.action == "remove" {"removed"} else {"complete"},"method_id":p.method.method_id,"sign_in_enabled":p.action == "add"})
         };
         let saved = store
             .pending
@@ -975,6 +957,7 @@ pub(crate) fn complete(
             .ok_or(Refused)?;
         saved.result = Some(result.clone());
         saved.response_digest = Some(response_digest);
+        reconcile(store, auth);
         Ok(result)
     })
 }
@@ -1014,7 +997,7 @@ pub(crate) fn select(
     mutate(data, |_, store| {
         let mut p = pending(store, id, browser, origin)?.clone();
         require(
-            matches!(p.action.as_str(), "signin" | "add" | "add_signin")
+            matches!(p.action.as_str(), "signin" | "add")
                 && p.method.connector == "walletconnect"
                 && p.method.address.is_empty()
                 && p.result.is_none(),
@@ -1104,12 +1087,7 @@ pub(crate) fn approval_intent(
             .iter()
             .find(|p| p.id == id && !p.cancelled && p.expires_at > now_ts() && p.result.is_none())
             .ok_or(Refused)?;
-        require_actor(
-            auth,
-            store,
-            actor,
-            matches!(p.action.as_str(), "add" | "add_signin" | "enable"),
-        )?;
+        require_actor(auth, store, actor, p.action == "add")?;
         require(same_actor(p.actor.as_ref(), Some(actor)))?;
         Ok(approval(p))
     })
@@ -1138,10 +1116,7 @@ pub(crate) fn attempt_context(
             bool::from(p.transport_digest.ct_eq(&digest(token)))
                 && p.instance_id == instance
                 && p.method.connector == "walletconnect"
-                && matches!(
-                    p.action.as_str(),
-                    "signin" | "add" | "add_signin" | "enable"
-                )
+                && matches!(p.action.as_str(), "signin" | "add")
                 && !p.cancelled
                 && p.result.is_none()
                 && p.expires_at > now
@@ -1364,9 +1339,7 @@ pub(crate) mod tests {
         out["method_id"].as_str().unwrap().into()
     }
     pub(crate) fn enabled(f: &Fixture) -> String {
-        let id = change(f, "add", "");
-        change(f, "enable", &id);
-        id
+        change(f, "add", "")
     }
     #[test]
     fn wallet_one_state_add_is_live_and_retired_actions_are_refused() {
@@ -1406,10 +1379,39 @@ pub(crate) mod tests {
             pending.as_object_mut().unwrap().remove("contract_version");
         }
         write_secret_bytes_atomic(&file, &serde_json::to_vec(&saved).unwrap()).unwrap();
-        assert!(list(f.data.path(), &f.actor).unwrap()["methods"]
-            .as_array()
-            .unwrap()
-            .is_empty());
+        #[derive(Clone)]
+        struct LogWriter(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+        impl std::io::Write for LogWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let logs = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let writer = LogWriter(logs.clone());
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_writer(move || writer.clone())
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            assert!(list(f.data.path(), &f.actor).unwrap()["methods"]
+                .as_array()
+                .unwrap()
+                .is_empty());
+        });
+        let log = String::from_utf8(logs.lock().unwrap().clone()).unwrap();
+        assert!(
+            log.contains("Deleted disabled trial wallet sign-in methods"),
+            "{log}"
+        );
+        assert!(
+            !log.contains(&f.address),
+            "migration logs counts, not wallet identities"
+        );
         assert!(read(f.data.path()).unwrap().methods.is_empty());
         assert!(principal(f.data.path(), &id).is_err());
         assert!(load_active_session_grant(f.data.path(), &session.session_id, now_ts()).is_err());
@@ -1419,6 +1421,43 @@ pub(crate) mod tests {
             ))
             .is_err()
         );
+    }
+    #[test]
+    fn wallet_one_state_legacy_pending_and_completed_ceremonies_are_invalid() {
+        for action in ["add", "remove", "signin"] {
+            for completed in [false, true] {
+                let f = fixture();
+                let id = enabled(&f);
+                let mut req = input(action, &id, &f.address);
+                if action == "add" {
+                    req.chain_id = 8453;
+                }
+                let actor = (action != "signin").then_some(&f.actor);
+                let b = begin(f.data.path(), ORIGIN, "home-test", req, actor.cloned()).unwrap();
+                let proof = completion(&f, &b);
+                if completed {
+                    complete(f.data.path(), ORIGIN, &proof, actor, |_| Ok(())).unwrap();
+                }
+                let file = path(f.data.path()).unwrap();
+                let mut saved: Value =
+                    serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+                for pending in saved["pending"].as_array_mut().unwrap() {
+                    pending.as_object_mut().unwrap().remove("contract_version");
+                }
+                write_secret_bytes_atomic(&file, &serde_json::to_vec(&saved).unwrap()).unwrap();
+                assert!(
+                    complete(f.data.path(), ORIGIN, &proof, actor, |_| panic!(
+                        "legacy ceremony cannot consume approval"
+                    ))
+                    .is_err(),
+                    "{action}, completed={completed}"
+                );
+                assert!(
+                    list(f.data.path(), &f.actor).is_ok(),
+                    "passkey account remains available"
+                );
+            }
+        }
     }
     #[test]
     fn wallet_one_state_removing_final_compatible_method_ends_unselected_pairing() {
@@ -1457,7 +1496,7 @@ pub(crate) mod tests {
             f.data.path(),
             ORIGIN,
             "home-test",
-            input("add_signin", "", &f.address),
+            input("add", "", &f.address),
             Some(f.actor.clone()),
         )
         .unwrap();
@@ -1466,7 +1505,7 @@ pub(crate) mod tests {
             .unwrap()
             .is_empty());
         let expected = b.approval.as_ref().unwrap()["request"].clone();
-        assert_eq!(expected["action"], "add_signin");
+        assert_eq!(expected["action"], "add");
         assert_eq!(expected["authorizes_short_public_walletconnect"], true);
         assert_eq!(b.approval.as_ref().unwrap()["notice"], RELAY_NOTICE);
         assert_eq!(
@@ -1506,7 +1545,7 @@ pub(crate) mod tests {
     }
     #[test]
     fn wallet_add_signin_and_add_proofs_are_disjoint_and_single_use() {
-        for (action, other) in [("add", "add_signin"), ("add_signin", "add")] {
+        for (action, other) in [("add", "legacy_add"), ("add", "signin")] {
             let f = fixture();
             let b = begin(
                 f.data.path(),
@@ -1563,7 +1602,7 @@ pub(crate) mod tests {
                         f.data.path(),
                         ORIGIN,
                         "home-test",
-                        input("add_signin", "", &f.address),
+                        input("add", "", &f.address),
                         Some(f.actor.clone()),
                     )
                     .unwrap(),
@@ -1574,7 +1613,7 @@ pub(crate) mod tests {
                 f.data.path(),
                 ORIGIN,
                 "home-test",
-                input("add_signin", "", &f.address),
+                input("add", "", &f.address),
                 Some(f.actor.clone()),
             )
             .is_err());
@@ -1594,10 +1633,10 @@ pub(crate) mod tests {
         }
     }
     #[test]
-    fn wallet_add_signin_relay_disclosure_matches_enable() {
+    fn wallet_add_relay_disclosure_matches_compatible_chains() {
         for chain in [20, 8453, 1] {
             let f = fixture();
-            let mut req = input("add_signin", "", &f.address);
+            let mut req = input("add", "", &f.address);
             req.chain_id = chain;
             let b = begin(
                 f.data.path(),
@@ -1609,7 +1648,16 @@ pub(crate) mod tests {
             .unwrap();
             assert!(b.message.contains("Add this wallet so it can sign in"));
             assert!(b.message.contains(&f.actor.principal_id));
-            let out = complete(
+            let approval = b.approval.as_ref().unwrap();
+            assert_eq!(
+                approval["request"]["authorizes_short_public_walletconnect"],
+                matches!(chain, 20 | 8453)
+            );
+            assert_eq!(
+                approval["notice"] == RELAY_NOTICE,
+                matches!(chain, 20 | 8453)
+            );
+            complete(
                 f.data.path(),
                 ORIGIN,
                 &completion(&f, &b),
@@ -1617,32 +1665,13 @@ pub(crate) mod tests {
                 |_| Ok(()),
             )
             .unwrap();
-            let enable = begin(
-                f.data.path(),
-                ORIGIN,
-                "home-test",
-                input("enable", out["method_id"].as_str().unwrap(), ""),
-                Some(f.actor.clone()),
-            )
-            .unwrap();
-            let approval = b.approval.unwrap();
-            let enabled = enable.approval.unwrap();
-            assert_eq!(approval["notice"], enabled["notice"]);
-            assert_eq!(
-                approval["request"]["authorizes_short_public_walletconnect"],
-                matches!(chain, 20 | 8453)
-            );
-            assert_eq!(
-                approval["request"]["authorizes_short_public_walletconnect"],
-                enabled["request"]["authorizes_short_public_walletconnect"]
-            );
         }
     }
     #[test]
     fn walletconnect_add_signin_pairs_selects_and_completes_with_consent() {
         let f = fixture();
         let request = |consent| {
-            let mut req = input("add_signin", "", "");
+            let mut req = input("add", "", "");
             req.connector = "walletconnect".into();
             req.chain_id = 0;
             req.allow_temporary_internet = consent;
@@ -1677,7 +1706,7 @@ pub(crate) mod tests {
         )
         .unwrap();
         let expected = selected.approval.as_ref().unwrap()["request"].clone();
-        assert_eq!(expected["action"], "add_signin");
+        assert_eq!(expected["action"], "add");
         assert_eq!(expected["chain_id"], 8453);
         assert_eq!(expected["authorizes_short_public_walletconnect"], true);
         assert_eq!(selected.approval.as_ref().unwrap()["notice"], RELAY_NOTICE);
@@ -1735,7 +1764,7 @@ pub(crate) mod tests {
             hex::encode(&sha3::Keccak256::digest(&point.as_bytes()[1..])[12..])
         );
         let mut id = String::new();
-        for action in ["add", "enable", "signin"] {
+        for action in ["add", "signin"] {
             let owner = (action != "signin").then_some(actor);
             let b = begin(
                 data,
@@ -1762,31 +1791,32 @@ pub(crate) mod tests {
         unreachable!()
     }
     #[test]
-    fn wallet_enable_requires_added_method_id() {
-        for state in ["absent", "added", "enabled", "removed"] {
-            let f = fixture();
-            if state != "absent" {
-                let id = change(&f, "add", "");
-                if state == "enabled" {
-                    change(&f, "enable", &id);
-                } else if state == "removed" {
-                    change(&f, "remove", &id);
-                }
-            }
-            for method_id in ["", "proof:signin-wallet:unknown"] {
-                assert!(
-                    begin(
-                        f.data.path(),
-                        ORIGIN,
-                        "home-test",
-                        input("enable", method_id, &f.address),
-                        Some(f.actor.clone()),
-                    )
-                    .is_err(),
-                    "enable requires an owned method ID after Add ({state})"
-                );
-            }
+    fn wallet_remove_requires_an_owned_method_id() {
+        let f = fixture();
+        enabled(&f);
+        for id in ["", "proof:signin-wallet:unknown"] {
+            assert!(begin(
+                f.data.path(),
+                ORIGIN,
+                "home-test",
+                input("remove", id, &f.address),
+                Some(f.actor.clone())
+            )
+            .is_err());
         }
+        let bob = add_account(f.data.path(), "bob", "bob-key");
+        let id = list(f.data.path(), &f.actor).unwrap()["methods"][0]["method_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert!(begin(
+            f.data.path(),
+            ORIGIN,
+            "home-test",
+            input("remove", &id, &f.address),
+            Some(bob)
+        )
+        .is_err());
     }
     #[test]
     fn wallet_legacy_provisional_enable_cannot_create_method() {
@@ -1823,16 +1853,17 @@ pub(crate) mod tests {
     #[test]
     fn wallet_completed_changes_leave_live_approval_capacity_available() {
         let f = fixture();
-        let id = enabled(&f);
+        let mut id = enabled(&f);
         for _ in 0..4 {
-            change(&f, "enable", &id);
+            change(&f, "remove", &id);
+            id = change(&f, "add", "");
         }
         for _ in 0..4 {
             begin(
                 f.data.path(),
                 ORIGIN,
                 "home-test",
-                input("disable", &id, ""),
+                input("remove", &id, ""),
                 Some(f.actor.clone()),
             )
             .unwrap();
@@ -1841,7 +1872,7 @@ pub(crate) mod tests {
             f.data.path(),
             ORIGIN,
             "home-test",
-            input("disable", &id, ""),
+            input("remove", &id, ""),
             Some(f.actor.clone()),
         );
         assert!(matches!(refused, Err(err) if err.is::<Capacity>()));
@@ -1879,23 +1910,7 @@ pub(crate) mod tests {
             Some(actor.clone()),
         )
         .unwrap();
-        let added = complete(
-            f.data.path(),
-            ORIGIN,
-            &completion(&f, &add),
-            Some(&actor),
-            |_| Ok(()),
-        )
-        .unwrap();
-        assert_eq!(added["sign_in_enabled"], false);
-        let b = begin(
-            f.data.path(),
-            ORIGIN,
-            "home-test",
-            input("enable", added["method_id"].as_str().unwrap(), ""),
-            Some(actor.clone()),
-        )
-        .unwrap();
+        let b = add;
         let second = add_account(f.data.path(), "alice", "rotated-approver");
         revoke_passkey_for_actor(
             f.data.path(),
@@ -1917,7 +1932,7 @@ pub(crate) mod tests {
         assert_eq!(method.principal_id, actor.principal_id);
     }
     #[test]
-    fn wallet_added_off_then_signs_into_same_account_with_same_root_and_metadata() {
+    fn wallet_add_signs_into_same_account_with_same_root_and_metadata() {
         let f = fixture();
         let old =
             load_principal_for_proof_binding(f.data.path(), &f.actor.proof_binding_id).unwrap();
@@ -1936,8 +1951,7 @@ pub(crate) mod tests {
             None,
         )
         .unwrap();
-        assert!(complete(f.data.path(), ORIGIN, &completion(&f, &b), None, |_| Ok(())).is_err());
-        change(&f, "enable", &id);
+        assert!(complete(f.data.path(), ORIGIN, &completion(&f, &b), None, |_| Ok(())).is_ok());
         let session = signin(&f);
         assert_eq!(session.principal_id, f.actor.principal_id);
         assert_eq!(
@@ -1992,7 +2006,7 @@ pub(crate) mod tests {
         .is_err());
     }
     #[test]
-    fn wallet_switch_off_revokes_sessions_pending_and_old_signatures_after_reenable() {
+    fn wallet_remove_revokes_sessions_pending_and_old_signatures_after_readd() {
         let f = fixture();
         let id = enabled(&f);
         let session = signin(&f);
@@ -2005,12 +2019,13 @@ pub(crate) mod tests {
         )
         .unwrap();
         let proof = completion(&f, &b);
-        change(&f, "disable", &id);
+        change(&f, "remove", &id);
         assert!(load_active_session_grant(f.data.path(), &session.session_id, now_ts()).is_err());
         assert!(renew_session_grant(f.data.path(), session.clone()).is_err());
-        change(&f, "enable", &id);
+        let replacement = change(&f, "add", "");
         assert!(complete(f.data.path(), ORIGIN, &proof, None, |_| Ok(())).is_err());
-        assert!(principal(f.data.path(), &id).is_ok());
+        assert!(principal(f.data.path(), &id).is_err());
+        assert!(principal(f.data.path(), &replacement).is_ok());
     }
     #[test]
     fn wallet_remove_revokes_sessions_and_pending_method_approvals() {
@@ -2021,7 +2036,7 @@ pub(crate) mod tests {
             f.data.path(),
             ORIGIN,
             "home-test",
-            input("enable", &id, &f.address),
+            input("remove", &id, &f.address),
             Some(f.actor.clone()),
         )
         .unwrap();
@@ -2094,7 +2109,7 @@ pub(crate) mod tests {
             first
         );
         assert_eq!(read(f.data.path()).unwrap().sessions.len(), 1);
-        change(&f, "disable", &id);
+        change(&f, "remove", &id);
         assert!(complete(f.data.path(), ORIGIN, &c, None, |_| Ok(())).is_err());
     }
     #[test]
@@ -2292,7 +2307,7 @@ pub(crate) mod tests {
             f.data.path(),
             ORIGIN,
             "home-test",
-            input("disable", &id, &f.address),
+            input("remove", &id, &f.address),
             Some(f.actor.clone()),
         )
         .unwrap();
@@ -2595,19 +2610,19 @@ pub(crate) mod tests {
         assert_eq!(signin(&f).principal_id, f.actor.principal_id);
     }
     #[test]
-    fn wallet_guest_can_disable_own_wallet_but_cannot_enable_it() {
+    fn wallet_guest_can_remove_own_wallet_but_cannot_add_one() {
         let f = fixture();
         let id = enabled(&f);
         let session = signin(&f);
         add_account(f.data.path(), "bob", "bob-key");
         demote_passkey_to_guest(f.data.path(), &f.actor.proof_binding_id, now_ts()).unwrap();
-        change(&f, "disable", &id);
+        change(&f, "remove", &id);
         assert!(load_active_session_grant(f.data.path(), &session.session_id, now_ts()).is_err());
         assert!(begin(
             f.data.path(),
             ORIGIN,
             "home-test",
-            input("enable", &id, ""),
+            input("add", "", &f.address),
             Some(f.actor.clone())
         )
         .is_err());
@@ -2663,7 +2678,7 @@ pub(crate) mod tests {
         );
     }
     #[test]
-    fn wallet_disable_racing_signin_never_leaves_a_live_wallet_session() {
+    fn wallet_remove_racing_signin_never_leaves_a_live_wallet_session() {
         let f = fixture();
         let id = enabled(&f);
         let b = begin(
@@ -2677,7 +2692,7 @@ pub(crate) mod tests {
         let c = completion(&f, &b);
         std::thread::scope(|scope| {
             let first = scope.spawn(|| complete(f.data.path(), ORIGIN, &c, None, |_| Ok(())));
-            let second = scope.spawn(|| change(&f, "disable", &id));
+            let second = scope.spawn(|| change(&f, "remove", &id));
             let _ = first.join().unwrap();
             second.join().unwrap();
         });
@@ -2782,7 +2797,7 @@ pub(crate) mod tests {
             ORIGIN,
             "home-test",
             serde_json::from_value(serde_json::json!({
-                "action":"add_signin", "connector":"unisat",
+                "action":"add", "connector":"unisat",
                 "address":"1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH",
                 "network":"bitcoin", "browser_secret":BROWSER
             }))
@@ -2816,7 +2831,7 @@ pub(crate) mod tests {
             step_up_token: String::new(),
         };
         let mut add = read(f.data.path()).unwrap().pending[0].clone();
-        add.action = "add".into();
+        add.action = "legacy_add".into();
         proof.signature = sign(&message(&add).unwrap());
         assert!(
             complete(f.data.path(), ORIGIN, &proof, Some(&f.actor), |_| {
@@ -2830,7 +2845,7 @@ pub(crate) mod tests {
         assert!(principal(f.data.path(), out["method_id"].as_str().unwrap()).is_ok());
     }
     #[test]
-    fn wallet_unisat_fresh_bitcoin_proof_add_enable_and_signin() {
+    fn wallet_unisat_fresh_bitcoin_proof_add_and_signin() {
         let f = fixture();
         let mut bytes = [0u8; 32];
         bytes[31] = 1;
@@ -2877,30 +2892,7 @@ pub(crate) mod tests {
             Ok(())
         })
         .unwrap();
-        let id = result["method_id"].as_str().unwrap();
-        let enable = begin(
-            f.data.path(),
-            ORIGIN,
-            "home-test",
-            serde_json::from_value(
-                serde_json::json!({"action":"enable","method_id":id,"browser_secret":BROWSER}),
-            )
-            .unwrap(),
-            Some(f.actor.clone()),
-        )
-        .unwrap();
-        assert_ne!(enable.message, added.message);
-        let mut wrong = make(&added);
-        wrong.ceremony_id = enable.ceremony_id.clone();
-        assert!(complete(f.data.path(), ORIGIN, &wrong, Some(&f.actor), |_| Ok(())).is_err());
-        complete(
-            f.data.path(),
-            ORIGIN,
-            &make(&enable),
-            Some(&f.actor),
-            |_| Ok(()),
-        )
-        .unwrap();
+        assert_eq!(result["sign_in_enabled"], true);
         let signin=begin(f.data.path(),ORIGIN,"home-test",serde_json::from_value(serde_json::json!({"connector":"unisat","address":address,"network":"bitcoin","browser_secret":BROWSER})).unwrap(),None).unwrap();
         let result = complete(f.data.path(), ORIGIN, &make(&signin), None, |_| {
             panic!("Bitcoin signs in, never approves")
@@ -2943,7 +2935,7 @@ pub(crate) mod tests {
             |_| Ok(()),
         )
         .unwrap();
-        assert_eq!(result["sign_in_enabled"], false);
+        assert_eq!(result["sign_in_enabled"], true);
         let remove = begin(
             f.data.path(),
             ORIGIN,
@@ -2982,7 +2974,7 @@ pub(crate) mod tests {
             now_ts()
         )
         .is_ok());
-        change(&f, "disable", &id);
+        change(&f, "remove", &id);
         assert!(attempt_context(
             f.data.path(),
             attempt.attempt_token.as_ref().unwrap(),
@@ -2995,14 +2987,13 @@ pub(crate) mod tests {
             .contains(&attempt.ceremony_id));
     }
     #[test]
-    fn wallet_enable_approval_discloses_short_public_relay_authority() {
+    fn wallet_add_approval_discloses_short_public_relay_authority() {
         let f = fixture();
-        let id = change(&f, "add", "");
         let request = begin(
             f.data.path(),
             ORIGIN,
             "home-test",
-            input("enable", &id, ""),
+            input("add", "", &f.address),
             Some(f.actor.clone()),
         )
         .unwrap();

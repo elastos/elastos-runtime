@@ -79,16 +79,15 @@ async fn change(
     result
 }
 #[tokio::test]
-async fn wallet_signin_http_add_enable_signout_signin_disable_journey() {
+async fn wallet_signin_http_add_signin_remove_journey() {
     let f = wallet_fixture::fixture();
     let state = test_state(f.data.path());
     let token =
         issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &f.actor).unwrap();
     let app = gateway_router(state);
     let method = change(&app, &token, &f, "add", "").await;
-    assert_eq!(method["sign_in_enabled"], false);
+    assert_eq!(method["sign_in_enabled"], true);
     let id = method["method_id"].as_str().unwrap();
-    change(&app, &token, &f, "enable", id).await;
     let (status,b)=call(&app,"/api/auth/wallet/signin/begin",None,Some(json!({"connector":"metamask","address":f.address,"chain_id":20,"browser_secret":BROWSER}))).await;
     assert_eq!(status, StatusCode::OK, "{b}");
     let b: auth::BeginResult = serde_json::from_value(b).unwrap();
@@ -107,7 +106,7 @@ async fn wallet_signin_http_add_enable_signout_signin_disable_journey() {
     let (status, list) = call(&app, "/api/auth/wallet-methods", Some(wallet_token), None).await;
     assert_eq!(status, StatusCode::OK, "{list}");
     assert_eq!(list["methods"][0]["sign_in_enabled"], true);
-    let b = begin(&app, wallet_token, &f, "disable", id).await;
+    let b = begin(&app, wallet_token, &f, "remove", id).await;
     let c = wallet_fixture::completion(&f, &b);
     let (status, _) = call(
         &app,
@@ -119,11 +118,11 @@ async fn wallet_signin_http_add_enable_signout_signin_disable_journey() {
     assert_eq!(
         status,
         StatusCode::FORBIDDEN,
-        "wallet session alone cannot disable a method"
+        "wallet session alone cannot remove a method"
     );
     // Same wallet session can obtain a token issued only after its account's
     // passkey ceremony. The test issuer models that completed WebAuthn proof.
-    change(&app, wallet_token, &f, "disable", id).await;
+    change(&app, wallet_token, &f, "remove", id).await;
     assert_eq!(
         call(&app, "/api/auth/wallet-methods", Some(wallet_token), None)
             .await
@@ -142,6 +141,75 @@ async fn wallet_signin_http_add_enable_signout_signin_disable_journey() {
         StatusCode::FORBIDDEN
     );
 }
+#[tokio::test]
+async fn wallet_one_state_http_refuses_retired_actions() {
+    let f = wallet_fixture::fixture();
+    let token =
+        issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &f.actor).unwrap();
+    let app = gateway_router(test_state(f.data.path()));
+    for action in ["add_signin", "enable", "disable"] {
+        let (status, out) = call(&app, "/api/auth/wallet-methods/begin", Some(&token), Some(json!({
+            "action":action, "connector":"metamask", "address":f.address, "chain_id":20, "browser_secret":BROWSER
+        }))).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{out}");
+        assert_eq!(out["error"], "wallet_signin_refused");
+    }
+}
+
+#[tokio::test]
+async fn wallet_one_state_http_remove_ends_pairing_and_preserves_payment_permission() {
+    let f = wallet_fixture::fixture();
+    let token =
+        issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &f.actor).unwrap();
+    let state = test_state(f.data.path());
+    let app = gateway_router(state.clone());
+    let payment_path = f
+        .data
+        .path()
+        .join("ElastOS/SystemServices/WalletConnect/internet.json");
+    assert!(!payment_path.exists());
+    let added = change(&app, &token, &f, "add", "").await;
+    assert_eq!(added["sign_in_enabled"], true);
+    assert!(
+        !payment_path.exists(),
+        "enrollment grants short sign-in access only"
+    );
+    let id = added["method_id"].as_str().unwrap();
+    // Existing payment permissions remain byte-identical across sign-in method removal.
+    let payment = json!({"id":"payment-fixture", "status":"requested", "at":now_ts()});
+    std::fs::create_dir_all(payment_path.parent().unwrap()).unwrap();
+    let payment_bytes = serde_json::to_vec(&payment).unwrap();
+    std::fs::write(&payment_path, &payment_bytes).unwrap();
+    let pair = auth::begin(
+        f.data.path(),
+        ORIGIN,
+        "home-test",
+        serde_json::from_value(json!({
+            "connector":"walletconnect", "address":"", "chain_id":0,
+            "browser_secret":BROWSER, "allow_temporary_internet":true
+        }))
+        .unwrap(),
+        None,
+    )
+    .unwrap();
+    gateway_walletconnect::install_attempt(&state, &pair, true, None)
+        .await
+        .unwrap();
+    let cancel =
+        gateway_walletconnect::watch_attempt_socket_for_test(&state, &pair.ceremony_id).await;
+    assert!(!*cancel.borrow());
+    change(&app, &token, &f, "remove", id).await;
+    assert!(
+        *cancel.borrow(),
+        "the removal response follows anonymous relay retirement"
+    );
+    let (status, _) = call(&app, "/api/auth/wallet/signin/select", None, Some(json!({
+        "ceremony_id":pair.ceremony_id, "browser_secret":BROWSER, "address":f.address, "chain_id":20
+    }))).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(std::fs::read(payment_path).unwrap(), payment_bytes);
+}
+
 #[tokio::test]
 async fn wallet_creation_recovery_approval_refused_at_both_routes() {
     let f = wallet_fixture::fixture();
@@ -302,7 +370,7 @@ async fn wallet_step_up_defaults_to_the_accounts_matching_relying_party() {
     let token =
         issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &session).unwrap();
     let app = gateway_router(test_state(f.data.path()));
-    let b = begin(&app, &token, &f, "disable", &id).await;
+    let b = begin(&app, &token, &f, "remove", &id).await;
     let request = &b.approval.as_ref().unwrap()["request"];
     let (status, result) = call(
         &app,
@@ -346,7 +414,7 @@ async fn wallet_session_real_webauthn_approves_only_same_account_and_exact_metho
     let token =
         issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &session).unwrap();
     let app = gateway_router(test_state(f.data.path()));
-    let b = begin(&app, &token, &f, "disable", &id).await;
+    let b = begin(&app, &token, &f, "remove", &id).await;
     let request = &b.approval.as_ref().unwrap()["request"];
     let (status,_)=call(&app,"/api/auth/passkey-step-up/begin",Some(&token),Some(json!({"schema":"elastos.auth.passkey-step-up.begin.request/v1","app_token":token,"operation":auth::OPERATION,"request":request,"approving_passkey_id":other}))).await;
     assert!(matches!(

@@ -28,16 +28,13 @@ function text(tag,value,className) {const el=document.createElement(tag);el.text
 function used(at) {return at?new Date(at*1000).toLocaleString():'Not used yet';}
 export function walletSigninControls(method,{canManage,onAction,buttonClass=''}) {
   const controls=text('div','','signin-method-controls');
-  const toggle=text('button','Sign in','signin-switch');toggle.type='button';toggle.setAttribute('role','switch');toggle.setAttribute('aria-checked',String(method.sign_in_enabled===true));
-  toggle.setAttribute('aria-label',`Sign in with ${connectorName(method.connector)} ${shortWalletAddress(method.address)} on ${walletNetwork(method)}`);
-  toggle.disabled=method.paymentOnly || !method.sign_in_enabled && !canManage;toggle.onclick=()=>onAction(method.sign_in_enabled?'disable':'enable',method.method_id);controls.append(toggle);
   if(method.paymentOnly) {
     const add=text('button','Add wallet',buttonClass);add.type='button';add.disabled=!canManage;add.onclick=()=>onAction('add',method.method_id);controls.append(add);
-    controls.append(text('small','Add this wallet to your account before turning on Sign in.','signin-method-note'));
+    if(!canManage)controls.append(text('small','Only an Admin can add a wallet.','signin-method-note'));
   } else {
+    controls.append(text('small','Signs in','signin-method-note'));
     const remove=text('button','Remove',buttonClass);remove.type='button';remove.onclick=()=>onAction('remove',method.method_id);controls.append(remove);
   }
-  if(!canManage)controls.append(text('small','Only an Admin can turn sign-in on.','signin-method-note'));
   return controls;
 }
 export function renderWalletSigninCards(mount,methods,options) {
