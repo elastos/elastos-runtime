@@ -20,7 +20,8 @@ serialized. Recovery Kit recovery keeps the passkey recovery flow and clears the
 recovered account's wallets.
 
 Supported signers are passkey, WalletConnect, MetaMask-compatible ordinary EVM keys
-and UniSat Bitcoin proofs. WalletConnect supports Elastos Smart Chain (20) and Base
+and UniSat Bitcoin mainnet proofs. Unsupported Bitcoin networks are refused before
+a ceremony starts. WalletConnect supports Elastos Smart Chain (20) and Base
 (8453). Contract-wallet signatures require a separate contract and are refused.
 Wallet account creation, wallet-target recovery and wallet approval are disabled
 at both begin and completion routes.
@@ -36,7 +37,8 @@ A caller generates a random 32-byte hex `browser_secret` per ceremony, keeps it
 in tab memory, and sends it on begin and complete. Runtime stores its digest.
 Secrets and signatures stay out of URLs, logs and durable browser storage.
 
-Errors use HTTP 400/422 for malformed JSON or schema, 403 for invalid wallet
+Errors use HTTP 413 for an oversized body, 415 for an unsupported content type,
+400/422 for malformed JSON or schema, 403 for invalid wallet
 addresses, browser secrets or refused authority/proof, 409 for
 changed state or conflicting ownership, 429 for capacity and 503 for unavailable
 transport. JSON is `{"error":"wallet_signin_refused"}` for unknown wallet, wrong

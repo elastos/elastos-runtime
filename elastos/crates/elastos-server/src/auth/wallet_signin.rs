@@ -582,7 +582,7 @@ pub(crate) fn begin(
             || store
                 .pending
                 .iter()
-                .filter(|p| actor.is_none() || (p.result.is_none() && !p.cancelled))
+                .filter(|p| actor.is_none() || p.result.is_none())
                 .filter(|p| match (&p.actor, &actor) {
                     (None, None) => true,
                     (Some(a), Some(b)) => a.session_id == b.session_id,
@@ -905,6 +905,8 @@ pub(crate) fn complete(
             approve(&approval(&p))?;
             if creates_method {
                 let mut method = p.method.clone();
+                method.witnesses = witnesses(auth, &method.account_id);
+                method.root_key = root_key(auth, &method.account_id);
                 method.sign_in_enabled = p.action == "enable";
                 store.methods.push(method);
             } else if p.action == "remove" {
@@ -1497,6 +1499,59 @@ pub(crate) mod tests {
         assert!(matches!(refused, Err(err) if err.is::<Capacity>()));
     }
     #[test]
+    fn wallet_cancelled_attempts_cannot_bypass_the_session_quota() {
+        let f = fixture();
+        for _ in 0..4 {
+            let b = begin(
+                f.data.path(),
+                ORIGIN,
+                "home-test",
+                input("add", "", &f.address),
+                Some(f.actor.clone()),
+            )
+            .unwrap();
+            cancel(f.data.path(), &b.ceremony_id, BROWSER, ORIGIN).unwrap();
+        }
+        assert!(
+            matches!(begin(f.data.path(), ORIGIN, "home-test", input("add", "", &f.address), Some(f.actor.clone())), Err(err) if err.is::<Capacity>())
+        );
+    }
+    #[test]
+    fn wallet_activation_stamps_current_passkeys_after_rotation_during_approval() {
+        let f = fixture();
+        enabled(&f);
+        let actor = signin(&f);
+        let mut request = input("enable", "", &f.address);
+        request.chain_id = 8453;
+        let b = begin(
+            f.data.path(),
+            ORIGIN,
+            "home-test",
+            request,
+            Some(actor.clone()),
+        )
+        .unwrap();
+        let second = add_account(f.data.path(), "alice", "rotated-approver");
+        revoke_passkey_for_actor(
+            f.data.path(),
+            &second.principal_id,
+            &second.proof_binding_id,
+            &f.actor.proof_binding_id,
+            now_ts(),
+        )
+        .unwrap();
+        let out = complete(
+            f.data.path(),
+            ORIGIN,
+            &completion(&f, &b),
+            Some(&actor),
+            |_| Ok(()),
+        )
+        .unwrap();
+        let method = principal(f.data.path(), out["method_id"].as_str().unwrap()).unwrap();
+        assert_eq!(method.principal_id, actor.principal_id);
+    }
+    #[test]
     fn wallet_added_off_then_signs_into_same_account_with_same_root_and_metadata() {
         let f = fixture();
         let old =
@@ -2073,6 +2128,17 @@ pub(crate) mod tests {
         bytes[31] = 1;
         let key = SigningKey::from_bytes((&bytes).into()).unwrap();
         let address = "1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH";
+        for network in ["testnet", "signet", "regtest"] {
+            let unsupported: Begin = serde_json::from_value(serde_json::json!({"action":"add","connector":"unisat","address":address,"network":network,"browser_secret":BROWSER})).unwrap();
+            assert!(begin(
+                f.data.path(),
+                ORIGIN,
+                "home-test",
+                unsupported,
+                Some(f.actor.clone())
+            )
+            .is_err());
+        }
         let make = |b: &BeginResult| {
             let (sig, id) = key
                 .sign_prehash_recoverable(&bitcoin::bitcoin_signed_message_hash(
