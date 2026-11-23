@@ -331,6 +331,61 @@ async fn gateway_allows_opaque_capsule_preflight_without_granting_unrelated_orig
 }
 
 #[tokio::test]
+async fn opaque_capsule_step_up_preflight_keeps_approval_routes_and_origins_bound() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = gateway_router(test_state(dir.path()));
+    for path in [
+        "/api/apps/system/access/guest-registration",
+        "/api/apps/system/community/presence",
+        "/api/auth/passkeys/proof:test/promote-admin",
+        "/api/auth/passkeys/proof:test/demote-guest",
+        "/api/auth/passkeys/proof:test/revoke",
+        "/api/apps/chat/room/requests/test/approve",
+    ] {
+        for (origin, allowed) in [("null", true), ("https://evil.example", false)] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("OPTIONS")
+                        .uri(path)
+                        .header("origin", origin)
+                        .header("access-control-request-method", "POST")
+                        .header(
+                            "access-control-request-headers",
+                            "content-type,x-elastos-home-token,x-elastos-step-up-token",
+                        )
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            if allowed {
+                assert_eq!(response.status(), StatusCode::NO_CONTENT, "{path}");
+                let headers = response.headers()["access-control-allow-headers"]
+                    .to_str()
+                    .unwrap();
+                assert!(
+                    headers
+                        .split(',')
+                        .any(|header| header.trim() == "x-elastos-step-up-token"),
+                    "{path}: {headers}"
+                );
+            } else {
+                assert_eq!(response.status(), StatusCode::FORBIDDEN, "{path}");
+                assert!(
+                    response
+                        .headers()
+                        .get("access-control-allow-origin")
+                        .is_none(),
+                    "{path}"
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn direct_delivery_profile_preflight_keeps_the_released_header_names_and_authority() {
     let dir = tempfile::tempdir().unwrap();
     let app = gateway_router(test_state(dir.path()));
