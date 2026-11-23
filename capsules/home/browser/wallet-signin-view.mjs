@@ -68,7 +68,7 @@ export function createHomeWalletSignin({approve,onSignin,onChanged=()=>{}}) {
     }
     if(['review','signing','approval','passkey','completing','unknown'].includes(state.stage)) {
       const details=node('dl',null,'signin-details');
-      for(const [label,value]of [['Account',state.account],['Home',location.origin],['Wallet',connectorName(state.wallet.connector)],['Address',state.wallet.address],['Network',walletNetwork(state.wallet)]]) {
+      for(const [label,value]of [['Account',state.account],['Home',location.origin],['Wallet',state.wallet.displayName||connectorName(state.wallet.connector)],['Address',state.wallet.address],['Network',walletNetwork(state.wallet)]]) {
         if(!value)continue;
         const row=node('div');row.append(node('dt',label),node('dd',value));details.append(row);
       }

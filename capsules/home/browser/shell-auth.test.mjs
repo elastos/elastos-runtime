@@ -100,6 +100,7 @@ const {
   addAccountPasskey,
   bindHomeUnlock,
   recoveryImportIncompleteMessage,
+  profileReadinessActionTarget,
   showHomeUnlock,
 } = await import("./shell-auth.js");
 
@@ -221,4 +222,10 @@ test("recovery says it worked when only the Home's recovery record is missing", 
   }
   assert.match(recoveryImportIncompleteMessage(imported("complete", "absent", "complete")),
     /has no signed Profile or name/);
+});
+
+test("wallet sign-in opens the account when the contract result has no enrollment metadata", () => {
+  const response = {app_token:"home", session_id:"session", principal_id:"principal:alex", proof_binding_id:"wallet:one"};
+  assert.equal(profileReadinessActionTarget(response, {walletSignin:true}), "");
+  assert.equal(profileReadinessActionTarget({}), "system", "passkey enrollment keeps its Profile check");
 });

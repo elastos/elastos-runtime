@@ -543,7 +543,7 @@ async function showHostAuthGate(options = {}) {
   const unlockReady = showHomeUnlock(async (response, flow) => {
     await boot();
     if (flow?.enrollmentPurpose === "recover") return;
-    const profileActionTarget = profileReadinessActionTarget(response);
+    const profileActionTarget = profileReadinessActionTarget(response, flow);
     if (profileActionTarget) {
       await activateDesktopShell();
       const query = { settings: "security" };

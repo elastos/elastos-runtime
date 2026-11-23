@@ -17,7 +17,7 @@ export function handleWalletSigninRequest(event,context,{api,manage,current,chan
       const method=wallets.methods?.find(row=>row.method_id===data.methodId);
       const passkey=passkeys.passkeys?.find(row=>row.principal_id===wallets.account_id && !row.revoked_at);
       if(data.action!=='add' && !method)return reply({status:'changed'});
-      const result=await manage({action:data.action,method,token:context.homeToken,account:passkey?.display_name||'Your account',isCurrent:current});
+      const result=await manage({action:data.action,method,token:context.homeToken,account:passkey?.display_name||'Your account',accountId:wallets.account_id,isCurrent:current});
       reply(result);changed();
     }).catch(()=>reply({status:'failed'}));
   return true;

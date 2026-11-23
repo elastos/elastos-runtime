@@ -69,7 +69,7 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
           signal:current.controller.signal,transport,
           pairing:pairing=>{if(live(current))show('pairing',{pairing});},
           choices:choices=>{if(live(current))show('wallet-choice',{choices});},
-          changed:()=>{if(live(current)){show('error',{message:walletSigninError(fault('changed'),state.action)});run=null;clearTimeout(timer);void clear(current);}},
+          changed:(code='changed')=>{if(live(current)){show('error',{message:walletSigninError(fault(code),state.action)});run=null;clearTimeout(timer);void clear(current);}},
         });
         assertLive(current);
         const wallet=current.wallet;
@@ -85,9 +85,14 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
       }
       assertLive(current);
       if(!ceremony || typeof ceremony.message!=='string' || ceremony.message.length>32768 || ['signin','add','enable'].includes(state.action)&&!ceremony.message) throw fault('invalid');
-      if(state.action!=='signin' && (ceremony.approval?.operation!=='auth.wallet.method' || !ceremony.approval.request)) throw fault('invalid');
+      if(state.action!=='signin') {
+        const approval=ceremony.approval, request=approval?.request;
+        if(approval?.operation!=='auth.wallet.method' || request?.ceremony_id!==ceremony.ceremony_id || request?.action!==state.action
+          || typeof request.account_id!=='string' || !request.account_id || state.accountId && request.account_id!==state.accountId
+          || state.action!=='add' && request.method_id!==state.method.method_id) throw fault('invalid');
+      }
       current.ceremony=ceremony;
-      show('review',{wallet:current.target,message:'',signingMessage:ceremony.message});
+      show('review',{wallet:{...current.target,displayName:current.wallet?.name},message:'',signingMessage:ceremony.message});
     } catch(error) { fail(current,error); }
   }
   function fail(current,error) {
@@ -115,11 +120,11 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
   }
   return {
     get state(){return state;},
-    async start({action='signin',method=null,account='',token='' }={}) {
+    async start({action='signin',method=null,account='',accountId='',token='' }={}) {
       const previous=run;run=null;clearTimeout(timer);void clear(previous);
       const current=run={secret:randomSecret(),controller:new AbortController(),ceremonies:new Set(),deadline:now()+180};
-      state={stage:'choice',action,method,account,token};show('choice');deadline(current,current.deadline);
-      if(method) await prepare(current,method.connector);
+      state={stage:'choice',action,method,account,accountId,token};show('choice');deadline(current,current.deadline);
+      if(method && live(current)) await prepare(current,method.connector);
     },
     async choose(connector) { if(run && state.stage==='choice' && ['metamask','walletconnect','unisat'].includes(connector))await prepare(run,connector); },
     async confirm() {

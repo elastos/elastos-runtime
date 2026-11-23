@@ -10,13 +10,13 @@ const hexMessage = text => '0x'+[...new TextEncoder().encode(text)].map(b=>b.toS
 export async function selectSigninWallet(connector,options) {
   if(connector==='walletconnect') return selectWalletConnect(options);
   const {signal,choices,changed}=options;
-  let provider;
+  let provider,name;
   if(connector==='metamask') {
     const entries=signinBrowserWallets();
     if(!entries.length)throw fault('missing');
     const entry=entries.length===1 ? entries[0] : await abortable(new Promise(resolve=>choices(entries.map((entry,index)=>({id:String(index),name:entry.name,choose:()=>resolve(entry)})))),signal);
-    provider=entry.provider;
-  } else provider=window.unisat;
+    provider=entry.provider;name=entry.name;
+  } else {provider=window.unisat;name="UniSat";}
   if(!provider || connector==='unisat' && ['requestAccounts','getAccounts','getNetwork','signMessage'].some(key=>typeof provider[key]!=='function'))throw fault('missing');
   const request=(method,params)=>abortable(Promise.resolve().then(()=>provider.request({method,...(params?{params}:{})})),signal);
   const accounts=connector==='unisat' ? await abortable(provider.requestAccounts(),signal) : await request('eth_requestAccounts');
@@ -32,13 +32,13 @@ export async function selectSigninWallet(connector,options) {
       const same=event==='accountsChanged'
         ? typeof value?.[0]==='string' && (connector==='unisat'?value[0]===address:value[0].toLowerCase()===address.toLowerCase())
         : event==='chainChanged'?Number(value)===chain_id:event==='networkChanged'?value===network:false;
-      if(!same)changed();
+      if(!same)changed(event==='disconnect'?'disconnected':'changed');
     };
     provider.on?.(event,listener);listeners.push([event,listener]);
   }
   const close=()=>{for(const [event,listener]of listeners)provider.removeListener?.(event,listener);};
   signal.addEventListener('abort',close,{once:true});
-  return {connector,address,chain_id,network,
+  return {connector,address,chain_id,network,name,
     async check(){
       signal.throwIfAborted();
       const current=connector==='unisat' ? await abortable(provider.getAccounts(),signal) : await request('eth_accounts');
@@ -81,7 +81,7 @@ function selectWalletConnect({signal,transport,pairing,changed}) {
           resolve({...wallet,check:()=>send('check'),sign:message=>send('sign',{message}),close});
         },error=>{close();reject(error);});
       } else if(data.event==='pairing' && typeof data.qr==='string' && /^data:image\/png;base64,/.test(data.qr) && data.qr.length<262144 && typeof data.uri==='string' && data.uri.startsWith('wc:') && data.uri.length<16384) pairing({qr:data.qr,uri:data.uri});
-      else if(data.event==='changed') {if(selected)changed();else {close();reject(fault('changed'));}}
+      else if(data.event==='changed') {if(selected)changed(data.code==='disconnected'?'disconnected':'changed');else {close();reject(fault('changed'));}}
       else {
         const job=pending.get(data.id);if(!job)return;pending.delete(data.id);
         if(data.error)job.reject(Object.assign(new Error('WalletConnect request failed'),{code:data.code,status:data.status}));else job.resolve(data.result);

@@ -34,22 +34,17 @@ async function connect(transport) {
   provider=await connectWithView(adapter,{
     contextKey:`signin-${crypto.randomUUID()}`,projectId:config.walletconnect.project_id,chains:[20,8453],api,
     runtimeUrl:`${homeOrigin}/api/apps/wallet-walletconnect`,relayUrl:`${homeOrigin.replace(/^http/,'ws')}/api/apps/wallet-walletconnect/relay`,
-    copyLink:uri=>{pairingUri=uri;},
     metadata:{name:'ElastOS Home',description:'Sign in to your Home',url:homeOrigin,icons:[]},
-  },{show:(qr,actions)=>{
-    // connectWithView supplies a copy action around the current URI.
-    actions.copy();
-    reply({event:'pairing',qr,uri:pairingUri});
+  },{show:(qr,actions,uri)=>{
+    reply({event:'pairing',qr,uri});
   },hide(){} });
   identity=await readIdentity();
   for(const name of ['accountsChanged','chainChanged','disconnect','session_delete'])provider.on(name,value=>{
     const same=name==='accountsChanged'?typeof value?.[0]==='string'&&value[0].toLowerCase()===identity.address.toLowerCase():name==='chainChanged'?Number(value)===identity.chain_id:false;
-    if(!same)reply({event:'changed'});
+    if(!same)reply({event:'changed',code:['disconnect','session_delete'].includes(name)?'disconnected':'changed'});
   });
   return identity;
 }
-let pairingUri='';
-// QR presentation stays with Home; the SDK's copy callback only hands it the URI.
 addEventListener('message',async event=>{
   if(event.source!==parent || event.origin!==homeOrigin || event.data?.type!=='wallet-signin-transport')return;
   const {id,operation,message,transport}=event.data;

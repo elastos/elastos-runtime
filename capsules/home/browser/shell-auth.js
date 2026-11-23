@@ -64,7 +64,7 @@ const walletSignin = createHomeWalletSignin({
   approve: requestPasskeyStepUp,
   onSignin: async response => {
     setHomeAuthorityToken(response.app_token, response);
-    await unlockComplete(response);
+    await unlockComplete(response, {walletSignin:true});
   },
 });
 export function manageWalletSignin(options) { return walletSignin.start(options); }
@@ -1059,7 +1059,8 @@ async function unlockComplete(response, flow = null) {
   hideHomeUnlock();
 }
 
-export function profileReadinessActionTarget(response) {
+export function profileReadinessActionTarget(response, flow = null) {
+  if (flow?.walletSignin === true) return "";
   const readiness = response && typeof response.profile_readiness === "object"
     ? response.profile_readiness
     : null;

@@ -9,7 +9,7 @@ function fixture({lost=false}={}) {
     randomSecret:()=> 'a'.repeat(64),
     api:async(path,body)=>{
       calls.push({path,body:structuredClone(body)});
-      if(path.endsWith('/begin')) {lastAction=body.action;return {ceremony_id:'ceremony',message:'exact Home message',expires_at:Date.now()/1000+120,approval:{operation:'auth.wallet.method',request:{ceremony_id:'ceremony'}}};}
+      if(path.endsWith('/begin')) {lastAction=body.action;return {ceremony_id:'ceremony',message:'exact Home message',expires_at:Date.now()/1000+120,approval:{operation:'auth.wallet.method',request:{ceremony_id:'ceremony',action:body.action,account_id:'principal:alex',method_id:method.method_id}}};}
       if(path.endsWith('/complete')) { if(lost && completeCalls++===0) throw new TypeError('lost reply'); return {status:lastAction==='remove'?'removed':'complete',method_id:method.method_id,sign_in_enabled:lastAction==='enable'}; }
       return {};
     },
@@ -25,7 +25,7 @@ test('enable reviews before signature, then requests exact passkey approval',asy
   await f.flow.confirm();assert.equal(f.states.at(-1).stage,'approval');assert.equal(f.calls.filter(c=>c.approve).length,0);
   await f.flow.approve();assert.equal(f.states.at(-1).stage,'done');
   assert.equal(f.calls.find(c=>c.sign).sign,'exact Home message');
-  assert.deepEqual(f.calls.find(c=>c.approve).approve,{operation:'auth.wallet.method',request:{ceremony_id:'ceremony'}});
+  assert.deepEqual(f.calls.find(c=>c.approve).approve,{operation:'auth.wallet.method',request:{ceremony_id:'ceremony',action:'enable',account_id:'principal:alex',method_id:method.method_id}});
   assert.equal(f.calls.find(c=>c.path?.endsWith('/complete')).body.step_up_token,'step-up');
 });
 test('uncertain completion retries identical proof without signing or approving again',async()=>{
@@ -99,4 +99,16 @@ test('Home accepts method intents only from the bound System or Wallet frame',as
   assert.equal(reads,0);assert.equal(managed,0);
   handleWalletSigninRequest({source,data},context,options);await new Promise(resolve=>setImmediate(resolve));
   assert.equal(reads,2);assert.equal(managed,1);
+});
+
+test('every method action checks the approval against the reviewed ceremony and account',async()=>{
+  for(const action of ['add','enable','disable','remove'])for(const mismatch of ['action','account_id','ceremony_id','method_id']) {
+    if(action==='add' && mismatch==='method_id')continue;
+    const states=[];let signs=0;
+    const request={action,account_id:'principal:alex',ceremony_id:'one',method_id:method.method_id};request[mismatch]='different';
+    const flow=createWalletSigninFlow({api:async path=>path.endsWith('/begin')?{ceremony_id:'one',message:'exact message',expires_at:Date.now()/1000+120,approval:{operation:'auth.wallet.method',request}}:{},
+      select:async()=>({...method,close(){},sign(){signs++;}}),approve:()=>{throw new Error('must not approve');},render:s=>states.push(s)});
+    await flow.start({action,method:action==='add'?null:method,accountId:'principal:alex'});if(action==='add')await flow.choose('metamask');
+    assert.equal(states.at(-1).stage,'error',`${action} refuses a different ${mismatch}`);assert.equal(signs,0);
+  }
 });
