@@ -48,8 +48,9 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 
 ### Security
 
-- Apps open in separate browser sandboxes, need permission to reach private data, and get stricter checks on whose data they reach. Home checks more carefully which programs it starts.
+- Apps get stricter checks on whose data they reach, and Home checks more carefully which programs it starts.
 - Error messages from Home, Library, Inbox and System no longer show where files are stored on this computer.
+- Isolation status: apps open in separate browser sandboxes and need permission to reach private data. Home can still get every app's permissions. Background programs run with your account's rights; only the program that runs models is partly limited. Approvals are not yet shown on a screen only the Runtime controls, importing a Recovery Kit does not yet ask for your passkey again (#403), and on Linux the Browser helper is installed without a hash check (#406). See the isolation plan (#173).
 
 ### Developer detail
 
@@ -100,8 +101,9 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 
 ### Security
 
-- Apps open in separate browser sandboxes, need permission to reach private data, and get stricter checks on whose data they reach. Home checks more carefully which programs it starts.
+- Apps get stricter checks on whose data they reach, and Home checks more carefully which programs it starts.
 - Error messages from Home, Library, Inbox and System no longer show where files are stored on this computer.
+- Isolation status: apps open in separate browser sandboxes and need permission to reach private data. Home can still get every app's permissions. Background programs run with your account's rights; only the program that runs models is partly limited. Approvals are not yet shown on a screen only the Runtime controls, importing a Recovery Kit does not yet ask for your passkey again (#403), and on Linux the Browser helper is installed without a hash check (#406). See the isolation plan (#173).
 
 ## [2.0.1] - 2026-11-09
 
