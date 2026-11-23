@@ -41,6 +41,8 @@ async function exercise(engine,width) {
     assert.equal(clipped,0,`${name}: connector, address and network text stays visible`);
     const bad=await page.locator('.signin-dialog button:visible').evaluateAll(buttons=>buttons.filter(button=>{const r=button.getBoundingClientRect();return r.height<44||r.left<0||r.right>innerWidth+1;}).map(button=>button.textContent));
     assert.deepEqual(bad,[],`${name}: controls fit and are 44px high`);
+    const expiryVisible=await page.locator('.signin-dialog').evaluateAll(dialogs=>dialogs.every(dialog=>{const expiry=dialog.querySelector('.signin-expiry');if(!expiry?.textContent)return true;const r=expiry.getBoundingClientRect(),d=dialog.getBoundingClientRect();return r.top>=d.top&&r.bottom<=d.bottom-4;}));
+    assert(expiryVisible,`${name}: expiry label stays fully visible`);
     if(await page.locator('.signin-dialog').count()) {
       const style=await page.locator('.signin-dialog').evaluate(node=>{const s=getComputedStyle(node);return {background:s.backgroundColor,font:s.getPropertyValue('--el-font').trim()};});
       assert.notEqual(style.background,'rgba(0, 0, 0, 0)',`${name}: dialog has its shared surface color`);assert(style.font,`${name}: shared type tokens loaded`);

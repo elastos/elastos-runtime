@@ -35,7 +35,10 @@
 .signin-method-card { border: 1px solid var(--el-hairline); border-radius: var(--el-radius-md); padding: 16px; overflow-wrap: anywhere; }
 .signin-method-card .signin-method-controls { margin-top: 12px; }
 .signin-method-card button { min-height: 44px; }
-@media (max-width: 480px) { .signin-dialog { padding: 20px; } }
+@media (max-width: 480px) {
+  .signin-dialog { padding: 20px; }
+  .signin-dialog > * { margin-bottom: 12px; }
+}
 
 .home-unlock .home-unlock-passkey-label { margin: 12px 0 0; font-size: 14px; font-weight: 600; }
 
