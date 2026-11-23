@@ -27,7 +27,7 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 - Inbox tells you when an update is available. System > About shows release notes and update download progress, and lets you turn automatic update checks on or off.
 - The Recovery Kit and backup screens say what a kit saves and when to save a new one. Notifications and Inbox entries show their whole text.
 - Wallet, Inbox and System use plainer words for requests, settings and recovery steps.
-- Known issue: a direct message reaches a contact only when the two Homes can reach each other directly (#345).
+- Direct messages reach contacts on other networks while both Homes are on (#345).
 
 ### Fixed
 
@@ -80,7 +80,7 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 - Inbox tells you when an update is available. System > About shows release notes and update download progress, and lets you turn automatic update checks on or off.
 - The Recovery Kit and backup screens say what a kit saves and when to save a new one. Notifications and Inbox entries show their whole text.
 - Wallet, Inbox and System use plainer words for requests, settings and recovery steps.
-- Known issue: a direct message reaches a contact only when the two Homes can reach each other directly (#345).
+- Direct messages reach contacts on other networks while both Homes are on (#345).
 
 ### Fixed
 
