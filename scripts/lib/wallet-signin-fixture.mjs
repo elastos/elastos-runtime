@@ -43,7 +43,7 @@ export async function signinFixture() {
           const ceremony_id=`ceremony:${++state.serial}`,expires_at=now+(state.scenario==='expired'?1:180);
           const approval={operation:'auth.wallet.method',notice:body.action==='enable'&&method?.connector!=='unisat'?relayNotice:'Confirm this wallet sign-in method change with your passkey.',request:{ceremony_id,account_id:'principal:alex',action:body.action,method_id:body.method_id||`wallet:${body.connector}`}};
           const result={ceremony_id,message:['disable','remove'].includes(body.action)?'':`Sign in to ${origin}\nAccount: ${method?.address||'Select wallet'}\nRequest: ${ceremony_id}`,expires_at,approval,
-            ...(method?.connector==='walletconnect'?{attempt_token:'fixture-attempt',instance_id:ceremony_id,storage_revision:0}:{})};
+            ...(method?.connector==='walletconnect'?{attempt_token:`fixture-attempt:${ceremony_id}`,instance_id:`instance:${ceremony_id}`,storage_revision:0}:{})};
           state.ceremonies.set(ceremony_id,{...result,secret:body.browser_secret,action:body.action||'signin',method});return json(result);
         }
         if(path==='/api/auth/wallet/signin/select') {
@@ -85,8 +85,8 @@ export async function signinFixture() {
           return json(c.result);
         }
         if(path.startsWith('/api/apps/wallet-walletconnect/')) {
-          const c=state.ceremonies.get(req.headers['x-elastos-wallet-instance']);
-          if(!c||c.cancelled||now>=c.expires_at||req.headers['x-elastos-wallet-attempt']!=='fixture-attempt')return json({},403);
+          const c=[...state.ceremonies.values()].find(c=>c.instance_id===req.headers['x-elastos-wallet-instance']);
+          if(!c||c.cancelled||now>=c.expires_at||req.headers['x-elastos-wallet-attempt']!==c.attempt_token)return json({},403);
           if(req.headers['if-match']!=='"0"')return json({},409);
         }
         if(path==='/api/apps/wallet-walletconnect/wallet/config')return json({walletconnect:{project_id:'fixture-project'}});

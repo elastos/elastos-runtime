@@ -251,7 +251,7 @@ async function exercise(engine,width) {
     const signerPaths=fixture.state.calls.filter(c=>c.path.startsWith('/api/auth/wallet-methods'));
     assert(signerPaths.every(c=>c.headers.authorization?.startsWith('Bearer ')),'method routes carry launch authorization');
     const transports=fixture.state.calls.filter(c=>c.path.startsWith('/api/apps/wallet-walletconnect/'));
-    assert(transports.length>0);assert(transports.every(c=>c.headers['x-elastos-wallet-attempt']==='fixture-attempt'&&c.headers['x-elastos-wallet-instance']&&c.headers['if-match']==='"0"'),'temporary connector and revision headers');
+    assert(transports.length>0);assert(transports.every(c=>c.headers['x-elastos-wallet-attempt']?.startsWith('fixture-attempt:')&&c.headers['x-elastos-wallet-instance']&&c.headers['if-match']==='"0"'),'temporary connector and revision headers');
     assert(!fixture.state.calls.some(c=>c.path.startsWith('/api/auth/wallet-methods')&&c.headers['x-elastos-home-token']==='fixture-wallet'),'Wallet uses Home authority for methods');
   } catch(error) {
     await page.screenshot({path:join(output,`${engine}-${width}-failure.png`),fullPage:true}).catch(()=>{});
