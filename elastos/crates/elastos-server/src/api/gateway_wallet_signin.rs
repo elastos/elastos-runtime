@@ -34,7 +34,7 @@ pub(super) fn approval_for_launch(
         &launch.context.session_id,
         now_ts(),
     )?;
-    let stored = auth::approval_intent(&state.data_dir, id, &grant)?;
+    let stored = auth::approval_intent(&home_launch_auth_data_dir(&state.data_dir), id, &grant)?;
     anyhow::ensure!(*request == stored, "wallet method request changed");
     Ok(stored)
 }
@@ -76,7 +76,10 @@ fn response<T: Serialize>(result: anyhow::Result<T>) -> Response {
     response
 }
 pub(super) async fn list(State(state): State<GatewayState>, headers: HeaderMap) -> Response {
-    response(actor(&state, &headers).and_then(|(_, a)| auth::list(&state.data_dir, &a)))
+    response(
+        actor(&state, &headers)
+            .and_then(|(_, a)| auth::list(&home_launch_auth_data_dir(&state.data_dir), &a)),
+    )
 }
 pub(super) async fn method_begin(
     State(state): State<GatewayState>,
@@ -86,7 +89,7 @@ pub(super) async fn method_begin(
     let result = async {
         let (_, a) = actor(&state, &headers)?;
         let result = auth::begin(
-            &state.data_dir,
+            &home_launch_auth_data_dir(&state.data_dir),
             &origin(&headers)?,
             &load_existing_gateway_runtime_did(&state.data_dir).ok_or(auth::Refused)?,
             input,
@@ -110,14 +113,14 @@ pub(super) async fn method_complete(
         let (launch, a) = actor(&state, &headers)?;
         // Authenticate browser ownership before consuming an approval.
         auth::intent(
-            &state.data_dir,
+            &home_launch_auth_data_dir(&state.data_dir),
             &input.ceremony_id,
             &input.browser_secret,
             &origin(&headers)?,
             &a,
         )?;
         let result = auth::complete(
-            &state.data_dir,
+            &home_launch_auth_data_dir(&state.data_dir),
             &origin(&headers)?,
             &input,
             Some(&a),
@@ -132,7 +135,7 @@ pub(super) async fn method_complete(
                 )
             },
         )?;
-        for id in auth::inactive_attempts(&state.data_dir)? {
+        for id in auth::inactive_attempts(&home_launch_auth_data_dir(&state.data_dir))? {
             gateway_walletconnect::retire_attempt(&state, &id).await?;
         }
         Ok::<_, anyhow::Error>(result)
@@ -155,7 +158,7 @@ pub(super) async fn signin_begin(
             gateway_walletconnect::preflight(&state, local, None, None, source).await?;
         }
         let result = auth::begin(
-            &state.data_dir,
+            &home_launch_auth_data_dir(&state.data_dir),
             &origin(&headers)?,
             &load_existing_gateway_runtime_did(&state.data_dir).ok_or(auth::Refused)?,
             input,
@@ -175,12 +178,20 @@ pub(super) async fn signin_complete(
     Json(input): Json<Complete>,
 ) -> Response {
     let result = async {
-        let value = auth::complete(&state.data_dir, &origin(&headers)?, &input, None, |_| {
-            Err(auth::Refused.into())
-        })?;
+        let value = auth::complete(
+            &home_launch_auth_data_dir(&state.data_dir),
+            &origin(&headers)?,
+            &input,
+            None,
+            |_| Err(auth::Refused.into()),
+        )?;
         let grant: AuthSessionGrantV1 = serde_json::from_value(value)?;
         gateway_walletconnect::retire_attempt(&state, &input.ceremony_id).await?;
-        crate::auth::load_active_session_grant(&state.data_dir, &grant.session_id, now_ts())?;
+        crate::auth::load_active_session_grant(
+            &home_launch_auth_data_dir(&state.data_dir),
+            &grant.session_id,
+            now_ts(),
+        )?;
         // Revocation may have won while the relay closed; token issuance checks
         // the live grant once more through the common Home launch path.
         let home_token =
@@ -223,7 +234,7 @@ pub(super) async fn select(
 ) -> Response {
     response(origin(&headers).and_then(|o| {
         auth::select(
-            &state.data_dir,
+            &home_launch_auth_data_dir(&state.data_dir),
             &input.ceremony_id,
             &input.browser_secret,
             &o,
@@ -245,7 +256,7 @@ pub(super) async fn cancel(
 ) -> Response {
     let result = async {
         auth::cancel(
-            &state.data_dir,
+            &home_launch_auth_data_dir(&state.data_dir),
             &input.ceremony_id,
             &input.browser_secret,
             &origin(&headers)?,

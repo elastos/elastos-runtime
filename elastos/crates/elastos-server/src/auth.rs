@@ -5310,6 +5310,10 @@ pub fn set_principal_display_name(
 }
 
 pub fn store_session_grant(data_dir: &Path, grant: AuthSessionGrantV1) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !grant.proof_binding_id.starts_with("proof:signin-wallet:"),
+        "Wallet sessions belong to the wallet sign-in store"
+    );
     mutate_auth_state(data_dir, |state| {
         state
             .sessions
@@ -5390,6 +5394,10 @@ pub fn rotate_session_grant(
     grant: AuthSessionGrantV1,
     revoked_at: u64,
 ) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !grant.proof_binding_id.starts_with("proof:signin-wallet:"),
+        "Wallet sessions belong to the wallet sign-in store"
+    );
     mutate_auth_state(data_dir, |state| {
         if let Some(previous) = state
             .sessions

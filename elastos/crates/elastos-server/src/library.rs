@@ -10736,4 +10736,14 @@ mod publish_tests {
             .await;
         assert_eq!(trash["status"], "ok", "{trash}");
     }
+    #[test]
+    fn wallet_signin_library_recipient_proof_preserves_runtime_source_and_recipient() {
+        let mut proof = serde_json::json!({"schema":"elastos.library.recipient-proof/v1","source":"runtime-launch-grant","proof_binding_id":"proof:signin-wallet:fixture","recipient":"person:local:alice","session_id":"auth:wallet:fixture"});
+        assert!(validate_shared_access_recipient_proof("person:local:alice", Some(&proof)).is_ok());
+        assert!(validate_shared_access_recipient_proof("person:local:bob", Some(&proof)).is_err());
+        proof["source"] = serde_json::json!("wallet-input");
+        assert!(
+            validate_shared_access_recipient_proof("person:local:alice", Some(&proof)).is_err()
+        );
+    }
 }

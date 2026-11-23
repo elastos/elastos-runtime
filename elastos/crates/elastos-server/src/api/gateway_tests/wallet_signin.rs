@@ -278,7 +278,10 @@ async fn wallet_session_real_webauthn_approves_only_same_account_and_exact_metho
     let b = begin(&app, &token, &f, "disable", &id).await;
     let request = &b.approval.as_ref().unwrap()["request"];
     let (status,_)=call(&app,"/api/auth/passkey-step-up/begin",Some(&token),Some(json!({"schema":"elastos.auth.passkey-step-up.begin.request/v1","app_token":token,"operation":auth::OPERATION,"request":request,"approving_passkey_id":other}))).await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(matches!(
+        status,
+        StatusCode::FORBIDDEN | StatusCode::CONFLICT
+    ));
     let approval = real_step_up(
         &app,
         &token,

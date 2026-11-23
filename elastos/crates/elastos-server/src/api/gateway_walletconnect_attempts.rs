@@ -50,7 +50,7 @@ fn context(
     headers: &HeaderMap,
 ) -> anyhow::Result<crate::auth::wallet_signin::AttemptContext> {
     crate::auth::wallet_signin::attempt_context(
-        &state.data_dir,
+        &home_launch_auth_data_dir(&state.data_dir),
         header(headers, "x-elastos-wallet-attempt")?,
         header(headers, "x-elastos-wallet-instance")?,
         now_ts(),
@@ -111,7 +111,7 @@ fn absolute_deadline(expires: u64) -> Instant {
     Instant::now()
         + Duration::from_secs(expires)
             .saturating_sub(now)
-            .min(Duration::from_secs(300))
+            .min(Duration::from_secs(180))
 }
 
 pub(in crate::api) async fn issue_lock(state: &GatewayState) -> tokio::sync::MutexGuard<'_, ()> {
@@ -252,7 +252,11 @@ async fn install(
     source: Option<std::net::IpAddr>,
 ) -> anyhow::Result<()> {
     let source = source.map(address_budget_key);
-    crate::auth::wallet_signin::set_transport_local(&state.data_dir, &result.ceremony_id, local)?;
+    crate::auth::wallet_signin::set_transport_local(
+        &home_launch_auth_data_dir(&state.data_dir),
+        &result.ceremony_id,
+        local,
+    )?;
     let mut inner = state.walletconnect.inner.lock().await;
     // Browser-claim renewal keeps its starting share even after an address
     // change. It gains neither another slot nor a later deadline.
@@ -333,9 +337,11 @@ async fn install(
             .is_some_and(|a| a.instance == instance && a.deadline <= Instant::now());
         if same {
             // The monotonic timer owns expiry even if wall time went backwards.
-            if let Err(_error) =
-                crate::auth::wallet_signin::expire_attempt(&state.data_dir, &id, &instance)
-            {
+            if let Err(_error) = crate::auth::wallet_signin::expire_attempt(
+                &home_launch_auth_data_dir(&state.data_dir),
+                &id,
+                &instance,
+            ) {
                 tracing::warn!("Wallet attempt expiry persistence failed");
             }
             let _ = retire_attempt(&state, &id).await;

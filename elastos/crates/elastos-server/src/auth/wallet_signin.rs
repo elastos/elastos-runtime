@@ -1802,4 +1802,86 @@ pub(crate) mod tests {
             "removal owns no relay authority"
         );
     }
+    #[test]
+    fn walletconnect_requires_explicit_short_consent_and_enabled_method() {
+        let f = fixture();
+        let mut req = input("signin", "", "");
+        req.connector = "walletconnect".into();
+        req.chain_id = 0;
+        req.allow_temporary_internet = true;
+        assert!(begin(f.data.path(), ORIGIN, "home-test", req, None).is_err());
+        let id = enabled(&f);
+        let mut req = input("signin", "", "");
+        req.connector = "walletconnect".into();
+        req.chain_id = 0;
+        assert!(begin(f.data.path(), ORIGIN, "home-test", req, None).is_err());
+        let mut req = input("signin", "", "");
+        req.connector = "walletconnect".into();
+        req.chain_id = 0;
+        req.allow_temporary_internet = true;
+        let attempt = begin(f.data.path(), ORIGIN, "home-test", req, None).unwrap();
+        assert!(attempt_context(
+            f.data.path(),
+            attempt.attempt_token.as_ref().unwrap(),
+            &attempt.instance_id,
+            now_ts()
+        )
+        .is_ok());
+        change(&f, "disable", &id);
+        assert!(attempt_context(
+            f.data.path(),
+            attempt.attempt_token.as_ref().unwrap(),
+            &attempt.instance_id,
+            now_ts()
+        )
+        .is_err());
+        assert!(inactive_attempts(f.data.path())
+            .unwrap()
+            .contains(&attempt.ceremony_id));
+    }
+    #[test]
+    fn wallet_enable_approval_discloses_short_public_relay_authority() {
+        let f = fixture();
+        let id = change(&f, "add", "");
+        let request = begin(
+            f.data.path(),
+            ORIGIN,
+            "home-test",
+            input("enable", &id, ""),
+            Some(f.actor.clone()),
+        )
+        .unwrap();
+        let approval = request.approval.unwrap();
+        assert_eq!(
+            approval["request"]["authorizes_short_public_walletconnect"],
+            true
+        );
+        assert!(approval["notice"]
+            .as_str()
+            .unwrap()
+            .contains("internet address"));
+    }
+    #[test]
+    fn wallet_session_refresh_keeps_pending_approval_identity() {
+        let f = fixture();
+        let b = begin(
+            f.data.path(),
+            ORIGIN,
+            "home-test",
+            input("add", "", &f.address),
+            Some(f.actor.clone()),
+        )
+        .unwrap();
+        let mut renewed = f.actor.clone();
+        renewed.expires_at += 60;
+        renew_session_grant(f.data.path(), renewed.clone()).unwrap();
+        assert!(complete(
+            f.data.path(),
+            ORIGIN,
+            &completion(&f, &b),
+            Some(&renewed),
+            |_| Ok(())
+        )
+        .is_ok());
+    }
 }

@@ -2020,4 +2020,40 @@ mod tests {
             .to_string()
             .contains("profile revision chain is invalid"));
     }
+    #[test]
+    fn wallet_signin_profile_binding_is_account_bound_and_revocable() {
+        let f = crate::auth::wallet_signin::tests::fixture();
+        let method = crate::auth::wallet_signin::tests::enabled(&f);
+        require_profile_authority_passkey_binding(
+            f.data.path(),
+            &f.actor.principal_id,
+            Some(&method),
+        )
+        .unwrap();
+        assert!(require_profile_authority_passkey_binding(
+            f.data.path(),
+            "person:local:other",
+            Some(&method)
+        )
+        .is_err());
+        crate::auth::revoke_session_grant(
+            f.data.path(),
+            &f.actor.session_id,
+            crate::auth::now_ts(),
+        )
+        .unwrap();
+        // Account method revocation is independent of ending the actor's session.
+        crate::auth::revoke_passkey_binding(
+            f.data.path(),
+            &f.actor.proof_binding_id,
+            crate::auth::now_ts(),
+        )
+        .unwrap();
+        assert!(require_profile_authority_passkey_binding(
+            f.data.path(),
+            &f.actor.principal_id,
+            Some(&method)
+        )
+        .is_err());
+    }
 }
