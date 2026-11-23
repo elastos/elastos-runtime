@@ -5422,8 +5422,23 @@ pub fn revoke_session_grant(
     session_id: &str,
     revoked_at: u64,
 ) -> anyhow::Result<()> {
+    revoke_session_grant_approved(data_dir, session_id, revoked_at, || Ok(()))
+}
+
+pub(crate) fn revoke_session_grant_approved(
+    data_dir: &Path,
+    session_id: &str,
+    revoked_at: u64,
+    approve: impl FnOnce() -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
     if session_id.starts_with("auth:wallet:") {
-        return wallet_signin::update_session(data_dir, session_id, None, Some(revoked_at));
+        return wallet_signin::update_session_approved(
+            data_dir,
+            session_id,
+            None,
+            Some(revoked_at),
+            approve,
+        );
     }
     mutate_auth_state(data_dir, |state| {
         let stored = state
@@ -5431,6 +5446,7 @@ pub fn revoke_session_grant(
             .iter_mut()
             .find(|stored| stored.grant.session_id == session_id)
             .ok_or_else(|| anyhow!("auth session not found"))?;
+        approve()?;
         stored.revoked_at = Some(revoked_at);
         Ok(())
     })

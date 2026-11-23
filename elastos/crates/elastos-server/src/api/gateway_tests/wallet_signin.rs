@@ -534,3 +534,204 @@ fn wallet_account_role_is_rechecked_inside_approved_mutation_after_demotion() {
         crate::auth::RuntimePrincipalRole::Guest
     );
 }
+
+async fn call_approved(
+    app: &Router,
+    path: &str,
+    token: &str,
+    approval: &str,
+    input: Value,
+) -> (StatusCode, Value) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(path)
+                .header(HOST, "localhost:61180")
+                .header("origin", ORIGIN)
+                .header("x-elastos-home-token", token)
+                .header("x-elastos-step-up-token", approval)
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(input.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    (
+        status,
+        serde_json::from_slice(&bytes)
+            .unwrap_or_else(|_| json!({"text":String::from_utf8_lossy(&bytes)})),
+    )
+}
+
+#[tokio::test]
+async fn wallet_inbox_positive_permissions_require_exact_fresh_passkey() {
+    let f = wallet_fixture::fixture();
+    wallet_fixture::enabled(&f);
+    let session = wallet_fixture::signin(&f);
+    let (approver, credential) =
+        install_real_approver(f.data.path(), "person:local:alice", b"inbox-approver");
+    let app = gateway_router(test_state(f.data.path()));
+    let home =
+        issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &session).unwrap();
+    let inbox =
+        issue_home_launch_token_for_auth_grant(f.data.path(), INBOX_CAPSULE_ID, &session).unwrap();
+    for action_id in [
+        "community-presence-always:test",
+        "community-presence-open:test",
+        "contact-accept-request:test",
+        "room-approve-request:test",
+        "capability-approve-request:test",
+        "service-approve-request:test",
+        "model-egress-approve:test",
+        WALLET_PRICE_HTTP_APPROVE_ACTION_ID,
+    ] {
+        let (status, result) = call(
+            &app,
+            "/api/apps/inbox/actions",
+            Some(&inbox),
+            Some(json!({"action_id":action_id})),
+        )
+        .await;
+        assert!(
+            !status.is_success(),
+            "wallet alone approved {action_id}: {result}"
+        );
+        assert!(
+            result.to_string().contains("passkey") || result.to_string().contains("step-up"),
+            "{action_id}: {result}"
+        );
+    }
+    let request = json!({"action_id":WALLET_PRICE_HTTP_APPROVE_ACTION_ID});
+    let approval = real_step_up_for_launch(
+        &app,
+        &home,
+        &inbox,
+        "inbox.approve",
+        &request,
+        &approver,
+        &credential,
+        1,
+    )
+    .await;
+    let (status, result) = call(
+        &app,
+        "/api/apps/inbox/actions",
+        Some(&inbox),
+        Some(json!({"action_id":WALLET_PRICE_HTTP_APPROVE_ACTION_ID,"step_up_token":approval})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    let (status, _) = call(
+        &app,
+        "/api/apps/inbox/actions",
+        Some(&inbox),
+        Some(json!({"action_id":WALLET_PRICE_HTTP_APPROVE_ACTION_ID,"step_up_token":approval})),
+    )
+    .await;
+    assert!(!status.is_success(), "consumed approval was reused");
+    assert_eq!(
+        call(
+            &app,
+            "/api/apps/inbox/actions",
+            Some(&inbox),
+            Some(json!({"action_id":"notification-read:missing"}))
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn wallet_session_can_sign_out_but_other_session_revocation_needs_passkey() {
+    let f = wallet_fixture::fixture();
+    wallet_fixture::enabled(&f);
+    let session = wallet_fixture::signin(&f);
+    let (approver, credential) =
+        install_real_approver(f.data.path(), "person:local:alice", b"session-approver");
+    let app = gateway_router(test_state(f.data.path()));
+    let home =
+        issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &session).unwrap();
+    let path = format!("/api/auth/sessions/{}/revoke", f.actor.session_id);
+    assert!(!call(&app, &path, Some(&home), Some(json!({})))
+        .await
+        .0
+        .is_success());
+    assert!(
+        crate::auth::load_active_session_grant(f.data.path(), &f.actor.session_id, now_ts())
+            .is_ok()
+    );
+    let approval = real_step_up(
+        &app,
+        &home,
+        "auth.session.revoke",
+        &json!({"session_id":f.actor.session_id}),
+        &approver,
+        &credential,
+        1,
+    )
+    .await;
+    let (status, result) = call_approved(&app, &path, &home, &approval, json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    assert!(
+        crate::auth::load_active_session_grant(f.data.path(), &f.actor.session_id, now_ts())
+            .is_err()
+    );
+    let path = format!("/api/auth/sessions/{}/revoke", session.session_id);
+    assert_eq!(
+        call(&app, &path, Some(&home), Some(json!({}))).await.0,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn wallet_explicit_account_removal_requires_exact_passkey_intent() {
+    let f = wallet_fixture::fixture();
+    wallet_fixture::enabled(&f);
+    let session = wallet_fixture::signin(&f);
+    install_real_approver(f.data.path(), "person:local:bob", b"other-admin");
+    let (approver, credential) =
+        install_real_approver(f.data.path(), "person:local:alice", b"removal-approver");
+    let app = gateway_router(test_state(f.data.path()));
+    let home =
+        issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &session).unwrap();
+    let path = format!("/api/auth/passkeys/{}/revoke", f.actor.proof_binding_id);
+    let body = json!({"remove_account":true,"account_id":session.principal_id});
+    assert!(!call(&app, &path, Some(&home), Some(body.clone()))
+        .await
+        .0
+        .is_success());
+    let request = json!({"proof_binding_id":f.actor.proof_binding_id,"account_id":session.principal_id,"remove_account":true});
+    let approval = real_step_up(
+        &app,
+        &home,
+        "auth.account.remove",
+        &request,
+        &approver,
+        &credential,
+        1,
+    )
+    .await;
+    let (status, result) = call_approved(&app, &path, &home, &approval, body).await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    assert!(
+        crate::auth::load_active_session_grant(f.data.path(), &session.session_id, now_ts())
+            .is_err()
+    );
+    assert!(crate::auth::active_passkey_principals(f.data.path())
+        .unwrap()
+        .iter()
+        .all(|p| p.principal_id != session.principal_id));
+    assert_eq!(
+        call(&app, "/api/auth/wallet-methods", Some(&home), None)
+            .await
+            .0,
+        StatusCode::FORBIDDEN
+    );
+}

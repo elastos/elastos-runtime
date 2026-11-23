@@ -231,3 +231,26 @@ in `x-elastos-step-up-token`. The operation is `auth.account.remove` and its exa
 request is `{"proof_binding_id":"<target>","account_id":"<exact account>","remove_account":true}`.
 This approval is required for both passkey and wallet sessions. The Home keeps
 its final Admin account. An omitted body means ordinary method removal.
+
+## Permission decisions from a wallet session
+
+A wallet session can use access that Runtime has already granted. Positive Inbox
+permission decisions also need a fresh same-account passkey. For Community presence,
+contact acceptance, room admission, capability and service grants, Wallet price HTTP,
+and hosted/model egress approval, use operation `inbox.approve` with
+`{"action_id":"<complete Inbox action ID>"}`. Send its token in the existing
+Inbox action JSON `step_up_token` field. Browser internet, WalletConnect payment
+internet, wallet payments and Inspector retain their existing exact approval intents.
+Read, dismiss, decline and deny controls keep their existing authority.
+
+System presence modes `always` and `while_open` use operation
+`community.presence.grant`, request `{"mode":"<selected mode>"}`, and the
+`x-elastos-step-up-token` header. Selecting `hidden` ends access directly. The legacy
+Chat room approval route uses `inbox.approve` with action ID
+`room-approve-request:<request ID>` in that header. Home can run the passkey bridge
+for the Chat launch token.
+
+`POST /api/auth/sessions/<target>/revoke` from a wallet session requires operation
+`auth.session.revoke`, request `{"session_id":"<target>"}`, and the approval header
+when the target is another session. Signing out the current session stays direct.
+Runtime rechecks current account authority while it commits the revocation.

@@ -42,6 +42,7 @@ const PASSKEY_STEP_UP_ACTORS: &[&str] = &[
     INBOX_CAPSULE_ID,
     SYSTEM_CAPSULE_ID,
     WALLET_CAPSULE_ID,
+    super::gateway::CHAT_ROOM_CAPSULE_ID,
 ];
 
 static PASSKEY_STEP_UP_STATE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();

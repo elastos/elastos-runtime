@@ -376,6 +376,24 @@ pub(super) async fn system_community_presence_update(
             Ok(context) => context,
             Err(error) => return home_error_response(error),
         };
+    if body.mode != "hidden" {
+        let approval = (|| {
+            let launch =
+                require_home_launch_token_binding(&state.data_dir, &headers, &[SYSTEM_CAPSULE_ID])?;
+            super::auth_gateway::wallet_action_approval(
+                &state,
+                &launch,
+                headers
+                    .get("x-elastos-step-up-token")
+                    .and_then(|v| v.to_str().ok()),
+                "community.presence.grant",
+                &json!({"mode":body.mode}),
+            )
+        })();
+        if let Err(error) = approval {
+            return home_error_response(error);
+        }
+    }
     if let Err(error) = set_community_presence(&state, &context, decision).await {
         return home_error_response(error);
     }

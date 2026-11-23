@@ -984,6 +984,15 @@ pub(crate) fn update_session(
     grant: Option<AuthSessionGrantV1>,
     revoked_at: Option<u64>,
 ) -> anyhow::Result<()> {
+    update_session_approved(data, id, grant, revoked_at, || Ok(()))
+}
+pub(crate) fn update_session_approved(
+    data: &Path,
+    id: &str,
+    grant: Option<AuthSessionGrantV1>,
+    revoked_at: Option<u64>,
+    approve: impl FnOnce() -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
     mutate(data, |auth, store| {
         let current = store
             .sessions
@@ -999,6 +1008,7 @@ pub(crate) fn update_session(
                     && g.proof_binding_id == current.grant.proof_binding_id,
             )?;
         }
+        approve()?;
         let s = store
             .sessions
             .iter_mut()

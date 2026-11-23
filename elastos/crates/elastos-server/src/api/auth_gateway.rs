@@ -1042,7 +1042,23 @@ pub async fn revoke_session(
         ));
     }
 
-    match crate::auth::revoke_session_grant(&auth_data_dir, &session_id, now) {
+    match crate::auth::revoke_session_grant_approved(&auth_data_dir, &session_id, now, || {
+        if session_id != context.session_id {
+            let current_actor = require_active_principal_for_context(&state, &context)?;
+            anyhow::ensure!(
+                crate::auth::is_admin(&current_actor),
+                "admin authority required to revoke another auth session"
+            );
+            wallet_session_approval(
+                &state,
+                &headers,
+                &context,
+                "auth.session.revoke",
+                &json!({"session_id":session_id}),
+            )?;
+        }
+        Ok(())
+    }) {
         Ok(()) => {
             if auth_data_dir != state.data_dir {
                 let _ = crate::auth::revoke_session_grant(&state.data_dir, &session_id, now);
@@ -1219,6 +1235,32 @@ async fn passkey_list_inner(
         schema: "elastos.auth.passkeys/v1".to_string(),
         passkeys,
     })
+}
+
+pub(in crate::api) fn wallet_action_approval(
+    state: &GatewayState,
+    launch: &super::gateway::RequiredHomeLaunchToken,
+    token: Option<&str>,
+    operation: &str,
+    request: &Value,
+) -> anyhow::Result<Option<String>> {
+    if launch
+        .context
+        .proof_binding_id
+        .as_deref()
+        .is_some_and(|id| id.starts_with("proof:signin-wallet:"))
+    {
+        return super::gateway::consume_passkey_step_up_token_with_approver(
+            &state.data_dir,
+            token.unwrap_or_default(),
+            launch,
+            180,
+            operation,
+            request,
+        )
+        .map(Some);
+    }
+    Ok(None)
 }
 
 pub(in crate::api) fn wallet_session_approval(

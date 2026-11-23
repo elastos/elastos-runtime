@@ -395,6 +395,32 @@ async fn dispatch_inbox_action(
     action: &InboxActionRequest,
 ) -> anyhow::Result<String> {
     let action_id = action.action_id.as_str();
+    // Each positive permission decision from a wallet session uses the account's
+    // passkey. Existing action-specific consumers keep their own exact intent.
+    let positive = [
+        "community-presence-always:",
+        "community-presence-open:",
+        "contact-accept-request:",
+        "room-approve-request:",
+        "capability-approve-request:",
+        "service-approve-request:",
+        "model-egress-approve:",
+        crate::jev_approval_lens::HOSTED_HTTP_APPROVE_PREFIX,
+    ]
+    .iter()
+    .any(|prefix| action_id.starts_with(prefix))
+        || action_id == WALLET_PRICE_HTTP_APPROVE_ACTION_ID;
+    let _approving_passkey = if positive {
+        super::auth_gateway::wallet_action_approval(
+            state,
+            launch,
+            action.step_up_token.as_deref(),
+            "inbox.approve",
+            &json!({"action_id":action_id}),
+        )?
+    } else {
+        None
+    };
     if action_id.starts_with("browser-internet-") {
         return gateway_browser_internet::answer(
             state,
@@ -669,6 +695,7 @@ async fn dispatch_inbox_action(
         let _decision = crate::api::model_provider_egress_decision::transition_gate(data_dir)
             .lock_owned()
             .await;
+        let proof = _approving_passkey.as_deref().unwrap_or(proof);
         crate::api::model_provider_egress_decision::approve(data_dir, request_id, proof)?;
         let _ = crate::notifications::mark_acted_for_action(data_dir, None, action_id);
         return Ok(
