@@ -779,10 +779,12 @@ mod tests {
 
     #[test]
     fn native_host_probe_requires_its_contract_and_has_a_deadline() {
-        use std::os::unix::fs::PermissionsExt;
         use std::time::Duration;
         let temp = tempfile::tempdir().unwrap();
-        let program = temp.path().join("probe");
+        // Keep the executable immutable: a parallel fork can inherit a writable
+        // script descriptor and make exec fail with ETXTBSY on Linux.
+        let program =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/native-host-probe.sh");
         for (output, accepted) in [
             (
                 r#"{"schema":"elastos.browser.vm-host-capabilities/v1","available":true}"#,
@@ -795,23 +797,21 @@ mod tests {
             (r#"{"schema":"other","available":true}"#, false),
             ("invalid", false),
         ] {
-            fs::write(&program, format!("#!/bin/sh\n[ \"$1\" = --host-capabilities ] || exit 2\nprintf '%s\\n' '{output}'\n")).unwrap();
-            fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).unwrap();
+            fs::write(temp.path().join("probe-output"), output).unwrap();
+            let result = probe_native_host(&program, temp.path(), Duration::from_secs(1));
             assert_eq!(
-                probe_native_host(&program, temp.path(), Duration::from_secs(1)).is_ok(),
-                accepted
+                result.is_ok(),
+                accepted,
+                "probe output {output:?}: {result:?}"
             );
         }
-        fs::write(&program, "#!/bin/sh\nwhile :; do :; done\n").unwrap();
-        assert!(
-            probe_native_host(&program, temp.path(), Duration::from_millis(20))
-                .unwrap_err()
-                .to_string()
-                .contains("did not complete")
-        );
+        fs::write(temp.path().join("probe-hang"), b"").unwrap();
+        let error =
+            probe_native_host(&program, temp.path(), Duration::from_millis(20)).unwrap_err();
+        assert!(error.to_string().contains("did not complete"), "{error:#}");
         // Admission precedes execution even when the named file is executable.
         fs::create_dir(temp.path().join("bin")).unwrap();
-        fs::rename(
+        fs::copy(
             &program,
             temp.path().join("bin/browser-vz-engine-supervisor"),
         )
