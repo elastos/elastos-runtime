@@ -130,7 +130,7 @@ export function reduceConnection(input, { message, safetyMessage, summary, other
   const waitSeconds = deadlines.length && Number.isSafeInteger(nowSeconds) ? Math.max(0, Math.min(...deadlines) - nowSeconds) : input.waitSeconds;
   let account=input.account;
   if(!account && screens[input.window]?.[stage]?.selectedAccount && provider?.firstAccount){
-    const networks={'eip155:1':'Ethereum','eip155:8453':'Base','eip155:20':'Elastos Smart Chain','bip122:000000000019d6689c085ae165831e93':'Bitcoin'};
+    const networks={'eip155:1':'Ethereum','eip155:8453':'Base','eip155:20':'Elastos Smart Chain','eip155:11155111':'Sepolia','bip122:000000000019d6689c085ae165831e93':'Bitcoin'};
     account={name:provider.displayName||providerCopy[provider.providerId]||'Your wallet',mark:provider.providerId==='unisat'?'unisat':provider.providerId==='io.metamask'?'metamask':'wallet',connection:null,accounts:[{address:provider.firstAccount,networks:[networks[provider.network]||'Selected network']}]};
   }
   return connectionView({ ...input, stage, provider, summary: request, requestContext, account, waitSeconds, walletResult, alternativeAllowed: reduceAlternative(alternative),

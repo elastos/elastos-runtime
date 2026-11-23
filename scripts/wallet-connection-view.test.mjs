@@ -254,3 +254,10 @@ test('import and model construction work with browser/effect globals forbidden',
   `,new URL('../capsules/_shared/wallet-connection-view.mjs',import.meta.url).href],{encoding:'utf8',timeout:10000});
   assert.equal(result.status,0,result.stderr);
 });
+
+test('the shared selected-account view names Sepolia',()=>{
+ const snapshot=structuredClone(shared.messages.find(r=>r.id==='state-io.metamask').message.snapshot);
+ const message={snapshot:{...snapshot,firstAccount:'0x1122334455667788990011223344556677889900',network:'eip155:11155111'}};
+ const view=reduceConnection({window:'metamask',stage:'link-wait',waitSeconds:300},{message});
+ assert.deepEqual(view.account.accounts[0].networks,['Sepolia']);
+});
