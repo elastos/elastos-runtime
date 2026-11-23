@@ -34,6 +34,10 @@ pub enum WalletProofPurpose {
         account_id: String,
         method_digest: [u8; 32],
     },
+    AddSignInMethod {
+        account_id: String,
+        method_digest: [u8; 32],
+    },
     AddMethodDuringRecovery {
         account_id: String,
         method_digest: [u8; 32],
@@ -453,6 +457,16 @@ impl WalletProofPurpose {
                 account_id,
                 format!(
                     "Add a sign-in method; SHA-256: {}",
+                    hex::encode(method_digest)
+                ),
+            ),
+            AddSignInMethod {
+                account_id,
+                method_digest,
+            } => (
+                account_id,
+                format!(
+                    "Add this wallet so it can sign in; SHA-256: {}",
                     hex::encode(method_digest)
                 ),
             ),

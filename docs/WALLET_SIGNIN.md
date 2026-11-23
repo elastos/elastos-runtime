@@ -67,12 +67,23 @@ Bitcoin ownership is network and address.
 {"action":"add","connector":"metamask","address":"0x…","chain_id":20,"network":"","browser_secret":"<64 hex characters>"}
 ```
 
-For the first WalletConnect Add, use this authenticated management route with
-`action: "add"`, `connector: "walletconnect"`, an empty address, chain_id 20,
-network `""`, browser_secret and `allow_temporary_internet: true`. Show the short
+Accounts uses `action: "add_signin"` with the same wallet fields to add the wallet
+with sign-in enabled in one operation. Runtime requires a live Admin at begin,
+passkey approval and completion. The wallet message says that this wallet can
+sign in to this Home for this account. Its distinct `AddSignInMethod` proof purpose
+and the approval's `action: "add_signin"` bind that combined effect. An `add`
+proof cannot complete `add_signin`, and an `add_signin` proof cannot complete `add`.
+Runtime saves the method, current ownership witnesses and sign-in permission in
+one transaction after wallet verification and exact passkey approval.
+
+For the first WalletConnect Add or Add-and-sign-in, use this authenticated
+management route with `action: "add"` or `"add_signin"`,
+`connector: "walletconnect"`, an empty address, chain_id 20, network `""`,
+browser_secret and `allow_temporary_internet: true`. Show the short
 connection disclosure first. Begin returns the temporary pairing transport.
 After pairing, call `/api/auth/wallet/signin/select` with the same ceremony_id,
-browser_secret, selected address and chain_id to obtain the exact Add message.
+browser_secret, selected address and chain_id to obtain the exact action-bound
+message.
 Selection replaces the initial chain_id with the wallet's chosen supported chain.
 Keep the management launch header on these calls. Then sign and approve Add as
 below. Anonymous sign-in pairing requires an already enabled compatible method;
@@ -89,10 +100,10 @@ Begin returns:
 ```
 
 Show the account, Home origin, full wallet address, network, exact message and
-effect before requesting the signature or passkey. Enable also shows Runtime's
-`approval.notice` before passkey approval. Home echoes the full Runtime-bound
+effect before requesting the signature or passkey. Add-and-sign-in and Enable
+show Runtime's `approval.notice` before passkey approval. Home echoes the full Runtime-bound
 approval request unchanged when it asks for passkey approval.
-For add/enable sign the exact `message` using personal_sign
+For add/add_signin/enable sign the exact `message` using personal_sign
 (EVM) or UniSat signMessage (Bitcoin). Then use existing
 `POST /api/auth/passkey-step-up/begin` with its existing schema, app_token and the
 returned approval operation/request. Complete WebAuthn through
@@ -108,8 +119,18 @@ returned approval operation/request. Complete WebAuthn through
 Bitcoin uses `bip322_simple` or `bitcoin_signed_message`; public_key is supplied
 where that proof mode needs it. The response is
 `{"status":"complete","method_id":"wallet:…","sign_in_enabled":false}`.
-The response for remove has `status: "removed"`. A repeated method change needs
-new approval. Begin never changes wallet authority.
+For `add_signin` and `enable`, the response has `sign_in_enabled: true`:
+
+```json
+{"status":"complete","method_id":"wallet:…","sign_in_enabled":true}
+```
+
+The response for remove has `status: "removed"`. `add` continues to create a
+payment-only method with sign-in off; its separate `enable` operation stays
+available. A new method change needs new approval. An identical completion retry
+returns its saved result while the ceremony is live, without another approval
+or authority change. Reusing the proof for a different ceremony is refused.
+Begin never changes wallet authority.
 
 ## Signed-out sign-in
 
@@ -228,7 +249,8 @@ file refuses wallet access while passkey access remains available.
 
 ## Short WalletConnect sign-in permission
 
-The Sign in ON review displays `approval.notice` before passkey approval. Its
+The Add-and-sign-in and Enable reviews display `approval.notice` before passkey
+approval. The
 `approval.request.authorizes_short_public_walletconnect` field is true for an
 ordinary EVM wallet on Elastos Smart Chain (20) or Base (8453), whether it was
 added through MetaMask or WalletConnect. This permission lets visitors start
@@ -236,7 +258,7 @@ bounded sign-in relay connections. The relay service can see the Home
 computer's internet address. Runtime binds this effect to the fresh approval.
 Payment connections keep their separate Inbox permission.
 
-A WalletConnect add/enable/sign-in begin sends `allow_temporary_internet: true`
+A WalletConnect add/add_signin/enable/sign-in begin sends `allow_temporary_internet: true`
 only after the person continues past a plain notice that the wallet is reached
 over the internet. The field defaults to false and records consent; authentication
 comes from the signed wallet proof and Runtime's current account state.
