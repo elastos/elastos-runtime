@@ -183,6 +183,8 @@ async function exercise(engine,width) {
       if(connector==='walletconnect'){await state('pairing');await pair();}
       await state('review');await capture(`add-${connector}-review`);await page.locator('.signin-dialog').getByRole('button',{name:'Sign message',exact:true}).click();await state('approval');await page.locator('.signin-dialog').getByRole('button',{name:'Use passkey',exact:true}).click();await state('done');await capture(`add-${connector}-done`);await page.locator('.signin-dialog').getByRole('button',{name:'Done',exact:true}).click();
       assert.equal(fixture.state.methods.find(m=>m.connector===connector).sign_in_enabled,false,'added wallet defaults off');
+      assert.equal(fixture.state.methods.find(m=>m.connector===connector).last_used_at,null,'new method has never signed in');
+      await system.locator(`[data-wallet-method="wallet:${connector}"]`).getByText('Not used yet',{exact:true}).waitFor();
     }
     for(const connector of ['unisat','walletconnect']) {
       const row=system.locator(`[data-wallet-method="wallet:${connector}"]`);

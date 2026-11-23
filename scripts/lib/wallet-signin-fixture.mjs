@@ -72,7 +72,7 @@ export async function signinFixture() {
               state.signed=true;c.result={session_id:'fixture-session',principal_id:'principal:alex',proof_binding_id:signedMethod.method_id,expires_at:now+3600,app_token:'fixture-home'};
             } else {
               const id=c.method.method_id||`wallet:${c.method.connector}`;
-              if(c.action==='add')state.methods.push({...sampleMethod(c.method.connector),method_id:id,address:c.method.address,chain_id:c.method.chain_id,network:c.method.network});
+              if(c.action==='add')state.methods.push({...sampleMethod(c.method.connector),created_at:Math.floor(now),last_used_at:null,method_id:id,address:c.method.address,chain_id:c.method.chain_id,network:c.method.network});
               else if(c.action==='remove')state.methods=state.methods.filter(m=>m.method_id!==id);
               else state.methods.find(m=>m.method_id===id).sign_in_enabled=c.action==='enable';
               c.result={status:c.action==='remove'?'removed':'complete',method_id:id,sign_in_enabled:c.action==='enable'};
