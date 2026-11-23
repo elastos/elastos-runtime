@@ -80,12 +80,17 @@ where
         collaboration_context,
         mut collaboration_service,
     } = setup_control_plane().await?;
+    // Only the Home gateway owns the public IPFS store (Ruling R3).
+    let public_ipfs = crate::public_ipfs_store::PublicIpfsSupervisor::spawn(
+        provider_registry.clone(),
+        data_dir.clone(),
+    );
     let server_result = api::gateway::start_gateway_server_with_ready(
         &addr,
-        Some(provider_registry),
+        Some(provider_registry.clone()),
         collaboration_context,
         cache_path,
-        data_dir,
+        data_dir.clone(),
         on_ready,
     )
     .await;
@@ -93,6 +98,11 @@ where
         server_result,
         &mut collaboration_service,
         &mut carrier_service,
+        Some(PublicIpfsTeardown {
+            supervisor: public_ipfs,
+            registry: &provider_registry,
+            data_dir: &data_dir,
+        }),
     )
     .await
 }
@@ -334,14 +344,34 @@ where
         Ok(())
     }
     .await;
-    finish_gateway_result(run_result, &mut collaboration_service, &mut carrier_service).await
+    finish_gateway_result(
+        run_result,
+        &mut collaboration_service,
+        &mut carrier_service,
+        None,
+    )
+    .await
+}
+
+/// The Home gateway's public IPFS supervisor, with what its stop needs.
+struct PublicIpfsTeardown<'a> {
+    supervisor: crate::public_ipfs_store::PublicIpfsSupervisor,
+    registry: &'a provider::ProviderRegistry,
+    data_dir: &'a Path,
 }
 
 async fn finish_gateway_result(
     run_result: anyhow::Result<()>,
     service: &mut Option<crate::collaboration_startup::CollaborationRuntimeService>,
     carrier_service: &mut Option<crate::carrier::CarrierRuntimeService>,
+    public_ipfs: Option<PublicIpfsTeardown<'_>>,
 ) -> anyhow::Result<()> {
+    if let Some(public_ipfs) = public_ipfs {
+        public_ipfs
+            .supervisor
+            .shutdown(public_ipfs.registry, public_ipfs.data_dir)
+            .await;
+    }
     let shutdown_result = shutdown_collaboration_service(service).await;
     let carrier_shutdown = shutdown_carrier_service(carrier_service).await;
     run_result?;
@@ -844,14 +874,75 @@ for line in sys.stdin:
                 Some(crate::carrier::CarrierRuntimeService::test_pending_service(
                     carrier_stopped.clone(),
                 ));
-            let result =
-                finish_gateway_result(run_result, &mut collaboration_service, &mut carrier_service)
-                    .await;
+            let result = finish_gateway_result(
+                run_result,
+                &mut collaboration_service,
+                &mut carrier_service,
+                None,
+            )
+            .await;
             assert!(collaboration_service.is_none());
             assert!(carrier_service.is_none());
             assert!(collaboration_stopped.load(Ordering::SeqCst));
             assert!(carrier_stopped.load(Ordering::SeqCst));
             assert_eq!(result.is_err(), expect_error);
         }
+    }
+
+    #[tokio::test]
+    async fn public_gateway_finish_stops_the_public_store() {
+        use crate::public_ipfs_store::tests::{no_configure, record_consent, FakeStore};
+        use crate::public_ipfs_store::{PublicIpfsSupervisor, PUBLIC_IPFS_TARGET};
+
+        let dir = crate::protected_content_config::tests::safe_ancestor_tempdir();
+        let data_dir = dir.path().join("data");
+        crate::protected_content_config::tests::owner_only_dir(&data_dir);
+        // A5: a Home that offers sharing runs the store.
+        crate::public_metadata_consent::tests::open_public_metadata_gate(&data_dir);
+        let store = FakeStore::install(&data_dir, no_configure());
+        record_consent(
+            &data_dir,
+            crate::public_metadata_consent::ConsentState::Enabled,
+        )
+        .await;
+        let registry = Arc::new(provider::ProviderRegistry::new());
+        let supervisor = PublicIpfsSupervisor::spawn(registry.clone(), data_dir.clone());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while !registry
+            .has_ready_runtime_provider_target(PUBLIC_IPFS_TARGET)
+            .await
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the store never started"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        let result = finish_gateway_result(
+            Ok(()),
+            &mut None,
+            &mut None,
+            Some(PublicIpfsTeardown {
+                supervisor,
+                registry: &registry,
+                data_dir: &data_dir,
+            }),
+        )
+        .await;
+        assert!(result.is_ok());
+        assert!(
+            !registry
+                .has_ready_runtime_provider_target(PUBLIC_IPFS_TARGET)
+                .await
+        );
+        assert_eq!(store.launches(), 1);
+        assert_eq!(
+            store
+                .last()
+                .shutdown_calls
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
     }
 }

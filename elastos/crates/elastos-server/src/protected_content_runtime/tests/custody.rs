@@ -693,18 +693,21 @@ fn runtime_mint_journal_uses_exact_owner_only_root_and_contains_no_route_or_sign
 }
 
 #[tokio::test]
-async fn runtime_invokes_custody_not_the_provisional_key_route() {
+async fn runtime_invokes_custody_target_not_any_capsule_sub_provider() {
     let registry = Arc::new(ProviderRegistry::new());
     let custody = RecordingProvider::new(
         "custody",
         json!({"status": "ok", "data": {"echo": "custody"}}),
     );
-    let key = RecordingProvider::new("key", json!({"status": "ok", "data": {"echo": "key"}}));
+    let key = RecordingProvider::new(
+        "library",
+        json!({"status": "ok", "data": {"echo": "unrelated-capsule-provider"}}),
+    );
     registry
-        .register_sub_provider("key", key.clone())
+        .register_sub_provider("library", key.clone())
         .await
         .unwrap();
-    register_inactive_custody_runtime_provider_target(registry.as_ref(), custody.clone())
+    register_custody_runtime_provider_target(registry.as_ref(), custody.clone())
         .await
         .unwrap();
 
@@ -747,7 +750,7 @@ async fn runtime_custody_invoke_fails_closed_on_provider_errors() {
         "custody",
         json!({"status": "error", "code": "invalid_request"}),
     );
-    register_inactive_custody_runtime_provider_target(registry.as_ref(), custody)
+    register_custody_runtime_provider_target(registry.as_ref(), custody)
         .await
         .unwrap();
     let err = invoke_json_provider(
@@ -762,25 +765,31 @@ async fn runtime_custody_invoke_fails_closed_on_provider_errors() {
 }
 
 #[tokio::test]
-async fn inactive_custody_registration_does_not_replace_key() {
+async fn custody_target_registration_adds_no_capsule_sub_provider_scheme() {
     let registry = Arc::new(ProviderRegistry::new());
     let custody = RecordingProvider::new(
         "custody",
         json!({"status": "ok", "data": {"echo": "custody"}}),
     );
-    let key = RecordingProvider::new("key", json!({"status": "ok", "data": {"echo": "key"}}));
-    registry.register_sub_provider("key", key).await.unwrap();
-    register_inactive_custody_runtime_provider_target(&registry, custody)
+    let key = RecordingProvider::new(
+        "library",
+        json!({"status": "ok", "data": {"echo": "unrelated-capsule-provider"}}),
+    );
+    registry
+        .register_sub_provider("library", key)
+        .await
+        .unwrap();
+    register_custody_runtime_provider_target(&registry, custody)
         .await
         .unwrap();
     let mut schemes = registry.sub_provider_schemes().await;
     schemes.sort();
-    assert_eq!(schemes, vec!["key".to_string()]);
+    assert_eq!(schemes, vec!["library".to_string()]);
 }
 
 #[cfg(unix)]
 #[tokio::test]
-async fn inactive_custody_registration_passes_only_base_path_and_no_extra_truth() {
+async fn custody_registration_passes_the_root_set_from_disk() {
     let temp = tempfile::tempdir().unwrap();
     let data_dir = temp.path().join("data");
     owner_only_dir(&data_dir);
@@ -789,7 +798,8 @@ async fn inactive_custody_registration_passes_only_base_path_and_no_extra_truth(
     let (binary, _pid_file, request_log) = write_mock_custody_provider(temp.path());
     let registry = Arc::new(ProviderRegistry::new());
 
-    register_inactive_custody_provider(&registry, &binary, &data_dir)
+    crate::host_trust::seed_for_test(&data_dir, true);
+    register_custody_provider(&registry, &binary, &data_dir)
         .await
         .unwrap();
     assert!(registry.sub_provider_schemes().await.is_empty());
@@ -817,14 +827,22 @@ async fn inactive_custody_registration_passes_only_base_path_and_no_extra_truth(
     assert_eq!(requests.len(), 3);
     let init: Value = serde_json::from_str(&requests.remove(0)).unwrap();
     assert_eq!(init["op"], "init");
+    // Plan B T2.1: the base is the custody-provider folder and `extra`
+    // lists the roots found on disk, capped by the node settings.
     assert_eq!(
         init["config"]["base_path"],
-        Value::String(state_root.to_string_lossy().to_string())
+        Value::String(state_root.parent().unwrap().to_string_lossy().to_string())
     );
     assert_eq!(init["config"]["allowed_paths"], json!([]));
     assert_eq!(init["config"]["read_only"], false);
     assert_eq!(init["config"]["encryption_key"], "");
-    assert!(init["config"]["extra"].is_null());
+    assert_eq!(
+        init["config"]["extra"],
+        json!({
+            "roots": [{"path": "inactive"}],
+            "max_roots": crate::custody_release_limits::CUSTODY_NODE_SETTINGS.max_pools,
+        })
+    );
     let status: Value = serde_json::from_str(&requests.remove(0)).unwrap();
     assert_eq!(status, json!({"op": "status"}));
     let forwarded: Value = serde_json::from_str(&requests.remove(0)).unwrap();
@@ -835,7 +853,7 @@ async fn inactive_custody_registration_passes_only_base_path_and_no_extra_truth(
 
 #[cfg(unix)]
 #[tokio::test]
-async fn inactive_custody_wrapper_rejects_public_private_op_and_evidence_injection() {
+async fn custody_wrapper_rejects_public_private_op_and_evidence_injection() {
     let temp = tempfile::tempdir().unwrap();
     let data_dir = temp.path().join("data");
     owner_only_dir(&data_dir);
@@ -843,7 +861,8 @@ async fn inactive_custody_wrapper_rejects_public_private_op_and_evidence_injecti
     let (binary, _pid_file, request_log) = write_mock_custody_provider(temp.path());
     let registry = Arc::new(ProviderRegistry::new());
 
-    register_inactive_custody_provider(&registry, &binary, &data_dir)
+    crate::host_trust::seed_for_test(&data_dir, true);
+    register_custody_provider(&registry, &binary, &data_dir)
         .await
         .unwrap();
 
@@ -914,7 +933,7 @@ async fn inactive_custody_wrapper_rejects_public_private_op_and_evidence_injecti
 
 #[cfg(unix)]
 #[tokio::test]
-async fn inactive_custody_wrapper_status_surface_matches_public_dispatch() {
+async fn custody_wrapper_status_surface_matches_public_dispatch() {
     let temp = tempfile::tempdir().unwrap();
     let data_dir = temp.path().join("data");
     owner_only_dir(&data_dir);
@@ -922,7 +941,8 @@ async fn inactive_custody_wrapper_status_surface_matches_public_dispatch() {
     let (binary, _pid_file, _request_log) = write_mock_custody_provider(temp.path());
     let registry = Arc::new(ProviderRegistry::new());
 
-    register_inactive_custody_provider(&registry, &binary, &data_dir)
+    crate::host_trust::seed_for_test(&data_dir, true);
+    register_custody_provider(&registry, &binary, &data_dir)
         .await
         .unwrap();
 
@@ -946,7 +966,10 @@ async fn inactive_custody_wrapper_status_surface_matches_public_dispatch() {
             "status",
             "provision_node_share",
             "release_contribution",
-            "evaluate"
+            "evaluate",
+            "release_pool_contribution",
+            "sign_pool_statement",
+            "provision_pool_node_share"
         ])
     );
     assert!(status["supported_operations"]
@@ -965,19 +988,19 @@ async fn inactive_custody_wrapper_status_surface_matches_public_dispatch() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn inactive_custody_wrapper_accepts_local_and_carrier_envelopes() {
+async fn custody_wrapper_accepts_local_and_carrier_envelopes() {
     let temp = tempfile::tempdir().unwrap();
     let data_dir = temp.path().join("data");
     owner_only_dir(&data_dir);
     owner_only_dir(&inactive_custody_state_root(&data_dir));
     let (binary, _pid_file, request_log) = write_mock_custody_provider(temp.path());
-    let provider = spawn_inactive_custody_wrapper_for_test(&binary, &data_dir).await;
+    let provider = spawn_custody_wrapper_for_test(&binary, &data_dir).await;
 
     for transport in ["runtime-local-provider-plane", "carrier-provider-plane"] {
         let response = provider
             .send_raw(&json!({
                 "op": "release_contribution",
-                "_runtime_invocation": inactive_custody_runtime_envelope(
+                "_runtime_invocation": custody_runtime_envelope(
                     "release_contribution",
                     transport,
                 ),
@@ -1004,18 +1027,18 @@ async fn inactive_custody_wrapper_accepts_local_and_carrier_envelopes() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn inactive_custody_wrapper_rejects_invalid_transport_and_injected_carrier_data() {
+async fn custody_wrapper_rejects_invalid_transport_and_injected_carrier_data() {
     let temp = tempfile::tempdir().unwrap();
     let data_dir = temp.path().join("data");
     owner_only_dir(&data_dir);
     owner_only_dir(&inactive_custody_state_root(&data_dir));
     let (binary, _pid_file, _request_log) = write_mock_custody_provider(temp.path());
-    let provider = spawn_inactive_custody_wrapper_for_test(&binary, &data_dir).await;
+    let provider = spawn_custody_wrapper_for_test(&binary, &data_dir).await;
 
     let invalid_transport = provider
         .send_raw(&json!({
             "op": "release_contribution",
-            "_runtime_invocation": inactive_custody_runtime_envelope(
+            "_runtime_invocation": custody_runtime_envelope(
                 "release_contribution",
                 "unsupported-provider-plane",
             ),
@@ -1029,7 +1052,7 @@ async fn inactive_custody_wrapper_rejects_invalid_transport_and_injected_carrier
     let injected_carrier = provider
         .send_raw(&json!({
             "op": "release_contribution",
-            "_runtime_invocation": inactive_custody_runtime_envelope(
+            "_runtime_invocation": custody_runtime_envelope(
                 "release_contribution",
                 "carrier-provider-plane",
             ),
@@ -1074,7 +1097,7 @@ async fn inactive_custody_wrapper_rejects_invalid_transport_and_injected_carrier
             }),
         ),
     ] {
-        let mut envelope = inactive_custody_runtime_envelope("release_contribution", transport);
+        let mut envelope = custody_runtime_envelope("release_contribution", transport);
         envelope["carrier"] = carrier;
         let error = provider
             .send_raw(&json!({
@@ -1086,6 +1109,38 @@ async fn inactive_custody_wrapper_rejects_invalid_transport_and_injected_carrier
         assert!(
             error.to_string().contains("runtime envelope is invalid"),
             "{name}: {error}"
+        );
+    }
+}
+
+#[test]
+fn custody_ops_are_declared_in_the_surface() {
+    use crate::custody_surface::{declared_ops, OP_CUSTODY_EVALUATE, TARGET_CUSTODY};
+    let declared: Vec<&str> = declared_ops(TARGET_CUSTODY).collect();
+    // The additional ops are the wrapper's evaluation and the private seal signing commands.
+    for op in CUSTODY_PROVIDER_OPERATIONS {
+        assert_eq!(declared.contains(op), *op != "shutdown", "{op}");
+    }
+    for op in &declared {
+        assert!(
+            matches!(
+                *op,
+                OP_CUSTODY_EVALUATE
+                    | ATTEST_REMOTE_SEAL_UPLOAD_OP
+                    | AUTHORIZE_REMOTE_SEAL_SHARE_OP
+                    | SIGN_REMOTE_SEAL_COMPLETION_OP
+            ) || CUSTODY_PROVIDER_OPERATIONS.contains(op),
+            "{op}"
+        );
+    }
+    for code in ["unknown_envelope", "rate_limited"] {
+        assert!(
+            super::super::CUSTODY_EFFECT_FREE_REFUSAL_CODES.contains(&code),
+            "{code}"
+        );
+        assert!(
+            super::super::CUSTODY_REPORTABLE_REFUSAL_CODES.contains(&code),
+            "{code}"
         );
     }
 }
@@ -1103,22 +1158,23 @@ async fn runtime_custody_registry_adapter_invokes_selected_custody_endpoint_for_
                 .unwrap(),
         ),
     );
-    let provisional = RecordingProvider::new(
-        "rights",
-        ok_provider_response(json!({"echo": "provisional"})),
+    let unrelated = RecordingProvider::new(
+        "library",
+        ok_provider_response(json!({"echo": "unrelated-capsule-provider"})),
     );
     registry
         .register_runtime_provider_target(CUSTODY_PROVIDER_ID, custody.clone())
         .await
         .unwrap();
     registry
-        .register_sub_provider("rights", provisional.clone())
+        .register_sub_provider("library", unrelated.clone())
         .await
         .unwrap();
 
     let adapter = RuntimeCustodyRegistryAdapter::new(
         registry.clone(),
         elastos_runtime::provider::ProviderInvocationTransport::Local,
+        super::super::RuntimeCustodyCallDiagnostics::default(),
     );
     let request = RightsProviderRequestV1::new_evaluate(node_public_key(1), &operation).unwrap();
 
@@ -1129,7 +1185,7 @@ async fn runtime_custody_registry_adapter_invokes_selected_custody_endpoint_for_
     );
     let custody_requests = custody.requests().await;
     assert_eq!(custody_requests.len(), 1);
-    assert!(provisional.requests().await.is_empty());
+    assert!(unrelated.requests().await.is_empty());
     let recorded = &custody_requests[0];
     assert_eq!(recorded["op"], "evaluate");
     assert_eq!(
@@ -1168,20 +1224,23 @@ async fn runtime_custody_registry_adapter_invokes_selected_custody_endpoint_for_
             .unwrap(),
         ),
     );
-    let provisional =
-        RecordingProvider::new("key", ok_provider_response(json!({"echo": "provisional"})));
+    let unrelated = RecordingProvider::new(
+        "library",
+        ok_provider_response(json!({"echo": "unrelated-capsule-provider"})),
+    );
     registry
         .register_runtime_provider_target(CUSTODY_PROVIDER_ID, custody.clone())
         .await
         .unwrap();
     registry
-        .register_sub_provider("key", provisional.clone())
+        .register_sub_provider("library", unrelated.clone())
         .await
         .unwrap();
 
     let adapter = RuntimeCustodyRegistryAdapter::new(
         registry.clone(),
         elastos_runtime::provider::ProviderInvocationTransport::Local,
+        super::super::RuntimeCustodyCallDiagnostics::default(),
     );
     let request =
         CustodyProviderRequestV1::new_release_contribution(&operation, &decision).unwrap();
@@ -1193,7 +1252,7 @@ async fn runtime_custody_registry_adapter_invokes_selected_custody_endpoint_for_
     );
     let custody_requests = custody.requests().await;
     assert_eq!(custody_requests.len(), 1);
-    assert!(provisional.requests().await.is_empty());
+    assert!(unrelated.requests().await.is_empty());
     let recorded = &custody_requests[0];
     assert_eq!(recorded["op"], "release_contribution");
     assert_eq!(
@@ -1224,7 +1283,8 @@ async fn runtime_custody_registry_adapter_process_happy_path_uses_public_provisi
     let provisioned = provision_custody_node_public_receipt(&binary, &state_root, 0x21);
 
     let registry = Arc::new(ProviderRegistry::new());
-    register_inactive_custody_provider(&registry, &binary, &data_dir)
+    crate::host_trust::seed_wci_host_for_test(&data_dir);
+    register_custody_provider(&registry, &binary, &data_dir)
         .await
         .unwrap();
 
@@ -1242,6 +1302,7 @@ async fn runtime_custody_registry_adapter_process_happy_path_uses_public_provisi
     let adapter = RuntimeCustodyRegistryAdapter::new(
         registry.clone(),
         elastos_runtime::provider::ProviderInvocationTransport::Local,
+        super::super::RuntimeCustodyCallDiagnostics::default(),
     );
 
     let provision_request =
@@ -1364,6 +1425,52 @@ async fn runtime_custody_registry_adapter_process_happy_path_uses_public_provisi
     );
 }
 
+/// PM-F2 (a): the host-wide share lock belongs to the write, not to its
+/// caller. A caller cancelled after its write was dispatched leaves the lock
+/// held until that write has landed, so the next write waits for it and is
+/// checked against its bytes: two writes that each fit the maximum alone,
+/// not together, never both commit.
+#[cfg(unix)]
+#[tokio::test]
+async fn guard_a_share_write_cancelled_after_dispatch_keeps_the_host_lock_until_it_lands() {
+    let host = HostShareWriteFixture::start(None).await;
+    let first = host.v1_share_request(0x11);
+    let second = host.v1_share_request(0x12);
+    let max = HostShareWriteFixture::charged_bytes(&first)
+        .max(HostShareWriteFixture::charged_bytes(&second));
+    host.set_storage_maximum(Some(max));
+
+    // The paused provider leaves the dispatched write unanswered.
+    host.signal_provider(nix::sys::signal::Signal::SIGSTOP);
+    let provider = host.provider.clone();
+    let cancelled = tokio::spawn(async move { provider.send_raw(&first).await });
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    cancelled.abort();
+    assert!(cancelled.await.unwrap_err().is_cancelled());
+    let provider = host.provider.clone();
+    let next = tokio::spawn(async move { provider.send_raw(&second).await });
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    host.signal_provider(nix::sys::signal::Signal::SIGCONT);
+
+    let answer = next.await.unwrap().unwrap();
+    assert_eq!(
+        answer["code"],
+        crate::host_trust::HOST_STORAGE_FULL,
+        "{answer}"
+    );
+    // The cancelled write landed, and it alone.
+    let used = host.used_bytes();
+    assert!(used > 0 && used <= max, "used {used} of {max}");
+    let store = elastos_protected_content_custody::NodeLocalShareStoreV1::new(
+        host.node_public_key,
+        custody_provider::node_share_store_dir(&super::super::custody_root_dir(
+            &host.data_dir,
+            custody_provider::CUSTODY_INACTIVE_ROOT_PATH,
+        )),
+    );
+    assert_eq!(store.count().unwrap(), 1);
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn runtime_release_coordinator_process_two_of_three_success_stops_before_third_node() {
@@ -1375,13 +1482,16 @@ async fn runtime_release_coordinator_process_two_of_three_success_stops_before_t
     let node2 = provisioned_process_custody_node(&binary, &temp_root, "node-2", 0x21, digest(0xa2));
     let node3 = provisioned_process_custody_node(&binary, &temp_root, "node-3", 0x21, digest(0xa3));
 
-    register_inactive_custody_provider(&node1.registry, &binary, &temp_root.join("node-1"))
+    crate::host_trust::seed_wci_host_for_test(&temp_root.join("node-1"));
+    register_custody_provider(&node1.registry, &binary, &temp_root.join("node-1"))
         .await
         .unwrap();
-    register_inactive_custody_provider(&node2.registry, &binary, &temp_root.join("node-2"))
+    crate::host_trust::seed_wci_host_for_test(&temp_root.join("node-2"));
+    register_custody_provider(&node2.registry, &binary, &temp_root.join("node-2"))
         .await
         .unwrap();
-    register_inactive_custody_provider(&node3.registry, &binary, &temp_root.join("node-3"))
+    crate::host_trust::seed_wci_host_for_test(&temp_root.join("node-3"));
+    register_custody_provider(&node3.registry, &binary, &temp_root.join("node-3"))
         .await
         .unwrap();
 
@@ -1501,7 +1611,7 @@ async fn runtime_release_coordinator_process_two_of_three_success_stops_before_t
         .release(
             &wallet_request,
             &wallet_response,
-            operation.clone(),
+            operation.clone().into(),
             crate::auth::now_ts(),
         )
         .await
@@ -1642,7 +1752,7 @@ async fn runtime_release_coordinator_process_two_of_three_success_stops_before_t
         .release(
             &beta_wallet_request,
             &beta_wallet_response,
-            beta_operation.clone(),
+            beta_operation.clone().into(),
             crate::auth::now_ts(),
         )
         .await
@@ -1656,19 +1766,27 @@ async fn runtime_release_coordinator_process_two_of_three_success_stops_before_t
         other => panic!("unexpected beta coordinator outcome: {other:?}"),
     };
     assert_eq!(beta_denied.statement().decision(), RightsDecisionV1::Denied);
-    assert_eq!(
-        beta_denied.statement().node_public_key(),
-        ordered_fixtures[0].provisioned.node_public_key
-    );
-    assert_eq!(beta_chain1.requests().await.len(), 1);
-    assert_eq!(beta_chain2.requests().await.len(), 0);
+    // The two nodes the threshold needs are asked together, so the denial is
+    // whichever of them answered first, and the other may have stopped before
+    // its chain read; the third node is never asked.
+    assert!([
+        ordered_fixtures[0].provisioned.node_public_key,
+        ordered_fixtures[1].provisioned.node_public_key,
+    ]
+    .contains(&beta_denied.statement().node_public_key()));
+    let beta_chain_reads = [
+        beta_chain1.requests().await.len(),
+        beta_chain2.requests().await.len(),
+    ];
+    assert!(beta_chain_reads.iter().all(|reads| *reads <= 1));
+    assert!(beta_chain_reads.iter().sum::<usize>() >= 1);
     assert_eq!(beta_chain3.requests().await.len(), 0);
 
     let beta_replay = coordinator
         .release(
             &beta_wallet_request,
             &beta_wallet_response,
-            beta_operation.clone(),
+            beta_operation.clone().into(),
             crate::auth::now_ts(),
         )
         .await
@@ -1682,8 +1800,14 @@ async fn runtime_release_coordinator_process_two_of_three_success_stops_before_t
         other => panic!("unexpected beta replay outcome: {other:?}"),
     };
     assert_eq!(beta_replay_denied, beta_denied);
-    assert_eq!(beta_chain1.requests().await.len(), 1);
-    assert_eq!(beta_chain2.requests().await.len(), 0);
+    assert_eq!(
+        [
+            beta_chain1.requests().await.len(),
+            beta_chain2.requests().await.len(),
+        ],
+        beta_chain_reads,
+        "a replayed denial asks no node again"
+    );
     assert_eq!(beta_chain3.requests().await.len(), 0);
 
     let beta_persisted = RuntimeReleaseJournal::new(runtime_data_dir.clone())
@@ -1748,13 +1872,16 @@ async fn runtime_decrypt_registry_adapter_process_reconstructs_for_prepared_reci
     let node3 =
         provisioned_process_custody_node(&custody_binary, &temp_root, "node-3", 0x21, digest(0xa3));
 
-    register_inactive_custody_provider(&node1.registry, &custody_binary, &temp_root.join("node-1"))
+    crate::host_trust::seed_wci_host_for_test(&temp_root.join("node-1"));
+    register_custody_provider(&node1.registry, &custody_binary, &temp_root.join("node-1"))
         .await
         .unwrap();
-    register_inactive_custody_provider(&node2.registry, &custody_binary, &temp_root.join("node-2"))
+    crate::host_trust::seed_wci_host_for_test(&temp_root.join("node-2"));
+    register_custody_provider(&node2.registry, &custody_binary, &temp_root.join("node-2"))
         .await
         .unwrap();
-    register_inactive_custody_provider(&node3.registry, &custody_binary, &temp_root.join("node-3"))
+    crate::host_trust::seed_wci_host_for_test(&temp_root.join("node-3"));
+    register_custody_provider(&node3.registry, &custody_binary, &temp_root.join("node-3"))
         .await
         .unwrap();
 
@@ -1989,8 +2116,12 @@ async fn runtime_decrypt_registry_adapter_process_reconstructs_for_prepared_reci
     }
     let mint_journal = RuntimeMintJournal::new(mint_root.clone());
     let custody_provisioned = mint_journal.load(mint_draft.mint_id()).unwrap();
-    assert!(custody_provisioned.any_effect_started());
     assert!(custody_provisioned.all_receipts_present());
+    assert_eq!(
+        custody_provisioned.uncertain_node_count(),
+        0,
+        "every node answered with a receipt, so none is left possibly holding a share"
+    );
     assert_eq!(custody_provisioned.accepted_orphans().len(), 3);
     let sealed_share_bytes = envelope.stored_shares()[0].canonical_bytes().unwrap();
     assert!(!any_file_contains(&mint_root, &sealed_share_bytes));
@@ -2017,10 +2148,10 @@ async fn runtime_decrypt_registry_adapter_process_reconstructs_for_prepared_reci
         &encrypted_segments,
         &protected_media_identity,
     );
-    let availability_evidence = super::super::publish_and_verify_protected_content_availability(
+    let availability_evidence = publish_and_verify_v1_protected_content_for_test(
         content_registry.as_ref(),
         content_directory.path(),
-        mint_draft.media_identity(),
+        mint_draft.media_identity().unwrap(),
         &requirement,
         crate::auth::now_ts,
     )
@@ -2200,7 +2331,7 @@ async fn runtime_decrypt_registry_adapter_process_reconstructs_for_prepared_reci
         .release(
             &wallet_request,
             &wallet_response,
-            operation.clone(),
+            operation.clone().into(),
             crate::auth::now_ts(),
         )
         .await
@@ -2249,7 +2380,7 @@ async fn runtime_decrypt_registry_adapter_process_reconstructs_for_prepared_reci
         .release(
             &wallet_request,
             &wallet_response,
-            operation.clone(),
+            operation.clone().into(),
             crate::auth::now_ts(),
         )
         .await
@@ -2280,8 +2411,10 @@ async fn runtime_decrypt_registry_adapter_process_reconstructs_for_prepared_reci
             signed_runtime_release_operation: &operation,
             expected_terminal_issuer: terminal_receipt.statement().issuer(),
             content_key_commitment: envelope.manifest().content_key_commitment(),
-            media_identity: &protected_media_identity,
-            protected_init_segment: &protected_init_segment,
+            content: RuntimeOpenViewerContentV1::Media {
+                media_identity: &protected_media_identity,
+                protected_init_segment: &protected_init_segment,
+            },
             signed_node_contributions: &signed_node_contributions,
             signed_terminal_receipt: &terminal_receipt,
             now_unix_seconds: crate::auth::now_ts(),
@@ -2304,8 +2437,10 @@ async fn runtime_decrypt_registry_adapter_process_reconstructs_for_prepared_reci
             signed_runtime_release_operation: &operation,
             expected_terminal_issuer: terminal_receipt.statement().issuer(),
             content_key_commitment: envelope.manifest().content_key_commitment(),
-            media_identity: &wrong_media_identity,
-            protected_init_segment: &protected_init_segment,
+            content: RuntimeOpenViewerContentV1::Media {
+                media_identity: &wrong_media_identity,
+                protected_init_segment: &protected_init_segment,
+            },
             signed_node_contributions: &signed_node_contributions,
             signed_terminal_receipt: &terminal_receipt,
             now_unix_seconds: crate::auth::now_ts(),
@@ -2322,8 +2457,10 @@ async fn runtime_decrypt_registry_adapter_process_reconstructs_for_prepared_reci
             signed_runtime_release_operation: &operation,
             expected_terminal_issuer: terminal_receipt.statement().issuer(),
             content_key_commitment: envelope.manifest().content_key_commitment(),
-            media_identity: &protected_media_identity,
-            protected_init_segment: &protected_init_segment,
+            content: RuntimeOpenViewerContentV1::Media {
+                media_identity: &protected_media_identity,
+                protected_init_segment: &protected_init_segment,
+            },
             signed_node_contributions: &signed_node_contributions,
             signed_terminal_receipt: &terminal_receipt,
             now_unix_seconds: crate::auth::now_ts(),
@@ -2464,14 +2601,14 @@ async fn runtime_decrypt_registry_adapter_process_reconstructs_for_prepared_reci
 
 #[cfg(unix)]
 #[tokio::test]
-async fn inactive_custody_registration_rejects_missing_or_unsafe_root_before_provider_use() {
+async fn custody_registration_rejects_missing_or_unsafe_root_before_provider_use() {
     let temp = tempfile::tempdir().unwrap();
     let data_dir = temp.path().join("missing-data");
     owner_only_dir(&data_dir);
     let (binary, pid_file, request_log) = write_mock_custody_provider(temp.path());
     let registry = Arc::new(ProviderRegistry::new());
 
-    let error = register_inactive_custody_provider(&registry, &binary, &data_dir)
+    let error = register_custody_provider(&registry, &binary, &data_dir)
         .await
         .unwrap_err();
     assert!(error.to_string().contains("missing or unsafe"));
@@ -2484,7 +2621,10 @@ async fn inactive_custody_registration_rejects_missing_or_unsafe_root_before_pro
     let unsafe_root = inactive_custody_state_root(&unsafe_data_dir);
     owner_only_dir(&unsafe_root);
     fs::set_permissions(&unsafe_root, fs::Permissions::from_mode(0o755)).unwrap();
-    let error = register_inactive_custody_provider(&registry, &binary, &unsafe_data_dir)
+    // Plan B T2.1 (user 10:26): the Home's root set names an unsafe root and
+    // starts the others (`custody_registration_names_an_unsafe_root_and_starts_the_others`);
+    // the custody host's one legacy root is still refused before any use.
+    let error = register_custody_host_provider(&registry, &binary, &unsafe_data_dir)
         .await
         .unwrap_err();
     assert!(error.to_string().contains("missing or unsafe"));
@@ -2503,7 +2643,8 @@ async fn inactive_custody_registry_unregisters_shutdowns_and_restarts_bridge() {
     let (binary, pid_file, _request_log) = write_mock_custody_provider(temp.path());
     let registry = Arc::new(ProviderRegistry::new());
 
-    register_inactive_custody_provider(&registry, &binary, &data_dir)
+    crate::host_trust::seed_for_test(&data_dir, true);
+    register_custody_provider(&registry, &binary, &data_dir)
         .await
         .unwrap();
     let first_pid = read_pid(&pid_file);
@@ -2514,7 +2655,8 @@ async fn inactive_custody_registry_unregisters_shutdowns_and_restarts_bridge() {
         .unwrap();
     assert!(!process_is_running(first_pid));
 
-    register_inactive_custody_provider(&registry, &binary, &data_dir)
+    crate::host_trust::seed_for_test(&data_dir, true);
+    register_custody_provider(&registry, &binary, &data_dir)
         .await
         .unwrap();
     let second_pid = read_pid(&pid_file);
@@ -2546,12 +2688,13 @@ async fn inactive_custody_duplicate_registration_rejects_and_settles_rejected_ch
     let (binary, pid_file, _request_log) = write_mock_custody_provider(temp.path());
     let registry = Arc::new(ProviderRegistry::new());
 
-    register_inactive_custody_provider(&registry, &binary, &data_dir)
+    crate::host_trust::seed_for_test(&data_dir, true);
+    register_custody_provider(&registry, &binary, &data_dir)
         .await
         .unwrap();
     let first_pid = read_pid(&pid_file);
 
-    let error = register_inactive_custody_provider(&registry, &binary, &data_dir)
+    let error = register_custody_provider(&registry, &binary, &data_dir)
         .await
         .unwrap_err();
     assert!(error
@@ -2740,24 +2883,10 @@ async fn runtime_custody_library_publish_fails_closed_without_device_key() {
             ),
         ),
     );
-    let (clear_init_segment, clear_segments) = clear_media_components(0x41);
     let error = publish_runtime_custody_library_object(
         &data_dir,
         Arc::new(ProviderRegistry::new()),
-        RuntimeCustodyLibraryPublishInput {
-            object_uri: "localhost://Users/test/Documents/media".to_string(),
-            principal_id: "person:local:runtime-custody-missing-device-key".to_string(),
-            mime_type: MEDIA_MIME_TYPE_V1.to_string(),
-            codecs: MEDIA_CODECS_V1.to_string(),
-            wallet_account_id: "wallet-account-1".to_string(),
-            wallet_account_address: "0x1111111111111111111111111111111111111111".to_string(),
-            creator_mint_source_digest: digest(0x71),
-            copies: "0x1".to_string(),
-            price: "0x5".to_string(),
-            clear_init_segment,
-            clear_segments,
-            source_storage: "plain_localhost_root".to_string(),
-        },
+        library_publish_test_input(&data_dir, "person:local:runtime-custody-missing-device-key"),
     )
     .await
     .expect_err("missing device key must fail closed");
@@ -2770,6 +2899,793 @@ async fn runtime_custody_library_publish_fails_closed_without_device_key() {
     assert!(!data_dir.join("protected-content/runtime-mint").exists());
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn completed_local_mint_replays_after_its_retained_composition_expires() {
+    let temp = tempfile::tempdir().unwrap();
+    let data_dir = temp.path().join("data");
+    owner_only_dir(&data_dir);
+    write_device_key(&data_dir, 0x21);
+    let input = library_publish_test_input(&data_dir, "person:local:expired-composition-replay");
+    let then = crate::auth::now_ts() - 7200;
+    let epoch = signed_custody_epoch();
+    write_owner_only_custody_composition_config(
+        &data_dir,
+        &custody_composition_config(then, library_publish_test_routes(&epoch)),
+    );
+    let mint_id = seed_settled_runtime_custody_mint_record_at(&data_dir, &input, true, then);
+    let journal = runtime_mint_journal(&data_dir);
+    let intent = journal
+        .mark_intent_completed(library_publish_request_id(&input), mint_id)
+        .unwrap();
+    let active = custody_composition_config_path(&data_dir);
+    super::super::retain_mint_composition(
+        &data_dir,
+        intent.custody_committee_authorization(),
+        &fs::read(&active).unwrap(),
+    )
+    .unwrap();
+    let registry = Arc::new(ProviderRegistry::new());
+    assert!(load_runtime_custody_composition(&data_dir, registry.clone()).is_err());
+
+    // With no provider registered, the completed result can only come from
+    // the existing journal. A fresh protect or custody write cannot pass.
+    let facts = publish_runtime_custody_library_object(&data_dir, registry.clone(), input.clone())
+        .await
+        .expect("a completed mint should still replay on its original composition");
+    assert_eq!(facts.mint_id, mint_id);
+    assert_eq!(journal.load_intent(intent.request_id()).unwrap(), intent);
+
+    let mut changed = input;
+    changed.wallet_account_id.push_str("-different");
+    let error = publish_runtime_custody_library_object(&data_dir, registry, changed)
+        .await
+        .expect_err("the expired composition cannot authorize a different wallet");
+    assert_eq!(
+        attempt_conflict_reason(&error),
+        RuntimeCustodyAttemptConflictReason::AuthorityChanged
+    );
+}
+
+/// The codes the custody capsule emits only from paths that precede its
+/// durable write. Everything else — `backend_unavailable` above all, which the
+/// capsule returns both for a refusal before the write and for a failure after
+/// it — must stay uncertain.
+#[test]
+fn custody_refusal_codes_claim_no_effect_only_where_the_capsule_proves_it() {
+    for code in [
+        "invalid_request",
+        "provisioning_refused",
+        "rights_denied",
+        "operation_expired",
+        "evidence_expired",
+    ] {
+        assert_eq!(
+            super::super::classify_custody_failure(
+                "release_contribution",
+                &super::super::ProviderInvocationFailure::Refused {
+                    code: code.to_string(),
+                    message: "refused".to_string(),
+                },
+            ),
+            RuntimeProviderCallError::RefusedWithoutEffect,
+            "{code} is emitted only before the durable write"
+        );
+    }
+    for code in ["backend_unavailable", "invalid_config", "unknown", ""] {
+        // `backend_unavailable` is the one that matters here: the capsule
+        // returns it both for a refusal before the write and for a failure
+        // after it.
+        assert_eq!(
+            super::super::classify_custody_failure(
+                "provision_node_share",
+                &super::super::ProviderInvocationFailure::Refused {
+                    code: code.to_string(),
+                    message: "refused".to_string(),
+                },
+            ),
+            RuntimeProviderCallError::NoExactResult,
+            "{code} spans acted and did-not-act paths"
+        );
+    }
+}
+
+/// A custody refusal keeps its code in the Runtime's report when the code is
+/// one the capsule emits, and nothing else from the refusal travels with it.
+#[test]
+fn custody_private_rejection_keeps_only_a_known_code() {
+    assert_eq!(
+        super::super::custody_private_rejection_message(Some("operation_expired")),
+        "custody private request was rejected: operation_expired"
+    );
+    assert_eq!(
+        super::super::custody_private_rejection_message(Some("invalid_request")),
+        "custody private request was rejected: invalid_request"
+    );
+    for code in [
+        None,
+        Some(""),
+        Some("/home/someone/key"),
+        Some("0xdeadbeef"),
+    ] {
+        assert_eq!(
+            super::super::custody_private_rejection_message(code),
+            "custody private request was rejected"
+        );
+    }
+}
+
+/// A reply that never arrived is not a node that never acted: the capsule can
+/// complete its write and then fail to answer.
+#[test]
+fn a_missing_or_malformed_custody_reply_is_effect_uncertain() {
+    assert_eq!(
+        super::super::classify_custody_failure(
+            "provision_node_share",
+            &super::super::ProviderInvocationFailure::NotCompleted {
+                detail: "transport closed".to_string(),
+            },
+        ),
+        RuntimeProviderCallError::NoExactResult
+    );
+    assert_eq!(
+        super::super::classify_custody_failure(
+            "provision_node_share",
+            &super::super::ProviderInvocationFailure::MalformedResponse {
+                detail: "custody provider provision_node_share response is missing status"
+                    .to_string(),
+            },
+        ),
+        RuntimeProviderCallError::NoExactResult
+    );
+}
+
+/// Every custody op that touches another party's content key is refused on
+/// an everyday host, with that op's existing effect-free code, so a remote
+/// coordinator fails over; every statement kind of `sign_pool_statement` is
+/// refused alike. Status and the rights evaluation are not gated.
+#[test]
+fn restart_with_existing_roots_on_an_everyday_host_releases_no_key() {
+    use super::super::{custody_host_trust_refusal, CUSTODY_EFFECT_FREE_REFUSAL_CODES};
+    use crate::custody_surface::{
+        OP_CUSTODY_EVALUATE, OP_CUSTODY_PROVISION_NODE_SHARE, OP_CUSTODY_RELEASE_CONTRIBUTION,
+        OP_CUSTODY_RELEASE_POOL_CONTRIBUTION, OP_CUSTODY_SIGN_POOL_STATEMENT, OP_CUSTODY_STATUS,
+    };
+    for (op, code) in [
+        (OP_CUSTODY_RELEASE_CONTRIBUTION, "invalid_request"),
+        (OP_CUSTODY_RELEASE_POOL_CONTRIBUTION, "unknown_envelope"),
+        (OP_CUSTODY_PROVISION_NODE_SHARE, "provisioning_refused"),
+        (OP_CUSTODY_SIGN_POOL_STATEMENT, "invalid_request"),
+    ] {
+        let refusal = custody_host_trust_refusal(op, false).unwrap_or_else(|| panic!("{op}"));
+        assert_eq!(refusal["status"], "error", "{op}");
+        assert_eq!(refusal["code"], code, "{op}");
+        assert!(CUSTODY_EFFECT_FREE_REFUSAL_CODES.contains(&code), "{op}");
+    }
+    for op in [OP_CUSTODY_STATUS, OP_CUSTODY_EVALUATE] {
+        assert!(custody_host_trust_refusal(op, false).is_none(), "{op}");
+    }
+}
+
+#[test]
+fn switching_to_wci_operated_and_restarting_restores_every_role() {
+    use super::super::custody_host_trust_refusal;
+    use crate::custody_surface::{
+        OP_CUSTODY_EVALUATE, OP_CUSTODY_PROVISION_NODE_SHARE, OP_CUSTODY_RELEASE_CONTRIBUTION,
+        OP_CUSTODY_RELEASE_POOL_CONTRIBUTION, OP_CUSTODY_SIGN_POOL_STATEMENT, OP_CUSTODY_STATUS,
+    };
+    for op in [
+        OP_CUSTODY_RELEASE_CONTRIBUTION,
+        OP_CUSTODY_RELEASE_POOL_CONTRIBUTION,
+        OP_CUSTODY_PROVISION_NODE_SHARE,
+        OP_CUSTODY_SIGN_POOL_STATEMENT,
+        OP_CUSTODY_STATUS,
+        OP_CUSTODY_EVALUATE,
+    ] {
+        assert!(custody_host_trust_refusal(op, true).is_none(), "{op}");
+    }
+}
+
+/// The registered wrapper of an everyday host still loads its existing root
+/// (Hosting lists it) but never forwards a gated op: the provider sees only
+/// its start-up, and the custody root is left byte for byte.
+#[cfg(unix)]
+#[tokio::test]
+async fn existing_roots_shares_replay_and_journals_are_untouched() {
+    let temp = tempfile::tempdir().unwrap();
+    let data_dir = temp.path().join("data");
+    owner_only_dir(&data_dir);
+    let state_root = inactive_custody_state_root(&data_dir);
+    owner_only_dir(&state_root);
+    fs::write(state_root.join("existing-share.bin"), b"share bytes").unwrap();
+    let before = fs::read(state_root.join("existing-share.bin")).unwrap();
+    let (binary, _pid_file, request_log) = write_mock_custody_provider(temp.path());
+    let registry = Arc::new(ProviderRegistry::new());
+    crate::host_trust::seed_for_test(&data_dir, false);
+    register_custody_provider(&registry, &binary, &data_dir)
+        .await
+        .unwrap();
+    assert!(
+        registry
+            .has_ready_runtime_provider_target(CUSTODY_PROVIDER_ID)
+            .await
+    );
+    for op in [
+        "release_contribution",
+        "release_pool_contribution",
+        "provision_node_share",
+        "sign_pool_statement",
+        "provision_pool_node_share",
+    ] {
+        let refused = invoke_json_provider(
+            registry.as_ref(),
+            CUSTODY_PROVIDER_ID,
+            op,
+            json!({"op": op}),
+        )
+        .await;
+        assert!(refused.is_err(), "{op}: {refused:?}");
+    }
+    let requests = fs::read_to_string(&request_log).unwrap();
+    assert_eq!(
+        requests.lines().count(),
+        2,
+        "init and status only: {requests}"
+    );
+    assert_eq!(
+        fs::read(state_root.join("existing-share.bin")).unwrap(),
+        before
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn custody_host_registration_passes_one_legacy_root() {
+    // The custody-host profile keeps the legacy init: the root itself and
+    // `extra: null`.
+    let temp = tempfile::tempdir().unwrap();
+    let data_dir = temp.path().join("data");
+    owner_only_dir(&data_dir);
+    let state_root = inactive_custody_state_root(&data_dir);
+    owner_only_dir(&state_root);
+    let (binary, _pid_file, request_log) = write_mock_custody_provider(temp.path());
+    let registry = Arc::new(ProviderRegistry::new());
+
+    super::super::register_custody_host_provider(&registry, &binary, &data_dir)
+        .await
+        .unwrap();
+    let init: Value = serde_json::from_str(
+        fs::read_to_string(&request_log)
+            .unwrap()
+            .lines()
+            .next()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(init["op"], "init");
+    assert_eq!(
+        init["config"]["base_path"],
+        Value::String(state_root.to_string_lossy().to_string())
+    );
+    assert!(init["config"]["extra"].is_null());
+}
+
+#[cfg(unix)]
+#[test]
+fn custody_roots_come_from_disk() {
+    let temp = tempfile::tempdir().unwrap();
+    let data_dir = temp.path().join("data");
+    owner_only_dir(&data_dir);
+    assert!(super::super::custody_provider_root_paths(&data_dir)
+        .unwrap()
+        .is_empty());
+
+    let base = inactive_custody_state_root(&data_dir)
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    let pool_b = format!("pools/{}", "b".repeat(64));
+    let pool_a = format!("pools/{}", "a".repeat(64));
+    for dir in [
+        "inactive",
+        "pools",
+        pool_b.as_str(),
+        pool_a.as_str(),
+        // Never roots: a tombstone (T2.3), a staging folder, a bad name.
+        "pools/.removed-0000",
+        "pools/.custody-provider-stage-1-00",
+        "pools/ABCD",
+    ] {
+        owner_only_dir(&base.join(dir));
+    }
+    fs::write(
+        base.join("pools").join("c".repeat(64)),
+        b"a file, not a root",
+    )
+    .unwrap();
+    assert_eq!(
+        super::super::custody_provider_root_paths(&data_dir).unwrap(),
+        vec!["inactive".to_string(), pool_a.clone(), pool_b.clone()]
+    );
+
+    // A Home that serves only `pools/<hex>` roots still has roots.
+    fs::remove_dir(base.join("inactive")).unwrap();
+    assert_eq!(
+        super::super::custody_provider_root_paths(&data_dir).unwrap(),
+        vec![pool_a, pool_b]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn custody_status_check_accepts_the_private_root_list() {
+    let key = format!("0x{}", "11".repeat(32));
+    super::super::require_custody_provider_status(&custody_status_with_roots(&key)).unwrap();
+    // A provider without roots (older build) still passes.
+    super::super::require_custody_provider_status(&ProtectedStartupProvider::Custody.status())
+        .unwrap();
+    // A malformed root entry is refused.
+    for root in [
+        json!({"path": "inactive", "node_public_key": key, "configured": true}),
+        json!({"path": "inactive", "node_public_key": key, "configured": true, "shares_held": 1, "more": 1}),
+        json!({"path": 7, "node_public_key": key, "configured": true, "shares_held": 1}),
+        json!({"path": "inactive", "node_public_key": key, "configured": "yes", "shares_held": 1}),
+    ] {
+        let mut status = ProtectedStartupProvider::Custody.status();
+        status["data"]["roots"] = json!([root]);
+        assert!(
+            super::super::require_custody_provider_status(&status).is_err(),
+            "{root}"
+        );
+    }
+    let mut status = ProtectedStartupProvider::Custody.status();
+    status["data"]["roots"] = json!({"path": "inactive"});
+    assert!(super::super::require_custody_provider_status(&status).is_err());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn public_status_never_lists_roots() {
+    let temp = tempfile::tempdir().unwrap();
+    let data_dir = temp.path().join("data");
+    owner_only_dir(&data_dir);
+    owner_only_dir(&inactive_custody_state_root(&data_dir));
+    let key = format!("0x{}", "5a".repeat(32));
+    let (binary, _pid_file, _request_log) =
+        write_mock_custody_provider_with_status(temp.path(), &custody_status_with_roots(&key));
+    let registry = Arc::new(ProviderRegistry::new());
+    register_custody_provider(&registry, &binary, &data_dir)
+        .await
+        .unwrap();
+
+    let status = invoke_json_provider(
+        registry.as_ref(),
+        CUSTODY_PROVIDER_ID,
+        "status",
+        json!({"op": "status"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(status["provider"], "custody");
+    assert!(status.get("roots").is_none());
+    let encoded = status.to_string();
+    assert!(!encoded.contains(&key));
+    assert!(!encoded.contains("shares_held"));
+    assert!(!encoded.contains("inactive"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn custody_registration_names_an_unsafe_root_and_starts_the_others() {
+    // User decision 2026-11-12 10:26: an unsafe root follows the per-root rule.
+    let temp = tempfile::tempdir().unwrap();
+    let data_dir = temp.path().join("data");
+    owner_only_dir(&data_dir);
+    let state_root = inactive_custody_state_root(&data_dir);
+    owner_only_dir(&state_root);
+    let pool = format!("pools/{}", "e".repeat(64));
+    let unsafe_root = state_root.parent().unwrap().join(&pool);
+    owner_only_dir(&unsafe_root);
+    fs::set_permissions(&unsafe_root, fs::Permissions::from_mode(0o755)).unwrap();
+    let (binary, _pid_file, request_log) = write_mock_custody_provider(temp.path());
+    let registry = Arc::new(ProviderRegistry::new());
+
+    register_custody_provider(&registry, &binary, &data_dir)
+        .await
+        .unwrap();
+    let init: Value = serde_json::from_str(
+        fs::read_to_string(&request_log)
+            .unwrap()
+            .lines()
+            .next()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        init["config"]["extra"]["roots"],
+        json!([{"path": "inactive"}, {"path": pool}])
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn new_root_reaches_the_running_provider_without_restart() {
+    // Plan B T2.2 (S2-Q1, user decision 2026-11-12 10:35): the server keeps
+    // the custody bridge and sends a fresh init; no registry change.
+    let temp = tempfile::tempdir().unwrap();
+    let data_dir = temp.path().join("data");
+    owner_only_dir(&data_dir);
+    let state_root = inactive_custody_state_root(&data_dir);
+    owner_only_dir(&state_root);
+    let (binary, request_log) = write_mock_root_set_custody_provider(temp.path());
+    let registry = Arc::new(ProviderRegistry::new());
+    register_custody_provider(&registry, &binary, &data_dir)
+        .await
+        .unwrap();
+    let pool = format!("pools/{}", "c".repeat(64));
+    assert!(!super::super::custody_root_loaded(&data_dir, &pool).await);
+
+    owner_only_dir(&state_root.parent().unwrap().join(&pool));
+    let roots = super::super::refresh_custody_roots(&data_dir)
+        .await
+        .unwrap();
+    assert_eq!(
+        roots
+            .iter()
+            .map(|root| root.path.clone().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["inactive".to_string(), pool.clone()]
+    );
+    assert!(super::super::custody_root_loaded(&data_dir, &pool).await);
+    assert!(super::super::custody_root_loaded(&data_dir, "inactive").await);
+    // The same process: one spawn, a second init with both roots.
+    let inits: Vec<Value> = fs::read_to_string(&request_log)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .filter(|request| request["op"] == "init")
+        .collect();
+    assert_eq!(inits.len(), 2);
+    assert_eq!(
+        inits[1]["config"]["extra"]["roots"],
+        json!([{"path": "inactive"}, {"path": pool}])
+    );
+    assert!(
+        registry
+            .has_ready_runtime_provider_target(CUSTODY_PROVIDER_ID)
+            .await
+    );
+}
+
+/// S2-F1: with several roots, a refresh the provider refuses leaves the
+/// pool served and reports the failure; a later retry stops it, and the
+/// provider then holds only the roots left.
+#[cfg(unix)]
+#[tokio::test]
+async fn stop_serving_reports_a_failed_refresh_and_a_retry_finishes() {
+    let temp = tempfile::tempdir().unwrap();
+    let data_dir = temp.path().join("data");
+    owner_only_dir(&data_dir);
+    let base = inactive_custody_state_root(&data_dir)
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    for dir in [
+        base.parent().unwrap().to_path_buf(),
+        base.clone(),
+        base.join("pools"),
+    ] {
+        owner_only_dir(&dir);
+    }
+    let (kept, stopped) = ("a".repeat(64), "b".repeat(64));
+    for hex in [&kept, &stopped] {
+        owner_only_dir(&base.join(format!("pools/{hex}")));
+        plant_served_entry(&data_dir, hex);
+    }
+    let refuse = temp.path().join("refuse-init");
+    let binary = write_failing_root_set_custody_provider(temp.path(), &refuse, 0);
+    let registry = Arc::new(ProviderRegistry::new());
+    register_custody_provider(&registry, &binary, &data_dir)
+        .await
+        .unwrap();
+    let stopped_path = format!("pools/{stopped}");
+    assert!(super::super::custody_root_loaded(&data_dir, &stopped_path).await);
+
+    fs::write(&refuse, b"").unwrap();
+    let write = crate::custody_consent::lock_custody_writes().await;
+    let error = crate::custody_pool_setup::stop_serving_pool(
+        &write,
+        &data_dir,
+        Some(&registry),
+        &stopped,
+        100,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(refusal_code(&error), "stop_failed");
+    // Still served, and truthfully so: the provider still holds the root.
+    assert!(crate::custody_consent::served_pools(&data_dir)
+        .unwrap()
+        .entries
+        .contains_key(&format!("sha256:{stopped}")));
+    assert!(super::super::custody_root_loaded(&data_dir, &stopped_path).await);
+
+    fs::remove_file(&refuse).unwrap();
+    crate::custody_pool_setup::stop_serving_pool(&write, &data_dir, Some(&registry), &stopped, 101)
+        .await
+        .unwrap();
+    assert!(!crate::custody_consent::served_pools(&data_dir)
+        .unwrap()
+        .entries
+        .contains_key(&format!("sha256:{stopped}")));
+    assert!(!super::super::custody_root_loaded(&data_dir, &stopped_path).await);
+    assert!(super::super::custody_root_loaded(&data_dir, &format!("pools/{kept}")).await);
+    assert!(!base.join(&stopped_path).exists());
+}
+
+/// S2-F1: on the last root, a provider that does not stop cleanly leaves the
+/// pool served and the root in place; a later retry stops it.
+#[cfg(unix)]
+#[tokio::test]
+async fn stop_serving_the_last_root_reports_a_failed_unregister_and_a_retry_finishes() {
+    let temp = tempfile::tempdir().unwrap();
+    let data_dir = temp.path().join("data");
+    owner_only_dir(&data_dir);
+    let base = inactive_custody_state_root(&data_dir)
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    for dir in [
+        base.parent().unwrap().to_path_buf(),
+        base.clone(),
+        base.join("pools"),
+    ] {
+        owner_only_dir(&dir);
+    }
+    let only = "c".repeat(64);
+    let root = base.join(format!("pools/{only}"));
+    owner_only_dir(&root);
+    plant_served_entry(&data_dir, &only);
+    let binary =
+        write_failing_root_set_custody_provider(temp.path(), &temp.path().join("never"), 1);
+    let registry = Arc::new(ProviderRegistry::new());
+    register_custody_provider(&registry, &binary, &data_dir)
+        .await
+        .unwrap();
+
+    let write = crate::custody_consent::lock_custody_writes().await;
+    let error = crate::custody_pool_setup::stop_serving_pool(
+        &write,
+        &data_dir,
+        Some(&registry),
+        &only,
+        100,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(refusal_code(&error), "stop_failed");
+    assert!(crate::custody_consent::served_pools(&data_dir)
+        .unwrap()
+        .entries
+        .contains_key(&format!("sha256:{only}")));
+    assert!(root.is_dir(), "the root stays until the provider is out");
+
+    crate::custody_pool_setup::stop_serving_pool(&write, &data_dir, Some(&registry), &only, 101)
+        .await
+        .unwrap();
+    assert!(crate::custody_consent::served_pools(&data_dir)
+        .unwrap()
+        .entries
+        .is_empty());
+    assert!(!root.exists());
+    assert!(
+        !registry
+            .has_ready_runtime_provider_target(CUSTODY_PROVIDER_ID)
+            .await
+    );
+}
+
+/// S2-F1: Remove on a serving Home whose provider refuses the refresh keeps
+/// this Home's node and reports the failure; a later retry removes it and
+/// the provider then holds only the served root.
+#[cfg(unix)]
+#[tokio::test]
+async fn remove_reports_a_failed_refresh_and_a_retry_finishes() {
+    let temp = safe_ancestor_tempdir();
+    let data_dir = temp.path().canonicalize().unwrap().join("data");
+    owner_only_dir(&data_dir);
+    crate::host_trust::seed_for_test(&data_dir, true);
+    elastos_identity::load_or_create_device_key(&data_dir).unwrap();
+    let base = inactive_custody_state_root(&data_dir)
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    for dir in [
+        base.parent().unwrap().to_path_buf(),
+        base.clone(),
+        base.join("pools"),
+    ] {
+        owner_only_dir(&dir);
+    }
+    let (own, served) = (
+        format!("pools/{}", "d".repeat(64)),
+        format!("pools/{}", "e".repeat(64)),
+    );
+    owner_only_dir(&base.join(&own));
+    owner_only_dir(&base.join(&served));
+    crate::collaboration_config::create_owner_only_file(
+        &base.join(&own).join("trusted-runtime-issuer"),
+        crate::protected_content_config::runtime_issuer_hex(&data_dir)
+            .unwrap()
+            .as_bytes(),
+        "test issuer",
+    )
+    .unwrap();
+    crate::custody_pool_setup::tests::write_local_node(&data_dir, "Home", "Paris");
+    let node_file = crate::custody_pool_setup::local_node_path(&data_dir);
+    assert!(node_file.exists());
+    let refuse = temp.path().join("refuse-init");
+    let binary = write_failing_root_set_custody_provider(temp.path(), &refuse, 0);
+    let registry = Arc::new(ProviderRegistry::new());
+    register_custody_provider(&registry, &binary, &data_dir)
+        .await
+        .unwrap();
+    assert!(super::super::custody_root_loaded(&data_dir, &own).await);
+
+    fs::write(&refuse, b"").unwrap();
+    let write = crate::custody_consent::lock_custody_writes().await;
+    let error = crate::custody_pool_setup::remove_local_node(&write, &data_dir, Some(&registry))
+        .await
+        .unwrap_err();
+    assert_eq!(refusal_code(&error), "remove_failed");
+    assert!(
+        node_file.exists(),
+        "this Home's node stays until the provider is out"
+    );
+    assert!(super::super::custody_root_loaded(&data_dir, &own).await);
+
+    fs::remove_file(&refuse).unwrap();
+    crate::custody_pool_setup::remove_local_node(&write, &data_dir, Some(&registry))
+        .await
+        .unwrap();
+    assert!(!node_file.exists());
+    assert!(!super::super::custody_root_loaded(&data_dir, &own).await);
+    assert!(super::super::custody_root_loaded(&data_dir, &served).await);
+}
+
+/// dkms-reviewer S2-F1: while the provider is Settling (its shutdown did not
+/// finish), an interrupted removal with no root left is not reported
+/// complete; the tombstone and node file stay, and a retry once the provider
+/// is out finishes it.
+#[cfg(unix)]
+#[tokio::test]
+async fn interrupted_removal_is_not_complete_while_the_provider_is_settling() {
+    let (temp, data_dir, node_file, tombstone) = interrupted_removal_home(false);
+    let binary =
+        write_failing_root_set_custody_provider(temp.path(), &temp.path().join("never"), 1);
+    // Boot saw the own root, so the provider runs; then the removal set the
+    // root aside and the provider's shutdown did not finish.
+    let own = tombstone.with_file_name("d".repeat(64));
+    fs::rename(&tombstone, &own).unwrap();
+    let registry = Arc::new(ProviderRegistry::new());
+    register_custody_provider(&registry, &binary, &data_dir)
+        .await
+        .unwrap();
+    fs::rename(&own, &tombstone).unwrap();
+    assert!(registry
+        .unregister_runtime_provider_target(CUSTODY_PROVIDER_ID)
+        .await
+        .is_err());
+    assert!(
+        registry
+            .has_runtime_provider_target_registration(CUSTODY_PROVIDER_ID)
+            .await
+    );
+    assert!(
+        !registry
+            .has_ready_runtime_provider_target(CUSTODY_PROVIDER_ID)
+            .await
+    );
+
+    let write = crate::custody_consent::lock_custody_writes().await;
+    let error = crate::custody_pool_setup::remove_local_node(&write, &data_dir, Some(&registry))
+        .await
+        .unwrap_err();
+    assert_eq!(refusal_code(&error), "remove_failed");
+    assert!(node_file.exists());
+    assert!(tombstone.exists());
+
+    registry
+        .unregister_runtime_provider_target(CUSTODY_PROVIDER_ID)
+        .await
+        .unwrap();
+    crate::custody_pool_setup::remove_local_node(&write, &data_dir, Some(&registry))
+        .await
+        .unwrap();
+    assert!(!node_file.exists());
+    assert!(!tombstone.exists());
+}
+
+/// dkms-reviewer S2-F1: with a custody target this server cannot refresh (no
+/// remembered bridge) still registered, Settling, an interrupted removal is
+/// not reported complete; once the target is gone a retry finishes it.
+#[cfg(unix)]
+#[tokio::test]
+async fn interrupted_removal_is_not_complete_while_an_unknown_bridge_target_is_settling() {
+    let (_temp, data_dir, node_file, tombstone) = interrupted_removal_home(true);
+    let registry = Arc::new(ProviderRegistry::new());
+    register_custody_runtime_provider_target(
+        registry.as_ref(),
+        Arc::new(SettlingCustodyProvider {
+            refuse_shutdown: AtomicBool::new(true),
+        }),
+    )
+    .await
+    .unwrap();
+    assert!(!super::super::custody_bridge_known(&data_dir));
+    assert!(registry
+        .unregister_runtime_provider_target(CUSTODY_PROVIDER_ID)
+        .await
+        .is_err());
+    assert!(
+        registry
+            .has_runtime_provider_target_registration(CUSTODY_PROVIDER_ID)
+            .await
+    );
+
+    let write = crate::custody_consent::lock_custody_writes().await;
+    let error = crate::custody_pool_setup::remove_local_node(&write, &data_dir, Some(&registry))
+        .await
+        .unwrap_err();
+    assert_eq!(refusal_code(&error), "remove_failed");
+    assert!(node_file.exists());
+    assert!(tombstone.exists());
+
+    registry
+        .unregister_runtime_provider_target(CUSTODY_PROVIDER_ID)
+        .await
+        .unwrap();
+    crate::custody_pool_setup::remove_local_node(&write, &data_dir, Some(&registry))
+        .await
+        .unwrap();
+    assert!(!node_file.exists());
+    assert!(!tombstone.exists());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn serves_only_pools_roots_and_still_starts_the_provider() {
+    let temp = tempfile::tempdir().unwrap();
+    let data_dir = temp.path().join("data");
+    owner_only_dir(&data_dir);
+    let base = inactive_custody_state_root(&data_dir)
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    let pool = format!("pools/{}", "d".repeat(64));
+    owner_only_dir(&base.join(&pool));
+    assert!(!inactive_custody_state_root(&data_dir).exists());
+    let (binary, _pid_file, request_log) = write_mock_custody_provider(temp.path());
+    let registry = Arc::new(ProviderRegistry::new());
+    register_custody_provider(&registry, &binary, &data_dir)
+        .await
+        .unwrap();
+    assert!(
+        registry
+            .has_ready_runtime_provider_target(CUSTODY_PROVIDER_ID)
+            .await
+    );
+    let init: Value = serde_json::from_str(
+        fs::read_to_string(&request_log)
+            .unwrap()
+            .lines()
+            .next()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(init["config"]["extra"]["roots"], json!([{"path": pool}]));
+}
+
 #[test]
 fn custody_child_reports_its_ops_in_order() {
     assert_eq!(
@@ -2778,7 +3694,10 @@ fn custody_child_reports_its_ops_in_order() {
             "status",
             "provision_node_share",
             "release_contribution",
-            "shutdown"
+            "release_pool_contribution",
+            "sign_pool_statement",
+            "provision_pool_node_share",
+            "shutdown",
         ]
     );
 }
@@ -2791,7 +3710,7 @@ async fn inactive_custody_wrapper_refuses_in_a_fixed_order_with_fixed_texts() {
     owner_only_dir(&data_dir);
     owner_only_dir(&inactive_custody_state_root(&data_dir));
     let (binary, _pid_file, _request_log) = write_mock_custody_provider(temp.path());
-    let provider = spawn_inactive_custody_wrapper_for_test(&binary, &data_dir).await;
+    let provider = spawn_custody_wrapper_for_test(&binary, &data_dir).await;
 
     // Each request also breaks every later rule, so the first refusal wins.
     let cases = [

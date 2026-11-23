@@ -4,8 +4,9 @@ use hpke::rand_core::{CryptoRng as HpkeCryptoRng, RngCore as HpkeRngCore};
 use rand09::{rngs::StdRng, SeedableRng as _};
 
 use elastos_protected_content_contracts::{
-    CanonicalContract, NodeContributionStatementV1, NodePublicKey, RecipientSealedContributionV1,
-    RightsDecisionV1, SignedNodeContributionV1, SignedNodeRightsDecisionV1,
+    AuthenticatedRuntimeReleaseOperationV2, CanonicalContract, NodeContributionStatementV1,
+    NodePublicKey, RecipientSealedContributionV1, RightsDecisionV1, SignedNodeContributionV1,
+    SignedNodeRightsDecisionV1,
 };
 
 use crate::{
@@ -133,6 +134,106 @@ pub(crate) fn produce_node_contribution_with_rng<R: HpkeCryptoRng + HpkeRngCore>
     let signed = SignedNodeContributionV1::new(statement, signature)?;
     operation.verify_node_contribution(&signed, &node_set, now)?;
     Ok(signed)
+}
+
+/// One contribution per wallet-signed recipient of a V2 pool release, in the
+/// rights request's order (Plan B T1.4). The node's share is opened once; for
+/// each recipient the released-share AAD names the V2 operation hash (L1) and
+/// that recipient, so a contribution opens only with its own recipient key.
+/// Called only after the durable claim (`claim_or_replay_pool_contributions`).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the pool release binds the claimed operation, decision, share and both node keys explicitly, as the V1 producer does"
+)]
+pub(crate) fn produce_pool_contributions_with_rng<R: HpkeCryptoRng + HpkeRngCore>(
+    operation: &AuthenticatedRuntimeReleaseOperationV2,
+    selected_node_public_key: NodePublicKey,
+    signed_rights_decision: &SignedNodeRightsDecisionV1,
+    node_share: &NodeLocalStoredShareV1,
+    node_signing_key: &SigningKey,
+    node_custody_secret: &NodeCustodySecretKeyV1,
+    issued_at: u64,
+    expires_at: u64,
+    now: u64,
+    hpke_rng: &mut R,
+) -> Result<Vec<SignedNodeContributionV1>, CustodyError> {
+    node_share.validate_pool_release_claim_context(operation, selected_node_public_key, now)?;
+    let node_set = node_share.node_set()?;
+    let decision = operation.verify_node_rights_decision(signed_rights_decision, &node_set, now)?;
+    if decision.decision() != RightsDecisionV1::Allowed {
+        return Err(CustodyError::Release(
+            elastos_protected_content_contracts::KeyReleaseError::RightsDenied,
+        ));
+    }
+    operation.validate_node_contribution_active_window(issued_at, expires_at, &decision, now)?;
+    let node_public_key = NodePublicKey::new(node_signing_key.verifying_key().to_bytes())?;
+    if node_public_key != decision.node_public_key() {
+        return Err(CustodyError::BindingMismatch("node_public_key"));
+    }
+    if node_public_key != selected_node_public_key {
+        return Err(CustodyError::BindingMismatch("claimed_node_public_key"));
+    }
+    let node_entry = node_share.node()?;
+    node_custody_secret.matches_node_entry(
+        node_public_key,
+        node_entry.custody_public_key(),
+        node_signing_key,
+    )?;
+
+    let stored_aad = node_share.stored_share_aad_bytes()?;
+    let plaintext_share = crate::share_wrap::open_share(
+        node_share.stored_share(),
+        node_custody_secret.secret_bytes(),
+        elastos_protected_content_contracts::STORED_SHARE_HPKE_INFO_V1,
+        &stored_aad,
+    )?;
+    let mut contributions = Vec::with_capacity(operation.recipients().len());
+    for recipient in operation.recipients() {
+        let identity = recipient.identity();
+        if identity.encryption_suite_id()
+            != elastos_protected_content_contracts::CUSTODY_X_WING_AES256GCM_SUITE_ID_V1
+        {
+            return Err(CustodyError::BindingMismatch(
+                "recipient_encryption_suite_id",
+            ));
+        }
+        let recipient_public_key = RecipientPublicKeyV1::new(*recipient.public_key().as_bytes())?;
+        if recipient_public_key.identity()? != *identity {
+            return Err(CustodyError::BindingMismatch("recipient_key_identity"));
+        }
+        let released_aad = node_entry.released_share_aad_bytes(
+            operation.operation_hash(),
+            operation.binding(),
+            decision.decision_hash(),
+            identity,
+        )?;
+        let released_ciphertext = seal_share(
+            recipient_public_key.as_bytes(),
+            elastos_protected_content_contracts::RELEASED_SHARE_HPKE_INFO_V1,
+            &released_aad,
+            &plaintext_share,
+            hpke_rng,
+        )?;
+        let statement = NodeContributionStatementV1::new(
+            operation.operation_hash(),
+            operation.binding().clone(),
+            signed_rights_decision.clone(),
+            RecipientSealedContributionV1::new(
+                identity.clone(),
+                released_ciphertext.canonical_bytes()?,
+            )?,
+            issued_at,
+            expires_at,
+        )?;
+        let signature = node_signing_key
+            .sign(&statement.canonical_bytes()?)
+            .to_bytes()
+            .to_vec();
+        let signed = SignedNodeContributionV1::new(statement, signature)?;
+        operation.verify_node_contribution(&signed, &node_set, identity, now)?;
+        contributions.push(signed);
+    }
+    Ok(contributions)
 }
 
 #[cfg(test)]

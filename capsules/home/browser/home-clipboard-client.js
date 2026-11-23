@@ -19,7 +19,7 @@ import {
   homeClipboardValidPayload,
   homeClipboardValidToken,
   homeClipboardValidWriteText,
-} from "./home-clipboard-protocol.js?v=home-20260726a";
+} from "./home-clipboard-protocol.js?v=home-20261111a";
 
 export {
   HOME_CLIPBOARD_CANCEL_SCHEMA,
