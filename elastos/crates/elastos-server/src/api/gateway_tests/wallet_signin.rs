@@ -536,6 +536,20 @@ fn wallet_account_role_is_rechecked_inside_approved_mutation_after_demotion() {
     );
 }
 
+fn wallet_app_token(data: &std::path::Path, app: &str, session: &AuthSessionGrantV1) -> String {
+    issue_home_launch_token_with_context(
+        data,
+        app,
+        &HomeLaunchTokenContext {
+            principal_id: session.principal_id.clone(),
+            session_id: session.session_id.clone(),
+            proof_binding_id: Some(session.proof_binding_id.clone()),
+            grant_id: session.grant_id.clone(),
+        },
+    )
+    .unwrap()
+}
+
 async fn call_approved(
     app: &Router,
     path: &str,
@@ -580,8 +594,7 @@ async fn wallet_inbox_positive_permissions_require_exact_fresh_passkey() {
     let app = gateway_router(test_state(f.data.path()));
     let home =
         issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &session).unwrap();
-    let inbox =
-        issue_home_launch_token_for_auth_grant(f.data.path(), INBOX_CAPSULE_ID, &session).unwrap();
+    let inbox = wallet_app_token(f.data.path(), INBOX_CAPSULE_ID, &session);
     for action_id in [
         "community-presence-always:test",
         "community-presence-open:test",
@@ -749,9 +762,7 @@ async fn wallet_guest_room_approval_stays_refused_with_a_valid_passkey() {
     let app = gateway_router(test_state(f.data.path()));
     let home =
         issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &session).unwrap();
-    let chat =
-        issue_home_launch_token_for_auth_grant(f.data.path(), CHAT_ROOM_CAPSULE_ID, &session)
-            .unwrap();
+    let chat = wallet_app_token(f.data.path(), CHAT_ROOM_CAPSULE_ID, &session);
     let request = json!({"action_id":"room-approve-request:missing"});
     let approval = real_step_up_for_launch(
         &app,
@@ -788,8 +799,7 @@ async fn wallet_hosted_permission_can_be_approved_then_ended_or_denied() {
     let app = gateway_router(test_state(f.data.path()));
     let home =
         issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &session).unwrap();
-    let inbox =
-        issue_home_launch_token_for_auth_grant(f.data.path(), INBOX_CAPSULE_ID, &session).unwrap();
+    let inbox = wallet_app_token(f.data.path(), INBOX_CAPSULE_ID, &session);
     let scope = egress::EgressScope {
         offer_id: "local:hosted:test".into(),
         effect: "model.http.request".into(),

@@ -10623,6 +10623,35 @@ mod tests {
             .with_state(state)
     }
 
+    fn explicit_account_removal_for_test(
+        data: &std::path::Path,
+        headers: &HeaderMap,
+        target: &str,
+    ) -> (HeaderMap, Value) {
+        let account = crate::auth::load_principal_for_proof_binding(data, target)
+            .unwrap()
+            .principal_id;
+        let token = headers
+            .get("x-elastos-home-token")
+            .unwrap()
+            .to_str()
+            .unwrap();
+        let approval = super::super::gateway::issue_passkey_step_up_token_for_test(
+            data,
+            token,
+            HOME_CAPSULE_ID,
+            "auth.account.remove",
+            &json!({"proof_binding_id":target,"account_id":account,"remove_account":true}),
+        )
+        .unwrap();
+        let mut headers = headers.clone();
+        headers.insert(
+            "x-elastos-step-up-token",
+            HeaderValue::from_str(&approval).unwrap(),
+        );
+        (headers, json!({"remove_account":true,"account_id":account}))
+    }
+
     #[tokio::test]
     async fn last_admin_passkey_http_guest_leaves_and_admin_removes_another_person() {
         for (target_role, self_removal) in [
@@ -10643,11 +10672,16 @@ mod tests {
             let state = test_gateway_state(temp.path());
             let app = passkey_removal_test_router(state.clone());
             let actor = if self_removal { &target } else { &owner };
+            let (approved_headers, removal) = explicit_account_removal_for_test(
+                temp.path(),
+                &actor.host_headers,
+                &target_binding,
+            );
             let (status, headers, body) = passkey_http(
                 &app,
                 &format!("/api/auth/passkeys/{target_binding}/revoke"),
-                &actor.host_headers,
-                json!({}),
+                &approved_headers,
+                removal,
             )
             .await;
             assert_eq!(status, StatusCode::OK, "{body}");
@@ -10828,16 +10862,20 @@ mod tests {
         let first_path = format!("/api/auth/passkeys/{first_binding}/revoke");
         let second_path = format!("/api/auth/passkeys/{second_binding}/revoke");
         let barrier = Arc::new(tokio::sync::Barrier::new(2));
+        let (first_headers, first_body) =
+            explicit_account_removal_for_test(temp.path(), &first.host_headers, &first_binding);
+        let (second_headers, second_body) =
+            explicit_account_removal_for_test(temp.path(), &second.host_headers, &second_binding);
         let attempts = [
-            (first_path, first.host_headers),
-            (second_path, second.host_headers),
+            (first_path, first_headers, first_body),
+            (second_path, second_headers, second_body),
         ]
-        .map(|(path, headers)| {
+        .map(|(path, headers, body)| {
             let app = app.clone();
             let barrier = barrier.clone();
             tokio::spawn(async move {
                 barrier.wait().await;
-                passkey_http(&app, &path, &headers, json!({})).await
+                passkey_http(&app, &path, &headers, body).await
             })
         });
         let [first, second] = attempts;
@@ -10876,11 +10914,13 @@ mod tests {
             .proof_binding_id
             .clone();
         let app = passkey_removal_test_router(test_gateway_state(temp.path()));
+        let (approved_headers, removal) =
+            explicit_account_removal_for_test(temp.path(), &owner.host_headers, &former_binding);
         let (status, _, body) = passkey_http(
             &app,
             &format!("/api/auth/passkeys/{former_binding}/revoke"),
-            &owner.host_headers,
-            json!({}),
+            &approved_headers,
+            removal,
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
