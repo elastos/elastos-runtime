@@ -786,7 +786,20 @@ async fn passkey_add_begin_inner(
         },
         &ceremony_id,
     )?;
-    crate::auth::name_passkey_registration(&mut options, &principal.display_name, &rp.origin)?;
+    // Picker text follows the name Home currently shows. A missing or damaged
+    // Profile affects only this label, so the stored account name remains usable.
+    let profile = crate::collaboration_profile_authority::load_profile_authority(
+        &state.data_dir,
+        &principal.principal_id,
+        &principal.localhost_root,
+    )
+    .ok()
+    .flatten();
+    let account_name = profile
+        .as_ref()
+        .map(|profile| profile.document().display_name.as_str())
+        .unwrap_or(&principal.display_name);
+    crate::auth::name_passkey_registration(&mut options, account_name, &rp.origin)?;
     Ok(PasskeyBeginResponse {
         schema: "elastos.auth.passkey.add.begin/v1".into(),
         ceremony_id,
@@ -6876,6 +6889,57 @@ mod tests {
             add.options.as_ref().unwrap(),
             "Account holder · ElastOS Home (localhost:61180)",
         );
+        let principal = records_for(root.path(), &account.principal_id).remove(0);
+        crate::auth::store_test_principal_root_protection(root.path(), &account.principal_id);
+        crate::collaboration_profile_authority::ensure_initial_profile_authority(
+            root.path(),
+            &principal.principal_id,
+            &principal.localhost_root,
+            &principal.proof_binding_id,
+            "First name",
+            crate::auth::now_ts(),
+        )
+        .unwrap();
+        crate::collaboration_profile_authority::update_profile_authority(
+            root.path(),
+            &principal.principal_id,
+            &principal.localhost_root,
+            &principal.proof_binding_id,
+            "Anders",
+            None,
+            crate::auth::now_ts(),
+        )
+        .unwrap();
+        let renamed = begin_passkey_add_for(
+            &state,
+            &account,
+            passkey_add_approval(root.path(), &account),
+        )
+        .await
+        .unwrap();
+        assert_passkey_registration_name(
+            renamed.options.as_ref().unwrap(),
+            "Anders · ElastOS Home (localhost:61180)",
+        );
+        let path = crate::collaboration_profile_authority::profile_authority_path(
+            root.path(),
+            &principal.localhost_root,
+        )
+        .unwrap();
+        let original_profile = std::fs::read(&path).unwrap();
+        std::fs::write(&path, b"damaged fixture profile").unwrap();
+        let fallback = begin_passkey_add_for(
+            &state,
+            &account,
+            passkey_add_approval(root.path(), &account),
+        )
+        .await
+        .unwrap();
+        assert_passkey_registration_name(
+            fallback.options.as_ref().unwrap(),
+            "Account holder · ElastOS Home (localhost:61180)",
+        );
+        std::fs::write(path, original_profile).unwrap();
         let code = crate::auth::arm_owner_recovery(
             root.path(),
             "http://localhost:61180",

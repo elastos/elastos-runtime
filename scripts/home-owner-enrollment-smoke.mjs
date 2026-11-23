@@ -27,6 +27,7 @@ function fixture({ guest = false, purpose = "create", terminalLoss = false, owne
   let importResult = null;
   let ownerClaimed = false;
   const intent = purpose === "create" ? { purpose, public_name: "Owner" } : { purpose };
+  const passkeyName = `${purpose === "create" && !ownerRecovery ? "Owner" : "Account recovery"} · ElastOS Home (home.test)`;
   const storage = {
     getItem(name) { if (readFailure) throw Error("storage denied"); return values.get(name) ?? null; },
     setItem(name, value) { if (writeFailure) throw Error("storage full"); values.set(name, String(value)); writes.push(String(value)); },
@@ -57,7 +58,9 @@ function fixture({ guest = false, purpose = "create", terminalLoss = false, owne
         addEventListener() {}, clearTimeout() {}, setTimeout() {}, setInterval() { return 1; }, clearInterval() {} },
       navigator: { credentials: { async create(options) {
         creates++;
-        assert.equal(options.publicKey.user.name, purpose === "create" ? "Owner" : "ElastOS Home");
+        assert.equal(options.publicKey.user.name, passkeyName);
+        assert.equal(options.publicKey.user.displayName, passkeyName);
+        assert.deepEqual(Array.from(new Uint8Array(options.publicKey.user.id)), [1]);
         await afterCreate();
         return { id: "credential", rawId: new Uint8Array([1]).buffer, type: "public-key",
           response: { clientDataJSON: new Uint8Array([2]).buffer, attestationObject: new Uint8Array([3]).buffer } };
@@ -75,7 +78,7 @@ function fixture({ guest = false, purpose = "create", terminalLoss = false, owne
           assert.equal(options.method, "POST");
           assert.equal(options.headers["x-elastos-owner-recovery"], "terminal-code");
           if (path.endsWith("/begin")) return { schema: "elastos.auth.passkey.register.begin/v1", ceremony_id: "recovery",
-            options: { publicKey: { challenge: "AQ", user: { id: "AQ" }, excludeCredentials: [] } } };
+            options: { publicKey: { challenge: "AQ", user: { id: "AQ", name: passkeyName, displayName: passkeyName }, excludeCredentials: [] } } };
           const request = JSON.parse(options.body);
           assert.deepEqual(Object.keys(request).sort(), ["bundle", "ceremony_id", "response"]);
           assert.equal(request.ceremony_id, "recovery");
@@ -109,7 +112,7 @@ function fixture({ guest = false, purpose = "create", terminalLoss = false, owne
           ownerClaimed = true;
           afterBegin();
           return { schema: "elastos.auth.passkey.register.begin/v1", ceremony_id: "ceremony",
-            options: verified ? null : { publicKey: { challenge: "AQ", user: { id: "AQ" }, excludeCredentials: [] } } };
+            options: verified ? null : { publicKey: { challenge: "AQ", user: { id: "AQ", name: passkeyName, displayName: passkeyName }, excludeCredentials: [] } } };
         }
         assert.ok(path.endsWith("/complete"));
         const request = JSON.parse(options.body);

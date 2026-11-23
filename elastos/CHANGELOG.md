@@ -31,6 +31,7 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 
 ### Fixed
 
+- New passkeys show which Home they belong to in the browser's picker. Existing passkeys keep their saved names.
 - Home and apps can enter full screen in Safari and the desktop app.
 - Apps load in Safari and other WebKit browsers.
 - Home repairs local Community connection failures, keeps trying while it runs, and shows the same reconnecting state in Chat and System.

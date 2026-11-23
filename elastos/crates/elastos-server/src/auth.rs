@@ -1307,7 +1307,7 @@ pub(crate) fn name_passkey_registration(
         value
             .chars()
             .filter(|ch| !ch.is_control() && !matches!(*ch,
-                '<' | '>' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{206f}'))
+                '<' | '>' | '\u{061c}' | '\u{200b}' | '\u{200e}' | '\u{200f}' | '\u{feff}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{206f}'))
             .collect::<String>()
             .split_whitespace()
             .collect::<Vec<_>>()
@@ -1335,7 +1335,7 @@ pub(crate) fn name_passkey_registration(
         &account
     };
     let suffix = format!(" · ElastOS Home ({address})");
-    let label = format!("{}{suffix}", prefix(account, 64 - suffix.len()));
+    let label = format!("{}{suffix}", prefix(account, 64 - suffix.len()).trim_end());
     options.public_key.user.name.clone_from(&label);
     options.public_key.user.display_name = label;
     Ok(())
