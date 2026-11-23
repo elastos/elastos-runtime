@@ -8,8 +8,10 @@ The contract is:
 
 `signed launch-token v4 -> verified RuntimeWalletAuthority -> private RuntimeWalletAdapter -> WalletProviderRequestV2 (Wallet Bus 2.3) -> wallet-provider`
 
-Capsules never receive private keys, browser wallet objects, raw wallet RPC,
-node RPC, seed phrases, or provider SDK handles. A wallet address is a proof
+Ordinary signing keeps private keys inside wallet-provider; explicit recovery
+export and import can pass secret key material through Wallet or System.
+Capsules never receive browser wallet objects, raw wallet RPC, node RPC, or
+provider SDK handles. A wallet address is a proof
 binding on a Runtime principal, not the principal itself.
 
 The generic provider plane exposes only read-only
@@ -100,7 +102,8 @@ passkey-controlled, not passkey-derived: a long-lived Wallet/System/Inbox launch
 token may list and review requests, but every built-in signature, transaction
 send, account deletion, and Wallet recovery-key export/import must include a
 fresh passkey-bound Home token before the provider uses or changes key material.
-App capsules never receive the private key, wallet object, or raw wallet RPC.
+Ordinary signing keeps private keys inside wallet-provider; explicit recovery
+export and import can pass secret key material through Wallet or System.
 External wallets still use the same approval request and completion receipt
 shape, but the final signature is completed by the connector capsule that owns
 the linked account.

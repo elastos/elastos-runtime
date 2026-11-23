@@ -216,10 +216,11 @@ of each file in the protected folders, a few kilobytes for an encrypted file.
 A file without a label is read whole only when it is at most 16 MiB, to tell an
 unencrypted file from a damaged one, and one pass reads at most 80 MiB of such
 files. A file left over once that is spent is named as not checked in this
-pass and treated as damaged until a later pass checks it. They check three
-things: no unencrypted file was found, each encrypted file is labelled for this
-Home's current key and for the place where it is stored, and no interrupted
-encryption step is waiting. The size of an encrypted file does not stop Home.
+pass. Home leaves it unchanged during that pass; a later pass can classify it.
+They check three things: no unencrypted file was found, each encrypted file is
+labelled for this Home's current key and for the place where it is stored, and
+no interrupted encryption step is waiting. The size of an encrypted file does
+not stop Home.
 An unencrypted file stops Home when this pass classifies it, including a file
 larger than 16 MiB with no encryption label. A file this pass does not check
 does not stop Home, and that file stays unencrypted.
@@ -227,15 +228,18 @@ File contents are checked when a file is opened: Home runs the full AES-GCM
 check over the whole file and uses none of it unless the check passes. A file
 that looks encrypted but does not carry a correct label is damaged. This
 includes a file of your own that only looks like an encrypted file; it stays
-unencrypted until you upload it again in Library. An interrupted upload over
-512 KiB can leave a readable copy in Home's
-`Runtime/ObjectUploadSessions/<id>/payload.bin`; finish or restart it, and the
-next chunked upload after 24 hours of inactivity attempts cleanup.
-A damaged file is named in
-the start log and in Recovery status, shows as Blocked in Library, and is never
-encrypted again. Home never changes or deletes it by itself; a Library save
-over it, Empty Trash, or a new or reset background image in System →
-Appearance (for a damaged background image) still can.
+unencrypted until you upload it again in Library. A file confirmed as damaged
+is named in the start log and in Recovery status, shows as Blocked in Library,
+and is excluded from automatic encryption. Automatic handling leaves it
+unchanged; a Library save over it, Empty Trash, or a new or reset background
+image in System → Appearance (for a damaged background image) can still
+replace or delete it.
+
+An interrupted upload over 512 KiB can leave a readable copy in Home's
+`Runtime/ObjectUploadSessions/<id>/payload.bin`. Library cannot resume that
+upload, and uploading the file again leaves the old copy. Home deletes it only
+when a later chunked upload starts more than 24 hours after the interrupted one
+last received data. To remove it sooner, stop Home and delete that `<id>` folder.
 
 Cleanup holds the installation writer lock and verifies the signed installed
 release, exact Home process and generation, host ownership, health response,

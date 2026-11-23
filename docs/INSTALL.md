@@ -536,10 +536,11 @@ and separate data backups first; check the
 
 ## Data, keys and backups
 
-Runtime stores keys next to the data they protect in its data home. A full
-backup of that home contains all keys, including wallet keys. Protect the backup
-with the same care as the running Home. System's **Download Recovery Kit** saves
-one recovery file. Keep it under your own control, with its optional password.
+Runtime stores keys next to the data they protect in its data home. A complete
+data-folder copy contains the keys needed to read the protected data. Protect
+the backup with the same care as the running Home. System's **Download Recovery Kit**
+saves one recovery file. Keep it under your own control, with its optional
+password.
 The [storage table](../SECURITY.md#stored-keys-and-recovery) lists its contents
 and the data that needs separate backups.
 

@@ -28,7 +28,7 @@ const PRINCIPAL_ROOT_ENCRYPTION_LEAD =
   "After protection exists, Home encrypts a write only when the write goes through\nprincipal-root protection.";
 
 const UPLOAD_STAGING_WARNING =
-  "An interrupted upload over 512 KiB can leave a readable copy in Home's `Runtime/ObjectUploadSessions/<id>/payload.bin`; finish or restart it, and the next chunked upload after 24 hours of inactivity attempts cleanup.";
+  "An interrupted upload over 512 KiB can leave a readable copy in Home's `Runtime/ObjectUploadSessions/<id>/payload.bin`. Library cannot resume that upload, and uploading the file again leaves the old copy. Home deletes it only when a later chunked upload starts more than 24 hours after the interrupted one last received data. To remove it sooner, stop Home and delete that `<id>` folder.";
 
 // Exact wording check only; this does not exercise upload cleanup or encryption.
 function checkUploadStagingWarning(document) {
@@ -333,14 +333,16 @@ test("Library re-upload advice includes the exact upload staging warning in both
   }
 });
 
-test("the upload warning wording check rejects missing and overstated cleanup advice", () => {
+test("the upload warning wording check rejects missing and misleading recovery or cleanup advice", () => {
   for (const warning of [
     "",
     UPLOAD_STAGING_WARNING.replace("over 512 KiB", "of any size"),
-    UPLOAD_STAGING_WARNING.replace("finish or restart it, and ", ""),
-    UPLOAD_STAGING_WARNING.replace("next chunked upload", "next upload"),
-    UPLOAD_STAGING_WARNING.replace("after 24 hours of inactivity", "immediately"),
-    UPLOAD_STAGING_WARNING.replace("attempts cleanup", "always removes it"),
+    "An interrupted upload over 512 KiB can leave a readable copy in Home's `Runtime/ObjectUploadSessions/<id>/payload.bin`; finish or restart it, and the next chunked upload after 24 hours of inactivity attempts cleanup.",
+    UPLOAD_STAGING_WARNING.replace("Library cannot resume that upload", "Library can resume that upload"),
+    UPLOAD_STAGING_WARNING.replace("leaves the old copy", "removes the old copy"),
+    UPLOAD_STAGING_WARNING.replace("later chunked upload", "later upload"),
+    UPLOAD_STAGING_WARNING.replace("more than 24 hours after the interrupted one last received data", "immediately"),
+    UPLOAD_STAGING_WARNING.replace("To remove it sooner, stop Home and delete that `<id>` folder.", ""),
   ]) {
     assert.throws(() => checkUploadStagingWarning(warning), /upload staging warning/);
   }

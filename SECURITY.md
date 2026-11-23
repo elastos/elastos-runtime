@@ -87,9 +87,14 @@ approval records stay plain. For existing plain files in scanned protected
 folders, Home encrypts in place only when the file is 16 MiB or less and the
 batch is at most 64 files and 64 MiB. Larger files stay plain until you move
 them out and upload them again in Library, which encrypts uploads of up to 100
-MiB. An interrupted upload over 512 KiB can leave a readable copy in Home's
-`Runtime/ObjectUploadSessions/<id>/payload.bin`; finish or restart it, and the
-next chunked upload after 24 hours of inactivity attempts cleanup.
+MiB.
+
+An interrupted upload over 512 KiB can leave a readable copy in Home's
+`Runtime/ObjectUploadSessions/<id>/payload.bin`. Library cannot resume that
+upload, and uploading the file again leaves the old copy. Home deletes it only
+when a later chunked upload starts more than 24 hours after the interrupted one
+last received data. To remove it sooner, stop Home and delete that `<id>` folder.
+
 Library can encrypt a surviving plain file of 16 MiB or less when it reads
 it. Migration and
 Recovery Kit export scan Library folders under each person (Desktop,
