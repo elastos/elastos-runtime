@@ -11,7 +11,14 @@ async fn call(
     let mut request = Request::builder()
         .uri(path)
         .header(HOST, "localhost:61180")
-        .header("origin", ORIGIN);
+        .header(
+            "origin",
+            if path.starts_with("/api/apps/inbox/") || path.starts_with("/api/apps/chat-room/") {
+                "null"
+            } else {
+                ORIGIN
+            },
+        );
     if let Some(token) = token {
         request = request.header("x-elastos-home-token", token);
     }
@@ -537,8 +544,9 @@ fn wallet_account_role_is_rechecked_inside_approved_mutation_after_demotion() {
 }
 
 fn wallet_app_token(data: &std::path::Path, app: &str, session: &AuthSessionGrantV1) -> String {
-    issue_home_launch_token_with_context(
+    issue_home_projection_launch_token_with_context(
         data,
+        app,
         app,
         &HomeLaunchTokenContext {
             principal_id: session.principal_id.clone(),
@@ -564,7 +572,14 @@ async fn call_approved(
                 .method("POST")
                 .uri(path)
                 .header(HOST, "localhost:61180")
-                .header("origin", ORIGIN)
+                .header(
+                    "origin",
+                    if path.starts_with("/api/apps/chat-room/") {
+                        "null"
+                    } else {
+                        ORIGIN
+                    },
+                )
                 .header("x-elastos-home-token", token)
                 .header("x-elastos-step-up-token", approval)
                 .header(CONTENT_TYPE, "application/json")
@@ -716,6 +731,18 @@ async fn wallet_explicit_account_removal_requires_exact_passkey_intent() {
     let home =
         issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &session).unwrap();
     let path = format!("/api/auth/passkeys/{}/revoke", f.actor.proof_binding_id);
+    let (malformed, _) = call(
+        &app,
+        &path,
+        Some(&home),
+        Some(json!({"remove_acount":true})),
+    )
+    .await;
+    assert_eq!(malformed, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(
+        crate::auth::load_active_session_grant(f.data.path(), &session.session_id, now_ts())
+            .is_ok()
+    );
     let body = json!({"remove_account":true,"account_id":session.principal_id});
     assert!(!call(&app, &path, Some(&home), Some(body.clone()))
         .await
@@ -796,6 +823,7 @@ async fn wallet_hosted_permission_can_be_approved_then_ended_or_denied() {
     let session = wallet_fixture::signin(&f);
     let (approver, credential) =
         install_real_approver(f.data.path(), "person:local:alice", b"egress-approver");
+    crate::api::seed_model_provider_operator_offers_for_test(f.data.path(), vec![]).unwrap();
     let app = gateway_router(test_state(f.data.path()));
     let home =
         issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &session).unwrap();
