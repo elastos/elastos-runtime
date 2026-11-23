@@ -2022,7 +2022,7 @@ pub(crate) mod tests {
 
     #[test]
     fn wallet_undo_session_revocation_clears_only_affected_account_after_checkpoint() {
-        for result in ["ok", "denied"] {
+        for (result, observe_with_commit) in [("ok", false), ("ok", true), ("denied", false)] {
             let f = fixture();
             let id = enabled(&f);
             let old = signin(&f);
@@ -2067,6 +2067,11 @@ pub(crate) mod tests {
             let mut legacy = load_auth_state_with_identity(f.data.path()).unwrap().0;
             push_audit_event(f.data.path(), &mut legacy, event).unwrap();
             save_auth_state(f.data.path(), &legacy, None).unwrap();
+            if observe_with_commit {
+                // Forward may first write passkey state. Its observer must
+                // replay the legacy revocation before advancing the checkpoint.
+                store_session_grant(f.data.path(), f.actor.clone()).unwrap();
+            }
             assert_eq!(
                 load_active_session_grant(f.data.path(), &old.session_id, now_ts()).is_err(),
                 result == "ok"
