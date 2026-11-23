@@ -522,6 +522,10 @@ pub(in crate::api) async fn storage(
             if values.len() > 256 || serde_json::to_vec(&values)?.len() > MAX_BYTES {
                 return Err(AttemptCapacity::after(Duration::from_secs(60)).into());
             }
+            store.revision = store
+                .revision
+                .checked_add(1)
+                .ok_or(crate::auth::wallet_signin::Refused)?;
             store.values = values;
         }
         revision = Some(store.revision);
