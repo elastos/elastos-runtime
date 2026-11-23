@@ -829,10 +829,13 @@ async function onGuestRegistrationChange() {
   clearGuestRegistrationStatus();
   guestRegistrationInput.disabled = true;
   try {
+    const intent = { enabled: guestRegistrationInput.checked };
+    const stepUpToken = currentProofBindingId.startsWith("proof:signin-wallet:")
+      ? await requestPasskeyStepUp("auth.account.guest-registration", intent) : "";
     const access = await fetchJson("/api/apps/system/access/guest-registration", {
       method: "POST",
-      headers: shellHeaders({ "content-type": "application/json" }),
-      body: JSON.stringify({ enabled: guestRegistrationInput.checked }),
+      headers: shellHeaders({ "content-type": "application/json", ...(stepUpToken ? { "x-elastos-step-up-token": stepUpToken } : {}) }),
+      body: JSON.stringify(intent),
     });
     setAccessPolicy(access);
     showGuestRegistrationStatus(access.guest_registration_enabled ? "Guest creation on." : "Guest creation off.", "success");
@@ -900,10 +903,13 @@ async function updateCommunityPresence(mode) {
   setCommunityPresenceOptions(mode, true);
   setHiddenFields("community-presence-status", true);
   try {
+    const intent = { mode };
+    const stepUpToken = mode !== "hidden" && currentProofBindingId.startsWith("proof:signin-wallet:")
+      ? await requestPasskeyStepUp("community.presence.grant", intent) : "";
     const presence = await fetchRuntimeUpdateJson({
       method: "POST",
-      headers: shellHeaders({ "content-type": "application/json" }),
-      body: JSON.stringify({ mode }),
+      headers: shellHeaders({ "content-type": "application/json", ...(stepUpToken ? { "x-elastos-step-up-token": stepUpToken } : {}) }),
+      body: JSON.stringify(intent),
     }, "/api/apps/system/community/presence");
     communityPresenceBusy = false;
     renderCommunityPresence(presence);

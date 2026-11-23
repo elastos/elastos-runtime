@@ -68,11 +68,12 @@ Bitcoin ownership is network and address.
 ```
 
 For the first WalletConnect Add, use this authenticated management route with
-`action: "add"`, `connector: "walletconnect"`, an empty address, chain_id 0,
+`action: "add"`, `connector: "walletconnect"`, an empty address, chain_id 20,
 network `""`, browser_secret and `allow_temporary_internet: true`. Show the short
 connection disclosure first. Begin returns the temporary pairing transport.
 After pairing, call `/api/auth/wallet/signin/select` with the same ceremony_id,
 browser_secret, selected address and chain_id to obtain the exact Add message.
+Selection replaces the initial chain_id with the wallet's chosen supported chain.
 Keep the management launch header on these calls. Then sign and approve Add as
 below. Anonymous sign-in pairing requires an already enabled compatible method;
 authenticated Add creates the first method without that prerequisite.

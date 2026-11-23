@@ -13,7 +13,7 @@ export const { chromium } = requireProductSmokePlaywright();
 
 export const CORS_HEADERS = Object.freeze({
   "access-control-allow-origin": "null",
-  "access-control-allow-headers": "content-type,x-elastos-home-token,authorization",
+  "access-control-allow-headers": "content-type,x-elastos-home-token,x-elastos-step-up-token,authorization",
   "access-control-allow-methods": "GET,POST,PUT,OPTIONS",
 });
 
