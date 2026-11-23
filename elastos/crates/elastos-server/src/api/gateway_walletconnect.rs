@@ -90,6 +90,20 @@ struct SocketOwner {
     cancel: watch::Sender<bool>,
     done: watch::Receiver<bool>,
 }
+#[cfg(test)]
+pub(in crate::api) async fn watch_attempt_socket_for_test(
+    state: &GatewayState,
+    id: &str,
+) -> watch::Receiver<bool> {
+    let (cancel, receiver) = watch::channel(false);
+    let (_done, done) = watch::channel(true);
+    state.walletconnect.inner.lock().await.sockets.insert(
+        format!("test:{id}"),
+        SocketOwner { principal: attempts::actor(id), cancel, done },
+    );
+    receiver
+}
+
 struct SocketCompletion(watch::Sender<bool>);
 impl Drop for SocketCompletion {
     fn drop(&mut self) {

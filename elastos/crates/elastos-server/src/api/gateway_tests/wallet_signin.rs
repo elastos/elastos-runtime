@@ -775,7 +775,16 @@ async fn wallet_explicit_account_removal_requires_exact_passkey_intent() {
     install_real_approver(f.data.path(), "person:local:bob", b"other-admin");
     let (approver, credential) =
         install_real_approver(f.data.path(), "person:local:alice", b"removal-approver");
-    let app = gateway_router(test_state(f.data.path()));
+    let state = test_state(f.data.path());
+    let attempt = auth::begin(
+        f.data.path(), ORIGIN, "home-test",
+        serde_json::from_value(json!({"connector":"walletconnect","address":"","chain_id":0,
+            "browser_secret":BROWSER,"allow_temporary_internet":true})).unwrap(), None,
+    ).unwrap();
+    gateway_walletconnect::install_attempt(&state, &attempt, true, None).await.unwrap();
+    let relay_cancel = gateway_walletconnect::watch_attempt_socket_for_test(&state, &attempt.ceremony_id).await;
+    let app = gateway_router(state);
+
     let home =
         issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &session).unwrap();
     let path = format!("/api/auth/passkeys/{}/revoke", f.actor.proof_binding_id);
@@ -809,6 +818,9 @@ async fn wallet_explicit_account_removal_requires_exact_passkey_intent() {
     .await;
     let (status, result) = call_approved(&app, &path, &home, &approval, body).await;
     assert_eq!(status, StatusCode::OK, "{result}");
+    assert!(auth::inactive_attempts(f.data.path()).unwrap().contains(&attempt.ceremony_id));
+    assert!(*relay_cancel.borrow(), "committed account removal must close the open relay");
+
     assert!(
         crate::auth::load_active_session_grant(f.data.path(), &session.session_id, now_ts())
             .is_err()
@@ -939,4 +951,36 @@ async fn wallet_hosted_permission_can_be_approved_then_ended_or_denied() {
         egress::approve(f.data.path(), &id, &other).is_err(),
         "other account approved wallet-bound request"
     );
+}
+
+#[tokio::test]
+async fn walletconnect_review_note_storage_post_advances_etag_and_fences_stale_writes() {
+    let f = wallet_fixture::fixture();
+    wallet_fixture::enabled(&f);
+    let state = test_state(f.data.path());
+    let attempt = auth::begin(
+        f.data.path(), ORIGIN, "home-test",
+        serde_json::from_value(json!({"connector":"walletconnect","address":"","chain_id":0,
+            "browser_secret":BROWSER,"allow_temporary_internet":true})).unwrap(), None,
+    ).unwrap();
+    gateway_walletconnect::install_attempt(&state, &attempt, true, None).await.unwrap();
+    let mut headers = HeaderMap::new();
+    headers.insert("x-elastos-wallet-attempt", attempt.attempt_token.as_ref().unwrap().parse().unwrap());
+    headers.insert("x-elastos-wallet-instance", attempt.instance_id.parse().unwrap());
+    headers.insert("if-match", format!("\"{}\"", attempt.storage_revision).parse().unwrap());
+    let write = || Ok(AxumJson(gateway_walletconnect::StorageWrite { key: "pairing".into(), value: Some(json!("first")) }));
+    let response = gateway_walletconnect::storage(AxumState(state.clone()), axum::http::Method::POST, headers.clone(), write()).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let next = format!("\"{}\"", attempt.storage_revision + 1);
+    assert_eq!(response.headers()["etag"], next);
+    let response = gateway_walletconnect::storage(AxumState(state.clone()), axum::http::Method::POST, headers.clone(), write()).await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    headers.insert("if-match", next.parse().unwrap());
+    let remove = Ok(AxumJson(gateway_walletconnect::StorageWrite { key: "pairing".into(), value: None }));
+    let response = gateway_walletconnect::storage(AxumState(state.clone()), axum::http::Method::POST, headers, remove).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["etag"], format!("\"{}\"", attempt.storage_revision + 2));
+    let body = axum::body::to_bytes(response.into_body(), 1024).await.unwrap();
+    assert_eq!(serde_json::from_slice::<Value>(&body).unwrap(), json!({}));
+    gateway_walletconnect::retire_attempt(&state, &attempt.ceremony_id).await.unwrap();
 }

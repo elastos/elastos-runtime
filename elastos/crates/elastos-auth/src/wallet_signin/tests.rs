@@ -998,3 +998,16 @@ fn scripted_phone_signing_primitive_matches_full_home_proof() {
         normalize_evm_address(vector["signer"].as_str().unwrap())
     );
 }
+
+#[test]
+fn review_note_unused_wallet_proof_purposes_are_refused() {
+    for purpose in [
+        WalletProofPurpose::CreateAccount,
+        WalletProofPurpose::ConfirmOperation { account_id: "account-1".into(), operation: "export-kit".into(), digest: [1; 32] },
+        WalletProofPurpose::AddMethodDuringRecovery { account_id: "account-1".into(), method_digest: [2; 32] },
+    ] {
+        let mut i = input();
+        i.purpose = purpose;
+        assert_eq!(WalletProofChallenge::new(i, &SECRET).err(), Some(WalletProofError::InvalidInput));
+    }
+}
