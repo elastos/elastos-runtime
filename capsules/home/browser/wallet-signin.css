@@ -11,6 +11,8 @@
 .signin-body > :last-child { margin-bottom: 0; }
 .signin-footer { flex-shrink: 0; }
 .signin-footer > :last-child { margin-bottom: 0; }
+.signin-footer .el-button { min-height: 44px; }
+.signin-dialog[data-state="pairing"] .signin-footer .connection-actions { display: grid; grid-template-columns: 1fr 1fr; }
 .signin-dialog h2 { font-size: var(--el-text-xl); font-weight: 600; }
 .signin-dialog .connection-actions { margin-top: 16px; }
 .signin-dialog .connection-option .connection-note { display: block; font-size: 12px; overflow-wrap: anywhere; }

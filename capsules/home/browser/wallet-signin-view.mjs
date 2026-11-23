@@ -122,7 +122,8 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
         }
       }
       if(state.wallet&&state.stage!=='review')body.append(node('p',`${connectorName(state.wallet.connector)} · ${shortWalletAddress(state.wallet.address)} · ${walletNetwork(state.wallet)}`,'connection-note'));
-      const walletName=state.wallet?.connector==='walletconnect'?'your phone wallet':state.wallet?.displayName||connectorName(state.wallet?.connector);
+      const connector=state.wallet?.connector||state.connector;
+      const walletName=connector==='walletconnect'?'your phone wallet':state.wallet?.displayName||state.method?.displayName||connectorName(connector);
       const statuses={choice:'Opening wallet…',loading:'Loading wallets…',connecting:`Continue in ${walletName}`,signing:`Continue in ${walletName}`,approval:'Confirm with your passkey.',passkey:state.action==='remove'?'Confirm with your passkey to remove this wallet and end its sign-in sessions.':'Confirm with your passkey.',completing:state.action==='signin'?'Checking sign-in…':'Saving change…'};
       if(state.message||statuses[state.stage]){const status=node('p',state.message||statuses[state.stage],'connection-note');status.setAttribute('role','status');body.append(status);}
       if(state.approvalNotice&&state.wallet?.connector==='walletconnect')body.append(node('p',state.approvalNotice,'connection-note'));

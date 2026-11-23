@@ -57,7 +57,9 @@ async function exercise(engine,width,theme) {
     assert.equal(await option('Passkey').locator('[aria-hidden=true]').count(),1);
     await dialog().getByLabel('Remember my choice').check();
     fixture.state.longSigningMessage=true;
-    await page.evaluate(()=>window.walletFixture.signaturePending=true);await option('MetaMask').click();await state('signing');await capture('03-extension-signature');
+    await page.evaluate(()=>{window.walletFixture.mode='pending';window.walletFixture.signaturePending=true;});await option('MetaMask').click();await state('connecting');
+    assert.equal(await dialog().getByText('Continue in MetaMask',{exact:true}).count(),1,'connection handoff names the selected wallet before it returns an account');
+    await capture('02b-extension-connection');await page.evaluate(()=>window.walletFixture.mode='normal');await release();await state('signing');await capture('03-extension-signature');
     assert.equal(await dialog().getByText('Continue in MetaMask',{exact:true}).count(),1);
     await dialog().getByText('Message details',{exact:true}).click();
     const detailLayout=await dialog().evaluate(el=>{
@@ -90,6 +92,7 @@ async function exercise(engine,width,theme) {
     const codeBox=await dialog().locator('.connection-qr').boundingBox(),destinationBox=await destination.boundingBox();
     assert(destinationBox.y+destinationBox.height<=codeBox.y,'Home destination stays above the QR code');
     assert.equal(await dialog().getByText('Scan with your wallet, or paste the copied link into your wallet.',{exact:true}).count(),1);
+    for(const control of await dialog().getByRole('button').all())assert.ok((await control.boundingBox()).height>=44,'QR footer controls retain their 44px target height');
     await capture('06-shared-qr');
     await dialog().getByRole('button',{name:'Copy link',exact:true}).click();await dialog().getByRole('button',{name:'Link copied.',exact:true}).waitFor();
     await page.locator('iframe[title=WalletConnect]').evaluate(f=>{f.contentWindow.postMessage('fixture-sign-pending','*');f.contentWindow.postMessage('fixture-pair','*');});
