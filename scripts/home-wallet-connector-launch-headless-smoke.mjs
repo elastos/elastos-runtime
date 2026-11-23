@@ -202,6 +202,7 @@ function homeSummary() {
       target: "wallet",
       title: "Wallet",
       description: "Private Wallet",
+      window_policy: JSON.parse(readFileSync(join(repoRoot,"capsules/wallet/capsule.json"),"utf8")).window_policy,
       role: "app",
       target_kind: "app",
       attach_kind: "iframe",

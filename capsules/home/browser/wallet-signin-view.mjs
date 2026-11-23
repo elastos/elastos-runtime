@@ -64,6 +64,7 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
     const request=epoch,known=new Set(currentState.methods?.map(optionId));
     try {
       dialog.close();const opened=await initial.openConnector(kind==='wallet'?'wallet':`wallet-${kind}`),until=Date.now()+180000;
+      if(request!==epoch||!dialog)return;
       // Wallet owns connection completion. Read its saved accounts before returning.
       clearInterval(ticker);let loading=false;
       ticker=setInterval(async()=>{
