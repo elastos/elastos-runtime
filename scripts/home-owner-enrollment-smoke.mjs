@@ -45,6 +45,13 @@ function fixture({ guest = false, purpose = "create", terminalLoss = false, owne
     setItem(name, value) { if (writeFailure) throw Error("storage full"); values.set(name, String(value)); writes.push(String(value)); },
     removeItem(name) { if (removeFailure) throw Error("storage denied"); values.delete(name); },
   };
+  // Browser-local wallet hints have a separate lifetime from pending registration.
+  const signinValues = new Map();
+  const signinStorage = {
+    getItem(name) { return signinValues.get(name) ?? null; },
+    setItem(name, value) { signinValues.set(name, String(value)); },
+    removeItem(name) { signinValues.delete(name); },
+  };
   function reload() {
     const elements = new Map();
     const element = id => {
@@ -64,7 +71,7 @@ function fixture({ guest = false, purpose = "create", terminalLoss = false, owne
     };
     let opened = null;
     const context = vm.createContext({
-      ownerRecoveryCommand, createHomeWalletSignin, readSigninOptions:()=>readSigninOptions(storage),readSigninChoice:()=>readSigninChoice(storage),saveSigninOptions:methods=>saveSigninOptions(methods,storage), location: { origin: "https://home.test", hostname: "home.test" },
+      ownerRecoveryCommand, createHomeWalletSignin, readSigninOptions:()=>readSigninOptions(signinStorage),readSigninChoice:()=>readSigninChoice(signinStorage),saveSigninOptions:methods=>saveSigninOptions(methods,signinStorage), location: { origin: "https://home.test", hostname: "home.test" },
       document: { querySelector: element, querySelectorAll: () => [], getElementById: id => element("#" + id), body: element("body") },
       window: { PublicKeyCredential: {}, location: { protocol: "https:" }, sessionStorage: storage, atob, btoa,
         addEventListener() {}, clearTimeout() {}, setTimeout() {}, setInterval() { return 1; }, clearInterval() {} },
