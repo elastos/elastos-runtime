@@ -101,7 +101,11 @@ pub(in crate::api) async fn watch_attempt_socket_for_test(
     let (_done, done) = watch::channel(true);
     state.walletconnect.inner.lock().await.sockets.insert(
         format!("test:{id}"),
-        SocketOwner { principal: attempts::actor(id), cancel, done },
+        SocketOwner {
+            principal: attempts::actor(id),
+            cancel,
+            done,
+        },
     );
     receiver
 }

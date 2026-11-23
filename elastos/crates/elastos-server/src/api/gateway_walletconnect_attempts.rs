@@ -414,7 +414,9 @@ async fn response<T: Serialize>(
 }
 
 pub(crate) async fn retire_inactive_attempts(state: &GatewayState) -> anyhow::Result<()> {
-    for id in crate::auth::wallet_signin::inactive_attempts(&home_launch_auth_data_dir(&state.data_dir))? {
+    for id in
+        crate::auth::wallet_signin::inactive_attempts(&home_launch_auth_data_dir(&state.data_dir))?
+    {
         retire_attempt(state, &id).await?;
     }
     Ok(())

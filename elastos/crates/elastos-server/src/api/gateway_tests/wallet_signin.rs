@@ -777,12 +777,22 @@ async fn wallet_explicit_account_removal_requires_exact_passkey_intent() {
         install_real_approver(f.data.path(), "person:local:alice", b"removal-approver");
     let state = test_state(f.data.path());
     let attempt = auth::begin(
-        f.data.path(), ORIGIN, "home-test",
-        serde_json::from_value(json!({"connector":"walletconnect","address":"","chain_id":0,
-            "browser_secret":BROWSER,"allow_temporary_internet":true})).unwrap(), None,
-    ).unwrap();
-    gateway_walletconnect::install_attempt(&state, &attempt, true, None).await.unwrap();
-    let relay_cancel = gateway_walletconnect::watch_attempt_socket_for_test(&state, &attempt.ceremony_id).await;
+        f.data.path(),
+        ORIGIN,
+        "home-test",
+        serde_json::from_value(
+            json!({"connector":"walletconnect","address":"","chain_id":0,
+            "browser_secret":BROWSER,"allow_temporary_internet":true}),
+        )
+        .unwrap(),
+        None,
+    )
+    .unwrap();
+    gateway_walletconnect::install_attempt(&state, &attempt, true, None)
+        .await
+        .unwrap();
+    let relay_cancel =
+        gateway_walletconnect::watch_attempt_socket_for_test(&state, &attempt.ceremony_id).await;
     let app = gateway_router(state);
 
     let home =
@@ -818,8 +828,13 @@ async fn wallet_explicit_account_removal_requires_exact_passkey_intent() {
     .await;
     let (status, result) = call_approved(&app, &path, &home, &approval, body).await;
     assert_eq!(status, StatusCode::OK, "{result}");
-    assert!(auth::inactive_attempts(f.data.path()).unwrap().contains(&attempt.ceremony_id));
-    assert!(*relay_cancel.borrow(), "committed account removal must close the open relay");
+    assert!(auth::inactive_attempts(f.data.path())
+        .unwrap()
+        .contains(&attempt.ceremony_id));
+    assert!(
+        *relay_cancel.borrow(),
+        "committed account removal must close the open relay"
+    );
 
     assert!(
         crate::auth::load_active_session_grant(f.data.path(), &session.session_id, now_ts())
@@ -959,28 +974,77 @@ async fn walletconnect_review_note_storage_post_advances_etag_and_fences_stale_w
     wallet_fixture::enabled(&f);
     let state = test_state(f.data.path());
     let attempt = auth::begin(
-        f.data.path(), ORIGIN, "home-test",
-        serde_json::from_value(json!({"connector":"walletconnect","address":"","chain_id":0,
-            "browser_secret":BROWSER,"allow_temporary_internet":true})).unwrap(), None,
-    ).unwrap();
-    gateway_walletconnect::install_attempt(&state, &attempt, true, None).await.unwrap();
+        f.data.path(),
+        ORIGIN,
+        "home-test",
+        serde_json::from_value(
+            json!({"connector":"walletconnect","address":"","chain_id":0,
+            "browser_secret":BROWSER,"allow_temporary_internet":true}),
+        )
+        .unwrap(),
+        None,
+    )
+    .unwrap();
+    gateway_walletconnect::install_attempt(&state, &attempt, true, None)
+        .await
+        .unwrap();
     let mut headers = HeaderMap::new();
-    headers.insert("x-elastos-wallet-attempt", attempt.attempt_token.as_ref().unwrap().parse().unwrap());
-    headers.insert("x-elastos-wallet-instance", attempt.instance_id.parse().unwrap());
-    headers.insert("if-match", format!("\"{}\"", attempt.storage_revision).parse().unwrap());
-    let write = || Ok(AxumJson(serde_json::from_value(json!({"key":"pairing","value":"first"})).unwrap()));
-    let response = gateway_walletconnect::storage(AxumState(state.clone()), axum::http::Method::POST, headers.clone(), write()).await;
+    headers.insert(
+        "x-elastos-wallet-attempt",
+        attempt.attempt_token.as_ref().unwrap().parse().unwrap(),
+    );
+    headers.insert(
+        "x-elastos-wallet-instance",
+        attempt.instance_id.parse().unwrap(),
+    );
+    headers.insert(
+        "if-match",
+        format!("\"{}\"", attempt.storage_revision).parse().unwrap(),
+    );
+    let write = || {
+        Ok(AxumJson(
+            serde_json::from_value(json!({"key":"pairing","value":"first"})).unwrap(),
+        ))
+    };
+    let response = gateway_walletconnect::storage(
+        AxumState(state.clone()),
+        axum::http::Method::POST,
+        headers.clone(),
+        write(),
+    )
+    .await;
     assert_eq!(response.status(), StatusCode::OK);
     let next = format!("\"{}\"", attempt.storage_revision + 1);
     assert_eq!(response.headers()["etag"], next);
-    let response = gateway_walletconnect::storage(AxumState(state.clone()), axum::http::Method::POST, headers.clone(), write()).await;
+    let response = gateway_walletconnect::storage(
+        AxumState(state.clone()),
+        axum::http::Method::POST,
+        headers.clone(),
+        write(),
+    )
+    .await;
     assert_eq!(response.status(), StatusCode::CONFLICT);
     headers.insert("if-match", next.parse().unwrap());
-    let remove = Ok(AxumJson(serde_json::from_value(json!({"key":"pairing","value":null})).unwrap()));
-    let response = gateway_walletconnect::storage(AxumState(state.clone()), axum::http::Method::POST, headers, remove).await;
+    let remove = Ok(AxumJson(
+        serde_json::from_value(json!({"key":"pairing","value":null})).unwrap(),
+    ));
+    let response = gateway_walletconnect::storage(
+        AxumState(state.clone()),
+        axum::http::Method::POST,
+        headers,
+        remove,
+    )
+    .await;
     assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(response.headers()["etag"], format!("\"{}\"", attempt.storage_revision + 2));
-    let body = axum::body::to_bytes(response.into_body(), 1024).await.unwrap();
+    assert_eq!(
+        response.headers()["etag"],
+        format!("\"{}\"", attempt.storage_revision + 2)
+    );
+    let body = axum::body::to_bytes(response.into_body(), 1024)
+        .await
+        .unwrap();
     assert_eq!(serde_json::from_slice::<Value>(&body).unwrap(), json!({}));
-    gateway_walletconnect::retire_attempt(&state, &attempt.ceremony_id).await.unwrap();
+    gateway_walletconnect::retire_attempt(&state, &attempt.ceremony_id)
+        .await
+        .unwrap();
 }

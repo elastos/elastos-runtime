@@ -16,7 +16,9 @@ fn input() -> WalletProofInput {
         nonce: [11; 32],
         issued_at: NOW,
         ttl_secs: DEFAULT_WALLET_PROOF_TTL_SECS,
-        purpose: WalletProofPurpose::SignIn { account_id: "account-1".into() },
+        purpose: WalletProofPurpose::SignIn {
+            account_id: "account-1".into(),
+        },
     }
 }
 
@@ -181,9 +183,15 @@ fn purposes() -> Vec<WalletProofPurpose> {
 }
 
 fn active_purposes() -> Vec<WalletProofPurpose> {
-    purposes().into_iter().filter(|purpose| matches!(purpose,
-        WalletProofPurpose::SignIn { .. } | WalletProofPurpose::AddMethod { .. }
-    )).collect()
+    purposes()
+        .into_iter()
+        .filter(|purpose| {
+            matches!(
+                purpose,
+                WalletProofPurpose::SignIn { .. } | WalletProofPurpose::AddMethod { .. }
+            )
+        })
+        .collect()
 }
 
 // Break: use one statement for all purposes, or omit expected-purpose comparison.
@@ -282,14 +290,20 @@ fn operation_name_and_digest_are_bound() {
             }
         }
         assert_ne!(changed.purpose.statement().unwrap(), original);
-        assert_eq!(WalletProofChallenge::new(changed, &SECRET).err(), Some(WalletProofError::InvalidInput));
+        assert_eq!(
+            WalletProofChallenge::new(changed, &SECRET).err(),
+            Some(WalletProofError::InvalidInput)
+        );
     }
 }
 
 // Break: omit the proposed method's digest from either add-purpose statement.
 #[test]
 fn added_method_digest_is_bound() {
-    for purpose in active_purposes().into_iter().filter(|p| matches!(p, WalletProofPurpose::AddMethod { .. })) {
+    for purpose in active_purposes()
+        .into_iter()
+        .filter(|p| matches!(p, WalletProofPurpose::AddMethod { .. }))
+    {
         let mut i = input();
         i.purpose = purpose;
         let original = WalletProofChallenge::new(i.clone(), &SECRET).unwrap();
@@ -321,7 +335,8 @@ fn added_method_digest_is_bound() {
 fn altered_text_is_refused_even_with_valid_signature() {
     let c = WalletProofChallenge::new(input(), &SECRET).unwrap();
     for message in [
-        c.message().replace("Sign in for account", "Add a method for account"),
+        c.message()
+            .replace("Sign in for account", "Add a method for account"),
         c.message().replace('\n', "\r\n"),
         format!("{}\n", c.message()),
         c.message().replace("Version: 1", "Version: 2"),
@@ -976,24 +991,63 @@ fn scripted_phone_signing_primitive_matches_full_home_proof() {
     let vector = &fixture["vectors"][0];
     let mut legacy = input();
     legacy.purpose = WalletProofPurpose::CreateAccount;
-    assert_eq!(WalletProofChallenge::new(legacy, &SECRET).err(), Some(WalletProofError::InvalidInput));
+    assert_eq!(
+        WalletProofChallenge::new(legacy, &SECRET).err(),
+        Some(WalletProofError::InvalidInput)
+    );
     let challenge = WalletProofChallenge::new(input(), &SECRET).unwrap();
-    let signature = hex::decode(vector["signature"].as_str().unwrap().strip_prefix("0x").unwrap()).unwrap();
-    assert!(matches!(verify(&challenge, vector["message"].as_str().unwrap(), &signature, NOW), Err(WalletProofError::TextMismatch)));
+    let signature = hex::decode(
+        vector["signature"]
+            .as_str()
+            .unwrap()
+            .strip_prefix("0x")
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(matches!(
+        verify(
+            &challenge,
+            vector["message"].as_str().unwrap(),
+            &signature,
+            NOW
+        ),
+        Err(WalletProofError::TextMismatch)
+    ));
     let mut store = Store::default();
-    let result = verify(&challenge, challenge.message(), &sign_with(7, challenge.message()), NOW).unwrap().consume(&mut store).unwrap();
-    assert_eq!(result.binding().subject, normalize_evm_address(vector["signer"].as_str().unwrap()));
+    let result = verify(
+        &challenge,
+        challenge.message(),
+        &sign_with(7, challenge.message()),
+        NOW,
+    )
+    .unwrap()
+    .consume(&mut store)
+    .unwrap();
+    assert_eq!(
+        result.binding().subject,
+        normalize_evm_address(vector["signer"].as_str().unwrap())
+    );
 }
 
 #[test]
 fn review_note_unused_wallet_proof_purposes_are_refused() {
     for purpose in [
         WalletProofPurpose::CreateAccount,
-        WalletProofPurpose::ConfirmOperation { account_id: "account-1".into(), operation: "export-kit".into(), digest: [1; 32] },
-        WalletProofPurpose::AddMethodDuringRecovery { account_id: "account-1".into(), method_digest: [2; 32] },
+        WalletProofPurpose::ConfirmOperation {
+            account_id: "account-1".into(),
+            operation: "export-kit".into(),
+            digest: [1; 32],
+        },
+        WalletProofPurpose::AddMethodDuringRecovery {
+            account_id: "account-1".into(),
+            method_digest: [2; 32],
+        },
     ] {
         let mut i = input();
         i.purpose = purpose;
-        assert_eq!(WalletProofChallenge::new(i, &SECRET).err(), Some(WalletProofError::InvalidInput));
+        assert_eq!(
+            WalletProofChallenge::new(i, &SECRET).err(),
+            Some(WalletProofError::InvalidInput)
+        );
     }
 }
