@@ -14,8 +14,8 @@ export async function selectSigninWallet(connector,options) {
   if(connector==='metamask') {
     const entries=signinBrowserWallets();
     if(!entries.length)throw fault('missing');
-    let preferred=entries.find(entry=>entry.rdns===(options.method?.providerId||'io.metamask'));
-    if(options.method?.providerId&&!preferred)throw fault('missing');
+    let preferred=entries.find(entry=>entry.rdns===(options.providerId||options.method?.providerId||'io.metamask'));
+    if((options.providerId||options.method?.providerId)&&!preferred)throw fault('missing');
     if(options.method&&!options.method.providerId) {
       let accountsVisible=false;
       const matches=await abortable(Promise.all(entries.map(async entry=>{

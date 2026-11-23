@@ -75,7 +75,7 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
           ...(['add'].includes(state.action)?{action:state.action}:{}),connector,address:'',chain_id:20,network:'',allow_temporary_internet:true,
         });
         current.wallet=await select(connector,{
-          signal:current.controller.signal,transport,method,action:state.action,
+          signal:current.controller.signal,transport,method,providerId:state.providerId,action:state.action,
           pairing:pairing=>{if(live(current))show('pairing',{pairing});},
           changed:(code='changed')=>{
             if(!live(current))return;
@@ -138,11 +138,11 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
   }
   return controls={
     get state(){return state;},
-    async start({action='signin',method=null,account='',accountId='',token='',automatic=false,delegateWalletConnect=false }={}) {
+    async start({action='signin',method=null,account='',accountId='',token='',automatic=false,delegateWalletConnect=false,providerId='' }={}) {
       if(!['signin','add','remove'].includes(action))throw fault('invalid');
       const previous=run;run=null;clearTimeout(timer);void clear(previous);
       const current=run={secret:randomSecret(),controller:new AbortController(),ceremonies:new Map(),deadline:now()+180};
-      state={stage:'choice',action,method,account,accountId,token,automatic,delegateWalletConnect,walletconnectAvailable:action==='signin'?null:true};show('choice');deadline(current,current.deadline);
+      state={stage:'choice',action,method,account,accountId,token,automatic,delegateWalletConnect,providerId,walletconnectAvailable:action==='signin'?null:true};show('choice');deadline(current,current.deadline);
       if(action==='signin') {
         let available=false;
         try {available=(await api('/api/auth/passkey/status')).walletconnect_signin_available===true;}catch{}

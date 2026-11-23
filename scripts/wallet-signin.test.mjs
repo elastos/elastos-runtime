@@ -426,6 +426,8 @@ test('a revoked WalletConnect option offers an error instead of an empty choice 
 test('Runtime connector choices work in a fresh browser and on a desktop surface',()=>{
   const runtime=['metamask','unisat','walletconnect'];
   assert.deepEqual(availableSigninOptions(runtime,{providers:[{rdns:'io.metamask'}],unisatAvailable:true,walletconnectAvailable:true}).map(m=>m.connector),runtime);
+  const extensions=availableSigninOptions(['metamask'],{providers:[{rdns:'io.rabby',name:'Rabby Wallet'},{rdns:'com.brave.wallet',name:'Brave Wallet'}]});
+  assert.deepEqual(extensions.map(m=>m.providerId),['io.rabby','com.brave.wallet']);
   assert.deepEqual(availableSigninOptions(runtime,{walletconnectAvailable:true}).map(m=>m.connector),['walletconnect']);
   assert.deepEqual(availableSigninOptions(['metamask'],{walletconnectAvailable:true}),[]);
 });
@@ -434,6 +436,7 @@ test('the browser stores only a closed remembered connector choice and clears tr
  const storage={getItem:k=>values.get(k),setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)};
  saveSigninChoice('metamask',storage);assert.equal(readSigninChoice(storage),'metamask');
  assert.equal(values.has('elastos.signin.options.v1'),false);
+ saveSigninChoice('metamask:com.brave.wallet',storage);assert.equal(readSigninChoice(storage),'metamask:com.brave.wallet');
  saveSigninChoice('0x'+'12'.repeat(20),storage);assert.equal(readSigninChoice(storage),'');
 });
 

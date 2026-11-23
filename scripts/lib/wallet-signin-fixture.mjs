@@ -155,7 +155,7 @@ const contexts=new WeakMap();
 async function openConnector(target) {
   let frame=document.querySelector('iframe[data-target='+target+']');
   if(!frame){frame=document.createElement('iframe');frame.dataset.target=target;frame.title=target;frame.style.cssText='position:fixed;inset:40px 0 0;width:100%;height:calc(100vh - 40px);border:0;z-index:20;background:var(--el-surface)';frame.setAttribute('sandbox','allow-scripts allow-forms');frame.src='/apps/'+target+'/?home_origin='+encodeURIComponent(location.origin)+'#home_token=fixture-'+target;document.querySelector('#fixture-desktop').append(frame);await new Promise(resolve=>frame.onload=resolve);}
-  document.querySelectorAll('#fixture-desktop iframe').forEach(f=>f.hidden=f!==frame);frame.hidden=false;return {isOpen:()=>frame.isConnected,homeToken:'fixture-'+target,source:frame.contentWindow};
+  document.querySelectorAll('#fixture-desktop iframe').forEach(f=>f.hidden=f!==frame);frame.hidden=false;if(target==='wallet')frame.contentWindow.postMessage({type:'elastos.wallet.connect-entry/v1'},'*');return {isOpen:()=>frame.isConnected,homeToken:'fixture-'+target,source:frame.contentWindow};
 }
 const selectWalletConnect=options=>selectConnectedWalletConnect(options,{open:()=>openConnector('wallet-walletconnect'),current:context=>[...document.querySelectorAll('#fixture-desktop iframe')].some(f=>f.isConnected&&f.contentWindow===context.source)});
 window.openedPrincipal='';

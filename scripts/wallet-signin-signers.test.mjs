@@ -108,3 +108,11 @@ test('locked extensions ask the user to open the wallet before retrying',async()
   try{await assert.rejects(selectSigninWallet('metamask',{...options(),method:{address,chain_id:20}}),{code:'wallet-unavailable'});assert(![...first.calls,...second.calls].some(c=>c.method==='eth_requestAccounts'||c.method==='personal_sign'));}
   finally{window.removeEventListener('eip6963:requestProvider',announce);}
 });
+
+test('the signed-out option binds its selected extension without a cached address',async()=>{
+ const rabby=provider(),brave=provider();
+ const announce=()=>{for(const [rdns,p]of [['io.rabby',rabby],['com.brave.wallet',brave]])window.dispatchEvent(new CustomEvent('eip6963:announceProvider',{detail:{provider:p.api,info:{uuid:rdns,rdns,name:rdns}}}));};
+ window.addEventListener('eip6963:requestProvider',announce);
+ try {const wallet=await selectSigninWallet('metamask',{...options(),providerId:'com.brave.wallet'});await wallet.sign('Home sign-in');wallet.close();assert.equal(brave.calls.filter(c=>c.method==='personal_sign').length,1);assert.equal(rabby.calls.length,0);}
+ finally {window.removeEventListener('eip6963:requestProvider',announce);}
+});

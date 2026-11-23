@@ -420,6 +420,10 @@ function onShellMenuCommand(event) {
 function onHomeConnectCommand(event) {
   if (event.source !== window.top || event.origin !== homeParentOrigin) return;
   const message = event.data;
+  if (message?.type === "elastos.wallet.connect-entry/v1" && Object.keys(message).length === 1) {
+    focusSignersSection();
+    return;
+  }
   if (message?.type !== "elastos.wallet.connect/v1"
     || Object.keys(message).length !== 2
     || !["wallet-metamask", "wallet-unisat", "wallet-walletconnect"].includes(message.target)) return;

@@ -228,8 +228,13 @@ async function launchWalletConnectorFromTrustedSource(context, target) {
 async function openSigninConnector(target) {
   if(target==='wallet') {
     requireHomeGuiActive('open Wallet');
-    await openTargetFromHomeGui('wallet', {query:{connect:'1'}});
-    return {};
+    await openTargetFromHomeGui('wallet');
+    const find=()=>[...launchedAppContexts.entries()].find(([,c])=>c.targetId==='wallet'&&c.source&&!c.source.closed&&c.expiresAt>Date.now());
+    const deadline=Date.now()+15000;
+    while(!find()){if(Date.now()>deadline)throw new Error('Wallet did not open');await new Promise(resolve=>setTimeout(resolve,50));}
+    const [token,context]=find();
+    context.source.postMessage({type:'elastos.wallet.connect-entry/v1'}, OPAQUE_FRAME_TARGET);
+    return {isOpen:()=>launchedAppContexts.has(token)};
   }
   if(!WALLET_CONNECTOR_TARGETS.has(target))throw new Error("Unknown wallet connector");
   requireHomeGuiActive("launch Wallet connector");
