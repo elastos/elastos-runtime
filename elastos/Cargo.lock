@@ -1597,7 +1597,7 @@ checksum = "9e5e8f6c15a24b9a3ee5efec809ccd006d3b30e8b3bb63c39af737c7f87daa1d"
 name = "elastos-auth"
 version = "2.0.2"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "bitcoin",
  "chrono",
  "hex",
@@ -1894,6 +1894,7 @@ dependencies = [
  "libc",
  "memchr",
  "noq",
+ "p256",
  "postcard",
  "qrcodegen",
  "rand 0.10.2",

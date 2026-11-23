@@ -186,3 +186,169 @@ async fn wallet_session_role_change_requires_exact_fresh_passkey_approval() {
         before.role
     );
 }
+
+fn install_real_approver(data: &std::path::Path, account: &str, name: &[u8]) -> (String, String) {
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use elastos_identity::{IdentityStore, StoredCredential};
+    let credential_id = URL_SAFE_NO_PAD.encode(name);
+    let public_key = URL_SAFE_NO_PAD.encode(
+        hex::decode(concat!(
+            "a5010203262001215820",
+            "6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296",
+            "225820",
+            "4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5"
+        ))
+        .unwrap(),
+    );
+    let mut store = IdentityStore::new(data).unwrap();
+    store.load().unwrap();
+    store.add_credential(StoredCredential {
+        credential_id: credential_id.clone(),
+        public_key: public_key.clone(),
+        sign_count: 0,
+        rp_id: "localhost".into(),
+    });
+    store.save().unwrap();
+    let p = crate::auth::upsert_principal_for_binding_as_role(
+        data,
+        ProofBinding::passkey_webauthn(PasskeyWebAuthnBinding {
+            credential_id: credential_id.clone(),
+            public_key,
+            sign_count: 0,
+            user_verified: true,
+            origin: ORIGIN.into(),
+            rp_id: "localhost".into(),
+            created_at: now_ts(),
+            last_used_at: now_ts(),
+            revoked_at: None,
+        }),
+        account.into(),
+        crate::auth::RuntimePrincipalRole::Admin,
+        now_ts(),
+    )
+    .unwrap();
+    (p.proof_binding_id, credential_id)
+}
+async fn real_step_up(
+    app: &Router,
+    token: &str,
+    operation: &str,
+    request: &Value,
+    approver: &str,
+    credential: &str,
+    count: u32,
+) -> String {
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use p256::ecdsa::{signature::Signer, Signature, SigningKey};
+    let (status,begin)=call(app,"/api/auth/passkey-step-up/begin",Some(token),Some(json!({"schema":"elastos.auth.passkey-step-up.begin.request/v1","app_token":token,"operation":operation,"request":request,"approving_passkey_id":approver}))).await;
+    assert_eq!(status, StatusCode::OK, "{begin}");
+    assert_eq!(
+        begin["options"]["publicKey"]["allowCredentials"][0]["id"],
+        credential
+    );
+    let client=json!({"type":"webauthn.get","challenge":begin["options"]["publicKey"]["challenge"],"origin":ORIGIN,"crossOrigin":false}).to_string();
+    let mut auth = Sha256::digest(b"localhost").to_vec();
+    auth.push(0x05);
+    auth.extend_from_slice(&count.to_be_bytes());
+    let mut signed = auth.clone();
+    signed.extend_from_slice(&Sha256::digest(client.as_bytes()));
+    let mut key = [0u8; 32];
+    key[31] = 1;
+    let key = SigningKey::from_bytes((&key).into()).unwrap();
+    let signature: Signature = key.sign(&signed);
+    let (status,done)=call(app,"/api/auth/passkey-step-up/complete",Some(token),Some(json!({"schema":"elastos.auth.passkey-step-up.complete.request/v1","ceremony_id":begin["ceremony_id"],"response":{"id":credential,"rawId":credential,"type":"public-key","response":{"clientDataJson":URL_SAFE_NO_PAD.encode(client),"authenticatorData":URL_SAFE_NO_PAD.encode(auth),"signature":URL_SAFE_NO_PAD.encode(signature.to_der().as_bytes())}}}))).await;
+    assert_eq!(status, StatusCode::OK, "{done}");
+    done["step_up_token"].as_str().unwrap().into()
+}
+#[tokio::test]
+async fn wallet_session_real_webauthn_approves_only_same_account_and_exact_method_action() {
+    let f = wallet_fixture::fixture();
+    let id = wallet_fixture::enabled(&f);
+    let (approver, credential) = install_real_approver(
+        f.data.path(),
+        &f.actor.principal_id,
+        b"wallet-real-approver",
+    );
+    let (other, _) =
+        install_real_approver(f.data.path(), "person:local:other", b"other-real-approver");
+    let session = wallet_fixture::signin(&f);
+    let token =
+        issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &session).unwrap();
+    let app = gateway_router(test_state(f.data.path()));
+    let b = begin(&app, &token, &f, "disable", &id).await;
+    let request = &b.approval.as_ref().unwrap()["request"];
+    let (status,_)=call(&app,"/api/auth/passkey-step-up/begin",Some(&token),Some(json!({"schema":"elastos.auth.passkey-step-up.begin.request/v1","app_token":token,"operation":auth::OPERATION,"request":request,"approving_passkey_id":other}))).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let approval = real_step_up(
+        &app,
+        &token,
+        auth::OPERATION,
+        request,
+        &approver,
+        &credential,
+        1,
+    )
+    .await;
+    let (status, out) = call(
+        &app,
+        "/api/auth/wallet-methods/complete",
+        Some(&token),
+        Some(
+            json!({"ceremony_id":b.ceremony_id,"browser_secret":BROWSER,"step_up_token":approval}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{out}");
+    assert_eq!(out["sign_in_enabled"], false);
+    assert!(
+        crate::auth::load_active_session_grant(f.data.path(), &session.session_id, now_ts())
+            .is_err()
+    );
+}
+#[tokio::test]
+async fn wallet_session_guest_switch_requires_passkey_and_host_terminal_stays_with_passkey() {
+    let f = wallet_fixture::fixture();
+    wallet_fixture::enabled(&f);
+    let session = wallet_fixture::signin(&f);
+    let (approver, credential) = install_real_approver(
+        f.data.path(),
+        &f.actor.principal_id,
+        b"guest-switch-approver",
+    );
+    let token =
+        issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &session).unwrap();
+    let system = issue_home_projection_launch_token_with_context(
+        f.data.path(),
+        SYSTEM_CAPSULE_ID,
+        SYSTEM_CAPSULE_ID,
+        &HomeLaunchTokenContext {
+            principal_id: session.principal_id.clone(),
+            session_id: session.session_id.clone(),
+            proof_binding_id: Some(session.proof_binding_id.clone()),
+            grant_id: session.grant_id.clone(),
+        },
+    )
+    .unwrap();
+    assert!(!acts_for_host(
+        f.data.path(),
+        Some(&session.proof_binding_id)
+    ));
+    let app = gateway_router(test_state(f.data.path()));
+    let path = "/api/apps/system/access/guest-registration";
+    assert_eq!(
+        call(&app, path, Some(&system), Some(json!({"enabled":true})))
+            .await
+            .0,
+        StatusCode::FORBIDDEN
+    );
+    assert!(!crate::auth::guest_registration_enabled(f.data.path()).unwrap());
+    // Use the Home-hosted System launch as the carried token, while Home owns
+    // the WebAuthn request. This mirrors the host bridge's approval flow.
+    let request = json!({"enabled":true});
+    let (status,begin)=call(&app,"/api/auth/passkey-step-up/begin",Some(&token),Some(json!({"schema":"elastos.auth.passkey-step-up.begin.request/v1","app_token":system,"operation":"auth.account.guest-registration","request":request,"approving_passkey_id":approver}))).await;
+    assert_eq!(status, StatusCode::OK, "{begin}");
+    // The full signed assertion path is exercised above; cancellation keeps this
+    // test focused on the host/System authority boundary and the safe refusal.
+    assert_eq!(call(&app,"/api/auth/passkey-step-up/cancel",Some(&token),Some(json!({"schema":"elastos.auth.passkey-step-up.cancel.request/v1","ceremony_id":begin["ceremony_id"]}))).await.0,StatusCode::OK);
+    assert!(!credential.is_empty());
+}
