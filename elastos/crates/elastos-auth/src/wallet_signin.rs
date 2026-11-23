@@ -99,6 +99,15 @@ impl WalletProofChallenge {
         ceremony_secret: &[u8; 32],
     ) -> Result<Self, WalletProofError> {
         use WalletProofError::InvalidInput;
+        // Runtime issues wallet proofs only for sign-in and method management.
+        if matches!(
+            input.purpose,
+            WalletProofPurpose::CreateAccount
+                | WalletProofPurpose::ConfirmOperation { .. }
+                | WalletProofPurpose::AddMethodDuringRecovery { .. }
+        ) {
+            return Err(InvalidInput);
+        }
         if [
             input.origin.len(),
             input.uri.len(),
