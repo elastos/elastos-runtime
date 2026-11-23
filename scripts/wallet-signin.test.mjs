@@ -441,3 +441,13 @@ test('the browser stores only a closed remembered connector choice and clears tr
 });
 
 }
+
+test('MetaMask enrollment keeps phone relay admission off until a phone method exists',async()=>{
+ const server=await signinFixture();server.state.methods=[sampleMethod('metamask')];
+ try {
+  const status=await (await fetch(server.origin+'/api/auth/passkey/status')).json();
+  assert.deepEqual(status.wallet_signin_connectors,['metamask']);assert.equal(status.walletconnect_signin_available,false);
+  const result=await fetch(server.origin+'/api/auth/wallet/signin/begin',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({connector:'walletconnect',address:'',chain_id:20,browser_secret:'a'.repeat(64),allow_temporary_internet:true})});
+  assert.equal(result.status,403);
+ }finally {await server.close();}
+});
