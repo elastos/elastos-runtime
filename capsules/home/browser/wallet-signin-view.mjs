@@ -1,4 +1,5 @@
 import {createWalletSigninFlow,connectorName,walletNetwork,walletSigninOriginAllowed} from './wallet-signin-flow.mjs';
+import {copyHomeWalletConnectionLink} from './home-clipboard-host.js?v=home-20260726a';
 import {selectSigninWallet} from './wallet-signin-signers.mjs';
 const titles={signin:'Sign in with wallet',add:'Add wallet',enable:'Turn on wallet sign-in',disable:'Turn off wallet sign-in',remove:'Remove wallet'};
 const effects={signin:'This wallet opens your existing Home account. Approvals need your passkey.',add:'Home will add this wallet to your account with Sign in off.',enable:'This wallet will be able to sign in to your Home account.',disable:'Home will turn off sign-in for this wallet and end its sign-in sessions. Wallet keeps its payment connections.',remove:'Home will remove this sign-in method and end its sign-in sessions. Wallet keeps its payment connections.'};
@@ -61,7 +62,7 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
       const copyStatus=node('p',null,'signin-note');copyStatus.setAttribute('role','status');
       dialog.append(button('Copy link',async event=>{
         event.currentTarget.disabled=true;
-        try{await navigator.clipboard.writeText(state.pairing.uri);copyStatus.textContent='Link copied.';}
+        try{await copyHomeWalletConnectionLink(state.pairing.uri);copyStatus.textContent='Link copied.';}
         catch{copyStatus.textContent='Could not copy. Try again.';}
         finally{if(event.target.isConnected)event.target.disabled=false;}
       },true),copyStatus);

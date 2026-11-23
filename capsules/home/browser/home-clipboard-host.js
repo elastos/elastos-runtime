@@ -319,6 +319,19 @@ export function createHomeClipboardPrompt({
   };
 }
 
+// The Home sign-in dialog owns this user-initiated copy before an app exists.
+export async function copyHomeWalletConnectionLink(text, {
+  windowRef = globalThis.window,
+  clipboard = globalThis.navigator?.clipboard,
+} = {}) {
+  if (!windowRef || windowRef.top !== windowRef ||
+      !homeClipboardValidWriteText("wallet-walletconnect", "wallet.connection-link", text) ||
+      typeof clipboard?.writeText !== "function") {
+    throw new Error("Home cannot copy this connection link");
+  }
+  await clipboard.writeText(text);
+}
+
 export function createHomeClipboardHost({
   clipboard = globalThis.navigator?.clipboard,
   prompt,

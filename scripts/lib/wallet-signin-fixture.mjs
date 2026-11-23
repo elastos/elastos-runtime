@@ -132,7 +132,7 @@ window.fixtureReady=true;
 let callback,holdSignature=false,chainOverride;const listeners=new Map();let account=${JSON.stringify(walletconnectAddress)},chain=20;
 const provider={connected:false,session:null,signer:{client:{core:{relayer:{transportClose:async()=>{}}}},abortPairingAttempt(){},async connect(){}},
  on(name,fn){listeners.set(name,fn);},removeListener(name){listeners.delete(name);},
- async connect(){listeners.get('display_uri')?.('wc:fixture@2?relay-protocol=irn&symKey=fixture');await new Promise(resolve=>callback=resolve);this.connected=true;this.session={expiry:Date.now()/1000+180};},
+ async connect(){listeners.get('display_uri')?.('wc:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@2?relay-protocol=irn&symKey=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');await new Promise(resolve=>callback=resolve);this.connected=true;this.session={expiry:Date.now()/1000+180};},
  async request({method,params}){await fetch('/api/fixture-sdk',{method:'POST',body:JSON.stringify({method,params})});if(method==='eth_accounts')return [account];if(method==='eth_chainId')return chainOverride??chain;if(method==='personal_sign'){if(holdSignature)await new Promise(()=>{});return 'fixture-signature';}}};
 addEventListener('message',event=>{if(event.source!==parent)return;if(event.data==='fixture-pair')callback?.();if(event.data==='fixture-sign-pending')holdSignature=true;if(event.data?.type==='fixture-network')chainOverride=event.data.chain;if(event.data==='fixture-account-change'){account='0x'+'34'.repeat(20);listeners.get('accountsChanged')?.([account]);}});
 export async function restoreWalletConnectEvm(options){await options.api('storage');await options.api('relay-admission',{method:'POST'});return provider;}
