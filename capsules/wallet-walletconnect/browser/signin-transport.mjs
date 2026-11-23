@@ -1,6 +1,9 @@
 // One opaque document owns one temporary SDK and its Runtime transport.
 import { connectWithView } from './walletconnect-pairing.mjs';
 import { createSigninTransportApi } from './signin-transport-api.mjs';
+import { installWalletConnectStorage } from './walletconnect-storage.mjs';
+const clearMemory = installWalletConnectStorage(window);
+addEventListener('pagehide', clearMemory, {once:true});
 const homeOrigin=new URLSearchParams(location.search).get('home_origin');
 let provider,adapter,identity,connecting=false;
 const fault=code=>Object.assign(new Error(code),{code});
