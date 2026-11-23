@@ -117,6 +117,10 @@ current switch and ownership, then issues the existing Home authentication resul
 (session_id, principal_id, proof_binding_id, expires_at, app_token) and session
 cookie. Home opens the same account directly. A proof for payment linking,
 adding a method, another Home or another browser cannot sign in.
+A wallet signature proves control of the wallet, not that the signer is at this
+browser; the browser secret binds the requester, and the screen tells the person
+which Home and wallet will sign in and asks him to continue only if he started
+sign-in in this browser.
 
 `POST /api/auth/wallet/cancel` accepts ceremony_id and browser_secret and returns
 `{"status":"cancelled"}`. It clears the ceremony's temporary transport authority.

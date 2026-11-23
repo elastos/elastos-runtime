@@ -267,6 +267,19 @@ fn reconcile(store: &mut Store, auth: &AuthState) {
             pending.cancelled = true;
         }
     }
+    // A legacy binary cannot see wallet sessions during Undo. Honor its
+    // account session revocations when this sidecar next observes the audit.
+    let revoked_accounts: Vec<_> = auth
+        .audit_chain
+        .iter()
+        .filter(|l| l.sequence > store.audit_sequence)
+        .filter_map(|l| auth.audit.iter().find(|e| e.event_id == l.event_id))
+        .filter(|e| e.event_type == "auth.session.revoked" && e.result == "ok")
+        .filter_map(|e| e.principal_id.as_ref())
+        .collect();
+    store
+        .sessions
+        .retain(|s| !revoked_accounts.contains(&&s.grant.principal_id));
     let added: Vec<_> = auth
         .audit_chain
         .iter()
@@ -309,6 +322,7 @@ fn reconcile(store: &mut Store, auth: &AuthState) {
             p.cancelled = true;
         }
         if p.action == "signin"
+            && !p.method.account_id.is_empty()
             && !p.method.address.is_empty()
             && !live
                 .iter()
@@ -332,13 +346,16 @@ fn mutate<T>(
     let lock = lock_auth_state_file(open_auth_state_lock(data)?)?;
     let auth = load_auth_state_with_identity(data)?.0;
     let mut store = read(data)?;
+    let before = serde_json::to_vec(&store)?;
     reconcile(&mut store, &auth);
     let now = now_ts();
     store.pending.retain(|p| p.expires_at > now);
     store.passkey_add.retain(|p| p.expires_at > now);
     store.sessions.retain(|s| s.grant.expires_at > now);
     let result = f(&auth, &mut store)?;
-    write(data, &store)?;
+    if serde_json::to_vec(&store)? != before {
+        write(data, &store)?;
+    }
     unlock_auth_state_file(lock)?;
     Ok(result)
 }
@@ -1790,6 +1807,286 @@ pub(crate) mod tests {
         .is_err());
     }
     #[test]
+    fn wallet_signed_out_ceremonies_verify_before_method_lookup() {
+        for chain in [20, 8453] {
+            let f = fixture();
+            enabled(&f);
+            let mut store = read(f.data.path()).unwrap();
+            store.methods[0].chain_id = chain;
+            let address_for = |key: &SigningKey| {
+                let point = key.verifying_key().to_encoded_point(false);
+                format!(
+                    "0x{}",
+                    hex::encode(&sha3::Keccak256::digest(&point.as_bytes()[1..])[12..])
+                )
+            };
+            let unknown_key = SigningKey::from_bytes((&[8u8; 32]).into()).unwrap();
+            let unknown = address_for(&unknown_key);
+            let disabled_key = SigningKey::from_bytes((&[9u8; 32]).into()).unwrap();
+            let mut disabled = store.methods[0].clone();
+            disabled.method_id = format!("proof:signin-wallet:{}", random_secret_hex());
+            disabled.address = address_for(&disabled_key);
+            disabled.sign_in_enabled = false;
+            store.methods.push(disabled.clone());
+            write(f.data.path(), &store).unwrap();
+            for connector in ["metamask", "walletconnect"] {
+                for (address, signing_key) in [
+                    (f.address.as_str(), &f.key),
+                    (unknown.as_str(), &unknown_key),
+                    (disabled.address.as_str(), &disabled_key),
+                ] {
+                    let b = begin(
+                        f.data.path(),
+                        ORIGIN,
+                        "home-test",
+                        serde_json::from_value(serde_json::json!({
+                            "connector":connector,
+                            "address":if connector == "walletconnect" { "" } else { address },
+                            "chain_id":chain,"browser_secret":BROWSER,
+                            "allow_temporary_internet":true
+                        }))
+                        .unwrap(),
+                        None,
+                    )
+                    .unwrap();
+                    let challenge = if connector == "walletconnect" {
+                        let selected = select(
+                            f.data.path(),
+                            &b.ceremony_id,
+                            BROWSER,
+                            ORIGIN,
+                            address.into(),
+                            chain,
+                        )
+                        .unwrap();
+                        assert!(attempt_context(
+                            f.data.path(),
+                            b.attempt_token.as_deref().unwrap(),
+                            &b.instance_id,
+                            now_ts()
+                        )
+                        .is_ok());
+                        selected
+                    } else {
+                        b
+                    };
+                    let (_, store) = loaded(f.data.path()).unwrap();
+                    assert!(
+                        !store
+                            .pending
+                            .iter()
+                            .find(|p| p.id == challenge.ceremony_id)
+                            .unwrap()
+                            .cancelled
+                    );
+                    let mut response = completion(&f, &challenge);
+                    // A well-sized invalid signature reaches cryptographic verification
+                    // for enabled, disabled and unknown wallets alike.
+                    response.signature = "00".repeat(65);
+                    let err = complete(f.data.path(), ORIGIN, &response, None, |_| {
+                        panic!("sign-in cannot approve")
+                    })
+                    .unwrap_err();
+                    assert_eq!(
+                        err.downcast_ref::<WalletProofError>(),
+                        Some(&WalletProofError::InvalidSignature),
+                        "{connector} {chain}: {err}"
+                    );
+                    response.signature = signed(signing_key, &challenge.message);
+                    let result = complete(f.data.path(), ORIGIN, &response, None, |_| {
+                        panic!("sign-in cannot approve")
+                    });
+                    if address == f.address {
+                        assert_eq!(result.unwrap()["principal_id"], f.actor.principal_id);
+                    } else {
+                        assert!(
+                            result.unwrap_err().is::<Refused>(),
+                            "valid proof still needs an enabled method"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn wallet_unisat_unknown_and_enabled_ceremonies_stay_live() {
+        let f = fixture();
+        enabled(&f);
+        let mut store = read(f.data.path()).unwrap();
+        store.methods[0].connector = "unisat".into();
+        store.methods[0].network = "bitcoin".into();
+        store.methods[0].chain_id = 0;
+        store.methods[0].address = "1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH".into();
+        write(f.data.path(), &store).unwrap();
+        for address in [
+            "1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH",
+            "1cMh228HTCiwS8ZsaakH8A8wze1JR5ZsP",
+        ] {
+            let b = begin(f.data.path(), ORIGIN, "home-test", serde_json::from_value(serde_json::json!({"connector":"unisat","address":address,"network":"bitcoin","browser_secret":BROWSER})).unwrap(), None).unwrap();
+            let (_, store) = loaded(f.data.path()).unwrap();
+            assert!(
+                !store
+                    .pending
+                    .iter()
+                    .find(|p| p.id == b.ceremony_id)
+                    .unwrap()
+                    .cancelled
+            );
+        }
+    }
+
+    #[test]
+    fn wallet_reads_preserve_file_identity_and_real_changes_are_saved() {
+        let f = fixture();
+        let id = enabled(&f);
+        let b = begin(
+            f.data.path(),
+            ORIGIN,
+            "home-test",
+            input("disable", &id, &f.address),
+            Some(f.actor.clone()),
+        )
+        .unwrap();
+        let file_path = path(f.data.path()).unwrap();
+        let held = File::open(&file_path).unwrap();
+        let before =
+            regular_file_identity_from_metadata(&held.metadata().unwrap(), "wallet state").unwrap();
+        for _ in 0..3 {
+            list(f.data.path(), &f.actor).unwrap();
+            intent(f.data.path(), &b.ceremony_id, BROWSER, ORIGIN, &f.actor).unwrap();
+            assert_eq!(
+                observe_optional_regular_file_identity(&file_path, "wallet state").unwrap(),
+                Some(before)
+            );
+        }
+        let pair = begin(f.data.path(), ORIGIN, "home-test", serde_json::from_value(serde_json::json!({"connector":"walletconnect","address":"","chain_id":0,"browser_secret":BROWSER,"allow_temporary_internet":true})).unwrap(), None).unwrap();
+        select(
+            f.data.path(),
+            &pair.ceremony_id,
+            BROWSER,
+            ORIGIN,
+            f.address.clone(),
+            20,
+        )
+        .unwrap();
+        assert_eq!(
+            read(f.data.path())
+                .unwrap()
+                .pending
+                .iter()
+                .find(|p| p.id == pair.ceremony_id)
+                .unwrap()
+                .method
+                .address,
+            f.address
+        );
+        let selected = File::open(&file_path).unwrap();
+        let selected_identity =
+            regular_file_identity_from_metadata(&selected.metadata().unwrap(), "wallet state")
+                .unwrap();
+        assert!(select(
+            f.data.path(),
+            &pair.ceremony_id,
+            BROWSER,
+            ORIGIN,
+            f.address.clone(),
+            20
+        )
+        .is_err());
+        assert_eq!(
+            observe_optional_regular_file_identity(&file_path, "wallet state").unwrap(),
+            Some(selected_identity)
+        );
+        // Reconciliation is a real change even on list: expired pending state
+        // must be removed and persisted, rather than skipped as a read.
+        let mut store = read(f.data.path()).unwrap();
+        store.pending[0].expires_at = 0;
+        write(f.data.path(), &store).unwrap();
+        list(f.data.path(), &f.actor).unwrap();
+        assert!(read(f.data.path())
+            .unwrap()
+            .pending
+            .iter()
+            .all(|p| p.expires_at > 0));
+    }
+
+    #[test]
+    fn wallet_undo_session_revocation_clears_only_affected_account_after_checkpoint() {
+        for result in ["ok", "denied"] {
+            let f = fixture();
+            let id = enabled(&f);
+            let old = signin(&f);
+            let other = add_account(f.data.path(), "bob", "bob-key");
+            let mut store = read(f.data.path()).unwrap();
+            let mut other_method = store.methods[0].clone();
+            other_method.method_id = format!("proof:signin-wallet:{}", random_secret_hex());
+            other_method.address = "0x000000000000000000000000000000000000beef".into();
+            other_method.account_id = other.principal_id.clone();
+            let auth = load_auth_state_with_identity(f.data.path()).unwrap().0;
+            other_method.witnesses = witnesses(&auth, &other.principal_id);
+            other_method.root_key = root_key(&auth, &other.principal_id);
+            let mut other_session = old.clone();
+            other_session.session_id = format!("auth:wallet:{}", random_secret_hex());
+            other_session.principal_id = other.principal_id.clone();
+            other_session.proof_binding_id = other_method.method_id.clone();
+            store.methods.push(other_method);
+            store.sessions.push(StoredAuthSession {
+                grant: other_session.clone(),
+                revoked_at: None,
+            });
+            write(f.data.path(), &store).unwrap();
+            let event = sign_audit_event(
+                f.data.path(),
+                RuntimeAuditEventV1 {
+                    schema: RuntimeAuditEventV1::SCHEMA.into(),
+                    event_id: format!("audit:{}", random_secret_hex()),
+                    event_type: "auth.session.revoked".into(),
+                    principal_id: Some(f.actor.principal_id.clone()),
+                    proof_binding_id: Some(f.actor.proof_binding_id.clone()),
+                    session_id: Some(f.actor.session_id.clone()),
+                    challenge_id: None,
+                    capsule_id: None,
+                    result: result.into(),
+                    reason: "legacy session revocation".into(),
+                    occurred_at: now_ts(),
+                    signer_did: None,
+                    signature: None,
+                },
+            )
+            .unwrap();
+            let mut legacy = load_auth_state_with_identity(f.data.path()).unwrap().0;
+            push_audit_event(f.data.path(), &mut legacy, event).unwrap();
+            save_auth_state(f.data.path(), &legacy, None).unwrap();
+            assert_eq!(
+                load_active_session_grant(f.data.path(), &old.session_id, now_ts()).is_err(),
+                result == "ok"
+            );
+            assert!(
+                load_active_session_grant(f.data.path(), &other_session.session_id, now_ts())
+                    .is_ok()
+            );
+            assert!(
+                principal(f.data.path(), &id).is_ok(),
+                "session revocation keeps the method"
+            );
+            // Persist the new checkpoint. The same historical event must leave
+            // a subsequent wallet sign-in usable.
+            list(f.data.path(), &f.actor).unwrap();
+            let fresh = signin(&f);
+            assert!(load_active_session_grant(f.data.path(), &fresh.session_id, now_ts()).is_ok());
+            let store = read(f.data.path()).unwrap();
+            assert_eq!(
+                store
+                    .sessions
+                    .iter()
+                    .any(|s| s.grant.session_id == old.session_id),
+                result != "ok"
+            );
+        }
+    }
+
+    #[test]
     fn wallet_undo_legacy_writer_preserves_additive_records_forward_signin_works() {
         let f = fixture();
         let id = enabled(&f);
@@ -2348,8 +2645,22 @@ mod review_probe {
             None,
         )
         .unwrap();
-        select(f.data.path(), &b.ceremony_id, BROWSER, ORIGIN, address.into(), 20).unwrap();
-        attempt_context(f.data.path(), b.attempt_token.as_deref().unwrap(), &b.instance_id, now_ts()).is_ok()
+        select(
+            f.data.path(),
+            &b.ceremony_id,
+            BROWSER,
+            ORIGIN,
+            address.into(),
+            20,
+        )
+        .unwrap();
+        attempt_context(
+            f.data.path(),
+            b.attempt_token.as_deref().unwrap(),
+            &b.instance_id,
+            now_ts(),
+        )
+        .is_ok()
     }
     fn metamask_pending_cancelled(f: &Fixture, address: &str) -> bool {
         let b = begin(
@@ -2361,7 +2672,12 @@ mod review_probe {
         )
         .unwrap();
         let (_, store) = loaded(f.data.path()).unwrap();
-        store.pending.iter().find(|p| p.id == b.ceremony_id).unwrap().cancelled
+        store
+            .pending
+            .iter()
+            .find(|p| p.id == b.ceremony_id)
+            .unwrap()
+            .cancelled
     }
     #[test]
     fn review_probe_signed_out_wallet_oracle() {
@@ -2373,5 +2689,7 @@ mod review_probe {
         let mm_known = metamask_pending_cancelled(&f, &f.address);
         let mm_unknown = metamask_pending_cancelled(&f, unknown);
         println!("PROBE wc_transport_live known={wc_known} unknown={wc_unknown}; metamask_pending_cancelled known={mm_known} unknown={mm_unknown}");
+        assert_eq!(wc_known, wc_unknown);
+        assert_eq!(mm_known, mm_unknown);
     }
 }

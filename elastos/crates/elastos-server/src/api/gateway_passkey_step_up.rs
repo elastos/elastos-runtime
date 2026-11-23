@@ -261,12 +261,13 @@ async fn passkey_step_up_begin_inner(
         input.request
     };
     let request_sha256 = canonical_request_sha256(&request)?;
+    let rp = super::super::handlers::identity::derive_rp(headers)?;
     let passkey = passkey_for_launch_selected(
         &state.data_dir,
         &launch,
         input.approving_passkey_id.as_deref(),
+        Some(&rp.id),
     )?;
-    let rp = super::super::handlers::identity::derive_rp(headers)?;
     if passkey.rp_id != rp.id {
         anyhow::bail!("passkey step-up relying party mismatch");
     }
@@ -766,12 +767,13 @@ fn passkey_for_launch(
     data_dir: &Path,
     launch: &RequiredHomeLaunchToken,
 ) -> anyhow::Result<PasskeyWebAuthnBinding> {
-    passkey_for_launch_selected(data_dir, launch, None)
+    passkey_for_launch_selected(data_dir, launch, None, None)
 }
 fn passkey_for_launch_selected(
     data_dir: &Path,
     launch: &RequiredHomeLaunchToken,
     selected: Option<&str>,
+    rp_id: Option<&str>,
 ) -> anyhow::Result<PasskeyWebAuthnBinding> {
     let session_proof = launch
         .context
@@ -802,6 +804,12 @@ fn passkey_for_launch_selected(
             .find(|p| {
                 p.principal_id == launch.context.principal_id
                     && selected.is_none_or(|id| id == p.proof_binding_id)
+                    && rp_id.is_none_or(|rp| {
+                        p.proof_binding
+                            .passkey
+                            .as_ref()
+                            .is_some_and(|key| key.rp_id == rp)
+                    })
             })
             .ok_or_else(|| anyhow::anyhow!("this account's passkey is unavailable"))?
     };

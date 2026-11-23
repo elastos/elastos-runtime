@@ -284,6 +284,54 @@ async fn real_step_up_for_launch(
     done["step_up_token"].as_str().unwrap().into()
 }
 #[tokio::test]
+async fn wallet_step_up_defaults_to_the_accounts_matching_relying_party() {
+    let f = wallet_fixture::fixture();
+    let id = wallet_fixture::enabled(&f);
+    let session = wallet_fixture::signin(&f);
+    // The first active passkey belongs to the account but to another RP.
+    crate::auth::mutate_auth_state_for_test(f.data.path(), |state| {
+        let first = state
+            .principals
+            .iter_mut()
+            .find(|p| p.proof_binding_id == f.actor.proof_binding_id)
+            .unwrap();
+        first.proof_binding.passkey.as_mut().unwrap().rp_id = "other.example".into();
+    });
+    let (_, credential) =
+        install_real_approver(f.data.path(), &f.actor.principal_id, b"matching-rp");
+    let token =
+        issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &session).unwrap();
+    let app = gateway_router(test_state(f.data.path()));
+    let b = begin(&app, &token, &f, "disable", &id).await;
+    let request = &b.approval.as_ref().unwrap()["request"];
+    let (status, result) = call(
+        &app,
+        "/api/auth/passkey-step-up/begin",
+        Some(&token),
+        Some(json!({
+            "schema":"elastos.auth.passkey-step-up.begin.request/v1", "app_token":token,
+            "operation":auth::OPERATION, "request":request
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    assert_eq!(result["options"]["publicKey"]["rpId"], "localhost");
+    assert_eq!(
+        result["options"]["publicKey"]["allowCredentials"][0]["id"],
+        credential
+    );
+    let (status, _) = call(&app, "/api/auth/passkey-step-up/begin", Some(&token), Some(json!({
+        "schema":"elastos.auth.passkey-step-up.begin.request/v1", "app_token":token,
+        "operation":auth::OPERATION, "request":request, "approving_passkey_id":f.actor.proof_binding_id
+    }))).await;
+    assert_ne!(
+        status,
+        StatusCode::OK,
+        "an explicit key still requires the request RP"
+    );
+}
+
+#[tokio::test]
 async fn wallet_session_real_webauthn_approves_only_same_account_and_exact_method_action() {
     let f = wallet_fixture::fixture();
     let id = wallet_fixture::enabled(&f);
