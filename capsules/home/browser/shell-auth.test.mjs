@@ -228,4 +228,6 @@ test("wallet sign-in opens the account when the contract result has no enrollmen
   const response = {app_token:"home", session_id:"session", principal_id:"principal:alex", proof_binding_id:"wallet:one"};
   assert.equal(profileReadinessActionTarget(response, {walletSignin:true}), "");
   assert.equal(profileReadinessActionTarget({}), "system", "passkey enrollment keeps its Profile check");
+  assert.equal(profileReadinessActionTarget({...response, profile_readiness:{schema:"elastos.profile.readiness/v1",status:"setup_required"}}, {walletSignin:true}), "system", "explicit Runtime readiness still owns setup");
+  assert.equal(profileReadinessActionTarget({...response, profile_readiness:{schema:"elastos.profile.readiness/v1",status:"ready"}}, {walletSignin:true}), "");
 });

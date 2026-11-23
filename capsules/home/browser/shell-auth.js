@@ -1063,7 +1063,7 @@ async function unlockComplete(response, flow = null) {
 }
 
 export function profileReadinessActionTarget(response, flow = null) {
-  if (flow?.walletSignin === true) return "";
+  if (flow?.walletSignin === true && response?.profile_readiness == null) return "";
   const readiness = response && typeof response.profile_readiness === "object"
     ? response.profile_readiness
     : null;
