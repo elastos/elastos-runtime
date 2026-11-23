@@ -127,3 +127,12 @@ test('browser choices follow wallet identity across EVM checksum casing and pres
   saveSigninOptions([{...wallet,address,sign_in_enabled:true}],storage);
   const [saved]=readSigninOptions(storage);assert.equal(saved.connector,'walletconnect');assert.equal(saved.providerId,undefined);assert.equal(saved.displayName,undefined);
 });
+test('closing the admitted phone window ends a pending signature without waiting for ceremony expiry',async t=>{
+  t.mock.timers.enable({apis:['setInterval']});
+  const listen=new EventTarget(),controller=new AbortController(),sent=[];
+  const source={closed:false,postMessage(data){sent.push(data);if(data.operation==='select')queueMicrotask(()=>listen.dispatchEvent(Object.assign(new Event('message'),{source,origin:'null',data:{type:'home:wallet-signin-effect-result',homeToken:'connector',requestId:data.requestId,result:{...wallet,connector:'walletconnect'}}})));}};
+  const selected=await selectConnectedWalletConnect({signal:controller.signal,method:wallet},{listen,open:async()=>({source,homeToken:'connector'}),current:()=>!source.closed});
+  const pending=selected.sign('Runtime message');const ended=assert.rejects(pending,{code:'disconnected'});
+  source.closed=true;t.mock.timers.tick(250);await ended;
+  assert.equal(sent.filter(data=>data.operation==='sign').length,1);controller.abort();
+});
