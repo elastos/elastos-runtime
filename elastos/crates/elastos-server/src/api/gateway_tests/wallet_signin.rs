@@ -470,3 +470,67 @@ async fn wallet_method_management_accepts_trusted_opaque_system_origin() {
     let response=app.oneshot(Request::builder().uri("/api/auth/wallet-methods/begin").method("POST").header(HOST,"localhost:61180").header("origin","null").header("x-elastos-home-token",token).header(CONTENT_TYPE,"application/json").body(Body::from(json!({"action":"add","connector":"metamask","address":f.address,"chain_id":20,"browser_secret":BROWSER}).to_string())).unwrap()).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 }
+
+#[test]
+fn wallet_account_role_is_rechecked_inside_approved_mutation_after_demotion() {
+    let f = wallet_fixture::fixture();
+    wallet_fixture::enabled(&f);
+    let session = wallet_fixture::signin(&f);
+    let _other_admin = passkey_authority_with_name_role_credential(
+        f.data.path(),
+        Some("Other admin"),
+        crate::auth::RuntimePrincipalRole::Admin,
+        "role-race-admin",
+    );
+    let target = passkey_authority_with_name_role_credential(
+        f.data.path(),
+        Some("Guest"),
+        crate::auth::RuntimePrincipalRole::Guest,
+        "role-race-guest",
+    );
+    let token =
+        issue_home_launch_token_for_auth_grant(f.data.path(), SYSTEM_CAPSULE_ID, &session).unwrap();
+    let request = json!({"proof_binding_id":target.proof_binding_id});
+    let approval = issue_passkey_step_up_token_for_test(
+        f.data.path(),
+        &token,
+        SYSTEM_CAPSULE_ID,
+        "auth.account.promote",
+        &request,
+    )
+    .unwrap();
+    let state = test_state(f.data.path());
+    let mut headers = HeaderMap::new();
+    headers.insert("x-elastos-home-token", token.parse().unwrap());
+    headers.insert("x-elastos-step-up-token", approval.parse().unwrap());
+    let context = runtime_wallet_authority_for_app_token(f.data.path(), SYSTEM_CAPSULE_ID, &token)
+        .home_launch_context();
+    // The initial HTTP Admin check won before this demotion. The callback must
+    // verify current role again while the auth mutation lock is held.
+    crate::auth::demote_passkey_to_guest(f.data.path(), &f.actor.proof_binding_id, now_ts())
+        .unwrap();
+    let result = crate::auth::promote_passkey_to_admin_approved(
+        f.data.path(),
+        &target.proof_binding_id,
+        now_ts(),
+        || {
+            crate::api::auth_gateway::wallet_session_approval(
+                &state,
+                &headers,
+                &context,
+                "auth.account.promote",
+                &request,
+            )
+        },
+    );
+    assert!(
+        result.is_err(),
+        "stale Admin approval changed an account role"
+    );
+    assert_eq!(
+        crate::auth::load_principal_for_proof_binding(f.data.path(), &target.proof_binding_id)
+            .unwrap()
+            .role,
+        crate::auth::RuntimePrincipalRole::Guest
+    );
+}

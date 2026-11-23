@@ -6,13 +6,15 @@ sign-in. Account IDs, roots, Profiles and passkey added-from labels stay unchang
 
 ## Rules
 
-An Admin manages his own wallet methods. Adding a wallet leaves Sign in off.
+An Admin adds and enables his own wallet methods. Each account can disable or
+remove its own methods, including after demotion to Guest. Adding a wallet leaves Sign in off.
 Turning Sign in on requires a fresh signature from that wallet and fresh passkey
 approval for the exact action. Turning it off or removing it requires fresh
 passkey approval. Payment links acquire sign-in authority only through this
 explicit operation. Wallet sessions can use Home; passkeys approve sensitive actions.
-Every account retains a passkey. Removing the final account passkey clears its
-wallet access; the Home's final Admin passkey remains protected. Removal and switch
+Ordinary method removal keeps each account's final passkey. A separate explicit
+Remove account intent can remove that account and clears its wallet access. The
+Home's final Admin passkey remains protected. Removal and switch
 off end the wallet's sessions and pending sign-in attempts. Concurrent changes are
 serialized. Recovery Kit recovery keeps the passkey recovery flow and clears the
 recovered account's wallets.
@@ -34,7 +36,8 @@ A caller generates a random 32-byte hex `browser_secret` per ceremony, keeps it
 in tab memory, and sends it on begin and complete. Runtime stores its digest.
 Secrets and signatures stay out of URLs, logs and durable browser storage.
 
-Errors use HTTP 400/422 for invalid input, 403 for refused authority/proof, 409 for
+Errors use HTTP 400/422 for malformed JSON or schema, 403 for invalid wallet
+addresses, browser secrets or refused authority/proof, 409 for
 changed state or conflicting ownership, 429 for capacity and 503 for unavailable
 transport. JSON is `{"error":"wallet_signin_refused"}` for unknown wallet, wrong
 browser, expired/replayed proof and disabled method. Signed-out responses disclose
@@ -216,3 +219,15 @@ sign-in keeps the same-origin Home boundary; other capsules receive a refusal.
 `walletconnect_signin_available`. Home uses them to show the wallet choice and its
 compatible relay option. These booleans reveal availability; account names,
 addresses and method IDs remain in the authenticated account list.
+
+## Explicit account removal
+
+Ordinary passkey removal preserves the account's final passkey under concurrent
+requests. A screen that offers Remove account shows the affected account and
+explains that all its passkeys, wallet sign-in methods and sessions will end.
+It calls `/api/auth/passkeys/<target>/revoke` with
+`{"remove_account":true,"account_id":"<exact account>"}` and a fresh passkey token
+in `x-elastos-step-up-token`. The operation is `auth.account.remove` and its exact
+request is `{"proof_binding_id":"<target>","account_id":"<exact account>","remove_account":true}`.
+This approval is required for both passkey and wallet sessions. The Home keeps
+its final Admin account. An omitted body means ordinary method removal.

@@ -517,12 +517,29 @@ fn principal_root_migration_required_response(err: &anyhow::Error) -> Option<Res
         .map(|outcome| (StatusCode::CONFLICT, Json(outcome.clone())).into_response())
 }
 
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PasskeyRevokeRequest {
+    #[serde(default)]
+    remove_account: bool,
+    #[serde(default)]
+    account_id: Option<String>,
+}
+
 pub async fn passkey_revoke(
     State(state): State<GatewayState>,
     Path(proof_binding_id): Path<String>,
     headers: HeaderMap,
+    input: Option<Json<PasskeyRevokeRequest>>,
 ) -> Response {
-    match passkey_revoke_inner(&state, &headers, proof_binding_id).await {
+    match passkey_revoke_scoped_inner(
+        &state,
+        &headers,
+        proof_binding_id,
+        input.map(|Json(r)| r).unwrap_or_default(),
+    )
+    .await
+    {
         Ok((response, clear_current_cookie)) => {
             let mut http_response = Json(response).into_response();
             if clear_current_cookie {
@@ -1216,6 +1233,16 @@ pub(in crate::api) fn wallet_session_approval(
         .as_deref()
         .is_some_and(|id| id.starts_with("proof:signin-wallet:"))
     {
+        if matches!(
+            operation,
+            "auth.account.promote" | "auth.account.demote" | "auth.account.guest-registration"
+        ) {
+            let current_actor = require_active_principal_for_context(state, context)?;
+            anyhow::ensure!(
+                crate::auth::is_admin(&current_actor),
+                "admin passkey required for account administration"
+            );
+        }
         let launch = require_home_launch_token_binding(
             &state.data_dir,
             headers,
@@ -1251,45 +1278,103 @@ fn account_passkey_for_context(
     .ok_or_else(|| anyhow::anyhow!("account passkey unavailable"))
 }
 
+#[cfg(test)]
 async fn passkey_revoke_inner(
     state: &GatewayState,
     headers: &HeaderMap,
     proof_binding_id: String,
 ) -> anyhow::Result<(PasskeyRevokeResponse, bool)> {
+    passkey_revoke_scoped_inner(
+        state,
+        headers,
+        proof_binding_id,
+        PasskeyRevokeRequest::default(),
+    )
+    .await
+}
+
+async fn passkey_revoke_scoped_inner(
+    state: &GatewayState,
+    headers: &HeaderMap,
+    proof_binding_id: String,
+    request: PasskeyRevokeRequest,
+) -> anyhow::Result<(PasskeyRevokeResponse, bool)> {
     let context = require_auth_home_or_system_context(state, headers)?;
     validate_passkey_proof_binding_id(&proof_binding_id)?;
+    let target = crate::auth::load_principal_for_proof_binding(&state.data_dir, &proof_binding_id)?;
+    let account_id = request
+        .account_id
+        .as_deref()
+        .unwrap_or(&target.principal_id);
+    anyhow::ensure!(
+        account_id == target.principal_id
+            && (!request.remove_account || request.account_id.is_some()),
+        "explicit account removal intent required"
+    );
     let actor = account_passkey_for_context(state, &context)?;
     let actor_proof_binding_id = actor.proof_binding_id.as_str();
     // The identity lock serializes every credential-store change with the one
     // auth write that checks and revokes.
     let manager = state.identity_manager()?;
     let mut manager = manager.lock().await;
+    let removed_credentials: Vec<_> = crate::auth::list_passkey_principals(&state.data_dir)?
+        .into_iter()
+        .filter(|p| {
+            if request.remove_account {
+                p.principal_id == account_id
+            } else {
+                p.proof_binding_id == proof_binding_id
+            }
+        })
+        .filter_map(|p| p.proof_binding.passkey.map(|k| k.credential_id))
+        .collect();
     let now = crate::auth::now_ts();
     crate::auth::revoke_passkey_for_actor_approved(
         &state.data_dir,
         &context.principal_id,
         actor_proof_binding_id,
-        &proof_binding_id,
+        crate::auth::PasskeyRemovalTarget {
+            proof_binding_id: &proof_binding_id,
+            account_id,
+            remove_account: request.remove_account,
+        },
         now,
         || {
-            wallet_session_approval(
-                state,
-                headers,
-                &context,
-                "auth.passkey.remove",
-                &json!({"proof_binding_id":proof_binding_id}),
-            )
+            if request.remove_account {
+                let launch = require_home_launch_token_binding(
+                    &state.data_dir,
+                    headers,
+                    &[HOME_CAPSULE_ID, super::gateway::SYSTEM_CAPSULE_ID],
+                )?;
+                let token = headers
+                    .get("x-elastos-step-up-token")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or_default();
+                consume_passkey_step_up_token(
+                    &state.data_dir,
+                    token,
+                    &launch,
+                    180,
+                    "auth.account.remove",
+                    &json!({"proof_binding_id":proof_binding_id,"account_id":account_id,"remove_account":true}),
+                )
+            } else {
+                wallet_session_approval(
+                    state,
+                    headers,
+                    &context,
+                    "auth.passkey.remove",
+                    &json!({"proof_binding_id":proof_binding_id}),
+                )
+            }
         },
     )?;
     // The credential follows the committed revocation; when an earlier
     // attempt already removed it, there is nothing left to do.
-    if let Some(credential_id) = manager
-        .credentials()
-        .into_iter()
-        .find(|credential| passkey_proof_binding_id(credential) == proof_binding_id)
-        .map(|credential| credential.credential_id)
-    {
-        manager.revoke_credential(&credential_id)?;
+    for credential in manager.credentials() {
+        if removed_credentials.contains(&credential.credential_id) {
+            manager.revoke_credential(&credential.credential_id)?;
+        }
     }
     drop(manager);
     let actor = context.principal_id.clone();
@@ -1307,8 +1392,8 @@ async fn passkey_revoke_inner(
         }),
     )?;
 
-    let clear_current_cookie =
-        context.proof_binding_id.as_deref() == Some(proof_binding_id.as_str());
+    let clear_current_cookie = (request.remove_account && context.principal_id == account_id)
+        || context.proof_binding_id.as_deref() == Some(proof_binding_id.as_str());
     Ok((
         PasskeyRevokeResponse {
             status: "revoked".to_string(),
@@ -4997,6 +5082,7 @@ pub(in crate::api) fn auth_error_response(err: anyhow::Error) -> Response {
     }
     if err.is::<RecoveryKitPreparationRefused>()
         || err.is::<crate::auth::LastAdminPasskeyRemovalDenied>()
+        || err.is::<crate::auth::LastAccountMethodRemovalDenied>()
     {
         return (StatusCode::CONFLICT, err.to_string()).into_response();
     }
@@ -10964,12 +11050,32 @@ mod tests {
             "test passkey grant",
         )
         .unwrap();
-        let headers = home_token_headers(&grant.home_token);
+        let mut headers = home_token_headers(&grant.home_token);
+        let intent = json!({"proof_binding_id":grant.proof_binding_id,"account_id":grant.principal_id,"remove_account":true});
+        let approval = super::super::gateway::issue_passkey_step_up_token_for_test(
+            temp.path(),
+            &grant.home_token,
+            HOME_CAPSULE_ID,
+            "auth.account.remove",
+            &intent,
+        )
+        .unwrap();
+        headers.insert(
+            "x-elastos-step-up-token",
+            HeaderValue::from_str(&approval).unwrap(),
+        );
 
-        let (response, clear_cookie) =
-            passkey_revoke_inner(&state, &headers, grant.proof_binding_id.clone())
-                .await
-                .unwrap();
+        let (response, clear_cookie) = passkey_revoke_scoped_inner(
+            &state,
+            &headers,
+            grant.proof_binding_id.clone(),
+            PasskeyRevokeRequest {
+                remove_account: true,
+                account_id: Some(grant.principal_id.clone()),
+            },
+        )
+        .await
+        .unwrap();
 
         assert_eq!(response.status, "revoked");
         assert_eq!(response.proof_binding_id, grant.proof_binding_id);
@@ -11086,10 +11192,28 @@ mod tests {
         )
         .unwrap();
 
-        let (response, clear_cookie) = passkey_revoke_inner(
+        let intent = json!({"proof_binding_id":guest.proof_binding_id,"account_id":guest.principal_id,"remove_account":true});
+        let approval = super::super::gateway::issue_passkey_step_up_token_for_test(
+            temp.path(),
+            &admin.home_token,
+            HOME_CAPSULE_ID,
+            "auth.account.remove",
+            &intent,
+        )
+        .unwrap();
+        let mut headers = home_token_headers(&admin.home_token);
+        headers.insert(
+            "x-elastos-step-up-token",
+            HeaderValue::from_str(&approval).unwrap(),
+        );
+        let (response, clear_cookie) = passkey_revoke_scoped_inner(
             &state,
-            &home_token_headers(&admin.home_token),
+            &headers,
             guest.proof_binding_id.clone(),
+            PasskeyRevokeRequest {
+                remove_account: true,
+                account_id: Some(guest.principal_id.clone()),
+            },
         )
         .await
         .unwrap();

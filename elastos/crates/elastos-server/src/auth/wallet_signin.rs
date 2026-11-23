@@ -556,7 +556,12 @@ pub(crate) fn begin(
     let now = now_ts();
     mutate(data, |auth, store| {
         if let Some(actor) = &actor {
-            require_actor(auth, store, actor, true)?;
+            require_actor(
+                auth,
+                store,
+                actor,
+                matches!(input.action.as_str(), "add" | "enable"),
+            )?;
         } else {
             require(auth.principals.iter().any(active_passkey))?;
         }
@@ -698,8 +703,13 @@ pub(crate) fn intent(
     actor: &AuthSessionGrantV1,
 ) -> anyhow::Result<Value> {
     mutate(data, |auth, store| {
-        require_actor(auth, store, actor, true)?;
         let p = pending(store, id, browser, origin)?;
+        require_actor(
+            auth,
+            store,
+            actor,
+            matches!(p.action.as_str(), "add" | "enable"),
+        )?;
         require(same_actor(p.actor.as_ref(), Some(actor)))?;
         Ok(approval(p))
     })
@@ -788,7 +798,12 @@ pub(crate) fn complete(
         let p = pending(store, &input.ceremony_id, &input.browser_secret, origin)?.clone();
         require(same_actor(p.actor.as_ref(), actor))?;
         if let Some(actor) = actor {
-            require_actor(auth, store, actor, true)?;
+            require_actor(
+                auth,
+                store,
+                actor,
+                matches!(p.action.as_str(), "add" | "enable"),
+            )?;
         }
         let response_digest = hex::encode(digest(&format!(
             "{}:{}:{}",
@@ -1003,12 +1018,17 @@ pub(crate) fn approval_intent(
     actor: &AuthSessionGrantV1,
 ) -> anyhow::Result<Value> {
     mutate(data, |auth, store| {
-        require_actor(auth, store, actor, true)?;
         let p = store
             .pending
             .iter()
             .find(|p| p.id == id && !p.cancelled && p.expires_at > now_ts() && p.result.is_none())
             .ok_or(Refused)?;
+        require_actor(
+            auth,
+            store,
+            actor,
+            matches!(p.action.as_str(), "add" | "enable"),
+        )?;
         require(same_actor(p.actor.as_ref(), Some(actor)))?;
         Ok(approval(p))
     })
@@ -1592,12 +1612,17 @@ pub(crate) mod tests {
         enabled(&f);
         let session = signin(&f);
         let other = add_account(f.data.path(), "bob", "bob-key");
-        revoke_passkey_for_actor(
+        revoke_passkey_for_actor_approved(
             f.data.path(),
             &other.principal_id,
             &other.proof_binding_id,
-            &f.actor.proof_binding_id,
+            PasskeyRemovalTarget {
+                proof_binding_id: &f.actor.proof_binding_id,
+                account_id: &f.actor.principal_id,
+                remove_account: true,
+            },
             now_ts(),
+            || Ok(()),
         )
         .unwrap();
         assert!(load_active_session_grant(f.data.path(), &session.session_id, now_ts()).is_err());
@@ -1607,7 +1632,68 @@ pub(crate) mod tests {
             .any(|p| p.principal_id == other.principal_id));
     }
     #[test]
-    fn wallet_last_admin_removals_race_leaves_one_passkey() {
+    fn wallet_ordinary_removals_race_keeps_each_accounts_last_passkey() {
+        let f = fixture();
+        enabled(&f);
+        let second = add_account(f.data.path(), "alice", "alice-second");
+        add_account(f.data.path(), "bob", "bob-key");
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        std::thread::scope(|scope| {
+            let mut workers = Vec::new();
+            for key in [&f.actor, &second] {
+                let ready = barrier.clone();
+                let data = f.data.path();
+                workers.push(scope.spawn(move || {
+                    ready.wait();
+                    revoke_passkey_for_actor(
+                        data,
+                        &key.principal_id,
+                        &key.proof_binding_id,
+                        &key.proof_binding_id,
+                        now_ts(),
+                    )
+                    .is_ok()
+                }));
+            }
+            assert_eq!(
+                workers
+                    .into_iter()
+                    .map(|w| w.join().unwrap())
+                    .filter(|ok| *ok)
+                    .count(),
+                1
+            );
+        });
+        assert_eq!(
+            active_passkey_principals(f.data.path())
+                .unwrap()
+                .iter()
+                .filter(|p| p.principal_id == f.actor.principal_id)
+                .count(),
+            1
+        );
+        assert_eq!(signin(&f).principal_id, f.actor.principal_id);
+    }
+    #[test]
+    fn wallet_guest_can_disable_own_wallet_but_cannot_enable_it() {
+        let f = fixture();
+        let id = enabled(&f);
+        let session = signin(&f);
+        add_account(f.data.path(), "bob", "bob-key");
+        demote_passkey_to_guest(f.data.path(), &f.actor.proof_binding_id, now_ts()).unwrap();
+        change(&f, "disable", &id);
+        assert!(load_active_session_grant(f.data.path(), &session.session_id, now_ts()).is_err());
+        assert!(begin(
+            f.data.path(),
+            ORIGIN,
+            "home-test",
+            input("enable", &id, ""),
+            Some(f.actor.clone())
+        )
+        .is_err());
+    }
+    #[test]
+    fn wallet_explicit_account_removals_race_leaves_one_home_admin() {
         let f = fixture();
         let b = add_account(f.data.path(), "bob", "bob-key");
         let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
@@ -1617,12 +1703,17 @@ pub(crate) mod tests {
             let ready = barrier.clone();
             let first = scope.spawn(move || {
                 ready.wait();
-                revoke_passkey_for_actor(
+                revoke_passkey_for_actor_approved(
                     data,
                     &a.principal_id,
                     &a.proof_binding_id,
-                    &a.proof_binding_id,
+                    PasskeyRemovalTarget {
+                        proof_binding_id: &a.proof_binding_id,
+                        account_id: &a.principal_id,
+                        remove_account: true,
+                    },
                     now_ts(),
+                    || Ok(()),
                 )
                 .is_ok()
             });
@@ -1630,12 +1721,17 @@ pub(crate) mod tests {
             let ready = barrier.clone();
             let second = scope.spawn(move || {
                 ready.wait();
-                revoke_passkey_for_actor(
+                revoke_passkey_for_actor_approved(
                     data,
                     &b.principal_id,
                     &b.proof_binding_id,
-                    &b.proof_binding_id,
+                    PasskeyRemovalTarget {
+                        proof_binding_id: &b.proof_binding_id,
+                        account_id: &b.principal_id,
+                        remove_account: true,
+                    },
                     now_ts(),
+                    || Ok(()),
                 )
                 .is_ok()
             });

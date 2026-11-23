@@ -6699,11 +6699,23 @@ impl std::fmt::Display for LastAdminPasskeyRemovalDenied {
 
 impl std::error::Error for LastAdminPasskeyRemovalDenied {}
 
-/// Removes one passkey in one auth write. The actor's passkey, the permission
-/// and the last-admin rule are checked under the same lock as the
-/// revocation, so two concurrent removals cannot both pass and leave the Home
-/// without an admin passkey. A passkey already revoked returns its record unchanged,
-/// so a retry can finish removing its credential.
+#[derive(Debug)]
+pub(crate) struct LastAccountMethodRemovalDenied;
+impl std::fmt::Display for LastAccountMethodRemovalDenied {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Keep a passkey on this account, or choose Remove account.")
+    }
+}
+impl std::error::Error for LastAccountMethodRemovalDenied {}
+#[derive(Clone, Copy)]
+pub(crate) struct PasskeyRemovalTarget<'a> {
+    pub proof_binding_id: &'a str,
+    pub account_id: &'a str,
+    pub remove_account: bool,
+}
+
+/// Ordinary method removal preserves a passkey on the account. Account removal
+/// has a distinct, passkey-approved intent and preserves another Home Admin.
 pub fn revoke_passkey_for_actor(
     data_dir: &Path,
     actor_principal_id: &str,
@@ -6711,62 +6723,101 @@ pub fn revoke_passkey_for_actor(
     proof_binding_id: &str,
     revoked_at: u64,
 ) -> anyhow::Result<PrincipalRecord> {
+    let target = load_principal_for_proof_binding(data_dir, proof_binding_id)?;
     revoke_passkey_for_actor_approved(
         data_dir,
         actor_principal_id,
         actor_proof_binding_id,
-        proof_binding_id,
+        PasskeyRemovalTarget {
+            proof_binding_id,
+            account_id: &target.principal_id,
+            remove_account: false,
+        },
         revoked_at,
         || Ok(()),
     )
 }
-
 pub(crate) fn revoke_passkey_for_actor_approved(
     data_dir: &Path,
     actor_principal_id: &str,
     actor_proof_binding_id: &str,
-    proof_binding_id: &str,
+    request: PasskeyRemovalTarget<'_>,
     revoked_at: u64,
     approve: impl FnOnce() -> anyhow::Result<()>,
 ) -> anyhow::Result<PrincipalRecord> {
     mutate_auth_state(data_dir, |state| {
-        approve()?;
         let actor = state
             .principals
             .iter()
-            .find(|principal| {
-                principal.proof_binding_id == actor_proof_binding_id
-                    && principal.principal_id == actor_principal_id
+            .find(|p| {
+                p.proof_binding_id == actor_proof_binding_id && p.principal_id == actor_principal_id
             })
             .ok_or_else(|| anyhow!("auth session principal mismatch"))?;
         ensure_proof_binding_not_revoked(actor)?;
-        if actor_proof_binding_id != proof_binding_id && actor.role != RuntimePrincipalRole::Admin {
-            anyhow::bail!("admin passkey required to remove another passkey");
-        }
         let target = state
             .principals
             .iter()
-            .find(|principal| principal.proof_binding_id == proof_binding_id)
+            .find(|p| p.proof_binding_id == request.proof_binding_id)
+            .cloned()
             .ok_or_else(|| anyhow!("passkey proof binding not found"))?;
-        if target.proof_binding.passkey.is_none() {
-            anyhow::bail!("proof binding is not a passkey");
+        anyhow::ensure!(
+            target.principal_id == request.account_id,
+            "account removal target changed"
+        );
+        anyhow::ensure!(
+            actor.principal_id == target.principal_id || actor.role == RuntimePrincipalRole::Admin,
+            "admin passkey required to remove another account's method"
+        );
+        anyhow::ensure!(
+            target.proof_binding.passkey.is_some(),
+            "proof binding is not a passkey"
+        );
+        if !active_passkey(&target) && !request.remove_account {
+            return Ok(target);
         }
-        if !active_passkey(target) {
-            return Ok(target.clone());
+        let remaining_admin = state.principals.iter().any(|p| {
+            active_passkey(p)
+                && p.role == RuntimePrincipalRole::Admin
+                && if request.remove_account {
+                    p.principal_id != target.principal_id
+                } else {
+                    p.proof_binding_id != request.proof_binding_id
+                }
+        });
+        if target.role == RuntimePrincipalRole::Admin && !remaining_admin {
+            return Err(LastAdminPasskeyRemovalDenied.into());
         }
-        let others = || {
+        if !request.remove_account
+            && !state.principals.iter().any(|p| {
+                p.principal_id == target.principal_id
+                    && p.proof_binding_id != request.proof_binding_id
+                    && active_passkey(p)
+            })
+        {
+            return Err(LastAccountMethodRemovalDenied.into());
+        }
+        approve()?;
+        if request.remove_account {
+            let ids: Vec<_> = state
+                .principals
+                .iter()
+                .filter(|p| {
+                    p.principal_id == target.principal_id && p.proof_binding.passkey.is_some()
+                })
+                .map(|p| p.proof_binding_id.clone())
+                .collect();
+            for id in ids {
+                revoke_binding_in_state(state, &id, revoked_at)?;
+            }
             state
                 .principals
                 .iter()
-                .filter(|principal| principal.proof_binding_id != proof_binding_id)
-                .filter(|principal| active_passkey(principal))
-        };
-        if target.role == RuntimePrincipalRole::Admin
-            && !others().any(|principal| principal.role == RuntimePrincipalRole::Admin)
-        {
-            return Err(LastAdminPasskeyRemovalDenied.into());
+                .find(|p| p.proof_binding_id == request.proof_binding_id)
+                .cloned()
+                .ok_or_else(|| anyhow!("account removal target unavailable"))
+        } else {
+            revoke_binding_in_state(state, request.proof_binding_id, revoked_at)
         }
-        revoke_binding_in_state(state, proof_binding_id, revoked_at)
     })
 }
 
