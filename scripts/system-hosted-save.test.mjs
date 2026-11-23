@@ -1,3 +1,4 @@
+import { chromium, jsonResponse, makeAppearanceRecord, makeSystemSummary, startSystemFixtureServer } from "./system-uiux-fixture.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -1347,7 +1348,6 @@ test("Community missing configuration stays hidden and malformed state cannot en
 });
 
 test("Show me in Community offers three modes, sets only the caller's own and reverts on refusal", async () => {
-  const { chromium, jsonResponse, makeAppearanceRecord, makeSystemSummary, startSystemFixtureServer } = await import("./system-uiux-fixture.mjs");
   let configured = true, joined = true, mode = "requested", refuse = false, unavailable = false, presenceReads = 0;
   const requests = [];
   const server = await startSystemFixtureServer({
