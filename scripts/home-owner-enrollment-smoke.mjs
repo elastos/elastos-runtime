@@ -628,7 +628,7 @@ if (process.argv.includes("--browser")) {
       ["shell-auth.js", "text/javascript"], ["shell-core.js", "text/javascript"],
       ["home-boot-hint.js", "text/javascript"], ["manifest.webmanifest", "application/manifest+json"],
       ["elastos-logo.svg", "image/svg+xml"], ["elastos-home-icon.svg", "image/svg+xml"],
-      ["elastos-home-icon-192.png", "image/png"],
+      ["elastos-home-icon-192.png", "image/png"], ["assets/fonts/Inter-latin-var.woff2", "font/woff2"],
     ]);
     await page.route("**/*", async route => {
       const url = new URL(route.request().url());
