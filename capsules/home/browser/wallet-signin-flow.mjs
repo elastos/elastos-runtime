@@ -157,7 +157,7 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
     async choose(connector) {
       if(!run || state.stage!=='choice' || !['metamask','walletconnect','unisat'].includes(connector))return;
       if(connector==='walletconnect') {
-        if(state.walletconnectAvailable!==true)return;
+        if(state.walletconnectAvailable!==true){fail(run,{status:403});return;}
         show('internet-notice',{connector});
       } else await prepare(run,connector);
     },

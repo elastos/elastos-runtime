@@ -141,7 +141,7 @@ test('signed-out WalletConnect requires an enabled compatible method and interne
     const flow=createWalletSigninFlow({api:async(path,body)=>{calls.push({path,body});return path.endsWith('/status')?{walletconnect_signin_available:available}:{ceremony_id:'signin',message:'',expires_at:Date.now()/1000+120};},
       select:async()=>({...method,connector:'walletconnect',close(){}}),approve(){},render:s=>states.push(s)});
     await flow.start();assert.equal(states.at(-1).walletconnectAvailable,available);await flow.choose('walletconnect');
-    assert.equal(states.at(-1).stage,available?'internet-notice':'choice');assert.equal(calls.filter(c=>c.path.endsWith('/begin')).length,0);
+    assert.equal(states.at(-1).stage,available?'internet-notice':'error');assert.equal(calls.filter(c=>c.path.endsWith('/begin')).length,0);
     await flow.cancel();assert.equal(calls.filter(c=>c.path.endsWith('/begin')).length,0,'Cancel grants no temporary transport');
   }
 });

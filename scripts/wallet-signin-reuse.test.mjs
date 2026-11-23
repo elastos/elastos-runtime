@@ -145,3 +145,10 @@ test('sign-in options follow explicit desktop and browser capabilities',()=>{
   assert.deepEqual(availableSigninOptions([],{walletconnectAvailable:true}),[{connector:'walletconnect',chooseConnector:true}]);
   assert.deepEqual(availableSigninOptions([],{walletconnectAvailable:false}),[]);
 });
+
+test('a revoked WalletConnect option offers an error instead of an empty choice screen',async()=>{
+  const states=[],paths=[];
+  const flow=createWalletSigninFlow({api:async path=>{paths.push(path);return {walletconnect_signin_available:false};},select:async()=>{throw new Error('relay must remain unused');},approve:async()=>{},render:s=>states.push(s)});flows.push(flow);
+  await flow.start({action:'signin',automatic:true});await flow.choose('walletconnect');
+  assert.equal(states.at(-1).stage,'error');assert.match(states.at(-1).message,/Use your passkey/);assert.deepEqual(paths,['/api/auth/passkey/status']);
+});

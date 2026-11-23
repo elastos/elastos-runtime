@@ -80,7 +80,7 @@ root.addEventListener('click', async event => {
   const button = event.target.closest('button[data-action]');
   if (!button || button.disabled || !mounted?.root.contains(button)) return;
   const action = button.dataset.action;
-  if(signinRequest&&action==='stop-waiting'){await connector.effect({kind:'stop-signin'});signinRequest=undefined;hostEffectInFlight=false;currentPhase='idle';draw();return;}
+  if(signinRequest&&action==='stop-waiting'){await stopHomeSignin();return;}
   if (action === 'connect' || action === 'start-over') return onConnect();
   if (action === 'finish' || action === 'send-message') return onConnect({fresh:false});
   if (action === 'cancel') return qrControls ? qrControls.cancel() : cancelWalletWait();
@@ -362,6 +362,13 @@ function showError(error) {homeReadFailed=true;if(!launchExpired && !hostEffectI
 
 draw();watchConnection();refreshWalletState().catch(showError);
 
+// Both stop controls retire only the Home request that they observed.
+async function stopHomeSignin() {
+  const owned=signinRequest;signinSelection=undefined;
+  await connector.effect({kind:'stop-signin'});
+  if(owned&&signinRequest===owned){signinRequest=undefined;hostEffectInFlight=false;currentPhase='idle';draw();}
+}
+
 // Only Home can ask this admitted window to sign its Runtime-built message.
 addEventListener('message',async event=>{
   const data=event.data;
@@ -370,7 +377,7 @@ addEventListener('message',async event=>{
   const keys=['type','homeToken','requestId','operation',...(['check','sign'].includes(data.operation)?['address','chain_id']:[]),...(data.operation==='sign'?['message']:[])];
   if(Object.keys(data).length!==keys.length||keys.some(key=>!Object.hasOwn(data,key)))return;
   const reply=result=>window.top.postMessage({type:'home:wallet-signin-effect-result',homeToken:frameHomeToken,requestId:data.requestId,...result},homeOrigin);
-  if(data.operation==='stop'){signinSelection=undefined;signinRequest=undefined;await connector.effect({kind:'stop-signin'});return;}
+  if(data.operation==='stop'){await stopHomeSignin();return;}
   if(signinBusy||hostEffectInFlight)return reply({error:true});
   signinBusy=true;let ownedRequest;
   try {

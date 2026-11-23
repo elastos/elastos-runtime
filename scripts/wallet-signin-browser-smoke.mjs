@@ -119,12 +119,21 @@ async function exercise(engine,width,theme) {
     const sdkBefore=fixture.state.calls.filter(c=>c.path==='/api/fixture-sdk'&&c.body.method==='personal_sign').length;
     fixture.state.holdSignature=true;await option('WalletConnect').click();
     const phone=page.frameLocator('iframe[title=wallet-walletconnect]');await phone.locator('.connection-status').filter({hasText:/Sign the message in .* to sign in to this Home\./}).waitFor();await capture('17-existing-phone-session');
+    await page.locator('iframe[title=wallet-walletconnect]').evaluate(f=>f.contentWindow.postMessage({type:'home:wallet-signin-effect',homeToken:'fixture-wallet-walletconnect',requestId:'fixture-stop',operation:'stop'},'*'));
+    await state('error');await cancel();assert.equal(fixture.state.methods.length,0,'stopping a pending proof creates no sign-in method');
+    await phone.locator('[data-action=disconnect]').waitFor({state:'visible'});assert(await phone.locator('[data-action=disconnect]').isEnabled(),'saved payment connection remains usable after Home stops');await capture('23-stopped-phone-session');
+    await page.locator('iframe[title=wallet-walletconnect]').evaluate(f=>f.contentWindow.postMessage('fixture-release-signature','*'));fixture.state.holdSignature=false;
+    await page.locator('iframe[title=wallet-walletconnect]').evaluate(f=>f.contentWindow.postMessage('fixture-sign-pending','*'));
+    await system.getByRole('button',{name:'Add wallet',exact:true}).click();await state('options');await option('WalletConnect').click();
+    await phone.getByRole('button',{name:'Stop waiting',exact:true}).click();await state('error');await cancel();assert.equal(fixture.state.methods.length,0);
+    await phone.locator('[data-action=disconnect]').waitFor({state:'visible'});await capture('24-native-stop');
     await page.locator('iframe[title=wallet-walletconnect]').evaluate(f=>f.contentWindow.postMessage('fixture-release-signature','*'));
-    await system.getByRole('button',{name:'Turn off sign-in',exact:true}).waitFor();await dialog().waitFor({state:'detached'});fixture.state.holdSignature=false;
-    assert.equal(fixture.state.methods[0].sign_in_enabled,true);assert.equal(fixture.state.calls.filter(c=>c.path==='/api/fixture-sdk'&&c.body.method==='personal_sign').length-sdkBefore,1);
+    await system.getByRole('button',{name:'Add wallet',exact:true}).click();await state('options');await option('WalletConnect').click();
+    await system.getByRole('button',{name:'Turn off sign-in',exact:true}).waitFor();await dialog().waitFor({state:'detached'});
+    assert.equal(fixture.state.methods[0].sign_in_enabled,true);assert.equal(fixture.state.calls.filter(c=>c.path==='/api/fixture-sdk'&&c.body.method==='personal_sign').length-sdkBefore,3);
     assert.equal(await page.locator('iframe[title=WalletConnect]').count(),0,'connected signing reuses the admitted connector window');
     await page.locator('iframe[title=wallet-walletconnect]').evaluate(f=>f.remove());
-    checks.push(`${engine}/${width}/${theme}: connected WalletConnect signs once through its real connector controller and restored session`);
+    checks.push(`${engine}/${width}/${theme}: connected WalletConnect signs once per attempt through its real controller; Home stop and native Stop waiting preserve payments and a new sign-in succeeds`);
 
     fixture.state.methods=[];fixture.state.connected=[{account_id:'retry',connector_id:'wallet-metamask',address:evmAddress,chain_namespace:'eip155:20',proof_type:'siwe'}];await refreshSystem();await system.locator('[data-wallet-method]').waitFor({state:'detached'});
     fixture.state.scenario='unknown';await system.getByRole('button',{name:'Add wallet',exact:true}).click();await state('options');await option('MetaMask').click();await state('unknown');await capture('18-check-again');
