@@ -1612,7 +1612,18 @@ pub(crate) mod tests {
         .unwrap();
         assert_eq!(out["sign_in_enabled"], true);
         assert!(attempt_context(f.data.path(), token, &pair.instance_id, now_ts()).is_err());
-        assert_eq!(signin(&f).principal_id, f.actor.principal_id);
+        let mut req = input("signin", "", &f.address);
+        req.chain_id = 8453;
+        let signin = begin(f.data.path(), ORIGIN, "home-test", req, None).unwrap();
+        let session = complete(
+            f.data.path(),
+            ORIGIN,
+            &completion(&f, &signin),
+            None,
+            |_| panic!("sign-in cannot consume approval"),
+        )
+        .unwrap();
+        assert_eq!(session["principal_id"], f.actor.principal_id);
     }
     pub(crate) fn signin(f: &Fixture) -> AuthSessionGrantV1 {
         let b = begin(

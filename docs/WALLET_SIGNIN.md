@@ -7,8 +7,9 @@ sign-in. Account IDs, roots, Profiles and passkey added-from labels stay unchang
 ## Rules
 
 An Admin adds and enables his own wallet methods. Each account can disable or
-remove its own methods, including after demotion to Guest. Adding a wallet leaves Sign in off.
-Turning Sign in on requires a fresh signature from that wallet and fresh passkey
+remove its own methods, including after demotion to Guest. Accounts uses
+`add_signin` to add a wallet with sign-in on. The Wallet app uses `add`, which
+leaves sign-in off. Turning sign-in on requires a fresh signature from that wallet and fresh passkey
 approval for the exact action. Turning it off or removing it requires fresh
 passkey approval. Payment links acquire sign-in authority only through this
 explicit operation. Wallet sessions can use Home; passkeys approve sensitive actions.
@@ -190,8 +191,9 @@ passkey access and forward update retains eligible wallet records.
 
 ## Screen states
 
-Add: select signer → pair/select address → review → wallet signature → passkey
-approval → added, Sign in off. Enable: review → fresh wallet signature → passkey
+Accounts Add wallet (`add_signin`): select signer → pair/select address → review →
+wallet signature → passkey approval → added, sign-in on. Wallet app Add (`add`):
+the same sequence → added, sign-in off. Enable: review → fresh wallet signature → passkey
 approval → on. Disable/remove: review effect → passkey approval → complete.
 Sign-in: signer choice → pair/select → review → sign → Home. Every pending state
 has Cancel and an expiry path. An uncertain response is retried with the same
