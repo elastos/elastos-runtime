@@ -1097,3 +1097,163 @@ async fn walletconnect_passkey_session_end_retires_confirmation_relay() {
         );
     }
 }
+
+async fn open_passkey_confirmation_relay(
+    state: &GatewayState,
+    authority: &TestPasskeyAuthority,
+) -> (String, tokio::sync::watch::Receiver<bool>) {
+    let actor =
+        crate::auth::load_active_session_grant(&state.data_dir, &authority.session_id, now_ts())
+            .unwrap();
+    let pending = auth::begin(
+        &state.data_dir,
+        ORIGIN,
+        "home-test",
+        serde_json::from_value(json!({
+            "action":"add", "connector":"walletconnect", "address":"", "chain_id":0,
+            "browser_secret":BROWSER, "allow_temporary_internet":true
+        }))
+        .unwrap(),
+        Some(actor),
+    )
+    .unwrap();
+    gateway_walletconnect::install_confirmation(state, &pending, &authority.session_id)
+        .await
+        .unwrap();
+    let cancel =
+        gateway_walletconnect::watch_attempt_socket_for_test(state, &pending.ceremony_id).await;
+    assert!(!*cancel.borrow());
+    assert!(!auth::inactive_attempts(&state.data_dir)
+        .unwrap()
+        .contains(&pending.ceremony_id));
+    (pending.ceremony_id, cancel)
+}
+
+fn recovery_bundle_for_authority(
+    data: &std::path::Path,
+    authority: &TestPasskeyAuthority,
+) -> Value {
+    let protection =
+        crate::auth::store_test_principal_root_protection(data, &authority.principal_id);
+    let kit = crate::auth::recovery_kit_from_archive(
+        data,
+        protection.protectors[0].archive.as_ref().unwrap(),
+    )
+    .unwrap();
+    json!({
+        "schema":"elastos.full-recovery-bundle/v1", "bundle_id":"bundle:relay-retirement",
+        "principal_id":kit.principal_id, "localhost_root":kit.localhost_root,
+        "data_kit":kit, "wallet_recovery_keys":[]
+    })
+}
+
+#[tokio::test]
+async fn walletconnect_owner_recovery_retires_confirmation_relay() {
+    let data = tempfile::tempdir().unwrap();
+    let owner = passkey_authority_with_name(data.path(), Some("Owner"));
+    let bundle = recovery_bundle_for_authority(data.path(), &owner);
+    let state = test_state(data.path());
+    let (id, cancel) = open_passkey_confirmation_relay(&state, &owner).await;
+    let code = crate::auth::arm_owner_recovery(data.path(), ORIGIN, "localhost", 300).unwrap();
+    let app = gateway_router(state);
+    let mut input = json!({});
+    for phase in ["begin", "complete"] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/auth/owner-recovery/{phase}"))
+                    .header(HOST, "localhost:61180")
+                    .header("origin", ORIGIN)
+                    .header("x-elastos-owner-recovery", code.as_str())
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(input.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+        let out: Value = serde_json::from_slice(&body).unwrap();
+        if phase == "begin" {
+            assert!(
+                !*cancel.borrow(),
+                "starting recovery keeps the relay active"
+            );
+            input = json!({
+                "ceremony_id":out["ceremony_id"], "bundle":bundle,
+                "response":crate::auth::passkey_attestation_with_id_for_test(
+                    out["options"]["publicKey"]["challenge"].as_str().unwrap(),
+                    "localhost", ORIGIN, b"recovered-relay-owner"
+                )
+            });
+        } else {
+            assert_eq!(out["principal_id"], owner.principal_id);
+            assert_ne!(out["proof_binding_id"], owner.proof_binding_id);
+        }
+    }
+    assert!(auth::inactive_attempts(data.path()).unwrap().contains(&id));
+    assert!(
+        *cancel.borrow(),
+        "owner recovery must cancel the open relay"
+    );
+}
+
+#[tokio::test]
+async fn walletconnect_recovery_kit_import_retires_confirmation_relay() {
+    let data = tempfile::tempdir().unwrap();
+    let owner = passkey_authority_with_name(data.path(), Some("Owner"));
+    let bundle = recovery_bundle_for_authority(data.path(), &owner);
+    let state = test_state(data.path());
+    let (id, cancel) = open_passkey_confirmation_relay(&state, &owner).await;
+    let (status, out) = call(
+        &gateway_router(state),
+        "/api/auth/recovery/full-import",
+        Some(&owner.home_token),
+        Some(json!({
+            "schema":"elastos.full-recovery-bundle.import.request/v1",
+            "principal_id":owner.principal_id, "localhost_root":bundle["localhost_root"],
+            "bundle":bundle, "reassign_to_current_principal":false
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{out}");
+    assert_eq!(out["status"], "imported");
+    assert!(auth::inactive_attempts(data.path()).unwrap().contains(&id));
+    assert!(
+        *cancel.borrow(),
+        "Recovery Kit import must cancel the open relay"
+    );
+}
+
+#[tokio::test]
+async fn walletconnect_passkey_demotion_retires_confirmation_relay() {
+    let data = tempfile::tempdir().unwrap();
+    let owner = passkey_authority_with_name(data.path(), Some("Owner"));
+    let other = passkey_authority_with_name_role_credential(
+        data.path(),
+        Some("Other admin"),
+        crate::auth::RuntimePrincipalRole::Admin,
+        "demotion-admin",
+    );
+    let state = test_state(data.path());
+    let (id, cancel) = open_passkey_confirmation_relay(&state, &owner).await;
+    let (status, out) = call(
+        &gateway_router(state),
+        &format!("/api/auth/passkeys/{}/demote-guest", owner.proof_binding_id),
+        Some(&other.home_token),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{out}");
+    assert_eq!(out["role"], "guest");
+    assert!(auth::inactive_attempts(data.path()).unwrap().contains(&id));
+    assert!(
+        *cancel.borrow(),
+        "passkey demotion must cancel the open relay"
+    );
+}
