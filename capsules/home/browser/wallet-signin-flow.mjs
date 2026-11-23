@@ -149,7 +149,7 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
         if(state.stage==='choice')show('choice');
       }
       if(method && live(current)) {
-        if(method.connector==='walletconnect'&&['signin','add','add_signin','enable'].includes(action))show('internet-notice',{connector:method.connector});
+        if(method.connector==='walletconnect'&&!delegateWalletConnect&&['signin','add','add_signin','enable'].includes(action))show('internet-notice',{connector:method.connector});
         else await prepare(current,method.connector);
       }
     },

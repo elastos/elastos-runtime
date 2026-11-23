@@ -278,7 +278,8 @@ Home waits for Wallet's account summary before offering the new account.
 Choosing an account signs the Runtime `add_signin` message, then requests one
 passkey approval. Home closes the request when Runtime confirms success.
 WalletConnect uses its admitted connector window and saved payment session for
-this authenticated operation. Signed-out sign-in uses its isolated temporary
+this authenticated operation, with the connector's existing internet permission.
+Signed-out sign-in uses its isolated temporary
 transport and the shared connection QR screen, after explicit relay consent.
 
 ## Explicit account removal

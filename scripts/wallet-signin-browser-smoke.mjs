@@ -103,10 +103,9 @@ async function exercise(engine,width,theme) {
     checks.push(`${engine}/${width}/${theme}: New wallet launches the real MetaMask connector and returns its saved account to Add wallet`);
 
     fixture.state.methods=[];fixture.state.connected=[{account_id:'phone',connector_id:'wallet-walletconnect',address:walletconnectAddress,chain_namespace:'eip155:20',proof_type:'siwe'}];await refreshSystem();await system.locator('[data-wallet-method]').waitFor({state:'detached'});
-    await system.getByRole('button',{name:'Add wallet',exact:true}).click();await state('options');await option('WalletConnect').click();await state('internet-notice');
+    await system.getByRole('button',{name:'Add wallet',exact:true}).click();await state('options');
     const sdkBefore=fixture.state.calls.filter(c=>c.path==='/api/fixture-sdk'&&c.body.method==='personal_sign').length;
-    fixture.state.holdSignature=true;
-    await dialog().getByRole('button',{name:'Continue',exact:true}).click();
+    fixture.state.holdSignature=true;await option('WalletConnect').click();
     const phone=page.frameLocator('iframe[title=wallet-walletconnect]');await phone.locator('.connection-status').filter({hasText:/Sign the message in .* to sign in to this Home\./}).waitFor();await capture('17-existing-phone-session');
     await page.locator('iframe[title=wallet-walletconnect]').evaluate(f=>f.contentWindow.postMessage('fixture-release-signature','*'));
     await system.getByRole('button',{name:'Turn off sign-in',exact:true}).waitFor();await dialog().waitFor({state:'detached'});fixture.state.holdSignature=false;

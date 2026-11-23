@@ -39,10 +39,9 @@ test('wallet changes stop the new automatic flow before signing or passkey appro
   const f=ceremony({change:true});await f.flow.start({action:'add_signin',method:f.method,automatic:true});
   assert.equal(f.states.at(-1).stage,'error');assert.equal(f.calls.filter(c=>c.signature||c.approval).length,0);
 });
-test('connected WalletConnect uses its window after relay consent, without temporary pairing',async()=>{
+test('connected WalletConnect reuses its admitted window and existing permission without another Home prompt',async()=>{
   const f=ceremony({connector:'walletconnect'});await f.flow.start({action:'add_signin',method:f.method,automatic:true,delegateWalletConnect:true});
-  assert.equal(f.states.at(-1).stage,'internet-notice');assert.equal(f.calls.length,0);
-  await f.flow.connect();assert.equal(f.states.at(-1).stage,'done');assert.equal(f.calls.find(c=>c.select).select.transport,undefined);
+  assert.equal(f.states.at(-1).stage,'done');assert(!f.states.some(state=>state.stage==='internet-notice'));assert.equal(f.calls.find(c=>c.select).select.transport,undefined);
   assert.equal(f.calls.filter(c=>c.signature).length,1);assert.equal(f.calls.filter(c=>c.approval).length,1);
 });
 test('browser options retain enabled identities and drop every secret and payment-only wallet',()=>{
