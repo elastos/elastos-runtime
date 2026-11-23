@@ -10,8 +10,13 @@ The contract is:
 
 Ordinary signing keeps private keys inside wallet-provider; explicit recovery
 export and import can pass secret key material through Wallet or System.
-Capsules never receive browser wallet objects, raw wallet RPC, node RPC, or
-provider SDK handles. A wallet address is a proof
+Ordinary app capsules use typed Runtime wallet operations and never receive
+browser wallet objects, raw wallet RPC, node RPC, or provider SDK handles.
+The MetaMask, UniSat, and WalletConnect connector paths keep browser wallet
+objects and SDK handles inside the Wallet trust boundary and launch only from
+Wallet flows. Trusted Home holds the injected MetaMask and UniSat provider
+objects; the configured WalletConnect connector capsule holds its pinned SDK's
+EIP-1193 provider and calls wallet RPC through it. A wallet address is a proof
 binding on a Runtime principal, not the principal itself.
 
 The generic provider plane exposes only read-only
@@ -260,7 +265,7 @@ owns proof verification, linked accounts, approval state, receipts, and audit;
 the connector owns only Reown/AppKit browser UX plus the operator-pinned local
 adapter. Mode A is the first target: ElastOS acts as the dApp and external
 wallets sign Runtime challenges or requests. Mode B, where external dApps treat
-ElastOS as a WalletConnect wallet, is a later security milestone. Internal
+ElastOS as a WalletConnect wallet, is a later security milestone. Ordinary app
 capsules do not use WalletConnect or generic Wallet provider calls; their
 product routes enter the private typed Wallet Bus through verified Runtime
 authority.
@@ -337,7 +342,8 @@ before they can be claimed as supported.
 - No address-only login.
 - No wallet-address-derived encryption keys.
 - No arbitrary signing.
-- No app-visible wallet RPC or node RPC.
+- Ordinary app capsules use typed Runtime operations; wallet connectors keep
+  wallet RPC inside the Wallet trust boundary, and chain-provider owns node RPC.
 - No private keys outside wallet-provider authority.
 - No Essentials or UniversalX requirement for default Home unlock.
 - No blockchain UI before fail-closed tests and capability schema exist.
