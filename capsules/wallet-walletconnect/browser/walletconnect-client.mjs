@@ -44,7 +44,7 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
     const prefix = linking ? 'link' : context;
     const localError = error?.code === undefined;
     if ([4001,5000,5001,5002,5003].includes(Number(error?.code))) return Object.assign(new Error(
-      walletConnectMessages[`${context}Declined`]), {tone:'muted'});
+      walletConnectMessages[`${context}Declined`]), {tone:'muted',code:Number(error.code)});
     // The pinned SDK creates an Error for its deadline; wallet replies are JSON objects.
     if (error instanceof Error && error.code === 6 && error.message === 'Request expired. Please try again.') return Object.assign(new Error(walletConnectMessages[`${prefix}Timeout`]), {tone:'muted'});
     const message = localError && [walletConnectMessages.cancelled,'The QR code expired. Select Connect wallet for a new one.','Internet access for WalletConnect was turned off. Select Connect wallet to ask again.'].includes(error?.message) ? error.message : walletConnectMessages[`${prefix}Error`];
@@ -281,6 +281,7 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
     return {...connectionFacts(),permission,permissionFresh};
   };
   return { async effect(action) {
+    if (action.kind === 'stop-signin') {if(['signin','signin-select'].includes(operationContext))operation?.abort(muted('Sign-in request ended.'));return;}
     if (action.kind === 'disconnect' || action.kind === 'cancel') return reset();
     if (action.kind === 'status') return status();
     if (operation && !operation.signal.aborted) throw new Error('A wallet request is already active.');
@@ -297,10 +298,20 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
     removed = false;
     if (action.kind === 'link' && action.fresh) await reset(muted(stopped),attempt);
     signal.throwIfAborted();
-    await connect(attempt);
+    if(['signin','signin-select'].includes(action.kind))await prepare(signal);
+    if(!['signin','signin-select'].includes(action.kind)||!provider?.session||provider.session.expiry<=Date.now()/1000)await connect(attempt);
     signal.throwIfAborted();
     const revision = generation;
     const signer = await address(signal), namespace = await chain(signal);
+    if(action.kind==='signin-select')return {connector:'walletconnect',address:signer,chain_id:Number(namespace.split(':')[1]),network:''};
+    if(action.kind==='signin') {
+      if(typeof action.message!=='string'||!action.message||action.message.length>32768||!same(action.address,signer)||`eip155:${action.chain_id}`!==namespace)throw Object.assign(new Error('Wallet changed.'),{code:'changed'});
+      const check=async()=>{signal.throwIfAborted();if(generation!==revision||!same(await address(signal),signer)||await chain(signal)!==namespace)throw Object.assign(new Error('Wallet changed.'),{code:'changed'});};
+      await check();operationDispatched=true;onPhase('signature',{address:signer,chain:namespace});
+      const signature=await request({method:'personal_sign',params:[signData(action.message),signer]},300,'signature',signal);
+      await check();if(typeof signature!=='string'||!signature||signature.length>16384)throw new Error('Invalid wallet signature');
+      return {signature,signature_type:'personal_sign',public_key:''};
+    }
     if (action.kind === 'link') {
       if (action.addAccount) {
         const saved=await waitFor(api('wallet/accounts'),signal);

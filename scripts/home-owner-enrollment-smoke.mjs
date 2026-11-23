@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync, readFileSync } from "node:fs";
 import vm from "node:vm";
+import {readSigninOptions,readSigninChoice,saveSigninOptions} from "../capsules/home/browser/wallet-signin-options.mjs";
 import { ownerRecoveryCommand } from "../capsules/home/browser/owner-recovery-command.js";
 import { resolve } from "node:path";
 import { importProductSmokePlaywright, productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
@@ -63,7 +64,7 @@ function fixture({ guest = false, purpose = "create", terminalLoss = false, owne
     };
     let opened = null;
     const context = vm.createContext({
-      ownerRecoveryCommand, createHomeWalletSignin, location: { origin: "https://home.test", hostname: "home.test" },
+      ownerRecoveryCommand, createHomeWalletSignin, readSigninOptions:()=>readSigninOptions(storage),readSigninChoice:()=>readSigninChoice(storage),saveSigninOptions:methods=>saveSigninOptions(methods,storage), location: { origin: "https://home.test", hostname: "home.test" },
       document: { querySelector: element, querySelectorAll: () => [], getElementById: id => element("#" + id), body: element("body") },
       window: { PublicKeyCredential: {}, location: { protocol: "https:" }, sessionStorage: storage, atob, btoa,
         addEventListener() {}, clearTimeout() {}, setTimeout() {}, setInterval() { return 1; }, clearInterval() {} },
@@ -420,7 +421,7 @@ for (const stage of ["before-begin", "after-create"]) {
   assert.equal(home.element("#home-enrollment-choice").hidden, false);
   home.element("#home-unlock-secondary").emit("click");
   assert.equal(home.element("#home-enrollment-choice").hidden, true);
-  assert.equal(home.element("#home-unlock-primary").textContent, "Use passkey");
+  assert.equal(home.element("#home-unlock-primary").textContent, "Sign in");
   home.element("#home-unlock-primary").emit("click"); await tick();
   assert.equal(f.gets(), 1);
   assert.equal(f.creates(), 0);

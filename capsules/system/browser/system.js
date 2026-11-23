@@ -1380,7 +1380,7 @@ function configurePasskeyAccess() {
   }
   if (accountListNode) {
     watchWalletSigninMethods(() => refreshAccountList().catch(error => showError(error)), homeParentOrigin);
-    walletAddButton?.addEventListener("click", () => changeWalletSignin("add"));
+    walletAddButton?.addEventListener("click", () => changeWalletSignin("add_signin"));
     accountListNode.addEventListener("click", onAccountListClick);
   }
   passkeyAddButton?.addEventListener("click", onPasskeyAdd);

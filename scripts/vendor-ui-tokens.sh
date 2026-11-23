@@ -130,9 +130,10 @@ for target_dir in home/browser assistant/browser system/browser library/browser 
   done
 done
 
-# Inactive enabling assets: the window lanes opt into the shared view later.
-for target_dir in wallet-metamask/browser wallet-unisat/browser wallet-walletconnect/browser; do
+# Connection windows and Home use the same pure presentation assets.
+for target_dir in wallet-metamask/browser wallet-unisat/browser wallet-walletconnect/browser home/browser; do
   for asset in wallet-connection-view.mjs wallet-connection-screens.mjs wallet-connection-view.css connection-wallet.png connection-walletconnect.png connection-metamask.png connection-unisat.png; do
+    if [[ "$target_dir" == "home/browser" && "$asset" == "wallet-connection-view.css" ]]; then continue; fi
     if [[ "$MODE" == "--check" ]]; then
       if ! cmp -s "capsules/_shared/$asset" "capsules/$target_dir/$asset"; then
         echo "[vendor-ui] DRIFT: capsules/$target_dir/$asset" >&2
@@ -143,6 +144,17 @@ for target_dir in wallet-metamask/browser wallet-unisat/browser wallet-walletcon
     fi
   done
 done
+
+# Home mounts the same connection screens in a scoped dialog.
+signin_css="capsules/home/browser/wallet-signin-connection.css"
+if [[ "$MODE" == "--check" ]]; then
+  if ! { printf '@scope (.signin-dialog) {\n'; cat capsules/_shared/wallet-connection-view.css; printf '}\n'; } | cmp -s - "$signin_css"; then
+    echo "[vendor-ui] DRIFT: $signin_css" >&2
+    FAILED=1
+  fi
+else
+  { printf '@scope (.signin-dialog) {\n'; cat capsules/_shared/wallet-connection-view.css; printf '}\n'; } > "$signin_css"
+fi
 
 # Marketplace uses only the controller; its compact rows take Marketplace's own list styles.
 for model_target in marketplace/browser/model-management.js system/browser/model-management.js system/browser/model-management.css; do

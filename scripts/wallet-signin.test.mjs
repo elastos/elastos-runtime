@@ -260,13 +260,14 @@ test('Guests retain Disable and Remove while only Admins can Add or Enable',()=>
   try {
     for(const canManage of [true,false])for(const enabled of [true,false]) {
       const actions=[],controls=walletSigninControls({...method,sign_in_enabled:enabled},{canManage,onAction:(...args)=>actions.push(args)});
-      const [toggle,remove]=controls.children;
+      const [toggle,remove]=controls.children.filter(node=>node.tag==='button');
+      assert.equal(controls.children[0].textContent,enabled?'Signs in':'Payments only');
       assert.equal(Boolean(toggle.disabled),!enabled&&!canManage);assert.equal(Boolean(remove.disabled),false);
       toggle.onclick();remove.onclick();assert.deepEqual(actions,[[enabled?'disable':'enable',method.method_id],['remove',method.method_id]]);
-      if(!canManage)assert.equal(controls.children.at(-1).textContent,'Only an Admin can turn sign-in on.');
+      if(!canManage)assert.equal(controls.children.at(-1).textContent,'An Admin can enable sign-in.');
       const payment=walletSigninControls({...method,paymentOnly:true},{canManage,onAction:(...args)=>actions.push(args)});
-      assert.equal(Boolean(payment.children[0].disabled),true);assert.equal(Boolean(payment.children[1].disabled),!canManage);
-      payment.children[1].onclick();assert.deepEqual(actions.at(-1),['add',method.method_id]);
+      const [use]=payment.children.filter(node=>node.tag==='button');assert.equal(Boolean(use.disabled),!canManage);
+      use.onclick();assert.deepEqual(actions.at(-1),['add_signin',method.method_id]);
     }
   } finally {globalThis.document=previous;}
 });

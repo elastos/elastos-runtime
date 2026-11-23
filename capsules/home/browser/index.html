@@ -18,6 +18,7 @@
     <link rel="stylesheet" href="./elastos-ui.css" />
     <link rel="stylesheet" href="./style.css?v=home-20261021a" />
     <link rel="stylesheet" href="./wallet-signin.css?v=wallet-signin-1" />
+    <link rel="stylesheet" href="./wallet-signin-connection.css" />
   </head>
   <body data-home-status="booting" data-home-shell="resolving" data-home-gui="resolving">
     <div class="home-host-shell">
@@ -79,15 +80,15 @@
               <p id="home-unlock-time" class="home-unlock-time"></p>
             </div>
             <div class="home-unlock-account">
-              <button id="home-unlock-person" class="home-unlock-person" type="button" aria-label="Unlock with passkey">
+              <button id="home-unlock-person" class="home-unlock-person" type="button" aria-label="Sign in">
                 <span class="home-unlock-avatar" aria-hidden="true">
                   <span id="home-unlock-monogram" class="home-unlock-avatar-monogram">e</span>
                 </span>
               </button>
-              <p class="home-unlock-passkey-label">Use passkey</p>
+              <p class="home-unlock-passkey-label">Sign in</p>
               <p id="home-unlock-person-name" class="home-unlock-account-name" hidden></p>
               <p id="home-unlock-face-status" class="home-unlock-face-status" data-tone="muted" role="status" aria-live="polite" hidden></p>
-              <button data-home-wallet-signin class="home-unlock-create" type="button" hidden>Sign in with wallet</button>
+              <button data-home-signin-options class="home-unlock-create" type="button" hidden>Other options</button>
               <button id="home-unlock-create" class="home-unlock-create" type="button" hidden>Create account</button>
               <button id="home-recover-owner" class="home-unlock-recover" type="button">Recover this Home with your Recovery Kit</button>
             </div>
@@ -126,8 +127,8 @@
           <label id="home-owner-recovery-code-label" for="home-owner-recovery-code" hidden>Code from the terminal</label>
           <input id="home-owner-recovery-code" class="home-unlock-input" type="password" maxlength="128" autocomplete="off" spellcheck="false" hidden />
           <div class="home-unlock-actions">
-            <button id="home-unlock-primary" class="home-unlock-button" type="button">Use passkey</button>
-            <button data-home-wallet-signin class="home-unlock-button home-unlock-button-secondary" type="button" hidden>Sign in with wallet</button>
+            <button id="home-unlock-primary" class="home-unlock-button" type="button">Sign in</button>
+            <button data-home-signin-options class="home-unlock-button home-unlock-button-secondary" type="button" hidden>Other options</button>
             <button id="home-unlock-secondary" class="home-unlock-button home-unlock-button-secondary" type="button" hidden>Create guest account</button>
             <button id="home-enrollment-dismiss" class="home-unlock-button home-unlock-button-secondary" type="button" hidden>Dismiss expired or invalid setup</button>
           </div>

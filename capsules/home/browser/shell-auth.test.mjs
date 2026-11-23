@@ -40,7 +40,7 @@ const element = (selector) => {
 globalThis.document = {
   body: { dataset: {} },
   querySelector: element,
-  querySelectorAll: selector => selector === "[data-home-wallet-signin]" ? walletButtons : [],
+  querySelectorAll: selector => selector === "[data-home-signin-options]" ? walletButtons : [],
   getElementById: (id) => element(`#${id}`),
 };
 globalThis.location = new URL("http://localhost:61180/home/");
@@ -294,12 +294,14 @@ test("wallet sign-in opens the account when the contract result has no enrollmen
   assert.equal(profileReadinessActionTarget({...response, profile_readiness:{schema:"elastos.profile.readiness/v1",status:"ready"}}, {walletSignin:true}), "");
 });
 
-test("Home shows wallet sign-in only after Runtime confirms availability", async () => {
+test("Home shows Other options for a saved choice only after Runtime confirms availability", async () => {
   const supported = window.PublicKeyCredential;
   try {
     for (const passkeysAvailable of [true, false]) {
       window.PublicKeyCredential = passkeysAvailable ? supported : undefined;
       for (const available of [true, false, undefined]) {
+        const storage=new Map([['elastos.signin.options.v1',JSON.stringify([{connector:'metamask',address:'0x'+'12'.repeat(20),chain_id:20,network:'',sign_in_enabled:true}])],['elastos.signin.choice.v1','passkey']]);
+        globalThis.localStorage={getItem:key=>storage.get(key),setItem:(key,value)=>storage.set(key,value),removeItem:key=>storage.delete(key)};
         routes["/api/auth/passkey/status"] = () => ({body:{registered:true,wallet_signin_available:available}});
         await showHomeUnlock(() => {});
         assert(walletButtons.every(button => button.hidden === (available !== true)));
@@ -308,6 +310,7 @@ test("Home shows wallet sign-in only after Runtime confirms availability", async
     window.PublicKeyCredential = supported;
     routes["/api/auth/passkey/status"] = () => ({body:{registered:false,wallet_signin_available:true}});
     await showHomeUnlock(() => {});assert(walletButtons.every(button => button.hidden));
+    globalThis.localStorage.setItem('elastos.signin.options.v1',JSON.stringify([{connector:'metamask',address:'0x'+'12'.repeat(20),chain_id:20,network:'',sign_in_enabled:true}]));
     let release;
     routes["/api/auth/passkey/status"] = () => new Promise(resolve => {release=resolve;});
     const checking = showHomeUnlock(() => {});
@@ -317,6 +320,7 @@ test("Home shows wallet sign-in only after Runtime confirms availability", async
     routes["/api/auth/passkey/status"] = () => {throw new TypeError("Home unavailable");};
     await showHomeUnlock(() => {});assert(walletButtons.every(button => button.hidden));
   } finally {
+    delete globalThis.localStorage;
     window.PublicKeyCredential = supported;
     routes["/api/auth/passkey/status"] = () => ({body:{registered:true}});
   }

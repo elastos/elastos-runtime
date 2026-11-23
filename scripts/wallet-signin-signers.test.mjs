@@ -63,3 +63,16 @@ test('same-account notifications keep the ceremony; a new account ends it',async
   for(const listener of p.listeners.get('accountsChanged'))listener(['0x'+'34'.repeat(20)]);assert.equal(changes,1);
   wallet.close();delete window.ethereum;
 });
+test('a connected compatible wallet selects its saved provider instead of another installed extension',async()=>{
+  const metamask=provider(),brave=provider();
+  const announce=()=>{
+    for(const [rdns,name,p]of [['io.metamask','MetaMask',metamask],['com.brave.wallet','Brave Wallet',brave]])
+      window.dispatchEvent(new CustomEvent('eip6963:announceProvider',{detail:{provider:p.api,info:{uuid:rdns,rdns,name}}}));
+  };
+  window.addEventListener('eip6963:requestProvider',announce);
+  try {
+    const wallet=await selectSigninWallet('metamask',{...options(),method:{providerId:'com.brave.wallet'}});await wallet.sign('Home sign-in');wallet.close();
+    assert.equal(brave.calls.filter(c=>c.method==='personal_sign').length,1);assert.equal(metamask.calls.length,0);
+    await assert.rejects(selectSigninWallet('metamask',{...options(),method:{providerId:'io.missing.wallet'}}),{code:'missing'});
+  }finally{window.removeEventListener('eip6963:requestProvider',announce);}
+});
