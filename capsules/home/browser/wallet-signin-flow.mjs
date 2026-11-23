@@ -20,7 +20,7 @@ export function walletSigninError(error, action) {
   if(error?.code === 'disconnected') return 'The connection to your wallet ended. Try again.';
   if([4001,5000,5001,5002,5003].includes(Number(error?.code))) return 'Your wallet declined the request. Try again or choose another wallet.';
   if(error?.status === 429) return 'Home is busy. Try again in a moment.';
-  if(error?.status === 409) return action === 'signin' ? 'This wallet cannot sign in to this Home. Use your passkey or choose another wallet.' : 'Sign-in methods changed, or this wallet belongs to another account. Refresh the list and try again.';
+  if(error?.status === 409) return action === 'signin' ? 'This wallet cannot sign in to this Home. Use your passkey or choose another wallet.' : 'Home could not make this change. Refresh the list, then check the wallet and try again.';
   if(error?.status === 403) return action === 'signin' ? 'This wallet cannot sign in to this Home. Use your passkey or choose another wallet.' : 'Home could not approve this change. Use your own passkey and try again.';
   if(error?.status === 503) return 'The wallet connection is unavailable. Try again.';
   return action === 'signin' ? 'Home could not sign you in. Check the connection to Home, then try again.' : 'Home could not change this wallet. Check the connection to Home, then try again.';
@@ -96,7 +96,8 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
       if(state.action!=='signin') {
         const approval=ceremony.approval, request=approval?.request;
         if(approval?.operation!=='auth.wallet.method' || request?.ceremony_id!==ceremony.ceremony_id || request?.action!==state.action
-          || typeof request.account_id!=='string' || !request.account_id || state.accountId && request.account_id!==state.accountId
+          || typeof request.account_id!=='string' || !request.account_id || typeof request.method_id!=='string' || !request.method_id
+          || state.accountId && request.account_id!==state.accountId
           || state.action!=='add' && request.method_id!==state.method.method_id) throw fault('invalid');
       }
       current.ceremony=ceremony;
@@ -105,7 +106,7 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
   }
   function fail(current,error) {
     if(!live(current))return;
-    show('error',{message:walletSigninError(error,state.action)});
+    show('error',{message:walletSigninError(error,state.action),refresh:error?.status===409 && state.action!=='signin'});
     run=null;clearTimeout(timer);void clear(current);
   }
   async function complete(current) {
@@ -114,11 +115,11 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
       const result=await api(state.action==='signin'?'/api/auth/wallet/signin/complete':'/api/auth/wallet-methods/complete',JSON.parse(current.completion));
       if(!live(current))return;
       if(state.action==='signin' ? !result?.app_token || !result?.session_id || !result?.principal_id || !result?.proof_binding_id
-        : result?.status!==(state.action==='remove'?'removed':'complete') || typeof result?.method_id!=='string'
+        : result?.status!==(state.action==='remove'?'removed':'complete') || result?.method_id!==current.ceremony.approval.request.method_id
           || state.action!=='remove' && result.sign_in_enabled!==(state.action==='enable')) throw fault('invalid');
       clearTimeout(timer);run=null;stopLocal(current);
-      // Completion retires its ceremony. Pairing-only ceremonies still need cancellation.
-      current.ceremonies.delete(current.ceremony.ceremony_id);void clear(current);
+      // Runtime keeps the completed method/session; cancel ends temporary transport.
+      void clear(current);
       show('done',{result});await onComplete(result,state.action);
     } catch(error) {
       if(!live(current))return;

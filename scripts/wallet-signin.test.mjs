@@ -30,6 +30,7 @@ test('enable reviews before signature, then requests exact passkey approval',asy
   assert.equal(f.calls.find(c=>c.sign).sign,'exact Home message');
   assert.deepEqual(f.calls.find(c=>c.approve).approve,{operation:'auth.wallet.method',request:{ceremony_id:'ceremony',action:'enable',account_id:'principal:alex',method_id:method.method_id}});
   assert.equal(f.calls.find(c=>c.path?.endsWith('/complete')).body.step_up_token,'step-up');
+  assert(f.calls.some(c=>c.path?.endsWith('/cancel')&&c.body.ceremony_id==='ceremony'),'confirmed completion clears its temporary transport');
 });
 test('uncertain completion retries identical proof without signing or approving again',async()=>{
   const f=fixture({lost:true});await f.flow.start({action:'enable',method});await f.flow.confirm();await f.flow.approve();
@@ -106,9 +107,8 @@ test('Home accepts method intents only from the bound System or Wallet frame',as
 
 test('every method action checks the approval against the reviewed ceremony and account',async()=>{
   for(const action of ['add','enable','disable','remove'])for(const mismatch of ['action','account_id','ceremony_id','method_id']) {
-    if(action==='add' && mismatch==='method_id')continue;
     const states=[];let signs=0;
-    const request={action,account_id:'principal:alex',ceremony_id:'one',method_id:method.method_id};request[mismatch]='different';
+    const request={action,account_id:'principal:alex',ceremony_id:'one',method_id:method.method_id};request[mismatch]=action==='add'&&mismatch==='method_id'?'':'different';
     const flow=createWalletSigninFlow({api:async path=>path.endsWith('/begin')?{ceremony_id:'one',message:'exact message',expires_at:Date.now()/1000+120,approval:{operation:'auth.wallet.method',request}}:{},
       select:async()=>({...method,close(){},sign(){signs++;}}),approve:()=>{throw new Error('must not approve');},render:s=>states.push(s)});
     await flow.start({action,method:action==='add'?null:method,accountId:'principal:alex'});if(action==='add')await flow.choose('metamask');

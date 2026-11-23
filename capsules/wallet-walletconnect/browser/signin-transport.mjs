@@ -30,7 +30,7 @@ async function connect(transport) {
   };
   transportExpiry=Math.min(Date.now()/1000+180,transport.expires_at);
   const config=await api('wallet/config');
-  adapter=await import('../vendor/reown-appkit.js');
+  adapter=await import('./vendor/reown-appkit.js');
   provider=await connectWithView(adapter,{
     contextKey:`signin-${crypto.randomUUID()}`,projectId:config.walletconnect.project_id,chains:[20,8453],api,
     runtimeUrl:`${homeOrigin}/api/apps/wallet-walletconnect`,relayUrl:`${homeOrigin.replace(/^http/,'ws')}/api/apps/wallet-walletconnect/relay`,
