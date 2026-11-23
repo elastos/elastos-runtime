@@ -2489,6 +2489,18 @@ pub async fn publish_directory_via_provider(
         .await
 }
 
+/// What one content publish acts on. A later publish mode adds its input
+/// here and leaves the request dispatch alone.
+struct ContentPublishInput<'a> {
+    request: &'a Value,
+}
+
+impl<'a> ContentPublishInput<'a> {
+    fn new(request: &'a Value) -> Self {
+        Self { request }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ContentPublishRequirements {
     min_replicas: u32,
@@ -3294,7 +3306,7 @@ impl Provider for ContentProvider {
 
     async fn send_raw(&self, request: &Value) -> Result<Value, ProviderError> {
         match request.get("op").and_then(|op| op.as_str()) {
-            Some("publish") => self.publish(request).await,
+            Some("publish") => self.publish(ContentPublishInput::new(request)).await,
             Some("fetch") => self.fetch(request).await,
             Some("import_exact") => self.import_exact(request).await,
             Some("admission") => self.admission(request).await,
@@ -3602,7 +3614,8 @@ impl ContentProvider {
         }))
     }
 
-    async fn publish(&self, request: &Value) -> Result<Value, ProviderError> {
+    async fn publish(&self, input: ContentPublishInput<'_>) -> Result<Value, ProviderError> {
+        let ContentPublishInput { request } = input;
         let kind = request.get("kind").and_then(|kind| kind.as_str());
         let pin = request
             .get("pin")

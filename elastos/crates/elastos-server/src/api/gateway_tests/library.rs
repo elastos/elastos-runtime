@@ -8511,14 +8511,16 @@ async fn test_library_provider_runtime_custody_buy_rejects_caller_supplied_purch
 async fn test_runtime_custody_buy_raw_provider_call_requires_gateway_wallet_authority() {
     let dir = tempfile::tempdir().unwrap();
     let response = crate::library::handle_object_provider_runtime_request_with_gateway(
-        dir.path(),
-        Arc::new(ProviderRegistry::new()),
-        &json!({
-            "op": "buy",
-            "principal_id": "person:local:raw-provider-buy",
-            "mint_id": "00".repeat(32),
-        }),
-        None,
+        crate::library::ObjectProviderRuntimeRequest {
+            data_dir: dir.path(),
+            registry: Arc::new(ProviderRegistry::new()),
+            request: &json!({
+                "op": "buy",
+                "principal_id": "person:local:raw-provider-buy",
+                "mint_id": "00".repeat(32),
+            }),
+            gateway_authority: None,
+        },
     )
     .await;
     assert_eq!(response["status"], "error");

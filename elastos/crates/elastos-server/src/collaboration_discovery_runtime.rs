@@ -2489,11 +2489,11 @@ impl CollaborationDiscoveryService {
                     range: None,
                     progress: None,
                     transport: ProviderInvocationTransport::Carrier(
-                        ProviderCarrierRoute::ConnectTicket {
-                            connect_ticket: peer.connect_ticket.clone(),
-                            peer_did: Some(peer_did),
-                            timeout_ms: Some(DISCOVERY_PROVIDER_TIMEOUT_MS),
-                        },
+                        ProviderCarrierRoute::connect_ticket(
+                            peer.connect_ticket.clone(),
+                            Some(peer_did),
+                            Some(DISCOVERY_PROVIDER_TIMEOUT_MS),
+                        ),
                     ),
                 })
                 .await

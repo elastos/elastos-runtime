@@ -351,6 +351,20 @@ pub enum ProviderCarrierRoute {
 }
 
 impl ProviderCarrierRoute {
+    /// A connect-ticket route. Build it here rather than as a literal, so a
+    /// field the route gains leaves every caller alone.
+    pub fn connect_ticket(
+        connect_ticket: String,
+        peer_did: Option<String>,
+        timeout_ms: Option<u64>,
+    ) -> Self {
+        Self::ConnectTicket {
+            connect_ticket,
+            peer_did,
+            timeout_ms,
+        }
+    }
+
     pub fn timeout_ms(&self) -> Option<u64> {
         match self {
             Self::ConnectTicket { timeout_ms, .. } | Self::PeerDid { timeout_ms, .. } => {
@@ -4520,11 +4534,11 @@ mod tests {
                 range: None,
                 progress: None,
                 transport: ProviderInvocationTransport::Carrier(
-                    ProviderCarrierRoute::ConnectTicket {
-                        connect_ticket: "ticket-secret".to_string(),
-                        peer_did: Some("did:key:zRemote".to_string()),
-                        timeout_ms: Some(5_000),
-                    },
+                    ProviderCarrierRoute::connect_ticket(
+                        "ticket-secret".to_string(),
+                        Some("did:key:zRemote".to_string()),
+                        Some(5_000),
+                    ),
                 ),
             })
             .await
@@ -4559,11 +4573,11 @@ mod tests {
                     expected_bytes: Some(4),
                 }),
                 transport: ProviderInvocationTransport::Carrier(
-                    ProviderCarrierRoute::ConnectTicket {
-                        connect_ticket: "ticket-secret".to_string(),
-                        peer_did: Some("did:key:zRemote".to_string()),
-                        timeout_ms: Some(5_000),
-                    },
+                    ProviderCarrierRoute::connect_ticket(
+                        "ticket-secret".to_string(),
+                        Some("did:key:zRemote".to_string()),
+                        Some(5_000),
+                    ),
                 ),
             })
             .await
