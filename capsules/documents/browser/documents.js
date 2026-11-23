@@ -458,7 +458,7 @@ function listFolder(item) {
 
 // When a row last changed, short: "Today 4:41 PM", "Yesterday", "Oct 26"
 // (with the year when it is not this year).
-function shortTime(timestamp, now = new Date()) {
+function shortTime(timestamp, now = new Date(), locale) {
   if (!timestamp) {
     return "";
   }
@@ -466,12 +466,12 @@ function shortTime(timestamp, now = new Date()) {
   const startOfDay = (value) => new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
   const daysAgo = Math.round((startOfDay(now) - startOfDay(date)) / 86_400_000);
   if (daysAgo === 0) {
-    return "Today " + date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    return "Today " + date.toLocaleTimeString(locale, { hour: "numeric", minute: "2-digit" });
   }
   if (daysAgo === 1) {
     return "Yesterday";
   }
-  return date.toLocaleDateString(undefined, date.getFullYear() === now.getFullYear()
+  return date.toLocaleDateString(locale, date.getFullYear() === now.getFullYear()
     ? { month: "short", day: "numeric" }
     : { month: "short", day: "numeric", year: "numeric" });
 }

@@ -36,9 +36,16 @@ test("the folder shows only for a file in a subfolder of Documents", () => {
 test("times are short: Today with the time, Yesterday, then the date", () => {
   const now = new Date(2026, 9, 28, 17, 0);
   const at = (...parts) => new Date(...parts).getTime() / 1000;
-  assert.match(shortTime(at(2026, 9, 28, 16, 41), now), /^Today 4:41\s?PM$/);
-  assert.equal(shortTime(at(2026, 9, 27, 23, 59), now), "Yesterday");
-  assert.equal(shortTime(at(2026, 9, 26, 9, 0), now), "Oct 26");
-  assert.equal(shortTime(at(2025, 11, 31, 9, 0), now), "Dec 31, 2025");
+  assert.match(shortTime(at(2026, 9, 28, 16, 41), now, "en-US"), /^Today 4:41\s?PM$/);
+  assert.equal(shortTime(at(2026, 9, 27, 23, 59), now, "en-US"), "Yesterday");
+  assert.equal(shortTime(at(2026, 9, 26, 9, 0), now, "en-US"), "Oct 26");
+  assert.equal(shortTime(at(2025, 11, 31, 9, 0), now, "en-US"), "Dec 31, 2025");
   assert.equal(shortTime(0, now), "");
+});
+
+// Calendar labels stay the same while the caller selects its display locale.
+test("short times accept an explicit locale instead of depending on the host", () => {
+  const now = new Date(2026, 9, 28, 17, 0);
+  assert.equal(shortTime(new Date(2026, 9, 28, 16, 41).getTime() / 1000, now, "en-GB"), "Today 16:41");
+  assert.equal(shortTime(new Date(2026, 9, 26, 9, 0).getTime() / 1000, now, "en-GB"), "26 Oct");
 });
