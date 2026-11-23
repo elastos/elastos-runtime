@@ -20,7 +20,7 @@ async function windowFor(credentials,label){
  await page.goto(origin+'/home/');await page.locator('#home-unlock-person').click();await page.waitForFunction(()=>document.body.dataset.homeAuthority==='signed'&&document.body.dataset.homeStatus==='ready');
  const frame=async target=>{for(let n=0;n<150;n++){for(const f of page.frames().filter(f=>f.url().includes('/apps/'+target+'/')).reverse())if(await(await f.frameElement()).isVisible())return f;await page.waitForTimeout(100);}throw Error('Missing '+target);};
  const system=async()=>{const gui=await frame('home-gui');if(await gui.locator('#setup-sheet').isVisible())await gui.locator('#setup-sheet-close').click();await gui.locator('#toolbar-home').click();await gui.locator('#identity-menu-system').click();const sys=await frame('system');await sys.getByRole('button',{name:'Accounts',exact:true}).click();return sys;};
- return {page,context,cdp,authenticatorId,system};
+ return {page,context,cdp,authenticatorId,system,frame};
 }
 try{
  const saved=JSON.parse(await readFile(credentialFile,'utf8'));
@@ -28,10 +28,7 @@ try{
  let sys=await current.system();
  if(process.env.HOME_AUTH_CASE!=='revocation'){
   const start=traffic.length;await sys.getByRole('button',{name:'Add wallet',exact:true}).click();
-  await current.page.waitForFunction(()=>{
-   const dialog=document.querySelector('.signin-dialog');
-   return dialog?.open&&dialog.textContent.includes('New wallet')||[...document.querySelectorAll('iframe')].some(f=>f.src.includes('/apps/wallet/')&&f.getBoundingClientRect().width>0);
-  },null,{timeout:18000});
+  await Promise.race([current.page.locator('.signin-dialog').getByText('New wallet',{exact:true}).waitFor({timeout:18000}),current.frame('wallet')]);
   const reads=traffic.slice(start).filter(r=>r.path==='/api/apps/system/summary');
   assert(reads.some(r=>r.status===200&&r.frame.includes('/apps/system/')),'System owns the actual HTTP summary read');
   assert(!reads.some(r=>r.frame.includes('/home/')),'Home does not call the System route');
@@ -48,17 +45,19 @@ try{
   for(let n=0;n<100&&!spareId;n++)await current.page.waitForTimeout(100);
   let spare=[];for(let n=0;n<100;n++){spare=(await current.cdp.send('WebAuthn.getCredentials',{authenticatorId:spareId})).credentials;if(spare.length)break;await current.page.waitForTimeout(100);}
   assert(spare.length,'new real spare passkey');
-  await writeFile(output+'/spare-passkey.private.json',JSON.stringify(spare),{mode:0o600});
+  await writeFile(credentialFile+'.spare',JSON.stringify(spare),{mode:0o600});
   await sys.getByText('Another device or security key',{exact:true}).last().waitFor();
   const revoked=await windowFor(spare,'revoked');await revoked.system();
   await current.cdp.send('WebAuthn.setAutomaticPresenceSimulation',{authenticatorId:current.authenticatorId,enabled:true});
   const remove=sys.locator('[data-passkey-revoke]').last();await remove.click();await sys.locator('#passkey-remove-dialog button[value="remove"]').click();
   for(let n=0;n<100&&!traffic.some(r=>r.path.endsWith('/revoke')&&r.status===200);n++)await current.page.waitForTimeout(100);
   assert(traffic.some(r=>r.path.endsWith('/revoke')&&r.status===200),'real server revocation accepted');
-  const revokedSystem=await revoked.system();await revokedSystem.getByRole('button',{name:'Add passkey',exact:true}).click();
+  const started=Date.now();
+  if(process.env.HOME_AUTH_REVOCATION_IDLE!=='1'){const revokedSystem=await revoked.system();await revokedSystem.getByRole('button',{name:'Add passkey',exact:true}).click();}
   await revoked.page.waitForFunction(()=>document.body.dataset.homeAuthority==='unsigned'&&!document.querySelector('#home-unlock').hidden,null,{timeout:15000});
   assert(traffic.some(r=>r.label==='revoked'&&[401,403].includes(r.status)&&r.path.includes('/auth/')),'Runtime denies revoked session');
   assert.equal(await current.page.getAttribute('body','data-home-authority'),'signed');
+  await writeFile(output+'/revocation-timing.json',JSON.stringify({idle:process.env.HOME_AUTH_REVOCATION_IDLE==='1',elapsedMs:Date.now()-started}));
   await revoked.page.screenshot({path:output+'/revoked-window-signin.png'});await current.page.screenshot({path:output+'/retained-window.png'});
   console.log('PASS real passkey revocation signs the removed window out; retained window stays signed in');
  }

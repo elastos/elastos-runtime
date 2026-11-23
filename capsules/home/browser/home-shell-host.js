@@ -76,7 +76,10 @@ const HOME_EVENTS_MAX_RETRY_MS = 30_000;
 const HOME_EVENTS_RECONNECT_TIMEOUT_MS = 10_000;
 const HOME_EVENTS_POLL_TIMEOUT_MS = HOME_EVENTS_WAIT_MS + HOME_EVENTS_RECONNECT_TIMEOUT_MS;
 const HOME_EVENTS_STREAM_URL = "/api/apps/home/events/stream";
-const SESSION_REFRESH_MS = 10_000;
+const SESSION_REFRESH_MS = 10 * 60 * 1000;
+const SESSION_CHECK_MS = 10_000;
+let sessionCheckInFlight = null;
+let sessionCheckStartedAt = 0;
 const ACTIVE_SHELL_HINT_KEY = "elastos.home.active-shell-hint";
 const ACTIVE_SHELL_READY_TIMEOUT_MS = 5_000;
 const HOME_CLI_SHELL_ID = "home-cli";
@@ -1741,8 +1744,9 @@ window.addEventListener("message", (event) => {
   if (!context) {
     return;
   }
-  if (data.type === "home:session-check" && hasExactMessageKeys(data,["type","homeToken"])) {
-    void refreshSignedHomeSession();
+  if (data.type === "home:session-check" && context.kind === "app-frame"
+    && context.targetId === SYSTEM_APP_ID && hasExactMessageKeys(data,["type","homeToken"])) {
+    void checkSignedHomeSession();
     return;
   }
   if (data.type === "home:wallet-signin-request" && handleWalletSigninRequest(event, context, {
@@ -2687,7 +2691,8 @@ function startShellTimers() {
   if (!shellState.frameRenewalTimer) {
     shellState.frameRenewalTimer = window.setInterval(renewExpiringFrames, 30_000);
     window.addEventListener("online", () => refreshSignedHomeSession());
-    window.addEventListener("home:session-check", () => refreshSignedHomeSession());
+    window.addEventListener("home:session-check", () => checkSignedHomeSession());
+    window.setInterval(() => { if (!document.hidden) void checkSignedHomeSession(); }, SESSION_CHECK_MS);
   }
   if (!shellState.sessionRefreshTimer) {
     shellState.sessionRefreshTimer = window.setInterval(() => {
@@ -2759,6 +2764,27 @@ function renewExpiringFrames() {
       || context.expiresAt > Date.now() + 60_000) continue;
     context.source.postMessage({ type: "elastos.home.authority.request/v1", homeToken }, OPAQUE_FRAME_TARGET);
   }
+}
+
+function checkSignedHomeSession() {
+  if (document.body.dataset.homeAuthority !== "signed" || !getHomeAuthorityToken()) return Promise.resolve(null);
+  if (sessionCheckInFlight) return sessionCheckInFlight;
+  if (Date.now() - sessionCheckStartedAt < 1000) return Promise.resolve(null);
+  sessionCheckStartedAt = Date.now();
+  const current = createHomeAuthorityCheck();
+  // This authority-checked read validates the session without renewing it or writing an audit event.
+  sessionCheckInFlight = fetchJson("/api/auth/passkeys", {
+    headers: { "x-elastos-home-token": getHomeAuthorityToken() },
+    cache: "no-store",
+    signal: AbortSignal.timeout(10_000),
+  }).catch(async error => {
+    if (!current()) return;
+    if (isHomeAuthError(error)) {
+      clearHomeAuthorityToken();
+      await showHostAuthGate({ presentation: "prompt" });
+    } else console.error("home session check failed", error);
+  }).finally(() => { sessionCheckInFlight = null; });
+  return sessionCheckInFlight;
 }
 
 function refreshSignedHomeSession() {
