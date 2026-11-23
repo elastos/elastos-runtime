@@ -2050,6 +2050,20 @@ async function createBrowserTargetWindow(targetId, options = {}) {
   return entry;
 }
 
+// The window registry excludes the separately mounted Wallet rail.
+export async function openWalletConnectEntry() {
+  if(windowHooks?.holdHomeSetupAct?.('wallet')===true)throw new Error('Finish Home setup first');
+  ensureDesktopForNewLaunch();
+  requireWindowHooks().retireWalletRailBeforeWindow?.();
+  const entry=await launchBrowserTargetWindow('wallet',{});
+  const frame=entry.node.querySelector('.window-frame');
+  const route=frame?.dataset.route;
+  if(!route)throw new Error('Wallet did not open');
+  const token=new URLSearchParams(new URL(route,window.location.href).hash.slice(1)).get('home_token');
+  if(!token)throw new Error('Wallet launch is incomplete');
+  return token;
+}
+
 export function attachAuthorizedTarget(launched) {
   if (launched?.target === HOME_AGENT_TARGET_ID || launched?.target === "home-agent") {
     const query = Object.fromEntries(new URL(launched.route, window.location.href).searchParams);

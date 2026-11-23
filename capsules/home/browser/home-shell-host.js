@@ -1,3 +1,4 @@
+import {openWalletSigninEntry} from './wallet-signin-window.mjs';
 import {selectConnectedWalletConnect} from './wallet-signin-connector.mjs';
 import { handleWalletSigninRequest } from "./wallet-signin-host.mjs?v=wallet-signin-1";
 import { walletSigninApi } from "./wallet-signin-view.mjs?v=wallet-signin-1";
@@ -228,13 +229,8 @@ async function launchWalletConnectorFromTrustedSource(context, target) {
 async function openSigninConnector(target) {
   if(target==='wallet') {
     requireHomeGuiActive('open Wallet');
-    await openTargetFromHomeGui('wallet');
-    const find=()=>[...launchedAppContexts.entries()].find(([,c])=>c.targetId==='wallet'&&c.source&&!c.source.closed&&c.expiresAt>Date.now());
-    const deadline=Date.now()+15000;
-    while(!find()){if(Date.now()>deadline)throw new Error('Wallet did not open');await new Promise(resolve=>setTimeout(resolve,50));}
-    const [token,context]=find();
-    context.source.postMessage({type:'elastos.wallet.connect-entry/v1'}, OPAQUE_FRAME_TARGET);
-    return {isOpen:()=>launchedAppContexts.has(token)};
+    return openWalletSigninEntry({post:postToActiveShell,source:()=>activeShellFrame?.contentWindow,
+      context:token=>{const c=launchedAppContexts.get(token);return c?.expiresAt>Date.now()?c:null;}});
   }
   if(!WALLET_CONNECTOR_TARGETS.has(target))throw new Error("Unknown wallet connector");
   requireHomeGuiActive("launch Wallet connector");

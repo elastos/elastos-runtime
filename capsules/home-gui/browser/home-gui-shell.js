@@ -1,4 +1,4 @@
-import { focusOpenBrowserWindow } from "./shell-windows.js?v=home-20261101d";
+import { openWalletConnectEntry, focusOpenBrowserWindow } from "./shell-windows.js?v=home-20261101d";
 import {
   bindHomeGuiInteractions,
   attachAuthorizedHomeGuiTarget,
@@ -222,6 +222,11 @@ function handleGuiCommand(message) {
   }
   if (command === "open-target") {
     return openHomeGuiTarget(message.target, { query: message.query || {} });
+  }
+  if (command === "open-wallet-connect-entry") {
+    if(!hasExactKeys(message,['type','command','requestId'])||typeof message.requestId!=='string'||!message.requestId||message.requestId.length>128)return false;
+    void openWalletConnectEntry().then(homeToken=>postToHome({type:'home:wallet-connect-entry-ready',requestId:message.requestId,homeToken}),()=>postToHome({type:'home:wallet-connect-entry-ready',requestId:message.requestId,homeToken:''}));
+    return true;
   }
   if (command === "attach-authorized-target") {
     return attachAuthorizedHomeGuiTarget(

@@ -150,12 +150,27 @@ import {bindHomeUnlock,showHomeUnlock,hideHomeUnlock,manageWalletSignin,requestP
 import {handleWalletSigninRequest} from '/apps/home/wallet-signin-host.mjs';
 import {walletSigninApi} from '/apps/home/wallet-signin-view.mjs';
 import {selectConnectedWalletConnect} from '/apps/home/wallet-signin-connector.mjs';
+import {openWalletSigninEntry} from '/apps/home/wallet-signin-window.mjs';
 import {handleHomeWalletConnectorEffect} from '/apps/home/home-wallet-connector-host.js?v=home-wallpaper-20261030b';
 const contexts=new WeakMap();
-async function openConnector(target) {
+async function openFixtureConnector(target) {
   let frame=document.querySelector('iframe[data-target='+target+']');
   if(!frame){frame=document.createElement('iframe');frame.dataset.target=target;frame.title=target;frame.style.cssText='position:fixed;inset:0;width:100%;height:100vh;border:0;z-index:20;background:var(--el-surface)';frame.setAttribute('sandbox','allow-scripts allow-forms');frame.src='/apps/'+target+'/?home_origin='+encodeURIComponent(location.origin)+'#home_token=fixture-'+target;document.querySelector('#fixture-desktop').append(frame);await new Promise(resolve=>frame.onload=resolve);}
   document.querySelectorAll('#fixture-desktop iframe').forEach(f=>f.hidden=f!==frame);frame.hidden=false;if(target==='wallet')frame.contentWindow.postMessage({type:'elastos.wallet.connect-entry/v1'},'*');return {isOpen:()=>frame.isConnected,homeToken:'fixture-'+target,source:frame.contentWindow};
+}
+async function openConnector(target) {
+ if(target!=='wallet')return openFixtureConnector(target);
+ const desktop=document.querySelector('#active-shell-frame').contentWindow;
+ let visible;
+ const hidden={targetId:'wallet',source:{postMessage(){throw new Error('Hidden Wallet rail selected');}}};
+ const contextsByToken=new Map([['fixture-wallet-rail',hidden]]);
+ return openWalletSigninEntry({source:()=>desktop,context:token=>contextsByToken.get(token),post:message=>{
+  void openFixtureConnector('wallet').then(opened=>{
+   visible={targetId:'wallet',source:opened.source};contextsByToken.set(opened.homeToken,visible);
+   window.fixtureWindowChoice='visible-wallet';
+   dispatchEvent(new MessageEvent('message',{source:desktop,origin:'null',data:{type:'home:wallet-connect-entry-ready',requestId:message.requestId,homeToken:opened.homeToken}}));
+  });return true;
+ }});
 }
 const selectWalletConnect=options=>selectConnectedWalletConnect(options,{open:()=>openConnector('wallet-walletconnect'),current:context=>[...document.querySelectorAll('#fixture-desktop iframe')].some(f=>f.isConnected&&f.contentWindow===context.source)});
 window.openedPrincipal='';
