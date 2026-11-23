@@ -1,6 +1,9 @@
-import test from 'node:test';
+import test, {afterEach} from 'node:test';
 import assert from 'node:assert/strict';
-import { createWalletSigninFlow } from '../capsules/home/browser/wallet-signin-flow.mjs';
+import { createWalletSigninFlow as createProductFlow } from '../capsules/home/browser/wallet-signin-flow.mjs';
+const activeFlows=new Set();
+const createWalletSigninFlow=options=>{const flow=createProductFlow(options);activeFlows.add(flow);return flow;};
+afterEach(async()=>{await Promise.all([...activeFlows].map(flow=>flow.cancel()));activeFlows.clear();});
 
 const method = {method_id:'wallet:one',connector:'metamask',address:'0x'+'12'.repeat(20),chain_id:20,network:'',sign_in_enabled:false};
 function fixture({lost=false}={}) {
@@ -111,4 +114,16 @@ test('every method action checks the approval against the reviewed ceremony and 
     await flow.start({action,method:action==='add'?null:method,accountId:'principal:alex'});if(action==='add')await flow.choose('metamask');
     assert.equal(states.at(-1).stage,'error',`${action} refuses a different ${mismatch}`);assert.equal(signs,0);
   }
+});
+
+test('WalletConnect pairing and Add wallet each have their own browser secret',async()=>{
+  const calls=[];let serial=0;
+  const flow=createWalletSigninFlow({randomSecret:()=>String(++serial).padStart(64,'0'),
+    api:async(path,body)=>{calls.push({path,body});if(path.endsWith('/begin')) {
+      const ceremony_id=path.includes('/wallet-methods/')?'addition':'pairing';
+      return {ceremony_id,message:'message',expires_at:Date.now()/1000+120,approval:{operation:'auth.wallet.method',request:{ceremony_id,action:'add',account_id:'principal:alex',method_id:'new'}}};
+    }return {};},select:async()=>({...method,connector:'walletconnect',close(){}}),approve:()=>{},render(){}});
+  await flow.start({action:'add'});await flow.choose('walletconnect');
+  const begins=calls.filter(c=>c.path.endsWith('/begin'));await flow.cancel();assert.equal(begins.length,2);assert.notEqual(begins[0].body.browser_secret,begins[1].body.browser_secret);
+  for(const begin of begins){const id=begin.path.includes('/wallet-methods/')?'addition':'pairing';assert(calls.some(c=>c.path.endsWith('/cancel')&&c.body.ceremony_id===id&&c.body.browser_secret===begin.body.browser_secret));}
 });

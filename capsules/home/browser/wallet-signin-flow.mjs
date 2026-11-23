@@ -34,7 +34,7 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
   async function clear(current) {
     if(!current) return;
     stopLocal(current);
-    await Promise.allSettled([...current.ceremonies].map(ceremony_id=>api('/api/auth/wallet/cancel',{ceremony_id,browser_secret:current.secret})));
+    await Promise.allSettled([...current.ceremonies].map(([ceremony_id,browser_secret])=>api('/api/auth/wallet/cancel',{ceremony_id,browser_secret})));
   }
   function deadline(current, expires) {
     if(!Number.isFinite(expires) || expires<=now()) throw fault('expired');
@@ -46,9 +46,10 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
     },Math.max(0,(current.deadline-now())*1000));
   }
   async function begin(current,path,body) {
-    const result=await api(path,{...body,browser_secret:current.secret});
+    const secret=current.secret;
+    const result=await api(path,{...body,browser_secret:secret});
     if(typeof result?.ceremony_id!=='string' || !result.ceremony_id || result.ceremony_id.length>256) throw fault('invalid');
-    current.ceremonies.add(result.ceremony_id);
+    current.ceremonies.set(result.ceremony_id,secret);
     if(!live(current)) { await clear(current);throw fault('cancelled'); }
     deadline(current,result.expires_at);
     return result;
@@ -81,7 +82,10 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
             ? await api('/api/auth/wallet/signin/select',{ceremony_id:transport.ceremony_id,browser_secret:current.secret,address:wallet.address,chain_id:wallet.chain_id})
             : await begin(current,'/api/auth/wallet/signin/begin',identity);
           if(connector==='walletconnect') { ceremony={...transport,...ceremony};deadline(current,ceremony.expires_at); }
-        } else if(state.action==='add') ceremony=await begin(current,'/api/auth/wallet-methods/begin',{action:'add',...identity});
+        } else if(state.action==='add') {
+          if(connector==='walletconnect')current.secret=randomSecret();
+          ceremony=await begin(current,'/api/auth/wallet-methods/begin',{action:'add',...identity});
+        }
       }
       assertLive(current);
       if(!ceremony || typeof ceremony.message!=='string' || ceremony.message.length>32768 || ['signin','add','enable'].includes(state.action)&&!ceremony.message) throw fault('invalid');
@@ -122,7 +126,7 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
     get state(){return state;},
     async start({action='signin',method=null,account='',accountId='',token='' }={}) {
       const previous=run;run=null;clearTimeout(timer);void clear(previous);
-      const current=run={secret:randomSecret(),controller:new AbortController(),ceremonies:new Set(),deadline:now()+180};
+      const current=run={secret:randomSecret(),controller:new AbortController(),ceremonies:new Map(),deadline:now()+180};
       state={stage:'choice',action,method,account,accountId,token};show('choice');deadline(current,current.deadline);
       if(method && live(current)) await prepare(current,method.connector);
     },
