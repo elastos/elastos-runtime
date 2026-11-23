@@ -14,8 +14,8 @@ passkey approval. Payment links acquire sign-in authority only through this
 explicit operation. Wallet sessions can use Home; passkeys approve sensitive actions.
 Ordinary passkey removal keeps every account's final active passkey, including
 accounts with wallet sign-in enabled. A separate passkey-approved Remove account
-intent revokes that account's passkeys and clears its wallet access. Another
-Admin account must retain an active passkey before account removal can proceed.
+intent revokes that account's passkeys and clears its wallet access. Before
+removing an Admin account, another account must retain an active Admin passkey.
 Removal and switch off end the wallet's sessions and pending sign-in attempts. Concurrent changes are
 serialized. Recovery Kit recovery keeps the passkey recovery flow and clears the
 recovered account's wallets.
@@ -265,7 +265,7 @@ concurrent requests, even when wallet sign-in remains enabled or another Admin
 exists. It also preserves the Home's final active Admin passkey. The warning for
 an account's final passkey is "Keep a passkey on this account, or choose Remove
 account." If the target is the Home's final Admin passkey, Runtime instead returns
-"Add another admin passkey before removing this one."
+"Add another admin passkey before removing this one." Both refusals use HTTP 409.
 
 A screen that offers Remove account shows the affected account and explains
 that all its passkeys, wallet sign-in methods and sessions will end. The caller
