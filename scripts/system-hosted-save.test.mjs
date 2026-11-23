@@ -1373,7 +1373,7 @@ test("Show me in Community offers three modes, sets only the caller's own and re
     async function open() {
       await page.goto(`${server.baseUrl}/fixture?settings=security`);
       const frame = await page.locator("#system-frame").elementHandle().then(h => h.contentFrame());
-      await frame.waitForFunction(() => document.querySelector('[data-field="runtime-version"]').textContent.length > 0);
+      await frame.waitForFunction(() => document.querySelector('[data-field="source-installed-version"]').textContent.length > 0);
       return frame;
     }
     let frame = await open();

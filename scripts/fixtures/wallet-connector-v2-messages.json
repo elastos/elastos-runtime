@@ -3363,7 +3363,7 @@
       "actor": "wallet-walletconnect",
       "operation": "link_verify",
       "fields": {
-        "wallet_peer_name": "\ufffdAlice"
+        "wallet_peer_name": "�Alice"
       },
       "expect": "accept"
     },
@@ -3579,7 +3579,7 @@
         "connector_id": "wallet-metamask",
         "created_at": 1800000000,
         "expires_at": 1800000600,
-        "requesting_origin": "https://b\u00fccher.example"
+        "requesting_origin": "https://bücher.example"
       },
       "expect": "omit_site"
     },

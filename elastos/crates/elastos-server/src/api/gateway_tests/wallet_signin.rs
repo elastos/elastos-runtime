@@ -674,6 +674,7 @@ async fn wallet_inbox_positive_permissions_require_exact_fresh_passkey() {
         "capability-approve-request:test",
         "service-approve-request:test",
         "model-egress-approve:test",
+        "hosted-http-approve:test",
         WALLET_PRICE_HTTP_APPROVE_ACTION_ID,
     ] {
         let (status, result) = call(
