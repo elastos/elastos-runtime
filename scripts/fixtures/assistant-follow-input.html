@@ -10,12 +10,14 @@
   #agent-harness-stream-column > textarea { position: absolute; left: 120px; bottom: 200px; width: 100px; height: 40px; }
   #agent-harness-stream-column > select { position: absolute; left: 240px; bottom: 200px; }
   #agent-harness-stream-column > [contenteditable] { position: absolute; left: 320px; bottom: 200px; }
+  #inline-editor-wrap { position: absolute; left: 320px; bottom: 150px; }
   #selection { position: absolute; bottom: 24px; left: 24px; white-space: nowrap; user-select: text; -webkit-user-select: text; }
 </style>
 <div id="viewport" class="agent-harness-stream-viewport">
   <div id="agent-harness-stream" class="agent-harness-stream">
     <div id="agent-harness-stream-column" class="agent-harness-stream-column">
       <span id="selection">Select this sentence at the end.</span><button id="message">Copy message</button><input><textarea></textarea><select><option>One</option></select><span contenteditable>Draft</span>
+      <div id="inline-editor-wrap"><span id="inline-editor" contenteditable>Inline draft</span></div>
     </div>
   </div>
 </div>
@@ -183,18 +185,22 @@
       // Allow the key animation and its 150 ms quiet period to finish.
       await delay(extra.waitMs ?? 650);
       const received = events.slice(firstEvent);
-      if (phase === "key") {
+      if (["key", "key-down", "key-up"].includes(phase)) {
         const keyName = extra.key === "Shift+Space" ? " " : extra.key;
-        expect(received.some(e => e.type === "keydown" && e.trusted && e.key === keyName
-          && e.shift === (extra.key === "Shift+Space") && !e.ctrl && !e.meta && !e.alt),
-          `trusted ${extra.key} with requested modifiers received`);
+        const type = phase === "key-up" ? "keyup" : "keydown";
+        const phaseLabel = phase === "key" ? "" : ` ${phase}`;
+        expect(received.some(e => e.type === type && e.trusted && e.key === keyName
+          && e.shift === (extra.key === "Shift+Space" && type === "keydown") && !e.ctrl && !e.meta && !e.alt),
+          `trusted ${extra.key}${phaseLabel} with requested modifiers received`);
+        if (phase === "key-down") expect(received.some(e => e.type === type && e.trusted
+          && e.code === extra.key && e.repeat === Boolean(extra.repeat)), `trusted ${extra.key} held-key identity and repeat received`);
       }
       (result.inputEvidence ||= []).push({ phase, extra, before, after: snap(), events: received });
     };
     const events = [];
     for (const name of ["keydown", "keyup", "pointerdown", "pointerup", "wheel", "scroll", "scrollend"]) {
       document.addEventListener(name, event => events.push({ type: name, key: event.key,
-        time: performance.now(), shift: event.shiftKey, ctrl: event.ctrlKey, meta: event.metaKey, alt: event.altKey, deltaY: event.deltaY, trusted: event.isTrusted, target: event.target.id, x: event.clientX, y: event.clientY, top: s.scrollTop, follow: snap().follow }), true);
+        time: performance.now(), code: event.code, repeat: event.repeat, shift: event.shiftKey, ctrl: event.ctrlKey, meta: event.metaKey, alt: event.altKey, deltaY: event.deltaY, trusted: event.isTrusted, target: event.target.id, x: event.clientX, y: event.clientY, top: s.scrollTop, pageTop: scrollY, follow: snap().follow }), true);
     }
     const focusMessage = () => document.querySelector("#message").focus({ preventScroll: true });
     await native("drag-away");
@@ -359,18 +365,246 @@
       target.focus({ preventScroll: true }); key(target, "PageUp");
       await followingGrowth(`${selector} keeps follow`);
     }
+    const fieldState = target => ({
+      focused: document.activeElement === target,
+      text: "value" in target ? target.value : target.textContent,
+      top: target.scrollTop,
+      start: target.selectionStart ?? null,
+      end: target.selectionEnd ?? null,
+      direction: target.selectionDirection ?? null,
+      selectedIndex: target.selectedIndex ?? null,
+      selection: target.isContentEditable ? getSelection().toString() : null,
+      anchor: target.isContentEditable ? getSelection().anchorOffset : null,
+      focus: target.isContentEditable ? getSelection().focusOffset : null,
+    });
+    const scrollStyles = () => [s, document.scrollingElement].map(element =>
+      ["overflow-y", "scrollbar-gutter"].map(name => ({ name,
+        value: element.style.getPropertyValue(name), priority: element.style.getPropertyPriority(name),
+      })));
+    const fieldKey = async (target, name, label) => {
+      await settle();
+      const before = { transcript: snap(), pageTop: scrollY, field: fieldState(target), styles: scrollStyles() };
+      const firstEvent = events.length;
+      await native("key", { key: name });
+      const after = { transcript: snap(), pageTop: scrollY, field: fieldState(target), styles: scrollStyles() };
+      result.cases[label] = { before, after };
+      // Check before growing the reply: a later follow pin must not hide a scroll.
+      expect(after.transcript.top === before.transcript.top && after.pageTop === before.pageTop
+        && events.slice(firstEvent).every(event => event.top === before.transcript.top && event.pageTop === before.pageTop),
+        `${label}: transcript stays still`);
+      expect(JSON.stringify(after.styles) === JSON.stringify(before.styles),
+        `${label}: scroll style values and priorities are restored`);
+      expect(after.field.focused && after.field.text === before.field.text,
+        `${label}: focus and text stay in the field`);
+      expect(after.transcript.follow === before.transcript.follow,
+        `${label}: field navigation preserves follow`);
+      return { before: before.field, after: after.field };
+    };
+    // These trusted-key regressions run in the normal smoke too, not only the live matrix.
+    for (const selector of ["input", "textarea", "select", "[contenteditable]", "#inline-editor"]) {
+      await reset();
+      const target = c.querySelector(selector);
+      const originalStyle = s.style.cssText;
+      try {
+        // Exercise absent declarations and explicit values with mixed priorities.
+        if (selector === "textarea" || selector === "#inline-editor") {
+          s.style.setProperty("overflow-y", selector === "textarea" ? "scroll" : "auto", selector === "textarea" ? "important" : "");
+          s.style.setProperty("scrollbar-gutter", "auto", selector === "#inline-editor" ? "important" : "");
+        }
+        if ("value" in target && target.tagName !== "SELECT") target.value = "Draft";
+        target.focus({ preventScroll: true });
+        if (typeof target.setSelectionRange === "function") target.setSelectionRange(0, 0);
+        else if (target.isContentEditable) getSelection().collapse(target.firstChild, 0);
+        const label = `native PageUp in short ${selector}`;
+        if (selector === "#inline-editor") expect(getComputedStyle(target).display === "inline"
+          && getComputedStyle(target).position === "static" && target.getBoundingClientRect().width > 0,
+          `${label}: editing host is a visible inline box`);
+        const { before, after } = await fieldKey(target, "PageUp", label);
+        expect(target.scrollHeight === target.clientHeight, `${label}: field has no overflow`);
+        expect(JSON.stringify(after) === JSON.stringify(before), `${label}: field state is preserved`);
+        await followingGrowth(`${label} then growth`);
+      } finally { s.style.cssText = originalStyle; }
+    }
+    const textarea = c.querySelector("textarea");
+    const shortText = textarea.value;
+    textarea.value = Array.from({ length: 40 }, (_, i) => `Line ${i + 1}`).join("\n");
+    for (const [name, atEnd, boundary] of [
+      ["PageUp", true, false], ["PageDown", false, false],
+      ["PageUp", false, true], ["PageDown", true, true],
+    ]) {
+      await reset();
+      const page = document.scrollingElement;
+      const pageStyle = page.style.cssText;
+      const spacer = document.createElement("div");
+      const label = `native textarea ${name} ${boundary ? "at boundary" : "inside field"}`;
+      try {
+        // Both ancestors have room to move if PageDown escapes the field.
+        if (boundary && atEnd) {
+          s.scrollBy(0, -80);
+          spacer.style.height = "2000px";
+          document.body.append(spacer);
+          page.style.setProperty("overflow-y", "auto", "important");
+          page.style.setProperty("scrollbar-gutter", "auto", "important");
+          scrollTo(0, 0);
+          await settle();
+          expect(page.scrollHeight > innerHeight && scrollY === 0, `${label}: outer page can scroll down`);
+        }
+        textarea.focus({ preventScroll: true });
+        const caret = atEnd ? textarea.value.length : 0;
+        textarea.setSelectionRange(caret, caret);
+        textarea.scrollTop = atEnd ? textarea.scrollHeight : 0;
+        const { before, after } = await fieldKey(textarea, name, label);
+        expect(textarea.scrollHeight > textarea.clientHeight, `${label}: field overflows`);
+        expect(boundary ? after.top === before.top : name === "PageUp" ? after.top < before.top : after.top > before.top,
+          `${label}: native field scrolling`);
+        if (boundary && atEnd) {
+          // Synthetic lifecycle events exercise repeat/blur cleanup for both
+          // ancestors, without changing the driver's focused window.
+          const repeatStyles = scrollStyles();
+          for (const repeat of [false, true]) textarea.dispatchEvent(new KeyboardEvent("keydown", {
+            key: "PageUp", repeat, bubbles: true,
+          }));
+          window.dispatchEvent(new Event("blur"));
+          const afterBlur = scrollStyles();
+          await frames();
+          result.cases["synthetic repeated field key then window blur"] = { before: repeatStyles, afterBlur, afterFrame: scrollStyles() };
+          expect(JSON.stringify(afterBlur) === JSON.stringify(repeatStyles)
+            && JSON.stringify(scrollStyles()) === JSON.stringify(repeatStyles), "repeated field key and blur restore scroll styles");
+        }
+      } finally { spacer.remove(); page.style.cssText = pageStyle; scrollTo(0, 0); }
+    }
+    textarea.value = shortText;
+    // Real split-key input spans rendering frames, repeats and overlapping keys.
+    // Native movement stays contained; scrolling returns between key events.
+    const input = c.querySelector("input");
+    await reset(); input.focus({ preventScroll: true }); input.setSelectionRange(0, 0);
+    const heldBefore = { transcript: snap(), pageTop: scrollY, field: fieldState(input), styles: scrollStyles() };
+    const heldFirstEvent = events.length;
+    for (const [phase, name, repeat, label] of [
+      ["key-down", "PageUp", false, "held editable key across frames"],
+      ["key-down", "PageUp", true, "held editable repeated key"],
+      ["key-down", "ArrowUp", false, "held editable overlapping key"],
+      ["key-up", "PageUp", false, "held editable partial release"],
+    ]) {
+      await native(phase, { key: name, repeat });
+      const after = { transcript: snap(), pageTop: scrollY, field: fieldState(input), styles: scrollStyles() };
+      result.cases[label] = { before: heldBefore, after };
+      expect(after.transcript.top === heldBefore.transcript.top && after.pageTop === heldBefore.pageTop
+        && events.slice(heldFirstEvent).every(event => event.top === heldBefore.transcript.top && event.pageTop === heldBefore.pageTop),
+        `${label}: transcript stays still`);
+      expect(JSON.stringify(after.field) === JSON.stringify(heldBefore.field) && after.transcript.follow,
+        `${label}: field state and follow are preserved`);
+      expect(JSON.stringify(after.styles) === JSON.stringify(heldBefore.styles), `${label}: styles restore between events`);
+    }
+    await native("key-up", { key: "ArrowUp" });
+    expect(JSON.stringify(scrollStyles()) === JSON.stringify(heldBefore.styles), "held editable final release restores styles");
+    await followingGrowth("held editable final release then growth");
+
+    await reset(); input.focus({ preventScroll: true }); input.setSelectionRange(0, 0);
+    const wheelStyles = scrollStyles();
+    await native("key-down", { key: "PageUp", waitMs: 50 });
+    await native("wheel", { deltas: [-300] });
+    expect(JSON.stringify(scrollStyles()) === JSON.stringify(wheelStyles), "editable wheel interruption restores styles");
+    expect(snap().fromEnd > 8 && !snap().follow, "editable wheel interruption scrolls the reader");
+    await native("key-up", { key: "PageUp", waitMs: 0 });
+    await heldGrowth("editable wheel interruption then growth");
+
+    // Synthetic lifecycle events isolate cancellation order from the OS driver.
+    // The trusted hold/repeat and wheel cases above prove the corresponding input.
+    const dispatchFieldKey = type => input.dispatchEvent(new KeyboardEvent(type, {
+      key: "PageUp", code: "PageUp", bubbles: true,
+    }));
+    await reset(); input.focus({ preventScroll: true });
+    const pendingStyles = scrollStyles();
+    dispatchFieldKey("keydown"); dispatchFieldKey("keyup");
+    await new Promise(resolve => requestAnimationFrame(() => { dispatchFieldKey("keydown"); resolve(); }));
+    // At the next frame the previous window would have expired. The replacement
+    // key still owns one more frame, then returns the original styles.
+    await new Promise(requestAnimationFrame);
+    expect(s.style.getPropertyValue("overflow-y") === "hidden", "editable pending release is cancelled by a new key");
+    await new Promise(requestAnimationFrame);
+    expect(JSON.stringify(scrollStyles()) === JSON.stringify(pendingStyles), "editable replacement key restores between events");
+    dispatchFieldKey("keyup"); await frames();
+    expect(JSON.stringify(scrollStyles()) === JSON.stringify(pendingStyles), "editable replacement key release restores styles");
+    for (const action of ["focusout", "blur", "hidden", "pointerdown", "touchstart"]) {
+      await reset(); input.focus({ preventScroll: true });
+      const styles = scrollStyles();
+      dispatchFieldKey("keydown");
+      if (action === "focusout") input.blur();
+      else if (action === "blur") window.dispatchEvent(new Event("blur"));
+      else if (action === "hidden") {
+        const descriptor = Object.getOwnPropertyDescriptor(document, "hidden");
+        try {
+          Object.defineProperty(document, "hidden", { configurable: true, value: true });
+          document.dispatchEvent(new Event("visibilitychange"));
+        } finally {
+          if (descriptor) Object.defineProperty(document, "hidden", descriptor);
+          else delete document.hidden;
+        }
+      } else {
+        const event = new Event(action, { bubbles: true });
+        document.dispatchEvent(event);
+      }
+      const restoredImmediately = JSON.stringify(scrollStyles()) === JSON.stringify(styles);
+      dispatchFieldKey("keyup"); await frames();
+      expect(restoredImmediately && JSON.stringify(scrollStyles()) === JSON.stringify(styles),
+        `editable ${action} interruption restores styles`);
+    }
+    // Revisit the two timing-sensitive fields after different rendering phases.
+    for (const selector of ["input", "#inline-editor"]) {
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        await reset(); const target = c.querySelector(selector);
+        target.focus({ preventScroll: true });
+        if (target.isContentEditable) getSelection().collapse(target.firstChild, 0);
+        else target.setSelectionRange(0, 0);
+        await frames();
+        await fieldKey(target, "PageUp", `native PageUp repeated short ${selector} ${attempt}`);
+      }
+    }
+    // Native Home/End and selection behavior differ by platform. Compare with an
+    // ordinary textarea outside the transcript instead of replacing that behavior.
+    const reference = textarea.cloneNode();
+    reference.style.cssText = "position:fixed;left:600px;top:0;width:100px;height:40px";
+    document.body.append(reference);
+    try {
+      for (const name of ["Home", "End", "PageUp"]) {
+        await reset();
+        reference.value = textarea.value = "Draft";
+        reference.focus({ preventScroll: true }); reference.setSelectionRange(1, 4);
+        const referenceBefore = fieldState(reference);
+        await native("key", { key: name });
+        const expected = fieldState(reference);
+        textarea.focus({ preventScroll: true }); textarea.setSelectionRange(1, 4);
+        const label = `native ${name} with selected textarea text`;
+        const { after } = await fieldKey(textarea, name, label);
+        result.cases[label].reference = { before: referenceBefore, after: expected };
+        expect(after.start === expected.start && after.end === expected.end && after.direction === expected.direction,
+          `${label}: matches native caret and selection`);
+      }
+    } finally { reference.remove(); }
     if (matrix) {
       for (const selector of ["input", "textarea", "select", "[contenteditable]"]) {
-        for (const name of ["PageUp", "Home", "ArrowUp"]) {
-          await reset(); c.querySelector(selector).focus({ preventScroll: true });
-          await native("key", { key: name });
-          await followingGrowth(`native ${name} in ${selector}`);
+        for (const name of ["Home", "ArrowUp"]) {
+          await reset();
+          const target = c.querySelector(selector);
+          target.focus({ preventScroll: true });
+          await fieldKey(target, name, `native ${name} in ${selector}`);
+          await followingGrowth(`native ${name} in ${selector} then growth`);
         }
       }
       for (const name of ["ArrowUp", "Shift+Space"]) {
         await reset(); focusMessage();
+        const before = s.scrollTop;
         await native("key", { key: name });
-        await heldGrowth(`native ${name} on message button`);
+        // Issue #563's native-input report observes no scroll for Shift+Space,
+        // or for ArrowUp on a message button in system WebKit.
+        const webKit = /AppleWebKit/.test(navigator.userAgent) && !/Chrome|Chromium|CriOS|Edg/.test(navigator.userAgent);
+        if (name === "Shift+Space" || webKit) {
+          expect(s.scrollTop === before, `native ${name} on message button does not scroll`);
+          await followingGrowth(`native ${name} on message button`);
+        } else {
+          await heldGrowth(`native ${name} on message button`);
+        }
       }
       await reset(); document.activeElement.blur();
       await native("key", { key: "PageUp" });
