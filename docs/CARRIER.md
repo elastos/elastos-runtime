@@ -624,9 +624,9 @@ Certificate renewal with the same key keeps the SPKI hash and requires no Home
 release. Before rotating keys, commit the new key as the backup pin and ship the
 signed update. After Homes accept that update, the operator can switch the seed
 to that key. A later release can promote it to primary and replace the backup.
-The pin pair was approved on 22 Nov under Anders's delegation, through agent
-review and devils-advocate review. Issue [#345](https://github.com/elastos/elastos-runtime/issues/345)
-holds the approval record. Identity and rotation changes require approval.
+The signed release owns the meeting-point origin and pinned public-key identity.
+Runtime uses the system DNS resolver with public fallback disabled. Identity
+and rotation changes require approval.
 
 To stop the meeting point, the operator runs
 `systemctl disable --now elastos-meeting-point.service`.

@@ -508,11 +508,12 @@ rather than inventing a failing provider response.
 
 ### N3 outside-wallet requests
 
-**Today.** The Inbox producer chooses wallet-review-request only for Browser
-account access; other external requests get wallet-approve-request. Runtime
-refuses their direct managed approval. N1 describes the connector launch gap.
-The Wallet toolbar badge in `capsules/home-gui/browser/shell-wallet-rail.js`
-counts only the approve prefix today.
+**Today.** The Inbox producer chooses `wallet-review-request` for Browser
+account access, external proofs and requests with connector metadata. Managed
+proofs without a connector use `wallet-approve-request`. Runtime keeps managed
+signing restricted to managed proofs. The Wallet toolbar badge in
+`capsules/home-gui/browser/shell-wallet-rail.js` counts both prefixes, once per
+request ID.
 
 | Status | Runtime classification | Inbox action | Wallet decision |
 | --- | --- | --- | --- |

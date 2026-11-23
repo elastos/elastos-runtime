@@ -28,10 +28,10 @@ for the canonical definition.
 
 The trusted base (`elastos` binary). It checks signatures,
 capabilities, routing, lifecycle, and audit. Providers run outside the trusted
-core as native processes. Release capsules run as WASM components inside the
-Runtime process with memory and fuel limits. Native host and engine adapters may
-also sit outside the trusted core, but they do not become capsules merely
-because they are separate processes.
+core as native processes. Release app, shell and viewer capsule manifests select
+`execution: web-projection` and the `elastos.runtime-projection/v1` ABI. Runtime
+serves their `browser/index.html` entrypoints. Native host and engine adapters
+also sit outside the trusted core; their role defines their authority.
 Also called the ElastOS kernel. In this repository, ElastOS alone means the
 whole system, not only the Runtime. A PC² Host is the computer the Runtime runs
 on: today an app on macOS or Linux, later possibly a dedicated appliance image.
