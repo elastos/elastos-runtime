@@ -1065,3 +1065,35 @@ async fn walletconnect_review_note_storage_post_advances_etag_and_fences_stale_w
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn walletconnect_passkey_session_end_retires_confirmation_relay() {
+    for sign_out in [false, true] {
+        let f = wallet_fixture::fixture();
+        let state = test_state(f.data.path());
+        let pending = auth::begin(
+            f.data.path(), ORIGIN, "home-test",
+            serde_json::from_value(json!({"action":"add","connector":"walletconnect","address":"","chain_id":0,"browser_secret":BROWSER})).unwrap(),
+            Some(f.actor.clone()),
+        ).unwrap();
+        gateway_walletconnect::install_confirmation(&state, &pending, &f.actor.session_id)
+            .await
+            .unwrap();
+        let relay_cancel =
+            gateway_walletconnect::watch_attempt_socket_for_test(&state, &pending.ceremony_id)
+                .await;
+        let home = issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &f.actor)
+            .unwrap();
+        let path = if sign_out {
+            "/api/auth/sessions/sign-out".into()
+        } else {
+            format!("/api/auth/sessions/{}/revoke", f.actor.session_id)
+        };
+        let (status, out) = call(&gateway_router(state), &path, Some(&home), Some(json!({}))).await;
+        assert_eq!(status, StatusCode::OK, "{out}");
+        assert!(
+            *relay_cancel.borrow(),
+            "session end must retire its confirmation relay: {path}"
+        );
+    }
+}

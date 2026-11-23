@@ -353,7 +353,7 @@ fn altered_text_is_refused_even_with_valid_signature() {
 #[test]
 fn case_only_text_change_is_refused() {
     let c = WalletProofChallenge::new(input(), &SECRET).unwrap();
-    let changed = c.message().replacen("Create", "create", 1);
+    let changed = c.message().to_ascii_uppercase();
     assert_ne!(changed, c.message());
     assert!(changed.eq_ignore_ascii_case(c.message()));
     assert!(matches!(
