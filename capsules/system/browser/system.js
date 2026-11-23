@@ -44,7 +44,7 @@ const walletAddButton = document.querySelector("#wallet-signin-add");
 const passkeyAddButton = document.querySelector("#passkey-add");
 const passkeyRemoveDialog = document.querySelector("#passkey-remove-dialog");
 const LAST_ACCOUNT_PASSKEY_REMOVAL_MESSAGE = "Keep a passkey on this account, or choose Remove account.";
-const LAST_ADMIN_PASSKEY_REMOVAL_MESSAGE = "Add another admin passkey before removing this one.";
+const LAST_ADMIN_PASSKEY_REMOVAL_MESSAGE = "Add another admin passkey first.";
 const recoveryDownloadButton = document.querySelector("#recovery-download");
 const recoveryProfileSetup = document.querySelector("#recovery-profile-setup");
 const recoveryProfileName = document.querySelector("#recovery-profile-name");
@@ -2638,7 +2638,7 @@ function accountRow(passkey, listState = {}) {
   const added = document.createElement("small");
   added.className = "passkey-added";
   added.textContent = `Added ${formatAccountDate(passkey.created_at)}`;
-  nameWrap.title = `${readText(passkey.added_from) || "Passkey"} · Added ${formatTimestamp(passkey.created_at, { year: "numeric" })}`;
+  nameWrap.title = `${readText(passkey.added_from) || "Passkey"} · Added ${formatAccountDate(passkey.created_at)}`;
   nameWrap.append(added);
   if (passkey.current) {
     const current = document.createElement("small");
@@ -2694,7 +2694,7 @@ function accountRow(passkey, listState = {}) {
     const explanation = document.createElement("p");
     explanation.className = "passkey-removal-note";
     explanation.id = `passkey-removal-${passkey.proof_binding_id}`;
-    explanation.textContent = protectsLastAdmin ? "Add another admin passkey first." : "Keep one passkey, or remove the account.";
+    explanation.textContent = protectsLastAdmin ? LAST_ADMIN_PASSKEY_REMOVAL_MESSAGE : "Keep one passkey, or remove the account.";
     actions.append(explanation);
     remove.title = explanation.textContent;
     remove.setAttribute("aria-describedby", explanation.id);
@@ -2765,19 +2765,6 @@ function formatAccountDate(timestamp) {
     : "recently";
 }
 
-function formatTimestamp(timestamp, options = {}) {
-  const seconds = Number(timestamp);
-  if (!Number.isFinite(seconds) || seconds <= 0) {
-    return "recently";
-  }
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    ...options,
-  }).format(new Date(seconds * 1000));
-}
 
 async function onAccountListClick(event) {
   const button = event.target.closest([

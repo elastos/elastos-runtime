@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { chromium, jsonResponse, textResponse, makeAppearanceRecord, makeSystemSummary, startSystemFixtureServer } from "./system-uiux-fixture.mjs";
 import { productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 
-const explanation = "Add another admin passkey before removing this one.";
+const explanation = "Add another admin passkey first.";
 const disabledExplanation = "Add another admin passkey first.";
 const owner = { principal_id: "alex", proof_binding_id: "proof:passkey:alex", display_name: "Alex", role: "admin", current: true,
   last_used_at: Date.UTC(2026, 10, 22, 16, 5) / 1000 };
@@ -327,7 +327,7 @@ test("Accounts groups methods beneath their owner with equal add controls in bot
         }
         if (options.methods) {
           const walletRow = block.locator("[data-wallet-method]");
-          assert.equal(await walletRow.getByText("Signs in", { exact: true }).count(), 1);
+          assert.equal(await walletRow.getByRole("button").count(), 1);
           assert.equal(await walletRow.getByRole("switch").count(), 0);
           assert.equal(await walletRow.getByRole("button", { name: "Remove", exact: true }).count(), 1);
           assert.equal(await block.getByRole("button", { name: "Remove account", exact: true }).count(), 0);

@@ -1,16 +1,14 @@
-import {saveSigninOptions} from './wallet-signin-options.mjs';
-import {connectorName,walletNetwork,shortWalletAddress} from './wallet-signin-flow.mjs';
 export async function readWalletSigninMethods(token,{origin}={}) {
   if(origin) {
     const result=await requestWalletSigninChange({action:'list',token,origin});
     if(result?.status!=='complete'||typeof result.account_id!=='string'||!Array.isArray(result.methods))throw new Error('Home could not load sign-in methods.');
-    saveSigninOptions(result.methods);return result;
+    return result;
   }
   const response=await fetch('/api/auth/wallet-methods',{cache:'no-store',signal:AbortSignal.timeout(15000),headers:{'x-elastos-home-token':token}});
   if(!response.ok)throw new Error('Home could not load sign-in methods.');
   const result=await response.json();
   if(typeof result.account_id!=='string'||!Array.isArray(result.methods)||result.methods.length>256)throw new Error('Home could not load sign-in methods.');
-  saveSigninOptions(result.methods);return result;
+  return result;
 }
 export function requestWalletSigninChange({action,methodId='',wallet,token,origin}) {
   if(window.top===window || !token || !origin)return Promise.reject(new Error('Open this app from Home to change wallet sign-in.'));
@@ -26,25 +24,10 @@ export function requestWalletSigninChange({action,methodId='',wallet,token,origi
   });
 }
 function text(tag,value,className) {const el=document.createElement(tag);el.textContent=value;if(className)el.className=className;return el;}
-function used(at) {return at?new Date(at*1000).toLocaleString():'Not used yet';}
-export function walletSigninControls(method,{canManage,onAction,buttonClass=''}) {
+export function walletSigninControls(method,{onAction,buttonClass=''}) {
   const controls=text('div','','signin-method-controls');
-  if(method.paymentOnly) {
-    const add=text('button','Add wallet',buttonClass);add.type='button';add.disabled=!canManage;add.onclick=()=>onAction('add',method.method_id);controls.append(add);
-    if(!canManage)controls.append(text('small','Only an Admin can add a wallet.','signin-method-note'));
-  } else {
-    controls.append(text('small','Signs in','signin-method-note'));
-    const remove=text('button','Remove',buttonClass);remove.type='button';remove.onclick=()=>onAction('remove',method.method_id);controls.append(remove);
-  }
+  const remove=text('button','Remove',buttonClass);remove.type='button';remove.onclick=()=>onAction('remove',method.method_id);controls.append(remove);
   return controls;
-}
-export function renderWalletSigninCards(mount,methods,options) {
-  mount.replaceChildren();
-  if(!methods.length)mount.append(text('p','Add a wallet in System, Accounts to use it for sign-in.','signin-method-note'));
-  for(const method of methods) {
-    const card=text('div','','signin-method-card');card.dataset.walletMethod=method.method_id;
-    card.append(text('strong',connectorName(method.connector)),text('p',`${shortWalletAddress(method.address)} · ${walletNetwork(method)}`,'signin-method-note'),text('p',`Last used: ${used(method.last_used_at)}`,'signin-method-note'),walletSigninControls(method,options));card.title=method.address;mount.append(card);
-  }
 }
 
 export function watchWalletSigninMethods(refresh,origin) {

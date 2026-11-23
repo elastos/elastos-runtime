@@ -282,31 +282,31 @@ System launch header. Home owns WebAuthn and receives the System launch plus the
 returned approval intent through the existing approval bridge. Public signed-out
 sign-in keeps the same-origin Home boundary; other capsules receive a refusal.
 
-`GET /api/auth/passkey/status` adds `wallet_signin_available` and
-`walletconnect_signin_available`. Home uses them to show the wallet choice and its
-compatible relay option. These booleans reveal availability; account names,
-addresses and method IDs remain in the authenticated account list.
+`GET /api/auth/passkey/status` returns `wallet_signin_available`,
+`walletconnect_signin_available`, `wallet_signin_connectors` (connector kinds only),
+and `wallet_signin_relay_notice`. Runtime derives these from the current methods.
+Account names, addresses, networks and method IDs stay in the authenticated list.
 
-Home's Sign in control lists Passkey and enabled wallet identities previously read
-by this browser through that authenticated list. Home stores only connector,
-address, network, chain and Wallet-supplied provider name and ID as browser-local
-display hints. Runtime checks the current method and wallet proof on every sign-in.
-Home offers an extension wallet only when its extension is present. WalletConnect
-is offered when Runtime reports a compatible sign-in method, including in the
-desktop app and a fresh browser with no local hints. That option opens the shared
-QR screen; Runtime checks the selected wallet after pairing. A fresh browser
-uses a passkey to learn named extension-wallet options. The Remember my choice checkbox stores
-only the selected option on this browser. Other options opens the list again.
+Home has one Sign in button. It offers the passkey when one exists, browser wallets
+when their extensions are present, and Phone wallet when Runtime reports a
+compatible WalletConnect method. A fresh browser and the desktop app use the same
+Runtime list. Signed-out choices show the wallet name and icon. The browser stores
+only the remembered choice (passkey or connector kind), and clears trial identity
+hints. Other options opens the list again.
 
-Accounts reads connected wallets through its own System launch authority.
-New wallet opens the existing connector window. Wallet owns saved connections;
-Home waits for Wallet's account summary before offering the new account.
-Choosing an account signs the Runtime `add_signin` message, then requests one
-passkey approval. Home closes the request when Runtime confirms success.
-WalletConnect uses its admitted connector window and saved payment session for
-this authenticated operation, with the connector's existing internet permission.
-Signed-out sign-in uses its isolated temporary
-transport and the shared connection QR screen, after explicit relay consent.
+Accounts groups sign-in methods under each person. Add wallet lists connected
+wallets and New wallet. New wallet opens Wallet's existing connection controls;
+Wallet opens the selected connector. Home waits for Wallet's saved account summary.
+Choosing a connected wallet signs the Runtime `add` message once, then requests one
+passkey approval. Runtime adds the sign-in method atomically and Home closes the
+request. Each wallet row has one Remove action. Wallet owns payment connections.
+
+Authenticated WalletConnect signing reuses its admitted connector window and saved
+payment session, with its existing internet permission. Signed-out Phone wallet
+shows Runtime's short relay notice beside the option. Selecting it consents to a
+short temporary connection and opens the shared QR screen. Runtime checks the
+wallet proof and current method after pairing. These transport and payment
+permissions remain separate.
 
 ## Explicit account removal
 

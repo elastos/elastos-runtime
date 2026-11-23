@@ -616,7 +616,7 @@ async fn wallet_session_add_passkey_retains_the_exact_approving_key_until_comple
 }
 
 #[tokio::test]
-async fn wallet_signin_public_availability_tracks_switch_without_account_details() {
+async fn wallet_signin_public_options_come_from_runtime_without_account_details() {
     let f = wallet_fixture::fixture();
     let app = gateway_router(test_state(f.data.path()));
     assert_eq!(
@@ -628,6 +628,14 @@ async fn wallet_signin_public_availability_tracks_switch_without_account_details
     assert_eq!(status, StatusCode::OK);
     assert_eq!(state["wallet_signin_available"], true);
     assert_eq!(state["walletconnect_signin_available"], true);
+    assert_eq!(
+        state["wallet_signin_connectors"],
+        json!(["metamask", "walletconnect"])
+    );
+    assert_eq!(
+        state["wallet_signin_relay_notice"],
+        crate::auth::wallet_signin::RELAY_NOTICE
+    );
     assert!(state.get("methods").is_none());
     assert!(state.get("account_id").is_none());
     assert!(state.get("address").is_none());

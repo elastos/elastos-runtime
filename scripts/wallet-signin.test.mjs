@@ -95,7 +95,7 @@ test('payment links start off and the same address and network shares one sign-i
   const [candidate]=connectedWalletSigninMethods(accounts,[]);assert.equal(candidate.sign_in_enabled,false);assert.equal(candidate.paymentOnly,true);
   assert.equal(connectedWalletSigninMethods([{...accounts[0],chain_namespace:'eip155:8453'}],[method]).length,2,'network distinguishes wallet records');
 });
-test('Home accepts method intents only from the bound System or Wallet frame',async()=>{
+test('Home accepts method intents only from the bound System frame',async()=>{
   const source={postMessage(){}},context={kind:'app-frame',targetId:'system',source,homeToken:'launch'};
   const data={type:'home:wallet-signin-request',requestId:'one',homeToken:'launch',action:'remove',methodId:method.method_id};
   let reads=0,managed=0;
@@ -103,7 +103,7 @@ test('Home accepts method intents only from the bound System or Wallet frame',as
   for(const invalid of [{...context,targetId:'browser'},{...context,source:{}},{...context,homeToken:'other'}])handleWalletSigninRequest({source,data},invalid,options);
   assert.equal(reads,0);assert.equal(managed,0);
   handleWalletSigninRequest({source,data},context,options);await new Promise(resolve=>setImmediate(resolve));
-  assert.equal(reads,3,'refresh the authoritative method list after completion');assert.equal(managed,1);
+  assert.equal(reads,2,'read methods and passkeys with Home authority');assert.equal(managed,1);
 });
 
 test('every method action checks the approval against the reviewed ceremony and account',async()=>{
@@ -127,8 +127,7 @@ test('WalletConnect Add pairs in the signed-in ceremony and selects its exact ap
       return {};
     },select:async(_connector,{transport})=>{assert.equal(transport.ceremony_id,'addition');return {...method,connector:'walletconnect',close(){}};},approve(){},render:s=>states.push(s)});
   await flow.start({action:'add',accountId:'principal:alex'});await flow.choose('walletconnect');
-  assert.equal(states.at(-1).stage,'internet-notice');assert.equal(calls.length,0,'consent precedes transport');
-  await flow.connect();assert.equal(states.at(-1).stage,'review');
+  assert.equal(states.at(-1).stage,'review');
   assert.deepEqual(calls.map(c=>c.path),['/api/auth/wallet-methods/begin','/api/auth/wallet/signin/select']);
   assert.equal(calls[0].body.address,'');assert.equal(calls[0].body.action,'add');assert.equal(calls[0].body.allow_temporary_internet,true);
   assert.equal(calls[1].body.address,method.address);assert.equal(calls[1].body.browser_secret,calls[0].body.browser_secret);
@@ -141,8 +140,10 @@ test('signed-out WalletConnect requires an enabled compatible method and interne
     const flow=createWalletSigninFlow({api:async(path,body)=>{calls.push({path,body});return path.endsWith('/status')?{walletconnect_signin_available:available}:{ceremony_id:'signin',message:'',expires_at:Date.now()/1000+120};},
       select:async()=>({...method,connector:'walletconnect',close(){}}),approve(){},render:s=>states.push(s)});
     await flow.start();assert.equal(states.at(-1).walletconnectAvailable,available);await flow.choose('walletconnect');
-    assert.equal(states.at(-1).stage,available?'internet-notice':'error');assert.equal(calls.filter(c=>c.path.endsWith('/begin')).length,0);
-    await flow.cancel();assert.equal(calls.filter(c=>c.path.endsWith('/begin')).length,0,'Cancel grants no temporary transport');
+    assert.equal(calls.filter(c=>c.path.endsWith('/begin')).length,available?1:0);
+    if(available)assert.equal(calls.find(c=>c.path.endsWith('/begin')).body.allow_temporary_internet,true);
+    else assert.equal(states.at(-1).stage,'error');
+    await flow.cancel();
   }
 });
 
@@ -168,8 +169,8 @@ test('an account change after dispatch keeps the uncertain result retryable',asy
   const sent=f.calls.filter(c=>c.path?.endsWith('/complete'));assert.deepEqual(sent[0].body,sent[1].body);assert.equal(f.calls.filter(c=>c.sign).length,1);
 });
 
-test('Wallet reads only its own method list through Home authority',async()=>{
-  const replies=[],source={postMessage:message=>replies.push(message)},context={kind:'app-frame',targetId:'wallet',source,homeToken:'wallet-launch'};
+test('System reads its own method list through Home authority',async()=>{
+  const replies=[],source={postMessage:message=>replies.push(message)},context={kind:'app-frame',targetId:'system',source,homeToken:'wallet-launch'};
   const data={type:'home:wallet-signin-request',requestId:'list',homeToken:'wallet-launch',action:'list',methodId:''};
   handleWalletSigninRequest({source,data},context,{authorityToken:()=> 'home-launch',api:async(path,_body,token)=>{
     assert.equal(token,'home-launch');return path.endsWith('/passkeys')?{passkeys:[{principal_id:'other',role:'admin'},{principal_id:'principal:alex',role:'guest'}]}:{account_id:'principal:alex',methods:[method]};
@@ -180,7 +181,7 @@ test('Wallet reads only its own method list through Home authority',async()=>{
 });
 
 test('a changed Home authority retires pending Wallet method requests',async()=>{
-  const replies=[],source={postMessage:message=>replies.push(message)},context={kind:'app-frame',targetId:'wallet',source,homeToken:'wallet-launch'};
+  const replies=[],source={postMessage:message=>replies.push(message)},context={kind:'app-frame',targetId:'system',source,homeToken:'wallet-launch'};
   let authority='home-one',release;
   const data={type:'home:wallet-signin-request',requestId:'retired',homeToken:'wallet-launch',action:'remove',methodId:method.method_id};
   handleWalletSigninRequest({source,data},context,{authorityToken:()=>authority,api:path=>path.endsWith('/passkeys')?Promise.resolve({passkeys:[]}):new Promise(resolve=>{release=resolve;}),manage:()=>{throw new Error('retired Home cannot start approval');},current:()=>true,changed(){}});
@@ -260,28 +261,16 @@ test('Guests retain Remove and only Admins can Add connected payment wallets',()
   try {
     for(const canManage of [true,false]) {
       const actions=[],controls=walletSigninControls(method,{canManage,onAction:(...args)=>actions.push(args)});
-      const [status,remove]=controls.children;
-      assert.equal(status.textContent,'Signs in');assert.equal(Boolean(remove.disabled),false);
+      const [remove]=controls.children;
+      assert.equal(controls.children.length,1);assert.equal(Boolean(remove.disabled),false);
       remove.onclick();assert.deepEqual(actions,[['remove',method.method_id]]);
-      const payment=walletSigninControls({...method,paymentOnly:true},{canManage,onAction:(...args)=>actions.push(args)});
-      assert.equal(Boolean(payment.children[0].disabled),!canManage);
-      payment.children[0].onclick();assert.deepEqual(actions.at(-1),['add',method.method_id]);
     }
   } finally {globalThis.document=previous;}
 });
-test('payment Add starts with the selected wallet and validates the bound frame intent',async()=>{
-  for(const invalid of ['', 'network', 'source', 'extra', 'action']) {
-    const replies=[],managed=[],source={postMessage:message=>replies.push(message)},context={kind:'app-frame',targetId:invalid==='source'?'system':'wallet',source,homeToken:'wallet-launch'};
-    const wallet={connector:'metamask',address:method.address,chain_id:20,network:''};
-    if(invalid==='network')wallet.network='bitcoin';if(invalid==='extra')wallet.authority='untrusted';
-    handleWalletSigninRequest({source,data:{type:'home:wallet-signin-request',requestId:'add',homeToken:'wallet-launch',action:invalid==='action'?'enable':'add',methodId:'',wallet}},context,{
-      authorityToken:()=> 'home',current:()=>true,changed(){},api:async path=>path.endsWith('/passkeys')?{passkeys:[]}:{account_id:'principal:alex',methods:[]},
-      manage:async input=>{managed.push(input);return {status:'complete'};},
-    });
-    await new Promise(resolve=>setImmediate(resolve));
-    assert.equal(managed.length,invalid?0:1);
-    if(!invalid){assert.deepEqual(managed[0].method,wallet);assert.equal(managed[0].action,'add');assert.equal(replies[0].result.status,'complete');}
-  }
+test('Wallet frames and unsolicited wallet identities cannot change sign-in methods',async()=>{
+ let managed=0;const source={postMessage(){}};
+ for(const targetId of ['wallet','system'])handleWalletSigninRequest({source,data:{type:'home:wallet-signin-request',requestId:'add',homeToken:'launch',action:'add',methodId:'',wallet:method}},{kind:'app-frame',targetId,source,homeToken:'launch'},{manage(){managed++;},api(){throw new Error('untrusted intent');}});
+ await new Promise(resolve=>setImmediate(resolve));assert.equal(managed,0);
 });
 test('Cancel and expiry revoke a committed but uncertain sign-in',async()=>{
   for(const action of ['cancel','expire']) {
@@ -310,3 +299,142 @@ test('the flow refuses retired method actions before it requests authority',asyn
   }
   assert.deepEqual(f.calls,[]);
 });
+
+// Connected-wallet reuse and signed-out surface contract.
+{
+const {default:test,afterEach}=await import('node:test');
+const {default:assert}=await import('node:assert/strict');
+const {saveSigninChoice,readSigninChoice,availableSigninOptions}=await import(process.env.SIGNIN_OPTIONS_MODULE||'../capsules/home/browser/wallet-signin-options.mjs');
+const {handleWalletSigninRequest}=await import('../capsules/home/browser/wallet-signin-host.mjs');
+const {createWalletConnectClient}=await import('../capsules/wallet-walletconnect/browser/walletconnect-client.mjs');
+const {createWalletSigninFlow}=await import(process.env.SIGNIN_FLOW_MODULE||'../capsules/home/browser/wallet-signin-flow.mjs');
+const wallet={connector:'metamask',address:'0x'+'12'.repeat(20),chain_id:20,network:'',paymentOnly:true};
+const flows=[];afterEach(async()=>{for(const flow of flows)await flow.cancel();flows.length=0;});
+function ceremony({lost=false,change=false,connector='metamask'}={}) {
+  const calls=[],states=[];let completes=0;
+  const method={...wallet,connector};
+  const flow=createWalletSigninFlow({
+    randomSecret:()=> 'a'.repeat(64),
+    api:async(path,body)=>{
+      calls.push({path,body});
+      if(path.endsWith('/begin'))return {ceremony_id:'one',message:'Use this wallet to sign in to this Home for Alex',expires_at:Date.now()/1000+120,approval:{operation:'auth.wallet.method',request:{ceremony_id:'one',action:body.action,account_id:'alex',method_id:'new-method'}}};
+      if(path.endsWith('/complete')){if(lost&&completes++===0)throw new TypeError('lost reply');return {status:'complete',method_id:'new-method',sign_in_enabled:true};}
+      return {};
+    },
+    select:async(_connector,options)=>{calls.push({select:options});return {...method,check:async()=>{if(change)throw Object.assign(new Error('changed'),{code:'changed'});},sign:async message=>{calls.push({signature:message});return {signature:'proof',signature_type:'personal_sign',public_key:''};},close(){}};},
+    approve:async approval=>{calls.push({approval});return 'step-up';},render:state=>states.push(state),
+  });flows.push(flow);return {flow,calls,states,method};
+}
+test('a connected wallet adds sign-in with one signature and one passkey approval',async()=>{
+  const f=ceremony();await f.flow.start({action:'add',method:f.method,automatic:true,accountId:'alex'});
+  assert.equal(f.states.at(-1).stage,'done');
+  assert.equal(f.calls.filter(c=>c.signature).length,1);assert.equal(f.calls.filter(c=>c.approval).length,1);
+  const begin=f.calls.find(c=>c.path?.endsWith('/begin'));assert.equal(begin.body.action,'add');assert.equal(begin.body.method_id,undefined);assert.equal(begin.body.address,wallet.address);
+  assert.equal(f.calls.find(c=>c.approval).approval.request.action,'add');
+  assert(!f.calls.some(c=>c.path?.endsWith('/cancel')));
+});
+test('a lost add reply retries the same proof and approval',async()=>{
+  const f=ceremony({lost:true});await f.flow.start({action:'add',method:f.method,automatic:true});
+  assert.equal(f.states.at(-1).stage,'unknown');await f.flow.retry();assert.equal(f.states.at(-1).stage,'done');
+  assert.deepEqual(f.calls.filter(c=>c.path?.endsWith('/complete')).map(c=>c.body),Array(2).fill(f.calls.find(c=>c.path?.endsWith('/complete')).body));
+  assert.equal(f.calls.filter(c=>c.signature).length,1);assert.equal(f.calls.filter(c=>c.approval).length,1);
+});
+test('wallet changes stop the new automatic flow before signing or passkey approval',async()=>{
+  const f=ceremony({change:true});await f.flow.start({action:'add',method:f.method,automatic:true});
+  assert.equal(f.states.at(-1).stage,'error');assert.equal(f.calls.filter(c=>c.signature||c.approval).length,0);
+});
+test('connected WalletConnect reuses its admitted window and existing permission without another Home prompt',async()=>{
+  const f=ceremony({connector:'walletconnect'});await f.flow.start({action:'add',method:f.method,automatic:true,delegateWalletConnect:true});
+  assert.equal(f.states.at(-1).stage,'done');assert(!f.states.some(state=>state.stage==='internet-notice'));assert.equal(f.calls.find(c=>c.select).select.transport,undefined);
+  assert.equal(f.calls.filter(c=>c.signature).length,1);assert.equal(f.calls.filter(c=>c.approval).length,1);
+});
+
+
+
+
+test('Home reads connected wallets through the requesting System launch, then checks methods with Home authority',async()=>{
+  let options;const calls=[],source={postMessage(){}},context={kind:'app-frame',targetId:'system',source,homeToken:'system-token'};
+  const data={type:'home:wallet-signin-request',requestId:'one',homeToken:'system-token',action:'add',methodId:''};
+  handleWalletSigninRequest({source,data},context,{authorityToken:()=> 'home-token',current:()=>true,changed(){},manage:async value=>{options=value;return {status:'cancelled'};},api:async(path,body,token)=>{
+    calls.push({path,token});
+    if(path.endsWith('/passkeys'))return {passkeys:[{principal_id:'alex',role:'admin'}]};
+    if(path.endsWith('/system/summary'))return {wallet_accounts:{accounts:[{account_id:'connected',connector_id:'wallet-metamask',address:wallet.address,chain_namespace:'eip155:20'}]}};
+    return {account_id:'alex',methods:[]};
+  }});
+  await new Promise(resolve=>setImmediate(resolve));const connected=await options.loadConnected();assert.equal(connected[0].address,wallet.address);
+  assert(calls.some(c=>c.path.endsWith('/system/summary')&&c.token==='system-token'));
+  assert(calls.filter(c=>c.path.includes('/auth/')).every(c=>c.token==='home-token'));
+});
+test('WalletConnect signs in through its restored session and keeps payments connected',async()=>{
+  const calls=[];let connects=0,disconnects=0,permission='granted';
+  const provider={chainId:20,accounts:[wallet.address],session:{expiry:Date.now()/1000+600,namespaces:{eip155:{chains:['eip155:20'],accounts:[`eip155:20:${wallet.address}`],methods:['personal_sign']}}},on(){},request:async input=>{calls.push(input);return input.method==='eth_accounts'?[wallet.address]:input.method==='eth_chainId'?20:'proof';}};
+  const client=createWalletConnectClient({origin:'http://localhost',api:async path=>path==='wallet/config'?{walletconnect:{project_id:'fixture',storage_revision:'"0"'}}:path==='internet'?{status:permission}:path==='storage'?{'wc//session':[{expiry:Date.now()/1000+600}]}:{},loadAdapter:async()=>({restoreWalletConnectEvm:async()=>provider,connectWalletConnectEvm:async()=>{connects++;return provider;},disconnectWalletConnectEvm:async()=>{disconnects++;}})});
+  await client.effect({kind:'status'});const selected=await client.effect({kind:'signin-select'});assert.equal(selected.address,wallet.address);
+  const result=await client.effect({kind:'signin',message:'Runtime sign-in',address:wallet.address,chain_id:20});
+  assert.equal(result.signature_type,'personal_sign');assert.equal(calls.filter(c=>c.method==='personal_sign').length,1);assert.equal(connects,0);
+  await client.effect({kind:'stop-signin'});assert.equal(disconnects,0);assert.equal((await client.effect({kind:'status'})).status,'connected');
+  permission='off';await assert.rejects(client.effect({kind:'signin',message:'Runtime sign-in',address:wallet.address,chain_id:20}),{code:'permission'});assert.equal(calls.filter(c=>c.method==='personal_sign').length,1);
+});
+
+const {connectionView,reduceSummary,viewText}=await import('../capsules/_shared/wallet-connection-view.mjs');
+
+test('the shared phone wait presents Home sign-in without disconnecting the payment session',()=>{
+  const summary=reduceSummary({connector_id:'wallet-walletconnect',request_id:'signin',capsule_id:'home',requesting_app_name:'Home',intent:'auth_challenge',address:wallet.address,status:'pending',reason:'Sign in',expires_at:180},{connector:'wallet-walletconnect'});
+  const view=connectionView({window:'walletconnect',stage:'request-phone',purpose:'home-signin',summary,supportedActions:['stop-waiting']});
+  assert.match(viewText(view.status),/sign in to this Home/);assert.doesNotMatch(viewText(view.notice),/disconnect/);assert.equal(view.wait,null);
+  assert.throws(()=>connectionView({window:'walletconnect',stage:'request-phone',purpose:'home-signin',summary:{...summary,actor:'browser'}}),/Home sign-in presentation/);
+  assert.throws(()=>connectionView({window:'walletconnect',stage:'linked',purpose:'home-signin'}),/closed connection purpose/);
+});
+
+const {selectConnectedWalletConnect}=await import('../capsules/home/browser/wallet-signin-connector.mjs');
+test('the Home signer bridge accepts only its current admitted connector and returns a closed proof',async()=>{
+  const listen=new EventTarget(),controller=new AbortController(),sent=[];let active=true;
+  const emit=(data,source,origin='null')=>listen.dispatchEvent(Object.assign(new Event('message'),{data,source,origin}));
+  const source={postMessage(data){
+    sent.push(data);if(data.operation==='stop')return;
+    const result=data.operation==='select'?{...wallet,connector:'walletconnect'}:data.operation==='sign'?{signature:'proof',signature_type:'personal_sign',public_key:'',browser_secret:'forged'}:{};
+    queueMicrotask(()=>{
+      const response={type:'home:wallet-signin-effect-result',homeToken:'connector',requestId:data.requestId,result};
+      emit({...response,result:{signature:'spoof'}},{});emit({...response,result:{signature:'spoof'}},source,'https://foreign.example');emit({...response,homeToken:'wrong'},source);emit(response,source);
+    });
+  }};
+  const selected=await selectConnectedWalletConnect({signal:controller.signal,method:wallet},{listen,open:async()=>({source,homeToken:'connector'}),current:()=>active});
+  await selected.check();assert.deepEqual(await selected.sign('Runtime message'),{signature:'proof',signature_type:'personal_sign',public_key:''});
+  active=false;await assert.rejects(selected.check(),/window changed/);controller.abort();assert(!sent.some(data=>Object.hasOwn(data,'browser_secret')));
+});
+
+
+
+
+test('closing the admitted phone window ends a pending signature without waiting for ceremony expiry',async t=>{
+  t.mock.timers.enable({apis:['setInterval']});
+  const listen=new EventTarget(),controller=new AbortController(),sent=[];
+  const source={closed:false,postMessage(data){sent.push(data);if(data.operation==='select')queueMicrotask(()=>listen.dispatchEvent(Object.assign(new Event('message'),{source,origin:'null',data:{type:'home:wallet-signin-effect-result',homeToken:'connector',requestId:data.requestId,result:{...wallet,connector:'walletconnect'}}})));}};
+  const selected=await selectConnectedWalletConnect({signal:controller.signal,method:wallet},{listen,open:async()=>({source,homeToken:'connector'}),current:()=>!source.closed});
+  const pending=selected.sign('Runtime message');const ended=assert.rejects(pending,{code:'disconnected'});
+  source.closed=true;t.mock.timers.tick(250);await ended;
+  assert.equal(sent.filter(data=>data.operation==='sign').length,1);controller.abort();
+});
+
+test('a revoked WalletConnect option offers an error instead of an empty choice screen',async()=>{
+  const states=[],paths=[];
+  const flow=createWalletSigninFlow({api:async path=>{paths.push(path);return {walletconnect_signin_available:false};},select:async()=>{throw new Error('relay must remain unused');},approve:async()=>{},render:s=>states.push(s)});flows.push(flow);
+  await flow.start({action:'signin',automatic:true});await flow.choose('walletconnect');
+  assert.equal(states.at(-1).stage,'error');assert.match(states.at(-1).message,/Use your passkey/);assert.deepEqual(paths,['/api/auth/passkey/status']);
+});
+
+test('Runtime connector choices work in a fresh browser and on a desktop surface',()=>{
+  const runtime=['metamask','unisat','walletconnect'];
+  assert.deepEqual(availableSigninOptions(runtime,{providers:[{rdns:'io.metamask'}],unisatAvailable:true,walletconnectAvailable:true}).map(m=>m.connector),runtime);
+  assert.deepEqual(availableSigninOptions(runtime,{walletconnectAvailable:true}).map(m=>m.connector),['walletconnect']);
+  assert.deepEqual(availableSigninOptions(['metamask'],{walletconnectAvailable:true}),[]);
+});
+test('the browser stores only a closed remembered connector choice and clears trial identities',()=>{
+ const values=new Map([['elastos.signin.options.v1','private wallet identities']]);
+ const storage={getItem:k=>values.get(k),setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)};
+ saveSigninChoice('metamask',storage);assert.equal(readSigninChoice(storage),'metamask');
+ assert.equal(values.has('elastos.signin.options.v1'),false);
+ saveSigninChoice('0x'+'12'.repeat(20),storage);assert.equal(readSigninChoice(storage),'');
+});
+
+}

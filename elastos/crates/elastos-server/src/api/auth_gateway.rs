@@ -166,6 +166,8 @@ pub struct PasskeyStatusResponse {
     pub guest_registration_enabled: bool,
     pub wallet_signin_available: bool,
     pub walletconnect_signin_available: bool,
+    pub wallet_signin_connectors: Vec<&'static str>,
+    pub wallet_signin_relay_notice: Option<&'static str>,
 }
 
 #[derive(Debug, Serialize)]
@@ -440,15 +442,18 @@ pub async fn passkey_status(State(state): State<GatewayState>) -> Response {
         Err(err) => return auth_error_response(err),
     };
     let manager = manager.lock().await;
-    let (wallet_signin_available, walletconnect_signin_available) =
+    let (wallet_signin_available, walletconnect_signin_available, wallet_signin_connectors) =
         crate::auth::wallet_signin::availability(&super::gateway::home_launch_auth_data_dir(
             &state.data_dir,
         ))
-        .unwrap_or((false, false));
+        .unwrap_or((false, false, Vec::new()));
     Json(PasskeyStatusResponse {
         registered: manager.status().registered,
         wallet_signin_available,
         walletconnect_signin_available,
+        wallet_signin_connectors,
+        wallet_signin_relay_notice: walletconnect_signin_available
+            .then_some(crate::auth::wallet_signin::RELAY_NOTICE),
         owner_setup_pending: match crate::auth::owner_setup_pending(&state.data_dir) {
             Ok(pending) => pending,
             Err(err) => return auth_error_response(err),

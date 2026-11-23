@@ -10,7 +10,7 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 
 ### Added
 
-- You can add a wallet to your account and turn on sign-in for it, then sign in with that wallet instead of a passkey. MetaMask, UniSat and WalletConnect wallets work.
+- In System > Accounts, Add wallet uses a connected wallet or opens Wallet to connect one. One wallet signature and one passkey approval add it for sign-in. Sign in offers your available methods and can remember your choice on this device.
 - WalletConnect links your wallet to Wallet. Scan the QR code with your wallet, or copy the connection link.
 - Compatible browser wallets can link through the MetaMask option. When MetaMask is installed, the option uses MetaMask.
 - To start Home without opening a browser window, use elastos home --browser --no-open. Updates and Undo keep this choice.
@@ -63,7 +63,7 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 
 ### Added
 
-- You can add a wallet to your account and turn on sign-in for it, then sign in with that wallet instead of a passkey. MetaMask, UniSat and WalletConnect wallets work.
+- In System > Accounts, Add wallet uses a connected wallet or opens Wallet to connect one. One wallet signature and one passkey approval add it for sign-in. Sign in offers your available methods and can remember your choice on this device.
 - WalletConnect links your wallet to Wallet. Scan the QR code with your wallet, or copy the connection link.
 - Compatible browser wallets can link through the MetaMask option. When MetaMask is installed, the option uses MetaMask.
 - To start Home without opening a browser window, use elastos home --browser --no-open. Updates and Undo keep this choice.

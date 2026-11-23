@@ -20,11 +20,10 @@
 .signin-dialog .signin-presence { margin-top: 16px; font-size: 12px; }
 .signin-method-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .signin-method-note { display: block; font-size: 12px; color: var(--el-muted); margin-top: 6px; overflow-wrap: anywhere; }
-.signin-method-list { display: grid; gap: 12px; }
-.signin-method-card { border: 1px solid var(--el-hairline); border-radius: var(--el-radius-md); padding: 16px; overflow-wrap: anywhere; }
-.signin-method-card .signin-method-controls { margin-top: 12px; }
 .signin-method-controls > button, #wallet-signin-add { min-height: 44px; }
 .home-unlock .home-unlock-person { display: flex; flex-direction: column; align-items: center; gap: 12px; width: auto; height: auto; padding: 8px; border-radius: var(--el-radius-md); }
 .home-unlock .home-unlock-passkey-label { margin: 0; font-size: 14px; font-weight: 600; }
 .account-row[data-wallet-method] .account-name-wrap .signin-method-note { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
 @media (max-width: 480px) { .signin-dialog { padding: 20px; } }
+
+.signin-passkey-icon { display: grid; place-items: center; width: 28px; height: 28px; font-size: 28px; line-height: 1; }

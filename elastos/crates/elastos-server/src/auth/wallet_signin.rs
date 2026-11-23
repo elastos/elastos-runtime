@@ -11,7 +11,8 @@ const MAX_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_PENDING: usize = 64;
 const MAX_METHODS: usize = 128;
 pub(crate) const OPERATION: &str = "auth.wallet.method";
-const RELAY_NOTICE: &str = "Adding this wallet lets visitors start short WalletConnect sign-in connections to this Home. The relay service can see this Home computer's internet address. Payment connections keep their separate Inbox permission.";
+pub(crate) const RELAY_NOTICE: &str =
+    "Your phone wallet connects through a relay that can see this computer's internet address.";
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1224,12 +1225,27 @@ pub(crate) fn passkey_add_approver(
         .ok_or_else(|| Refused.into())
 }
 
-pub(crate) fn availability(data: &Path) -> anyhow::Result<(bool, bool)> {
+pub(crate) fn availability(data: &Path) -> anyhow::Result<(bool, bool, Vec<&'static str>)> {
     let (_, store) = loaded(data)?;
-    Ok((
-        store.methods.iter().any(|m| m.sign_in_enabled),
-        has_relay_method(&store),
-    ))
+    let mut connectors = Vec::new();
+    if store
+        .methods
+        .iter()
+        .any(|m| m.sign_in_enabled && m.connector != "unisat")
+    {
+        connectors.push("metamask");
+    }
+    if store
+        .methods
+        .iter()
+        .any(|m| m.sign_in_enabled && m.connector == "unisat")
+    {
+        connectors.push("unisat");
+    }
+    if has_relay_method(&store) {
+        connectors.push("walletconnect");
+    }
+    Ok((!connectors.is_empty(), has_relay_method(&store), connectors))
 }
 
 #[cfg(test)]

@@ -9,7 +9,7 @@ export function walletSigninOriginAllowed(value) {
 export const connectorName = id => ({metamask:'MetaMask',walletconnect:'WalletConnect',unisat:'UniSat'})[id] || 'Wallet';
 export const walletNetwork = wallet => wallet.connector === 'unisat'
   ? (wallet.network === 'bitcoin' ? 'Bitcoin' : `Bitcoin ${wallet.network}`)
-  : ({20:'Elastos Smart Chain',8453:'Base',1:'Ethereum'})[wallet.chain_id] || `Network ${wallet.chain_id}`;
+  : ({20:'Elastos Smart Chain',8453:'Base',1:'Ethereum',11155111:'Sepolia'})[wallet.chain_id] || `Network ${wallet.chain_id}`;
 export const shortWalletAddress = value => value.length > 16 ? `${value.slice(0,6)}…${value.slice(-4)}` : value;
 export function walletSigninError(error, action) {
   if(error?.code === 'expired') return 'This request expired. Close the old request in your wallet, then try again.';
@@ -150,19 +150,15 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
         state={...state,walletconnectAvailable:available};
         if(state.stage==='choice')show('choice');
       }
-      if(method && live(current)) {
-        if(method.connector==='walletconnect'&&['add'].includes(action))show('internet-notice',{connector:method.connector});
-        else await prepare(current,method.connector);
-      }
+      if(method && live(current))await prepare(current,method.connector);
     },
     async choose(connector) {
       if(!run || state.stage!=='choice' || !['metamask','walletconnect','unisat'].includes(connector))return;
       if(connector==='walletconnect') {
         if(state.walletconnectAvailable!==true){fail(run,{status:403});return;}
-        show('internet-notice',{connector});
+        await prepare(run,connector);
       } else await prepare(run,connector);
     },
-    async connect() {if(run && state.stage==='internet-notice')await prepare(run,'walletconnect');},
     async confirm() {
       const current=run;if(!current || state.stage!=='review')return;
       try {

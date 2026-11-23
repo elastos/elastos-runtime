@@ -325,7 +325,8 @@ export const walletViewAssets = ['wallet-connection-view.mjs', 'wallet-connectio
 export function validateWalletViewAssets(repoRoot) {
   for (const asset of walletViewAssets) {
     const source = readFileSync(resolve(repoRoot, 'capsules/_shared', asset));
-    for (const name of ['wallet-metamask', 'wallet-unisat', 'wallet-walletconnect']) {
+    for (const name of ['wallet-metamask', 'wallet-unisat', 'wallet-walletconnect', 'home']) {
+      if (name === 'home' && asset === 'wallet-connection-view.css') continue;
       const path = resolve(repoRoot, 'capsules', name, 'browser', asset);
       assert(existsSync(path), `shared wallet view asset missing: ${name}/${asset}`);
       assert(realpathSync(path).startsWith(realpathSync(resolve(repoRoot, 'capsules', name)) + sep), `shared wallet view asset stays in its capsule: ${name}/${asset}`);

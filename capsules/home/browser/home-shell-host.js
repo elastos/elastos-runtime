@@ -226,6 +226,11 @@ async function launchWalletConnectorFromTrustedSource(context, target) {
 }
 
 async function openSigninConnector(target) {
+  if(target==='wallet') {
+    requireHomeGuiActive('open Wallet');
+    await openTargetFromHomeGui('wallet', {query:{connect:'1'}});
+    return {};
+  }
   if(!WALLET_CONNECTOR_TARGETS.has(target))throw new Error("Unknown wallet connector");
   requireHomeGuiActive("launch Wallet connector");
   const launched = await launchHomeTarget(target);

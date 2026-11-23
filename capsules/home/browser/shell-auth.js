@@ -1,4 +1,4 @@
-import {readSigninOptions,readSigninChoice,saveSigninOptions} from "./wallet-signin-options.mjs";
+import {readSigninChoice} from "./wallet-signin-options.mjs";
 import { createHomeWalletSignin } from "./wallet-signin-view.mjs?v=wallet-signin-1";
 import {
   clearHomeAuthorityToken,
@@ -63,7 +63,7 @@ let unlockLeaveTimer = 0;
 let unlockPersonLabel = "";
 
 let walletSigninAvailable = false;
-let signinAvailability = {passkey:true,walletconnect:false};
+let signinAvailability = {passkey:true,walletconnect:false,connectors:[]};
 const walletSignin = createHomeWalletSignin({
   approve: requestPasskeyStepUp,
   onPasskey: () => runPasskeySignIn().catch(reportUnlockError),
@@ -94,7 +94,7 @@ export async function showHomeUnlock(onUnlocked, options = {}) {
   delete unlockPanel.dataset.flow;
   unlockPanel.style.removeProperty("--home-unlock-ground");
   walletSigninAvailable = false;
-  signinAvailability = {passkey:true,walletconnect:false};
+  signinAvailability = {passkey:true,walletconnect:false,connectors:[]};
   renderUnlockChecking();
   unlockPanel.hidden = false;
   unlockPanel.setAttribute("aria-hidden", "false");
@@ -103,8 +103,8 @@ export async function showHomeUnlock(onUnlocked, options = {}) {
   try {
     const status = await fetchJson("/api/auth/passkey/status");
     walletSigninAvailable = status.wallet_signin_available === true;
-    signinAvailability = {passkey:status.registered === true,walletconnect:status.walletconnect_signin_available === true};
-    if(!walletSigninAvailable)saveSigninOptions([]);
+    signinAvailability = {passkey:status.registered === true,walletconnect:status.walletconnect_signin_available === true,connectors:status.wallet_signin_connectors||[],relayNotice:status.wallet_signin_relay_notice||""};
+    readSigninChoice();
     if (!window.PublicKeyCredential) {
       unlockMode = "unsupported";
       renderUnlockMode({ registered: status.registered === true, guestRegistrationEnabled: false });
@@ -218,7 +218,7 @@ export function bindHomeUnlock() {
       runPasskeyCreate().catch(reportUnlockError);
       return;
     }
-    if(readSigninOptions().length||signinAvailability.walletconnect)void walletSignin.start({action:"signin",availability:signinAvailability});
+    if(signinAvailability.connectors.length)void walletSignin.start({action:"signin",availability:signinAvailability});
     else runPasskeySignIn().catch(reportUnlockError);
   };
   for (const button of document.querySelectorAll("[data-home-signin-options]")) {
@@ -477,7 +477,7 @@ function renderUnlockChecking() {
 
 function renderUnlockMode({ registered, guestRegistrationEnabled }) {
   for (const button of document.querySelectorAll("[data-home-signin-options]")) {
-    button.hidden = !walletSigninAvailable || !(readSigninOptions().length||signinAvailability.walletconnect) || !readSigninChoice() || !registered || !["signin", "signin_guest_enabled", "unsupported"].includes(unlockMode);
+    button.hidden = !walletSigninAvailable || !(signinAvailability.connectors.length) || !readSigninChoice() || !registered || !["signin", "signin_guest_enabled", "unsupported"].includes(unlockMode);
     button.disabled = busy;
   }
   const resumingOwner = unlockMode === "resume_owner";
@@ -507,7 +507,7 @@ function renderUnlockMode({ registered, guestRegistrationEnabled }) {
     unlockPrimary.textContent = resumingOwner ? "Resume Home setup" : creatingGuest
       ? "Create guest passkey"
       : (registered ? "Sign in" : "Create admin passkey");
-    unlockPrimary.disabled = unlockMode === "unsupported" && !(readSigninOptions().length||signinAvailability.walletconnect);
+    unlockPrimary.disabled = unlockMode === "unsupported" && !(signinAvailability.connectors.length);
   }
   if (unlockSecondary) {
     unlockSecondary.hidden = !registered || !guestRegistrationEnabled && !resumingRegistration && !recoveringOwner;
@@ -542,7 +542,7 @@ function renderUnlockMode({ registered, guestRegistrationEnabled }) {
     unlockMonogram.textContent = [...unlockPersonLabel.trim()][0]?.toUpperCase() || "e";
   }
   if (unlockPerson) {
-    unlockPerson.disabled = unlockMode === "unsupported" && !(readSigninOptions().length||signinAvailability.walletconnect);
+    unlockPerson.disabled = unlockMode === "unsupported" && !(signinAvailability.connectors.length);
     const personLabel = unlockPersonLabel
       ? `Sign in as ${unlockPersonLabel}`
       : "Sign in";
@@ -993,17 +993,6 @@ async function runOwnerRecovery() {
   }
 }
 
-// Wallet display hints are optional. Late reads belong to this session and list.
-async function refreshSigninOptionsAfterUnlock(token) {
-  const previous=JSON.stringify(readSigninOptions());
-  const current=()=>getHomeAuthorityToken()===token&&JSON.stringify(readSigninOptions())===previous;
-  try {
-    if(!token||!current())return;
-    const result=await fetchJson("/api/auth/wallet-methods",{headers:{"x-elastos-home-token":token},signal:AbortSignal.timeout(15000)});
-    if(current())saveSigninOptions(result.methods);
-  }catch{if(current())saveSigninOptions([]);}
-}
-
 async function runPasskeySignIn() {
   if (busy || !window.PublicKeyCredential) {
     return;
@@ -1031,7 +1020,6 @@ async function runPasskeySignIn() {
     setHomeAuthorityToken(response?.home_token, response);
     stage = "open";
     await unlockComplete(response);
-    void refreshSigninOptionsAfterUnlock(response.home_token);
   } catch (error) {
     throw signInFailure(stage, error);
   } finally {
@@ -1106,10 +1094,10 @@ function reportUnlockError(error) {
 function setButtonsDisabled(disabled) {
   for (const button of document.querySelectorAll("[data-home-signin-options]")) button.disabled = disabled;
   if (unlockPerson) {
-    unlockPerson.disabled = disabled || unlockMode === "unsupported" && !(readSigninOptions().length||signinAvailability.walletconnect);
+    unlockPerson.disabled = disabled || unlockMode === "unsupported" && !(signinAvailability.connectors.length);
   }
   if (unlockPrimary) {
-    unlockPrimary.disabled = disabled || unlockMode === "unsupported" && !(readSigninOptions().length||signinAvailability.walletconnect);
+    unlockPrimary.disabled = disabled || unlockMode === "unsupported" && !(signinAvailability.connectors.length);
   }
   if (unlockSecondary) {
     unlockSecondary.disabled = disabled;

@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync, readFileSync } from "node:fs";
 import vm from "node:vm";
-import {readSigninOptions,readSigninChoice,saveSigninOptions} from "../capsules/home/browser/wallet-signin-options.mjs";
+import {readSigninChoice} from "../capsules/home/browser/wallet-signin-options.mjs";
 import { ownerRecoveryCommand } from "../capsules/home/browser/owner-recovery-command.js";
 import { resolve } from "node:path";
 import { importProductSmokePlaywright, productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
@@ -72,7 +72,7 @@ function fixture({ guest = false, purpose = "create", terminalLoss = false, owne
     };
     let opened = null;
     const context = vm.createContext({
-      ownerRecoveryCommand, createHomeWalletSignin, readSigninOptions:()=>readSigninOptions(signinStorage),readSigninChoice:()=>readSigninChoice(signinStorage),saveSigninOptions:methods=>saveSigninOptions(methods,signinStorage), location: { origin: "https://home.test", hostname: "home.test" },
+      ownerRecoveryCommand, createHomeWalletSignin, readSigninChoice:()=>readSigninChoice(signinStorage), location: { origin: "https://home.test", hostname: "home.test" },
       document: { querySelector: element, querySelectorAll: () => [], getElementById: id => element("#" + id), body: element("body") },
       window: { PublicKeyCredential: {}, location: { protocol: "https:" }, sessionStorage: storage, atob, btoa,
         addEventListener() {}, clearTimeout() {}, setTimeout() {}, setInterval() { return 1; }, clearInterval() {} },

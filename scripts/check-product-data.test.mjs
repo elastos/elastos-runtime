@@ -277,8 +277,9 @@ function dataFixture() {
       mkdirSync(dirname(resolve(fixture, path)), { recursive: true });
       copyFileSync(resolve(root, path), resolve(fixture, path));
     }
-    for (const name of ['_shared', 'wallet-metamask/browser', 'wallet-unisat/browser', 'wallet-walletconnect/browser']) {
+    for (const name of ['_shared', 'wallet-metamask/browser', 'wallet-unisat/browser', 'wallet-walletconnect/browser', 'home/browser']) {
       for (const asset of walletViewAssets) {
+        if (name === 'home/browser' && asset === 'wallet-connection-view.css') continue;
         const path = `capsules/${name}/${asset}`;
         mkdirSync(dirname(resolve(fixture, path)), { recursive: true });
         copyFileSync(resolve(root, path), resolve(fixture, path));

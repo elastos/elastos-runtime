@@ -302,7 +302,7 @@ test("Home shows Other options for a saved choice only after Runtime confirms av
       for (const available of [true, false, undefined]) {
         const storage=new Map([['elastos.signin.options.v1',JSON.stringify([{connector:'metamask',address:'0x'+'12'.repeat(20),chain_id:20,network:'',sign_in_enabled:true}])],['elastos.signin.choice.v1','passkey']]);
         globalThis.localStorage={getItem:key=>storage.get(key),setItem:(key,value)=>storage.set(key,value),removeItem:key=>storage.delete(key)};
-        routes["/api/auth/passkey/status"] = () => ({body:{registered:true,wallet_signin_available:available}});
+        routes["/api/auth/passkey/status"] = () => ({body:{registered:true,wallet_signin_available:available,wallet_signin_connectors:available?["metamask"]:[]}});
         await showHomeUnlock(() => {});
         assert(walletButtons.every(button => button.hidden === (available !== true)));
       }
@@ -315,7 +315,7 @@ test("Home shows Other options for a saved choice only after Runtime confirms av
     routes["/api/auth/passkey/status"] = () => new Promise(resolve => {release=resolve;});
     const checking = showHomeUnlock(() => {});
     assert(walletButtons.every(button => button.hidden && button.disabled));
-    release({body:{registered:true,wallet_signin_available:true}});await checking;
+    release({body:{registered:true,wallet_signin_available:true,wallet_signin_connectors:["metamask"]}});await checking;
     assert(walletButtons.every(button => !button.hidden));
     routes["/api/auth/passkey/status"] = () => {throw new TypeError("Home unavailable");};
     await showHomeUnlock(() => {});assert(walletButtons.every(button => button.hidden));
@@ -326,27 +326,11 @@ test("Home shows Other options for a saved choice only after Runtime confirms av
   }
 });
 
-test("wallet hints never delay opening Home or overwrite a newer session or wallet list", async () => {
-  const core = await import("./shell-core.js?v=home-wallpaper-20261030b");
-  const hints = await import("./wallet-signin-options.mjs");
-  const method = {connector:"metamask",address:"0x"+"12".repeat(20),chain_id:20,network:"",sign_in_enabled:true};
-  try {
-    for (const change of ["session", "wallets"]) {
-      const values = new Map();
-      globalThis.localStorage = {getItem:key=>values.get(key),setItem:(key,value)=>values.set(key,value),removeItem:key=>values.delete(key)};
-      routes["/api/auth/passkey/status"] = () => ({body:{registered:true,wallet_signin_available:false}});
-      routes["/api/auth/passkey/authenticate/begin"] = begin;
-      routes["/api/auth/passkey/authenticate/complete"] = () => ({body:{home_token:"current-home",principal_id:"alex",session_id:"current",proof_binding_id:"passkey:one"}});
-      let release,opened=false;
-      routes["/api/auth/wallet-methods"] = () => new Promise(resolve=>{release=()=>resolve({body:{methods:[method]}});});
-      credentials = {get:async()=>fakeCredential()};
-      await showHomeUnlock(()=>{opened=true;});element("#home-unlock-person").click();await settle();
-      try {
-        assert.equal(opened,true,"wallet metadata can wait while Home opens");assert.equal(typeof release,"function");
-        if(change==="session")core.clearHomeAuthorityToken();else hints.saveSigninOptions([{...method,address:"0x"+"34".repeat(20)}]);
-        release();await settle();
-        assert.deepEqual(hints.readSigninOptions(),change==="session"?[]:[{...method,address:"0x"+"34".repeat(20)}]);
-      } finally {release?.();await settle();core.clearHomeAuthorityToken();}
-    }
-  } finally {delete globalThis.localStorage;delete routes["/api/auth/wallet-methods"];routes["/api/auth/passkey/status"]=()=>({body:{registered:true}});}
+test("opening Home keeps wallet identities out of browser storage", async () => {
+ const values=new Map([['elastos.signin.options.v1','old wallet identity']]);
+ globalThis.localStorage={getItem:k=>values.get(k),setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)};
+ try {
+  routes['/api/auth/passkey/status']=()=>({body:{registered:true}});
+  await showHomeUnlock(()=>{});assert.equal(values.has('elastos.signin.options.v1'),false);
+ } finally {delete globalThis.localStorage;}
 });
