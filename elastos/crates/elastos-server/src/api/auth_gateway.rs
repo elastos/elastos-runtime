@@ -6901,7 +6901,11 @@ mod tests {
             .begin_principal_registration("label", "localhost", "http://localhost:8090")
             .unwrap();
         let id = options.public_key.user.id.clone();
-        for account in ["界".repeat(64), "<Anders>\n\u{202e}", String::new()] {
+        for account in [
+            "界".repeat(64),
+            "<Anders>\n\u{202e}".to_string(),
+            String::new(),
+        ] {
             crate::auth::name_passkey_registration(&mut options, &account, "http://localhost:8090")
                 .unwrap();
             assert!(options.public_key.user.name.len() <= 64);
