@@ -824,7 +824,8 @@ try {
   if (process.env.WALLET_SIGNIN_ENTRY === "1") {
     await homeGui.evaluate(async()=>{const rail=await import('./shell-wallet-rail.js?v=home-20261101d');rail.preloadWalletRail();});
     await waitFor(()=>frameFor(page,'wallet'),15000,'preloaded hidden Wallet rail');
-    const railToken=new URLSearchParams(new URL(frameFor(page,'wallet').url()).hash.slice(1)).get('home_token');
+    const railRoute=await homeGui.locator('#wallet-rail-frame').getAttribute('data-route');
+    const railToken=new URLSearchParams(new URL(railRoute,origin).hash.slice(1)).get('home_token');
     const ask=()=>page.evaluate(()=>new Promise((resolve,reject)=>{
       const desktop=document.querySelector('#active-shell-frame').contentWindow,requestId=crypto.randomUUID();
       const timer=setTimeout(()=>{removeEventListener('message',receive);reject(new Error('Desktop reply timed out'));},15000);
@@ -835,7 +836,7 @@ try {
     await homeGui.locator('.window[data-target="wallet"]').waitFor({state:'visible',timeout:15000});
     const visible=await homeWindowSnapshot(homeGui,'wallet');
     const visibleToken=new URLSearchParams(new URL(visible.route,origin).hash.slice(1)).get('home_token');
-    const desktopToken=new URLSearchParams(new URL(homeGui.url()).hash.slice(1)).get('home_token');
+    const desktopToken=await page.locator('#active-shell-frame').evaluate(frame=>new URLSearchParams(new URL(frame.dataset.route,location.href).hash.slice(1)).get('home_token'));
     assert(JSON.stringify(Object.keys(reply).sort())===JSON.stringify(['homeToken','requestId','type','walletToken']), 'real Desktop reply has separate envelope and Wallet tokens',reply);
     assert(reply.homeToken===desktopToken&&reply.walletToken===visibleToken&&reply.walletToken!==railToken,'real reply selects the visible Wallet rather than Desktop or rail',reply);
     const launches=state.launches.wallet;
