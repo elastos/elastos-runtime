@@ -230,6 +230,7 @@ async function openSigninConnector(target) {
   if(target==='wallet') {
     requireHomeGuiActive('open Wallet');
     return openWalletSigninEntry({post:postToActiveShell,source:()=>activeShellFrame?.contentWindow,
+      desktopToken:()=>homeLaunchTokenFromRoute(activeShellFrame?.dataset.route||activeShellFrame?.getAttribute('src')||''),
       context:token=>{const c=launchedAppContexts.get(token);return c?.expiresAt>Date.now()?c:null;}});
   }
   if(!WALLET_CONNECTOR_TARGETS.has(target))throw new Error("Unknown wallet connector");

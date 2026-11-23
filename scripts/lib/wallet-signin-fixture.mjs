@@ -151,6 +151,7 @@ import {handleWalletSigninRequest} from '/apps/home/wallet-signin-host.mjs';
 import {walletSigninApi} from '/apps/home/wallet-signin-view.mjs';
 import {selectConnectedWalletConnect} from '/apps/home/wallet-signin-connector.mjs';
 import {openWalletSigninEntry} from '/apps/home/wallet-signin-window.mjs';
+import {homeGuiReply} from '/apps/home-gui/home-gui-authority.js';
 import {handleHomeWalletConnectorEffect} from '/apps/home/home-wallet-connector-host.js?v=home-wallpaper-20261030b';
 const contexts=new WeakMap();
 async function openFixtureConnector(target) {
@@ -164,11 +165,11 @@ async function openConnector(target) {
  let visible;
  const hidden={targetId:'wallet',source:{postMessage(){throw new Error('Hidden Wallet rail selected');}}};
  const contextsByToken=new Map([['fixture-wallet-rail',hidden]]);
- return openWalletSigninEntry({source:()=>desktop,context:token=>contextsByToken.get(token),post:message=>{
+ return openWalletSigninEntry({source:()=>desktop,desktopToken:()=> 'fixture-desktop',context:token=>contextsByToken.get(token),post:message=>{
   void openFixtureConnector('wallet').then(opened=>{
    visible={targetId:'wallet',source:opened.source};contextsByToken.set(opened.homeToken,visible);
    window.fixtureWindowChoice='visible-wallet';
-   dispatchEvent(new MessageEvent('message',{source:desktop,origin:'null',data:{type:'home:wallet-connect-entry-ready',requestId:message.requestId,homeToken:opened.homeToken}}));
+   dispatchEvent(new MessageEvent('message',{source:desktop,origin:'null',data:homeGuiReply({type:'home:wallet-connect-entry-ready',requestId:message.requestId,walletToken:opened.homeToken},'fixture-desktop')}));
   });return true;
  }});
 }

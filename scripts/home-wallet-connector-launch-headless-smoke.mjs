@@ -821,6 +821,33 @@ try {
   );
   await waitFor(() => frameFor(page, "home-gui"), 15_000, "real Home GUI frame");
   const homeGui = frameFor(page, "home-gui");
+  if (process.env.WALLET_SIGNIN_ENTRY === "1") {
+    await homeGui.evaluate(async()=>{const rail=await import('./shell-wallet-rail.js?v=home-20261101d');rail.preloadWalletRail();});
+    await waitFor(()=>frameFor(page,'wallet'),15000,'preloaded hidden Wallet rail');
+    const railToken=new URLSearchParams(new URL(frameFor(page,'wallet').url()).hash.slice(1)).get('home_token');
+    const ask=()=>page.evaluate(()=>new Promise((resolve,reject)=>{
+      const desktop=document.querySelector('#active-shell-frame').contentWindow,requestId=crypto.randomUUID();
+      const timer=setTimeout(()=>{removeEventListener('message',receive);reject(new Error('Desktop reply timed out'));},15000);
+      function receive(event){if(event.source!==desktop||event.origin!=='null'||event.data?.type!=='home:wallet-connect-entry-ready'||event.data.requestId!==requestId)return;clearTimeout(timer);removeEventListener('message',receive);resolve(event.data);}
+      addEventListener('message',receive);desktop.postMessage({type:'home:gui-command',command:'open-wallet-connect-entry',requestId},'*');
+    }));
+    const reply=await ask();
+    await homeGui.locator('.window[data-target="wallet"]').waitFor({state:'visible',timeout:15000});
+    const visible=await homeWindowSnapshot(homeGui,'wallet');
+    const visibleToken=new URLSearchParams(new URL(visible.route).hash.slice(1)).get('home_token');
+    const desktopToken=new URLSearchParams(new URL(homeGui.url()).hash.slice(1)).get('home_token');
+    assert(JSON.stringify(Object.keys(reply).sort())===JSON.stringify(['homeToken','requestId','type','walletToken']), 'real Desktop reply has separate envelope and Wallet tokens',reply);
+    assert(reply.homeToken===desktopToken&&reply.walletToken===visibleToken&&reply.walletToken!==railToken,'real reply selects the visible Wallet rather than Desktop or rail',reply);
+    const launches=state.launches.wallet;
+    const again=await ask();assert(again.walletToken===visibleToken&&state.launches.wallet===launches,'New wallet reuses its already-open visible window');
+    await page.waitForTimeout(2700);
+    await homeGui.locator('.window[data-target="wallet"] [data-action="close"]').click();
+    await homeGui.locator('.window[data-target="wallet"]').waitFor({state:'detached',timeout:5000});
+    const reopened=await ask();assert(reopened.walletToken&&reopened.walletToken!==visibleToken,'closing Wallet retires its selected window token');
+    assert(state.serverErrors.length===0&&pageErrors.length===0,'real Home/Desktop source errors',{pageErrors,errors:state.serverErrors});
+    console.log(`[wallet-signin-entry] PASS ${engine}: hidden rail, exact reply tokens, existing window reuse and close/reopen`);
+    return;
+  }
   if (phoneLayout) {
     await homeGui.waitForFunction(() => document.body.dataset.formFactor === "phone", null, {timeout:15000});
     const device = await homeGui.evaluate(() => ({width:innerWidth,

@@ -453,18 +453,19 @@ test('MetaMask enrollment keeps phone relay admission off until a phone method e
 });
 
 import {openWalletSigninEntry} from '../capsules/home/browser/wallet-signin-window.mjs';
+import {homeGuiReply} from '../capsules/home-gui/browser/home-gui-authority.js';
 test("New wallet binds Desktop's exact visible window token while a hidden rail exists",async()=>{
  const listen=new EventTarget(),desktop={},sent=[],rail={targetId:'wallet',source:{postMessage(){throw new Error('hidden rail selected');}}},wallet={targetId:'wallet',source:{closed:false,postMessage:data=>sent.push(data)}};
  const contexts=new Map([['rail-token',rail],['window-token',wallet]]);
  const emit=(data,source=desktop,origin='null')=>listen.dispatchEvent(Object.assign(new Event('message'),{data,source,origin}));
- const result=await openWalletSigninEntry({listen,source:()=>desktop,context:key=>contexts.get(key),post:message=>{
-  const reply={type:'home:wallet-connect-entry-ready',requestId:message.requestId,homeToken:'window-token'};
-  queueMicrotask(()=>{emit({...reply,homeToken:'rail-token'},{});emit({...reply,homeToken:'rail-token'},desktop,'https://foreign.example');emit({...reply,requestId:'wrong',homeToken:'rail-token'});emit(reply);});return true;
+ const result=await openWalletSigninEntry({listen,source:()=>desktop,desktopToken:()=>'desktop-token',context:key=>contexts.get(key),post:message=>{
+  const reply=homeGuiReply({type:'home:wallet-connect-entry-ready',requestId:message.requestId,walletToken:'window-token'},'desktop-token');
+  queueMicrotask(()=>{emit({...reply,walletToken:'rail-token'},{});emit({...reply,walletToken:'rail-token'},desktop,'https://foreign.example');emit({...reply,requestId:'wrong',walletToken:'rail-token'});emit(reply);});return true;
  }});
  assert.deepEqual(sent,[{type:'elastos.wallet.connect-entry/v1'}]);assert(result.isOpen());contexts.delete('window-token');assert.equal(result.isOpen(),false);
 });
 test('New wallet refuses a token for another app and cleans up a missing Desktop reply',async()=>{
  const listen=new EventTarget(),desktop={};
- await assert.rejects(openWalletSigninEntry({listen,source:()=>desktop,context:()=>({targetId:'system',source:{}}),post:message=>{queueMicrotask(()=>listen.dispatchEvent(Object.assign(new Event('message'),{source:desktop,origin:'null',data:{type:'home:wallet-connect-entry-ready',requestId:message.requestId,homeToken:'wrong-app'}})));return true;}}),/Wallet window changed/);
- await assert.rejects(openWalletSigninEntry({listen,source:()=>desktop,context:()=>null,post:()=>true,timeoutMs:1}),/Wallet did not open/);
+ await assert.rejects(openWalletSigninEntry({listen,source:()=>desktop,desktopToken:()=>'desktop-token',context:()=>({targetId:'system',source:{}}),post:message=>{queueMicrotask(()=>listen.dispatchEvent(Object.assign(new Event('message'),{source:desktop,origin:'null',data:homeGuiReply({type:'home:wallet-connect-entry-ready',requestId:message.requestId,walletToken:'wrong-app'},'desktop-token')})));return true;}}),/Wallet window changed/);
+ await assert.rejects(openWalletSigninEntry({listen,source:()=>desktop,desktopToken:()=>'desktop-token',context:()=>null,post:()=>true,timeoutMs:1}),/Wallet did not open/);
 });

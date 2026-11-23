@@ -21,6 +21,7 @@ import {
   setHomeGuiLaunchToken,
 } from "./shell-core.js?v=home-20261101d";
 import {
+  homeGuiReply,
   isTrustedHomeGuiMessage,
   projectHomeGuiAuthority,
 } from "./home-gui-authority.js?v=home-20261101d";
@@ -79,7 +80,7 @@ function requestId() {
 }
 
 function postToHome(message) {
-  window.parent.postMessage({ ...message, homeToken }, homeOrigin);
+  window.parent.postMessage(homeGuiReply(message, homeToken), homeOrigin);
 }
 
 function requestHome(type, payload = {}, options = {}) {
@@ -225,7 +226,7 @@ function handleGuiCommand(message) {
   }
   if (command === "open-wallet-connect-entry") {
     if(!hasExactKeys(message,['type','command','requestId'])||typeof message.requestId!=='string'||!message.requestId||message.requestId.length>128)return false;
-    void openWalletConnectEntry().then(homeToken=>postToHome({type:'home:wallet-connect-entry-ready',requestId:message.requestId,homeToken}),()=>postToHome({type:'home:wallet-connect-entry-ready',requestId:message.requestId,homeToken:''}));
+    void openWalletConnectEntry().then(walletToken=>postToHome({type:'home:wallet-connect-entry-ready',requestId:message.requestId,walletToken}),()=>postToHome({type:'home:wallet-connect-entry-ready',requestId:message.requestId,walletToken:''}));
     return true;
   }
   if (command === "attach-authorized-target") {
