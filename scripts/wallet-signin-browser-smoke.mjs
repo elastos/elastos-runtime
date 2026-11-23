@@ -5,7 +5,7 @@ import {join,basename} from 'node:path';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {requireProductSmokePlaywright} from './product-smoke-browser.mjs';
-import {signinFixture,installSigninProviders,sampleMethod,evmAddress,bitcoinAddress} from './lib/wallet-signin-fixture.mjs';
+import {signinFixture,installSigninProviders,sampleMethod,evmAddress,bitcoinAddress,relayNotice} from './lib/wallet-signin-fixture.mjs';
 const output=process.env.SIGNIN_SCREENSHOT_DIR;
 if(!output)throw new Error('Set SIGNIN_SCREENSHOT_DIR to the screens evidence directory.');
 await mkdir(output,{recursive:true});
@@ -161,7 +161,7 @@ async function exercise(engine,width) {
     await system.getByText('Safari on Mac',{exact:false}).waitFor();
     await system.locator('[data-wallet-method]').scrollIntoViewIfNeeded();await capture('system-wallet-row');
     await system.locator('[data-passkey-revoke]').isDisabled().then(disabled=>assert(disabled,'last Admin passkey protected'));
-    await system.getByRole('switch').click();await state('review');await page.getByText('This wallet will also allow short WalletConnect sign-in connections to this Home.',{exact:true}).waitFor();await capture('enable-review');
+    await system.getByRole('switch').click();await state('review');await page.getByText(relayNotice,{exact:true}).waitFor();await capture('enable-review');
     await page.locator('.signin-dialog').getByRole('button',{name:'Sign message',exact:true}).click();await state('approval');await capture('enable-approval');
     await page.evaluate(()=>window.walletFixture.passkeyMode='pending');await page.locator('.signin-dialog').getByRole('button',{name:'Use passkey',exact:true}).click();await state('passkey');await capture('passkey-pending');await cancel();
     assert.equal(fixture.state.methods[0].sign_in_enabled,false,'cancelled passkey leaves switch off');
