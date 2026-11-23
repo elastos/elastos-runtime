@@ -161,6 +161,15 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
       }
       const result=new Promise(resolve=>{resolveRequest=resolve;});
       watcher=setInterval(()=>{if(initial.isCurrent&&!initial.isCurrent())void flow.cancel();},500);
+      if(initial.method&&['add','add_signin','enable'].includes(initial.action)&&initial.loadConnected) {
+        render({stage:'loading',action:initial.action});const request=epoch;
+        try {
+          const methods=await initial.loadConnected();if(request!==epoch)return result;
+          const connectedMethod=methods.find(method=>optionId(method)===optionId(initial.method));
+          if(connectedMethod){initial.method=connectedMethod;if(initial.action==='add_signin'&&!connectedMethod.paymentOnly)initial.action='enable';}
+          else if(initial.action!=='enable'){render({stage:'list-error',action:initial.action,message:'Refresh the wallet list and choose a connected wallet.'});return result;}
+        }catch{if(request===epoch)render({stage:'list-error',action:initial.action,message:'Home could not load your wallets.'});return result;}
+      }
       if(initial.method){initial.delegateWalletConnect=Boolean(initial.selectWalletConnect);void flow.start(initial);}
       else {render({stage:'loading',action:initial.action});void connected();}
       return result;

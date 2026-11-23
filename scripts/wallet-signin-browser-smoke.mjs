@@ -107,7 +107,7 @@ async function exercise(engine,width,theme) {
     const sdkBefore=fixture.state.calls.filter(c=>c.path==='/api/fixture-sdk'&&c.body.method==='personal_sign').length;
     fixture.state.holdSignature=true;
     await dialog().getByRole('button',{name:'Continue',exact:true}).click();
-    const phone=page.frameLocator('iframe[title=wallet-walletconnect]');await phone.getByText('Sign the message in Your wallet to sign in to this Home.',{exact:true}).waitFor();await capture('17-existing-phone-session');
+    const phone=page.frameLocator('iframe[title=wallet-walletconnect]');await phone.locator('.connection-status').filter({hasText:/Sign the message in .* to sign in to this Home\./}).waitFor();await capture('17-existing-phone-session');
     await page.locator('iframe[title=wallet-walletconnect]').evaluate(f=>f.contentWindow.postMessage('fixture-release-signature','*'));
     await system.getByRole('button',{name:'Turn off sign-in',exact:true}).waitFor();await dialog().waitFor({state:'detached'});fixture.state.holdSignature=false;
     assert.equal(fixture.state.methods[0].sign_in_enabled,true);assert.equal(fixture.state.calls.filter(c=>c.path==='/api/fixture-sdk'&&c.body.method==='personal_sign').length-sdkBefore,1);
@@ -122,6 +122,12 @@ async function exercise(engine,width,theme) {
     await page.evaluate(()=>window.walletFixture.passkeyMode='cancelled');await system.getByRole('button',{name:'Add wallet',exact:true}).click();await state('options');await option('MetaMask').click();await state('approval');await capture('19-passkey-retry');await cancel();assert.equal(fixture.state.methods.length,0);
     await page.evaluate(()=>window.walletFixture.passkeyMode='normal');
     checks.push(`${engine}/${width}/${theme}: lost completion reconciles the same request; cancelled approval leaves the method unchanged`);
+    fixture.state.connected=[{account_id:'brave',connector_id:'wallet-metamask',address:evmAddress,chain_namespace:'eip155:20',proof_type:'siwe',provider_id:'com.brave.wallet',wallet_display_name:'Brave Wallet'}];
+    await page.evaluate(()=>window.walletFixture.multiple=true);await page.locator('#show-wallet').click();
+    const wallet=page.frameLocator('iframe[title=wallet]');await wallet.locator('#wallet-signin-methods').getByRole('button',{name:'Use to sign in',exact:true}).click();
+    await wallet.locator('#wallet-signin-methods').getByRole('button',{name:'Turn off sign-in',exact:true}).waitFor();assert.equal(fixture.state.methods[0].sign_in_enabled,true);
+    await wallet.locator('#wallet-signin-methods').scrollIntoViewIfNeeded();await capture('20-wallet-shortcut');
+    checks.push(`${engine}/${width}/${theme}: Wallet shortcut reads its saved Brave provider and signs without a duplicate extension chooser`);
     assert.deepEqual(outside,[],'all network stays inside the fixture');assert.deepEqual(errors,[],'browser modules produce no uncaught errors');
     const storage=await page.evaluate(()=>JSON.stringify({...localStorage}));
     assert(!/browser_secret|step_up_token|fixture-signature|fixture-home|symKey|wc:/.test(storage),'secrets stay out of browser storage');
