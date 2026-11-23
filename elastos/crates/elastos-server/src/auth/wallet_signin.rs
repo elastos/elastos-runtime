@@ -1346,6 +1346,58 @@ pub(crate) mod tests {
         change(f, "enable", &id);
         id
     }
+    #[test]
+    fn wallet_add_signin_completes_enabled_atomically() {
+        let f = fixture();
+        let b = begin(
+            f.data.path(),
+            ORIGIN,
+            "home-test",
+            input("add_signin", "", &f.address),
+            Some(f.actor.clone()),
+        )
+        .unwrap();
+        assert!(list(f.data.path(), &f.actor).unwrap()["methods"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        let expected = b.approval.as_ref().unwrap()["request"].clone();
+        assert_eq!(expected["action"], "add_signin");
+        assert_eq!(expected["authorizes_short_public_walletconnect"], true);
+        assert_eq!(b.approval.as_ref().unwrap()["notice"], RELAY_NOTICE);
+        assert_eq!(
+            approval_intent(f.data.path(), &b.ceremony_id, &f.actor).unwrap(),
+            expected
+        );
+        let proof = completion(&f, &b);
+        assert!(complete(f.data.path(), ORIGIN, &proof, Some(&f.actor), |request| {
+            assert_eq!(request, &expected);
+            Err(Refused.into())
+        })
+        .is_err());
+        assert!(read(f.data.path()).unwrap().methods.is_empty());
+        assert!(!read(f.data.path()).unwrap().pending[0].proof_consumed);
+        let out = complete(f.data.path(), ORIGIN, &proof, Some(&f.actor), |request| {
+            assert_eq!(request, &expected);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(out["status"], "complete");
+        assert_eq!(out["sign_in_enabled"], true);
+        let saved = read(f.data.path()).unwrap();
+        assert_eq!(saved.methods.len(), 1);
+        assert!(saved.methods[0].sign_in_enabled);
+        assert!(saved.pending[0].proof_consumed);
+        // A lost reply returns the original result without another approval/effect.
+        assert_eq!(
+            complete(f.data.path(), ORIGIN, &proof, Some(&f.actor), |_| {
+                panic!("an identical retry returns its committed result")
+            })
+            .unwrap(),
+            out
+        );
+        assert_eq!(signin(&f).principal_id, f.actor.principal_id);
+    }
     pub(crate) fn signin(f: &Fixture) -> AuthSessionGrantV1 {
         let b = begin(
             f.data.path(),
