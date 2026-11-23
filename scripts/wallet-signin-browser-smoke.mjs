@@ -17,6 +17,7 @@ async function exercise(engine,width,theme) {
   browserVersions[engine]=browser.version();
   const context=await browser.newContext({viewport:{width,height:width===390?844:900},locale:'en-US',timezoneId:'America/Panama',reducedMotion:'reduce',colorScheme:theme});
   await context.addInitScript(installSigninProviders,{evmAddress,bitcoinAddress,theme});
+  await context.addInitScript(()=>addEventListener('message',event=>{if(event.source===top&&event.data?.type==='home:wallet-connector-effect-result'&&typeof event.data.error==='string')window.fixtureConnectorError=event.data.error;}));
   const page=await context.newPage(),errors=[],outside=[],lostReplies=new Set();
   page.on('pageerror',error=>errors.push(error.message));
   await context.route('**/*',async route=>{
@@ -132,6 +133,8 @@ async function exercise(engine,width,theme) {
     assert(!/browser_secret|step_up_token|fixture-signature|fixture-home|symKey|wc:/.test(storage),'secrets stay out of browser storage');
   } catch(error) {
     await page.screenshot({path:join(output,`${engine}-${width}-${theme}-failure.png`),fullPage:true}).catch(()=>{});
+    console.error('Connector errors:',await Promise.all(page.frames().map(frame=>frame.evaluate(()=>window.fixtureConnectorError||'').catch(()=>''))));
+    console.error('Link routes:',fixture.state.calls.filter(c=>c.path.includes('/wallet-connector/')).map(({path,status})=>({path,status})));
     console.error('Screen:',await dialog().getAttribute('data-state').catch(()=>null),'page errors:',errors,'routes:',fixture.state.calls.slice(-12).map(({path,status})=>({path,status})));throw error;
   } finally {await context.close();await browser.close();await fixture.close();}
 }

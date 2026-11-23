@@ -89,7 +89,7 @@ test('default opaque storage getters are contained inside the browser hint bound
 
 import {connectionView,reduceSummary,viewText} from '../capsules/_shared/wallet-connection-view.mjs';
 test('the shared phone wait presents Home sign-in without disconnecting the payment session',()=>{
-  const summary=reduceSummary({request_id:'signin',capsule_id:'home',requesting_app_name:'Home',intent:'auth_challenge',address:wallet.address,status:'pending',reason:'Sign in',expires_at:180},{connector:'wallet-walletconnect'});
+  const summary=reduceSummary({connector_id:'wallet-walletconnect',request_id:'signin',capsule_id:'home',requesting_app_name:'Home',intent:'auth_challenge',address:wallet.address,status:'pending',reason:'Sign in',expires_at:180},{connector:'wallet-walletconnect'});
   const view=connectionView({window:'walletconnect',stage:'request-phone',purpose:'home-signin',summary,supportedActions:['stop-waiting']});
   assert.match(viewText(view.status),/sign in to this Home/);assert.doesNotMatch(viewText(view.notice),/disconnect/);assert.equal(view.wait,null);
   assert.throws(()=>connectionView({window:'walletconnect',stage:'request-phone',purpose:'home-signin',summary:{...summary,actor:'browser'}}),/Home sign-in presentation/);

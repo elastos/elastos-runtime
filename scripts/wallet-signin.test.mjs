@@ -103,7 +103,7 @@ test('Home accepts method intents only from the bound System or Wallet frame',as
   for(const invalid of [{...context,targetId:'browser'},{...context,source:{}},{...context,homeToken:'other'}])handleWalletSigninRequest({source,data},invalid,options);
   assert.equal(reads,0);assert.equal(managed,0);
   handleWalletSigninRequest({source,data},context,options);await new Promise(resolve=>setImmediate(resolve));
-  assert.equal(reads,2);assert.equal(managed,1);
+  assert.equal(reads,3,'refresh the authoritative method list after completion');assert.equal(managed,1);
 });
 
 test('every method action checks the approval against the reviewed ceremony and account',async()=>{

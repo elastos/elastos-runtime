@@ -235,7 +235,7 @@ export function installSigninProviders({evmAddress,bitcoinAddress,theme='light'}
     if(f.mode==='rejected'&&['personal_sign','signMessage'].includes(method))return Promise.reject({code:4001});
     return Promise.resolve(result);
   }
-  const provider={on:(name,listener)=>{if(!listeners.has(name))listeners.set(name,new Set());listeners.get(name).add(listener);},removeListener:(name,listener)=>listeners.get(name)?.delete(listener),request:({method})=>ask(method,method==='eth_chainId'?f.chain:method==='personal_sign'?'fixture-signature':[f.address])};
+  const provider={on:(name,listener)=>{if(!listeners.has(name))listeners.set(name,new Set());listeners.get(name).add(listener);},removeListener:(name,listener)=>listeners.get(name)?.delete(listener),request:({method})=>ask(method,method==='eth_chainId'?'0x'+Number(f.chain).toString(16):method==='personal_sign'?'fixture-signature':[f.address])};
   window.addEventListener('eip6963:requestProvider',()=>{
     if(f.missing)return;
     for(const [uuid,rdns,name]of f.multiple?[['rabby','io.rabby','Rabby Wallet'],['brave','com.brave.wallet','Brave Wallet']]:[['metamask','io.metamask','MetaMask']])window.dispatchEvent(new CustomEvent('eip6963:announceProvider',{detail:{provider:f.multiple?{...provider,request:args=>provider.request(args)}:provider,info:{uuid,rdns,name}}}));
