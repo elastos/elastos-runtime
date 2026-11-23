@@ -58,8 +58,10 @@ try{
   assert(traffic.some(r=>r.label==='revoked'&&[401,403].includes(r.status)&&r.path.includes('/auth/')),'Runtime denies revoked session');
   assert.equal(await current.page.getAttribute('body','data-home-authority'),'signed');
   await writeFile(output+'/revocation-timing.json',JSON.stringify({idle:process.env.HOME_AUTH_REVOCATION_IDLE==='1',elapsedMs:Date.now()-started}));
+  await revoked.page.bringToFront();
   await revoked.page.locator('#home-unlock-person').waitFor({state:'visible'});
-  await revoked.page.screenshot({path:output+'/revoked-window-signin.png',animations:'disabled'});await current.page.screenshot({path:output+'/retained-window.png'});
+  await revoked.page.waitForFunction(()=>['#home-unlock','.home-unlock-account','.home-unlock-clock'].every(selector=>getComputedStyle(document.querySelector(selector)).opacity==='1'));
+  await revoked.page.screenshot({path:output+'/revoked-window-signin.png'});await current.page.screenshot({path:output+'/retained-window.png'});
   console.log('PASS real passkey revocation signs the removed window out; retained window stays signed in');
  }
 }catch(error){
