@@ -316,7 +316,7 @@ fn reconcile_through(store: &mut Store, auth: &AuthState, revocations_through: u
             p.cancelled = true;
         }
         if p.result.is_none()
-            && p.action != "add"
+            && !matches!(p.action.as_str(), "add" | "add_signin")
             && p.action != "signin"
             && !live
                 .iter()
@@ -519,7 +519,7 @@ fn same_wallet(a: &Method, b: &Method) -> bool {
     a.address == b.address && a.chain_id == b.chain_id && a.network == b.network
 }
 fn approval(p: &Pending) -> Value {
-    serde_json::json!({"ceremony_id":p.id,"account_id":p.method.account_id,"action":p.action,"method_id":p.method.method_id,"connector":p.method.connector,"address":p.method.address,"chain_id":p.method.chain_id,"network":p.method.network,"authorizes_short_public_walletconnect":p.action == "enable" && compatible_relay_method(&p.method)})
+    serde_json::json!({"ceremony_id":p.id,"account_id":p.method.account_id,"action":p.action,"method_id":p.method.method_id,"connector":p.method.connector,"address":p.method.address,"chain_id":p.method.chain_id,"network":p.method.network,"authorizes_short_public_walletconnect":matches!(p.action.as_str(), "add_signin" | "enable") && compatible_relay_method(&p.method)})
 }
 fn purpose(p: &Pending) -> WalletProofPurpose {
     if p.action == "signin" {
@@ -527,12 +527,21 @@ fn purpose(p: &Pending) -> WalletProofPurpose {
             account_id: p.id.clone(),
         }
     } else {
-        WalletProofPurpose::AddMethod {
-            account_id: p.method.account_id.clone(),
-            method_digest: digest(&format!(
-                "{}:{}:{}:{}",
-                p.id, p.action, p.method.method_id, p.method.generation
-            )),
+        let account_id = p.method.account_id.clone();
+        let method_digest = digest(&format!(
+            "{}:{}:{}:{}",
+            p.id, p.action, p.method.method_id, p.method.generation
+        ));
+        if p.action == "add_signin" {
+            WalletProofPurpose::AddSignInMethod {
+                account_id,
+                method_digest,
+            }
+        } else {
+            WalletProofPurpose::AddMethod {
+                account_id,
+                method_digest,
+            }
         }
     }
 }
@@ -559,7 +568,7 @@ fn message(p: &Pending) -> anyhow::Result<String> {
     if p.method.connector != "unisat" {
         return Ok(challenge(p)?.message().into());
     }
-    Ok(format!("{} wants you to {} with your Bitcoin account:\n{}\n\nHome: {}\nNetwork: {}\nAction: {}\nIntent: {}\nNonce: {}\nBrowser: {}\nIssued At: {}\nExpiration Time: {}",p.origin,if p.action == "signin" {"sign in"} else {"add a sign-in method"},p.method.address,p.home,p.method.network,p.action,hex::encode(digest(&approval(p).to_string())),hex::encode(p.nonce),hex::encode(digest(&hex::encode(p.proof_secret))),p.issued_at,p.expires_at))
+    Ok(format!("{} wants you to {} with your Bitcoin account:\n{}\n\nHome: {}\nNetwork: {}\nAction: {}\nIntent: {}\nNonce: {}\nBrowser: {}\nIssued At: {}\nExpiration Time: {}",p.origin,if p.action == "signin" {"sign in".into()} else if p.action == "add_signin" {format!("add this wallet so it can sign in to this Home for account {}", p.method.account_id)} else {"add a sign-in method".into()},p.method.address,p.home,p.method.network,p.action,hex::encode(digest(&approval(p).to_string())),hex::encode(p.nonce),hex::encode(digest(&hex::encode(p.proof_secret))),p.issued_at,p.expires_at))
 }
 fn begin_result(p: &Pending, token: Option<String>) -> anyhow::Result<BeginResult> {
     Ok(BeginResult {
@@ -569,7 +578,7 @@ fn begin_result(p: &Pending, token: Option<String>) -> anyhow::Result<BeginResul
         approval: p
             .actor
             .as_ref()
-            .map(|_| serde_json::json!({"operation":OPERATION,"request":approval(p),"notice":if p.action == "enable" && compatible_relay_method(&p.method) {RELAY_NOTICE} else {"Confirm this wallet sign-in method change with your passkey."}})),
+            .map(|_| serde_json::json!({"operation":OPERATION,"request":approval(p),"notice":if matches!(p.action.as_str(), "add_signin" | "enable") && compatible_relay_method(&p.method) {RELAY_NOTICE} else {"Confirm this wallet sign-in method change with your passkey."}})),
         attempt_token: token,
         instance_id: p.instance_id.clone(),
         storage_revision: 0,
@@ -590,7 +599,7 @@ pub(crate) fn begin(
     }
     require(matches!(
         input.action.as_str(),
-        "signin" | "add" | "enable" | "disable" | "remove"
+        "signin" | "add" | "add_signin" | "enable" | "disable" | "remove"
     ))?;
     let now = now_ts();
     mutate(data, |auth, store| {
@@ -599,7 +608,7 @@ pub(crate) fn begin(
                 auth,
                 store,
                 actor,
-                matches!(input.action.as_str(), "add" | "enable"),
+                matches!(input.action.as_str(), "add" | "add_signin" | "enable"),
             )?;
         } else {
             require(auth.principals.iter().any(active_passkey))?;
@@ -631,7 +640,8 @@ pub(crate) fn begin(
                 .cloned()
                 .ok_or(Refused)?
         } else {
-            let (address, network) = if (actor.is_none() || input.action == "add")
+            let (address, network) = if (actor.is_none()
+                || matches!(input.action.as_str(), "add" | "add_signin"))
                 && input.connector == "walletconnect"
                 && input.address.is_empty()
             {
@@ -668,7 +678,7 @@ pub(crate) fn begin(
                 method.connector = input.connector.clone();
             }
         }
-        if input.action == "add" {
+        if matches!(input.action.as_str(), "add" | "add_signin") {
             if store.methods.len() >= MAX_METHODS {
                 return Err(Capacity.into());
             }
@@ -676,7 +686,10 @@ pub(crate) fn begin(
             method.root_key = root_key(auth, &method.account_id);
         }
         if method.connector == "walletconnect"
-            && matches!(input.action.as_str(), "signin" | "add" | "enable")
+            && matches!(
+                input.action.as_str(),
+                "signin" | "add" | "add_signin" | "enable"
+            )
         {
             require(input.allow_temporary_internet)?;
             if actor.is_none() {
@@ -713,7 +726,10 @@ pub(crate) fn begin(
         let result = begin_result(
             &pending,
             (pending.method.connector == "walletconnect"
-                && matches!(pending.action.as_str(), "signin" | "add" | "enable"))
+                && matches!(
+                    pending.action.as_str(),
+                    "signin" | "add" | "add_signin" | "enable"
+                ))
             .then_some(token),
         )?;
         store.pending.push(pending);
@@ -749,7 +765,7 @@ pub(crate) fn intent(
             auth,
             store,
             actor,
-            matches!(p.action.as_str(), "add" | "enable"),
+            matches!(p.action.as_str(), "add" | "add_signin" | "enable"),
         )?;
         require(same_actor(p.actor.as_ref(), Some(actor)))?;
         Ok(approval(p))
@@ -843,7 +859,7 @@ pub(crate) fn complete(
                 auth,
                 store,
                 actor,
-                matches!(p.action.as_str(), "add" | "enable"),
+                matches!(p.action.as_str(), "add" | "add_signin" | "enable"),
             )?;
         }
         let response_digest = hex::encode(digest(&format!(
@@ -860,7 +876,10 @@ pub(crate) fn complete(
             }
             return Ok(result.clone());
         }
-        if matches!(p.action.as_str(), "add" | "enable" | "signin") {
+        if matches!(
+            p.action.as_str(),
+            "add" | "add_signin" | "enable" | "signin"
+        ) {
             verify(store, &p, input)?;
         }
         let result = if p.action == "signin" {
@@ -899,7 +918,7 @@ pub(crate) fn complete(
         } else {
             // Consume passkey approval only after proof/ownership validation. A
             // failed write leaves authority unchanged; retry needs new approval.
-            let creates_method = p.action == "add";
+            let creates_method = matches!(p.action.as_str(), "add" | "add_signin");
             if creates_method {
                 if store.methods.len() >= MAX_METHODS {
                     return Err(Capacity.into());
@@ -919,7 +938,7 @@ pub(crate) fn complete(
                 let mut method = p.method.clone();
                 method.witnesses = witnesses(auth, &method.account_id);
                 method.root_key = root_key(auth, &method.account_id);
-                method.sign_in_enabled = false;
+                method.sign_in_enabled = p.action == "add_signin";
                 store.methods.push(method);
             } else if p.action == "remove" {
                 store.methods.retain(|m| m.method_id != p.method.method_id);
@@ -947,7 +966,7 @@ pub(crate) fn complete(
                     }
                 }
             }
-            serde_json::json!({"status":if p.action == "remove" {"removed"} else {"complete"},"method_id":p.method.method_id,"sign_in_enabled":p.action == "enable"})
+            serde_json::json!({"status":if p.action == "remove" {"removed"} else {"complete"},"method_id":p.method.method_id,"sign_in_enabled":matches!(p.action.as_str(), "add_signin" | "enable")})
         };
         let saved = store
             .pending
@@ -995,7 +1014,7 @@ pub(crate) fn select(
     mutate(data, |_, store| {
         let mut p = pending(store, id, browser, origin)?.clone();
         require(
-            matches!(p.action.as_str(), "signin" | "add")
+            matches!(p.action.as_str(), "signin" | "add" | "add_signin")
                 && p.method.connector == "walletconnect"
                 && p.method.address.is_empty()
                 && p.result.is_none(),
@@ -1089,7 +1108,7 @@ pub(crate) fn approval_intent(
             auth,
             store,
             actor,
-            matches!(p.action.as_str(), "add" | "enable"),
+            matches!(p.action.as_str(), "add" | "add_signin" | "enable"),
         )?;
         require(same_actor(p.actor.as_ref(), Some(actor)))?;
         Ok(approval(p))
@@ -1119,7 +1138,10 @@ pub(crate) fn attempt_context(
             bool::from(p.transport_digest.ct_eq(&digest(token)))
                 && p.instance_id == instance
                 && p.method.connector == "walletconnect"
-                && matches!(p.action.as_str(), "signin" | "add" | "enable")
+                && matches!(
+                    p.action.as_str(),
+                    "signin" | "add" | "add_signin" | "enable"
+                )
                 && !p.cancelled
                 && p.result.is_none()
                 && p.expires_at > now
@@ -1345,6 +1367,263 @@ pub(crate) mod tests {
         let id = change(f, "add", "");
         change(f, "enable", &id);
         id
+    }
+    #[test]
+    fn wallet_add_signin_completes_enabled_atomically() {
+        let f = fixture();
+        let b = begin(
+            f.data.path(),
+            ORIGIN,
+            "home-test",
+            input("add_signin", "", &f.address),
+            Some(f.actor.clone()),
+        )
+        .unwrap();
+        assert!(list(f.data.path(), &f.actor).unwrap()["methods"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        let expected = b.approval.as_ref().unwrap()["request"].clone();
+        assert_eq!(expected["action"], "add_signin");
+        assert_eq!(expected["authorizes_short_public_walletconnect"], true);
+        assert_eq!(b.approval.as_ref().unwrap()["notice"], RELAY_NOTICE);
+        assert_eq!(
+            approval_intent(f.data.path(), &b.ceremony_id, &f.actor).unwrap(),
+            expected
+        );
+        let proof = completion(&f, &b);
+        assert!(
+            complete(f.data.path(), ORIGIN, &proof, Some(&f.actor), |request| {
+                assert_eq!(request, &expected);
+                Err(Refused.into())
+            })
+            .is_err()
+        );
+        assert!(read(f.data.path()).unwrap().methods.is_empty());
+        assert!(!read(f.data.path()).unwrap().pending[0].proof_consumed);
+        let out = complete(f.data.path(), ORIGIN, &proof, Some(&f.actor), |request| {
+            assert_eq!(request, &expected);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(out["status"], "complete");
+        assert_eq!(out["sign_in_enabled"], true);
+        let saved = read(f.data.path()).unwrap();
+        assert_eq!(saved.methods.len(), 1);
+        assert!(saved.methods[0].sign_in_enabled);
+        assert!(saved.pending[0].proof_consumed);
+        // A lost reply returns the original result without another approval/effect.
+        assert_eq!(
+            complete(f.data.path(), ORIGIN, &proof, Some(&f.actor), |_| {
+                panic!("an identical retry returns its committed result")
+            })
+            .unwrap(),
+            out
+        );
+        assert_eq!(signin(&f).principal_id, f.actor.principal_id);
+    }
+    #[test]
+    fn wallet_add_signin_and_add_proofs_are_disjoint_and_single_use() {
+        for (action, other) in [("add", "add_signin"), ("add_signin", "add")] {
+            let f = fixture();
+            let b = begin(
+                f.data.path(),
+                ORIGIN,
+                "home-test",
+                input(action, "", &f.address),
+                Some(f.actor.clone()),
+            )
+            .unwrap();
+            // Keep nonce, wallet, browser and ceremony equal: only the action changes.
+            let mut changed = read(f.data.path()).unwrap().pending[0].clone();
+            changed.action = other.into();
+            let other = begin_result(&changed, None).unwrap();
+            assert_ne!(b.message, other.message);
+            assert!(complete(
+                f.data.path(),
+                ORIGIN,
+                &completion(&f, &other),
+                Some(&f.actor),
+                |_| { panic!("a cross-purpose proof cannot consume approval") }
+            )
+            .is_err());
+            let proof = completion(&f, &b);
+            complete(f.data.path(), ORIGIN, &proof, Some(&f.actor), |_| Ok(())).unwrap();
+            let fresh = begin(
+                f.data.path(),
+                ORIGIN,
+                "home-test",
+                input(action, "", &f.address),
+                Some(f.actor.clone()),
+            )
+            .unwrap();
+            let mut replay = proof;
+            replay.ceremony_id = fresh.ceremony_id;
+            assert!(
+                complete(f.data.path(), ORIGIN, &replay, Some(&f.actor), |_| {
+                    panic!("a replay cannot consume approval")
+                })
+                .is_err()
+            );
+            assert_eq!(read(f.data.path()).unwrap().methods.len(), 1);
+        }
+    }
+    #[test]
+    fn wallet_add_signin_requires_live_admin_at_begin_and_completion() {
+        for demote_before_begin in [true, false] {
+            let f = fixture();
+            add_account(f.data.path(), "bob", "bob-key");
+            let b = if demote_before_begin {
+                None
+            } else {
+                Some(
+                    begin(
+                        f.data.path(),
+                        ORIGIN,
+                        "home-test",
+                        input("add_signin", "", &f.address),
+                        Some(f.actor.clone()),
+                    )
+                    .unwrap(),
+                )
+            };
+            demote_passkey_to_guest(f.data.path(), &f.actor.proof_binding_id, now_ts()).unwrap();
+            assert!(begin(
+                f.data.path(),
+                ORIGIN,
+                "home-test",
+                input("add_signin", "", &f.address),
+                Some(f.actor.clone()),
+            )
+            .is_err());
+            if let Some(b) = b {
+                assert!(intent(f.data.path(), &b.ceremony_id, BROWSER, ORIGIN, &f.actor).is_err());
+                assert!(approval_intent(f.data.path(), &b.ceremony_id, &f.actor).is_err());
+                assert!(complete(
+                    f.data.path(),
+                    ORIGIN,
+                    &completion(&f, &b),
+                    Some(&f.actor),
+                    |_| { panic!("a demoted actor cannot consume approval") }
+                )
+                .is_err());
+            }
+            assert!(read(f.data.path()).unwrap().methods.is_empty());
+        }
+    }
+    #[test]
+    fn wallet_add_signin_relay_disclosure_matches_enable() {
+        for chain in [20, 8453, 1] {
+            let f = fixture();
+            let mut req = input("add_signin", "", &f.address);
+            req.chain_id = chain;
+            let b = begin(
+                f.data.path(),
+                ORIGIN,
+                "home-test",
+                req,
+                Some(f.actor.clone()),
+            )
+            .unwrap();
+            assert!(b.message.contains("Add this wallet so it can sign in"));
+            assert!(b.message.contains(&f.actor.principal_id));
+            let out = complete(
+                f.data.path(),
+                ORIGIN,
+                &completion(&f, &b),
+                Some(&f.actor),
+                |_| Ok(()),
+            )
+            .unwrap();
+            let enable = begin(
+                f.data.path(),
+                ORIGIN,
+                "home-test",
+                input("enable", out["method_id"].as_str().unwrap(), ""),
+                Some(f.actor.clone()),
+            )
+            .unwrap();
+            let approval = b.approval.unwrap();
+            let enabled = enable.approval.unwrap();
+            assert_eq!(approval["notice"], enabled["notice"]);
+            assert_eq!(
+                approval["request"]["authorizes_short_public_walletconnect"],
+                matches!(chain, 20 | 8453)
+            );
+            assert_eq!(
+                approval["request"]["authorizes_short_public_walletconnect"],
+                enabled["request"]["authorizes_short_public_walletconnect"]
+            );
+        }
+    }
+    #[test]
+    fn walletconnect_add_signin_pairs_selects_and_completes_with_consent() {
+        let f = fixture();
+        let request = |consent| {
+            let mut req = input("add_signin", "", "");
+            req.connector = "walletconnect".into();
+            req.chain_id = 0;
+            req.allow_temporary_internet = consent;
+            req
+        };
+        assert!(begin(
+            f.data.path(),
+            ORIGIN,
+            "home-test",
+            request(false),
+            Some(f.actor.clone())
+        )
+        .is_err());
+        let pair = begin(
+            f.data.path(),
+            ORIGIN,
+            "home-test",
+            request(true),
+            Some(f.actor.clone()),
+        )
+        .unwrap();
+        assert!(pair.message.is_empty());
+        let token = pair.attempt_token.as_ref().unwrap();
+        assert!(attempt_context(f.data.path(), token, &pair.instance_id, now_ts()).is_ok());
+        let selected = select(
+            f.data.path(),
+            &pair.ceremony_id,
+            BROWSER,
+            ORIGIN,
+            f.address.clone(),
+            8453,
+        )
+        .unwrap();
+        let expected = selected.approval.as_ref().unwrap()["request"].clone();
+        assert_eq!(expected["action"], "add_signin");
+        assert_eq!(expected["chain_id"], 8453);
+        assert_eq!(expected["authorizes_short_public_walletconnect"], true);
+        assert_eq!(selected.approval.as_ref().unwrap()["notice"], RELAY_NOTICE);
+        let out = complete(
+            f.data.path(),
+            ORIGIN,
+            &completion(&f, &selected),
+            Some(&f.actor),
+            |request| {
+                assert_eq!(request, &expected);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(out["sign_in_enabled"], true);
+        assert!(attempt_context(f.data.path(), token, &pair.instance_id, now_ts()).is_err());
+        let mut req = input("signin", "", &f.address);
+        req.chain_id = 8453;
+        let signin = begin(f.data.path(), ORIGIN, "home-test", req, None).unwrap();
+        let session = complete(
+            f.data.path(),
+            ORIGIN,
+            &completion(&f, &signin),
+            None,
+            |_| panic!("sign-in cannot consume approval"),
+        )
+        .unwrap();
+        assert_eq!(session["principal_id"], f.actor.principal_id);
     }
     pub(crate) fn signin(f: &Fixture) -> AuthSessionGrantV1 {
         let b = begin(
@@ -2409,6 +2688,64 @@ pub(crate) mod tests {
         assert!(load_active_session_grant(f.data.path(), &session.session_id, now_ts()).is_err());
         assert!(load_active_session_grant(f.data.path(), &f.actor.session_id, now_ts()).is_ok());
         assert!(renew_session_grant(f.data.path(), f.actor.clone()).is_ok());
+    }
+    #[test]
+    fn wallet_unisat_add_signin_binds_account_and_enables_without_relay_permission() {
+        let f = fixture();
+        let mut bytes = [0u8; 32];
+        bytes[31] = 1;
+        let key = SigningKey::from_bytes((&bytes).into()).unwrap();
+        let b = begin(
+            f.data.path(),
+            ORIGIN,
+            "home-test",
+            serde_json::from_value(serde_json::json!({
+                "action":"add_signin", "connector":"unisat",
+                "address":"1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH",
+                "network":"bitcoin", "browser_secret":BROWSER
+            }))
+            .unwrap(),
+            Some(f.actor.clone()),
+        )
+        .unwrap();
+        assert!(b
+            .message
+            .contains("add this wallet so it can sign in to this Home"));
+        assert!(b.message.contains(&f.actor.principal_id));
+        assert_eq!(
+            b.approval.as_ref().unwrap()["request"]["authorizes_short_public_walletconnect"],
+            false
+        );
+        assert_ne!(b.approval.as_ref().unwrap()["notice"], RELAY_NOTICE);
+        let sign = |message: &str| {
+            let (sig, id) = key
+                .sign_prehash_recoverable(&bitcoin::bitcoin_signed_message_hash(message.as_bytes()))
+                .unwrap();
+            let mut raw = vec![31 + id.to_byte()];
+            raw.extend_from_slice(&sig.to_bytes());
+            base64::engine::general_purpose::STANDARD.encode(raw)
+        };
+        let mut proof = Complete {
+            ceremony_id: b.ceremony_id.clone(),
+            browser_secret: BROWSER.into(),
+            signature: String::new(),
+            signature_type: "bitcoin_signed_message".into(),
+            public_key: hex::encode(key.verifying_key().to_encoded_point(true).as_bytes()),
+            step_up_token: String::new(),
+        };
+        let mut add = read(f.data.path()).unwrap().pending[0].clone();
+        add.action = "add".into();
+        proof.signature = sign(&message(&add).unwrap());
+        assert!(
+            complete(f.data.path(), ORIGIN, &proof, Some(&f.actor), |_| {
+                panic!("a Bitcoin add proof cannot enable sign-in")
+            })
+            .is_err()
+        );
+        proof.signature = sign(&b.message);
+        let out = complete(f.data.path(), ORIGIN, &proof, Some(&f.actor), |_| Ok(())).unwrap();
+        assert_eq!(out["sign_in_enabled"], true);
+        assert!(principal(f.data.path(), out["method_id"].as_str().unwrap()).is_ok());
     }
     #[test]
     fn wallet_unisat_fresh_bitcoin_proof_add_enable_and_signin() {

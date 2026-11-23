@@ -175,6 +175,10 @@ fn purposes() -> Vec<WalletProofPurpose> {
             account_id: "account-1".into(),
             method_digest: [2; 32],
         },
+        AddSignInMethod {
+            account_id: "account-1".into(),
+            method_digest: [2; 32],
+        },
         AddMethodDuringRecovery {
             account_id: "account-1".into(),
             method_digest: [2; 32],
@@ -188,7 +192,9 @@ fn active_purposes() -> Vec<WalletProofPurpose> {
         .filter(|purpose| {
             matches!(
                 purpose,
-                WalletProofPurpose::SignIn { .. } | WalletProofPurpose::AddMethod { .. }
+                WalletProofPurpose::SignIn { .. }
+                    | WalletProofPurpose::AddMethod { .. }
+                    | WalletProofPurpose::AddSignInMethod { .. }
             )
         })
         .collect()
@@ -210,6 +216,9 @@ fn every_purpose_is_visible_and_cross_purpose_reuse_fails() {
             WalletProofPurpose::SignIn { .. } => "Sign in for account",
             WalletProofPurpose::ConfirmOperation { .. } => "Confirm operation export-kit; SHA-256:",
             WalletProofPurpose::AddMethod { .. } => "Add a sign-in method; SHA-256:",
+            WalletProofPurpose::AddSignInMethod { .. } => {
+                "Add this wallet so it can sign in; SHA-256:"
+            }
             WalletProofPurpose::AddMethodDuringRecovery { .. } => {
                 "Add a sign-in method during recovery; SHA-256:"
             }
@@ -250,6 +259,7 @@ fn account_intent_is_bound() {
             WalletProofPurpose::SignIn { account_id }
             | WalletProofPurpose::ConfirmOperation { account_id, .. }
             | WalletProofPurpose::AddMethod { account_id, .. }
+            | WalletProofPurpose::AddSignInMethod { account_id, .. }
             | WalletProofPurpose::AddMethodDuringRecovery { account_id, .. } => {
                 *account_id = "account-2".into()
             }
@@ -300,15 +310,18 @@ fn operation_name_and_digest_are_bound() {
 // Break: omit the proposed method's digest from either add-purpose statement.
 #[test]
 fn added_method_digest_is_bound() {
-    for purpose in active_purposes()
-        .into_iter()
-        .filter(|p| matches!(p, WalletProofPurpose::AddMethod { .. }))
-    {
+    for purpose in active_purposes().into_iter().filter(|p| {
+        matches!(
+            p,
+            WalletProofPurpose::AddMethod { .. } | WalletProofPurpose::AddSignInMethod { .. }
+        )
+    }) {
         let mut i = input();
         i.purpose = purpose;
         let original = WalletProofChallenge::new(i.clone(), &SECRET).unwrap();
         match &mut i.purpose {
             WalletProofPurpose::AddMethod { method_digest, .. }
+            | WalletProofPurpose::AddSignInMethod { method_digest, .. }
             | WalletProofPurpose::AddMethodDuringRecovery { method_digest, .. } => {
                 *method_digest = [4; 32]
             }
@@ -633,6 +646,7 @@ fn spaces_inside_account_ids_and_operation_names_are_refused() {
             WalletProofPurpose::SignIn { account_id }
             | WalletProofPurpose::ConfirmOperation { account_id, .. }
             | WalletProofPurpose::AddMethod { account_id, .. }
+            | WalletProofPurpose::AddSignInMethod { account_id, .. }
             | WalletProofPurpose::AddMethodDuringRecovery { account_id, .. } => {
                 *account_id = "account 1".into();
             }
@@ -894,6 +908,10 @@ fn every_public_type_redacts_debug_and_display() {
             digest: input().nonce,
         },
         WalletProofPurpose::AddMethod {
+            account_id: nonce_hex.clone(),
+            method_digest: input().nonce,
+        },
+        WalletProofPurpose::AddSignInMethod {
             account_id: nonce_hex.clone(),
             method_digest: input().nonce,
         },
