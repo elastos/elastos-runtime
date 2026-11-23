@@ -42,6 +42,13 @@ async function exercise(engine,width) {
     assert.equal(misplaced,0,`${name}: wallet details stay in the value column`);
     const clipped=await scope.evaluate(()=>[...document.querySelectorAll('tr[data-wallet-method] .signin-method-note')].filter(node=>node.scrollWidth>node.clientWidth+1).length);
     assert.equal(clipped,0,`${name}: connector, address and network text stays visible`);
+    // Measure after the async availability render and stylesheet layout settle.
+    await page.waitForFunction(()=>{
+      const dialog=document.querySelector('.signin-dialog');
+      if(!dialog)return true;
+      const buttons=[...dialog.querySelectorAll('button')].filter(button=>button.getClientRects().length);
+      return buttons.length>0 && buttons.every(button=>{const r=button.getBoundingClientRect();return r.height>=44&&r.left>=0&&r.right<=innerWidth+1;});
+    },undefined,{timeout:5000});
     const bad=await page.locator('.signin-dialog button:visible').evaluateAll(buttons=>buttons.filter(button=>{const r=button.getBoundingClientRect();return r.height<44||r.left<0||r.right>innerWidth+1;}).map(button=>button.textContent));
     assert.deepEqual(bad,[],`${name}: controls fit and are 44px high`);
     const expiryVisible=await page.locator('.signin-dialog').evaluateAll(dialogs=>dialogs.every(dialog=>{const expiry=dialog.querySelector('.signin-expiry');if(!expiry?.textContent)return true;const r=expiry.getBoundingClientRect(),d=dialog.getBoundingClientRect();return r.top>=d.top&&r.bottom<=d.bottom-4;}));

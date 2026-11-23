@@ -326,7 +326,10 @@ test("Accounts groups methods beneath their owner with equal add controls in bot
           assert.equal(await note.evaluate(node => node.parentElement.contains(node.parentElement.querySelector("button"))), true);
         }
         if (options.methods) {
-          assert.equal(await block.getByRole("switch").getAttribute("aria-checked"), "true");
+          const walletRow = block.locator("[data-wallet-method]");
+          assert.equal(await walletRow.getByText("Signs in", { exact: true }).count(), 1);
+          assert.equal(await walletRow.getByRole("switch").count(), 0);
+          assert.equal(await walletRow.getByRole("button", { name: "Remove", exact: true }).count(), 1);
           assert.equal(await block.getByRole("button", { name: "Remove account", exact: true }).count(), 0);
           assert.equal(new Set(await block.locator(".passkey-name").allTextContents()).size, 2);
           const remove = block.locator(".passkey-remove").first();
