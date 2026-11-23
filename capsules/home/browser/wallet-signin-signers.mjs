@@ -14,8 +14,19 @@ export async function selectSigninWallet(connector,options) {
   if(connector==='metamask') {
     const entries=signinBrowserWallets();
     if(!entries.length)throw fault('missing');
-    const preferred=entries.find(entry=>entry.rdns===(options.method?.providerId||'io.metamask'));
+    let preferred=entries.find(entry=>entry.rdns===(options.method?.providerId||'io.metamask'));
     if(options.method?.providerId&&!preferred)throw fault('missing');
+    if(options.method&&!options.method.providerId) {
+      const matches=await abortable(Promise.all(entries.map(async entry=>{
+        let timer;
+        try {
+          const [accounts,chain]=await Promise.race([Promise.all([entry.provider.request({method:'eth_accounts'}),entry.provider.request({method:'eth_chainId'})]),new Promise((_,reject)=>{timer=setTimeout(()=>reject(fault('missing')),1000);})]);
+          return typeof accounts?.[0]==='string'&&accounts[0].toLowerCase()===options.method.address.toLowerCase()&&Number(chain)===options.method.chain_id?entry:null;
+        }catch{return null;}finally{clearTimeout(timer);}
+      })),signal);
+      preferred=matches.find(entry=>entry?.rdns==='io.metamask')||matches.find(Boolean);
+      if(!preferred&&entries.length>1)throw fault('changed');
+    }
     const entry=preferred || (entries.length===1 ? entries[0] : await abortable(new Promise(resolve=>choices(entries.map((entry,index)=>({id:String(index),name:entry.name,choose:()=>resolve(entry)})))),signal));
     provider=entry.provider;name=entry.name;
   } else {provider=window.unisat;name="UniSat";}

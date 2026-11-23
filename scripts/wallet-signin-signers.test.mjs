@@ -76,3 +76,16 @@ test('a connected compatible wallet selects its saved provider instead of anothe
     await assert.rejects(selectSigninWallet('metamask',{...options(),method:{providerId:'io.missing.wallet'}}),{code:'missing'});
   }finally{window.removeEventListener('eip6963:requestProvider',announce);}
 });
+test('a connected account without a provider hint uses the matching extension account and network',async()=>{
+  const metamask=provider(),brave=provider();metamask.state.address='0x'+'34'.repeat(20);
+  const announce=()=>{
+    for(const [rdns,name,p]of [['io.metamask','MetaMask',metamask],['com.brave.wallet','Brave Wallet',brave]])
+      window.dispatchEvent(new CustomEvent('eip6963:announceProvider',{detail:{provider:p.api,info:{uuid:rdns,rdns,name}}}));
+  };
+  window.addEventListener('eip6963:requestProvider',announce);
+  try {
+    const wallet=await selectSigninWallet('metamask',{...options(),method:{address,chain_id:20}});await wallet.sign('Home sign-in');wallet.close();
+    assert.equal(brave.calls.filter(c=>c.method==='personal_sign').length,1);assert.equal(metamask.calls.filter(c=>c.method==='eth_requestAccounts'||c.method==='personal_sign').length,0);
+    brave.state.chain='0x2105';await assert.rejects(selectSigninWallet('metamask',{...options(),method:{address,chain_id:20}}),{code:'changed'});
+  }finally{window.removeEventListener('eip6963:requestProvider',announce);}
+});
