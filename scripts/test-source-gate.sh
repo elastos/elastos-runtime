@@ -8,6 +8,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 product_data() {
+  bash scripts/vendor-ui-tokens.sh --check
   python3 scripts/check-carrier-vendor.py
   python3 scripts/check-carrier-vendor-test.py
   python3 scripts/check-shell-pipe-readers.py

@@ -474,17 +474,29 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y just
           npm ci --prefix elastos/tools/browser-playwright-engine
-          npx --prefix elastos/tools/browser-playwright-engine playwright install --with-deps chromium
+          npx --prefix elastos/tools/browser-playwright-engine playwright install --with-deps chromium webkit
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '26'
-      # Product smokes launch Playwright Chromium. BRAVE_BIN names another executable.
-      # This job installs Chromium for the engine package and points BRAVE_BIN at it.
+      # Product smokes use the engine package. BRAVE_BIN selects its Chromium;
+      # wallet sign-in and Storage parity also exercise its WebKit.
       - name: browser layout smokes
+        timeout-minutes: 20
+        env:
+          ELASTOS_PLAYWRIGHT_MODULE: ${{ github.workspace }}/elastos/tools/browser-playwright-engine/node_modules/playwright/index.mjs
+          SIGNIN_SCREENSHOT_DIR: ${{ runner.temp }}/wallet-signin-screens
         run: |
           BRAVE_BIN="$(cd elastos/tools/browser-playwright-engine && node -p "require('playwright').chromium.executablePath()")"
           export BRAVE_BIN
           just product-ui-browser
+      - name: wallet sign-in browser evidence
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: wallet-signin-screens
+          path: ${{ runner.temp }}/wallet-signin-screens
+          retention-days: 7
+          if-no-files-found: error
 
       - name: list own-workspace capsule tests
         run: |
