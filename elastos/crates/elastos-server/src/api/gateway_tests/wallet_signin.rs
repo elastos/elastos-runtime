@@ -1151,6 +1151,8 @@ fn recovery_bundle_for_authority(
 async fn walletconnect_owner_recovery_retires_confirmation_relay() {
     let data = tempfile::tempdir().unwrap();
     let owner = passkey_authority_with_name(data.path(), Some("Owner"));
+    // Recovery appends to the owner's existing encrypted credential history.
+    install_real_approver(data.path(), &owner.principal_id, b"owner-before-recovery");
     let bundle = recovery_bundle_for_authority(data.path(), &owner);
     let state = test_state(data.path());
     let (id, cancel) = open_passkey_confirmation_relay(&state, &owner).await;

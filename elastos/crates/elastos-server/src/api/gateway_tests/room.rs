@@ -1502,7 +1502,7 @@ async fn test_chat_room_shell_can_kick_guest_without_exposing_session_token() {
     let app = gateway_router(test_state(dir.path()));
     let authority = passkey_authority(dir.path());
     let home_cookie = signed_home_cookie_for_room_test(&authority);
-    let chat_token = issue_home_launch_token(dir.path(), CHAT_ROOM_CAPSULE_ID).unwrap();
+    let chat_token = app_token_for_authority(dir.path(), CHAT_ROOM_CAPSULE_ID, &authority);
 
     let request = app
             .clone()
@@ -1711,7 +1711,7 @@ async fn test_chat_room_shell_can_approve_browser_access_request() {
             test_browser_request("localhost:61180", "http://localhost:61180")
                 .method("POST")
                 .uri("/api/apps/home/launch")
-                .header("x-elastos-home-token", home_app_token(dir.path()))
+                .header("x-elastos-home-token", &authority.home_token)
                 .header(CONTENT_TYPE, "application/json")
                 .body(Body::from(r#"{"target":"chat-room"}"#))
                 .unwrap(),
