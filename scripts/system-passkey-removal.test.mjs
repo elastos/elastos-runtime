@@ -293,7 +293,7 @@ test("System distinguishes two passkeys and identifies this window at desktop an
 test("Accounts groups methods beneath their owner with equal add controls in both themes and widths", async () => {
   await fixture(async ({ page, open, writes }) => {
     const created = Date.UTC(2026, 10, 23, 13, 3) / 1000;
-    const key = { ...owner, created_at: created, added_from: "Device passkey (added from Chrome on Mac or iPad)" };
+    const key = { ...owner, created_at: created, last_used_at: created + 240, added_from: "Device passkey (added from Chrome on Mac or iPad)" };
     const backup = { ...key, current: false, proof_binding_id: "proof:passkey:backup" };
     const wallet = { method_id: "wallet:metamask", connector: "metamask", address: "0x1234567890123456789012345678901234567890", chain_id: 20, network: "", sign_in_enabled: true, last_used_at: created };
     for (const theme of ["light", "dark"]) for (const width of [1280, 390]) {
