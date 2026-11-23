@@ -161,7 +161,7 @@ async function exercise(engine,width) {
     await system.getByText('Safari on Mac',{exact:false}).waitFor();
     await system.locator('[data-wallet-method]').scrollIntoViewIfNeeded();await capture('system-wallet-row');
     await system.locator('[data-passkey-revoke]').isDisabled().then(disabled=>assert(disabled,'last Admin passkey protected'));
-    await system.getByRole('switch').click();await state('review');await capture('enable-review');
+    await system.getByRole('switch').click();await state('review');await page.getByText('This wallet will also allow short WalletConnect sign-in connections to this Home.',{exact:true}).waitFor();await capture('enable-review');
     await page.locator('.signin-dialog').getByRole('button',{name:'Sign message',exact:true}).click();await state('approval');await capture('enable-approval');
     await page.evaluate(()=>window.walletFixture.passkeyMode='pending');await page.locator('.signin-dialog').getByRole('button',{name:'Use passkey',exact:true}).click();await state('passkey');await capture('passkey-pending');await cancel();
     assert.equal(fixture.state.methods[0].sign_in_enabled,false,'cancelled passkey leaves switch off');
@@ -251,7 +251,8 @@ async function exercise(engine,width) {
     const signerPaths=fixture.state.calls.filter(c=>c.path.startsWith('/api/auth/wallet-methods'));
     assert(signerPaths.every(c=>c.headers.authorization?.startsWith('Bearer ')),'method routes carry launch authorization');
     const transports=fixture.state.calls.filter(c=>c.path.startsWith('/api/apps/wallet-walletconnect/'));
-    assert(transports.length>0);assert(transports.every(c=>c.headers['x-elastos-wallet-attempt']==='fixture-attempt'&&c.headers['x-elastos-wallet-instance']),'temporary connector headers');
+    assert(transports.length>0);assert(transports.every(c=>c.headers['x-elastos-wallet-attempt']==='fixture-attempt'&&c.headers['x-elastos-wallet-instance']&&c.headers['if-match']==='"0"'),'temporary connector and revision headers');
+    assert(!fixture.state.calls.some(c=>c.path.startsWith('/api/auth/wallet-methods')&&c.headers['x-elastos-home-token']==='fixture-wallet'),'Wallet uses Home authority for methods');
   } catch(error) {
     await page.screenshot({path:join(output,`${engine}-${width}-failure.png`),fullPage:true}).catch(()=>{});
     console.error('Failing screen state:',await page.locator('.signin-dialog').count()?await page.locator('.signin-dialog').getAttribute('data-state'):null,'page errors:',errors);
