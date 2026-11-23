@@ -1508,13 +1508,30 @@ pub(crate) mod tests {
         let f = fixture();
         enabled(&f);
         let actor = signin(&f);
-        let mut request = input("enable", "", &f.address);
+        let mut request = input("add", "", &f.address);
         request.chain_id = 8453;
-        let b = begin(
+        let add = begin(
             f.data.path(),
             ORIGIN,
             "home-test",
             request,
+            Some(actor.clone()),
+        )
+        .unwrap();
+        let added = complete(
+            f.data.path(),
+            ORIGIN,
+            &completion(&f, &add),
+            Some(&actor),
+            |_| Ok(()),
+        )
+        .unwrap();
+        assert_eq!(added["sign_in_enabled"], false);
+        let b = begin(
+            f.data.path(),
+            ORIGIN,
+            "home-test",
+            input("enable", added["method_id"].as_str().unwrap(), ""),
             Some(actor.clone()),
         )
         .unwrap();
