@@ -40,16 +40,6 @@ export function walletSigninControls(method,{canManage,onAction,buttonClass=''})
   if(!canManage)controls.append(text('small','Only an Admin can turn sign-in on.','signin-method-note'));
   return controls;
 }
-export function walletSigninTableRow(method,options) {
-  const row=document.createElement('tr');row.className='account-row';row.dataset.walletMethod=method.method_id;
-  const cell=(label,className)=>{const el=document.createElement('td');el.dataset.label=label;el.className=className;row.append(el);return el;};
-  const identity=cell('Account','account-name'),name=text('div','','account-name-wrap');name.append(text('strong',options.account||'Your account'),text('small',`${connectorName(method.connector)} · ${shortWalletAddress(method.address)} · ${walletNetwork(method)}`,'signin-method-note'));identity.append(name);
-  identity.title=method.address;
-  cell('Role','account-role-cell').textContent=options.role||'Admin';
-  const signin=cell('Sign-in','account-method');signin.append(text('span',connectorName(method.connector)));
-  cell('Last used','account-used').textContent=options.formatUsedAt&&method.last_used_at?options.formatUsedAt(method.last_used_at):used(method.last_used_at);
-  cell('Actions','account-actions-cell').append(walletSigninControls(method,options));return row;
-}
 export function renderWalletSigninCards(mount,methods,options) {
   mount.replaceChildren();
   if(!methods.length)mount.append(text('p','Add a wallet in System, Accounts to use it for sign-in.','signin-method-note'));
