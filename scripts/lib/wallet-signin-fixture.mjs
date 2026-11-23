@@ -189,7 +189,7 @@ window.fixtureReady=true;
       }
       if(path==='/apps/wallet-walletconnect/vendor/reown-appkit.js') {
         res.setHeader('content-type','text/javascript');res.end(`
-let callback,holdSignature=false,chainOverride,releaseSignature;const listeners=new Map();let account=${JSON.stringify(walletconnectAddress)},chain=20;
+let callback,holdSignature=${JSON.stringify(state.holdSignature===true)},chainOverride,releaseSignature;const listeners=new Map();let account=${JSON.stringify(walletconnectAddress)},chain=20;
 const provider={connected:false,session:null,signer:{client:{core:{relayer:{transportClose:async()=>{}}}},abortPairingAttempt(){},async connect(){}},
  on(name,fn){listeners.set(name,fn);},removeListener(name){listeners.delete(name);},
  async connect(){listeners.get('display_uri')?.('wc:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@2?relay-protocol=irn&symKey=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');await new Promise(resolve=>callback=resolve);this.connected=true;this.session={expiry:Date.now()/1000+180,namespaces:{eip155:{chains:['eip155:20'],accounts:['eip155:20:'+account],methods:['personal_sign']}}};},
