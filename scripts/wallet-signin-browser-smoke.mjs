@@ -156,7 +156,7 @@ async function exercise(engine,width,theme) {
     await page.screenshot({path:join(output,`${engine}-${width}-${theme}-failure.png`),fullPage:true}).catch(()=>{});
     console.error('Connector errors:',await Promise.all(page.frames().map(frame=>frame.evaluate(()=>window.fixtureConnectorError||'').catch(()=>''))));
     console.error('Link routes:',fixture.state.calls.filter(c=>c.path.includes('/wallet-connector/')).map(({path,status})=>({path,status})));
-    console.error('Screen:',await dialog().getAttribute('data-state').catch(()=>null),'page errors:',errors,'routes:',fixture.state.calls.slice(-12).map(({path,status})=>({path,status})));throw error;
+    console.error('Screen:',await dialog().evaluateAll(nodes=>nodes[0]?.dataset.state||null),'page errors:',errors,'routes:',fixture.state.calls.slice(-12).map(({path,status})=>({path,status})));throw error;
   } finally {await context.close();await browser.close();await fixture.close();}
 }
 try {for(const engine of(process.env.SIGNIN_ENGINE?[process.env.SIGNIN_ENGINE]:['chromium','webkit']))for(const width of widths)for(const theme of themes)await exercise(engine,width,theme);passed=true;}
