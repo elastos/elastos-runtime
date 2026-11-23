@@ -4624,7 +4624,13 @@ fn mutate_auth_state<T>(
     ensure_audit_chain_state(data_dir, &mut state)?;
     let value = mutation(&mut state)?;
     save_auth_state(data_dir, &state, Some(&baseline))?;
-    if wallet_signin::observe_auth_commit(data_dir, &state).is_err() {
+    if wallet_signin::observe_auth_commit(
+        data_dir,
+        &state,
+        baseline.links.last().map_or(0, |link| link.sequence),
+    )
+    .is_err()
+    {
         tracing::warn!("Wallet sign-in storage requires repair; passkey access remains available");
     }
     for principal in previous_principals {

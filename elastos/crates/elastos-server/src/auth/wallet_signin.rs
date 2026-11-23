@@ -220,6 +220,9 @@ fn session_active(store: &Store, auth: &AuthState, session: &StoredAuthSession, 
             .is_some_and(|m| m.account_id == session.grant.principal_id)
 }
 fn reconcile(store: &mut Store, auth: &AuthState) {
+    reconcile_through(store, auth, u64::MAX);
+}
+fn reconcile_through(store: &mut Store, auth: &AuthState, revocations_through: u64) {
     let last = auth.audit_chain.last();
     if store.audit_sequence > 0 {
         let continuation = auth
@@ -272,7 +275,7 @@ fn reconcile(store: &mut Store, auth: &AuthState) {
     let revoked_accounts: Vec<_> = auth
         .audit_chain
         .iter()
-        .filter(|l| l.sequence > store.audit_sequence)
+        .filter(|l| l.sequence > store.audit_sequence && l.sequence <= revocations_through)
         .filter_map(|l| auth.audit.iter().find(|e| e.event_id == l.event_id))
         .filter(|e| e.event_type == "auth.session.revoked" && e.result == "ok")
         .filter_map(|e| e.principal_id.as_ref())
@@ -361,12 +364,18 @@ fn mutate<T>(
 }
 // Called after every current-binary auth commit to keep the bounded legacy audit
 // checkpoint current. Reads independently reconcile, including after a crash here.
-pub(super) fn observe_auth_commit(data: &Path, auth: &AuthState) -> anyhow::Result<()> {
+pub(super) fn observe_auth_commit(
+    data: &Path,
+    auth: &AuthState,
+    previous_audit_sequence: u64,
+) -> anyhow::Result<()> {
     if !path(data)?.exists() {
         return Ok(());
     }
     let mut store = read(data)?;
-    reconcile(&mut store, auth);
+    // Replay missed legacy events, while the current transaction owns the
+    // effects of its new events (including targeted single-session revocation).
+    reconcile_through(&mut store, auth, previous_audit_sequence);
     write(data, &store)
 }
 fn loaded(data: &Path) -> anyhow::Result<(AuthState, Store)> {
