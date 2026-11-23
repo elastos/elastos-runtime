@@ -124,7 +124,7 @@ async function exercise(engine,width) {
         const before=fixture.state.calls.filter(c=>c.path.endsWith('/signin/complete'));
         await page.evaluate(()=>{window.walletFixture.address='0x'+'34'.repeat(20);window.emitSigninWallet('accountsChanged');});await state('unknown');
         await page.locator('.signin-dialog').getByRole('button',{name:'Check again',exact:true}).click();await page.waitForFunction(()=>window.openedPrincipal==='principal:alex');
-        const after=fixture.state.calls.filter(c=>c.path.endsWith('/signin/complete'));assert.deepEqual(after.at(-1).body,before.at(-1).body);
+        const after=fixture.state.calls.filter(c=>c.path.endsWith('/signin/complete'));assert(JSON.stringify(after.at(-1).body)===JSON.stringify(before.at(-1).body),'Sign-in retry keeps the exact proof body');
       } else if(scenario==='unadded') {
         await page.locator('.signin-dialog').getByRole('button',{name:'Use passkey',exact:true}).click();await page.waitForFunction(()=>window.openedPrincipal==='principal:alex');await capture('passkey-after-wallet-refusal');
         assert.equal((await page.evaluate(()=>window.walletFixture.calls)).filter(call=>call.method==='passkey').length,1);
@@ -222,7 +222,7 @@ async function exercise(engine,width) {
       if(outcome==='unknown') {
         const before=fixture.state.calls.filter(c=>c.path==='/api/auth/wallet-methods/complete').at(-1).body;
         await page.locator('.signin-dialog').getByRole('button',{name:'Check again',exact:true}).click();await state('done');
-        assert.deepEqual(fixture.state.calls.filter(c=>c.path==='/api/auth/wallet-methods/complete').at(-1).body,before);
+        assert(JSON.stringify(fixture.state.calls.filter(c=>c.path==='/api/auth/wallet-methods/complete').at(-1).body)===JSON.stringify(before),'Method retry keeps the exact approved proof body');
         await page.locator('.signin-dialog').getByRole('button',{name:'Done',exact:true}).click();
       } else await cancel();
       fixture.state.scenario='normal';
