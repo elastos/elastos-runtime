@@ -914,6 +914,7 @@ async fn passkey_add_complete_inner(
         &input.ceremony_id,
         &input.response,
     )?;
+    super::gateway::retire_inactive_walletconnect_attempts(state).await?;
     record_passkey_added_from(&state.data_dir, headers, &added.proof_binding_id)?;
     Ok(PasskeyAddResponse {
         schema: PASSKEY_ADD_RESULT_SCHEMA.into(),
@@ -1033,6 +1034,7 @@ async fn owner_recovery_complete_inner(
         &input.response,
         &kit,
     )?;
+    super::gateway::retire_inactive_walletconnect_attempts(state).await?;
     record_passkey_added_from(&state.data_dir, headers, &grant.proof_binding_id)?;
     drop(manager);
     passkey_response_for_grant(state, grant)
@@ -1432,6 +1434,7 @@ async fn passkey_revoke_scoped_inner(
             }
         },
     )?;
+    super::gateway::retire_inactive_walletconnect_attempts(state).await?;
     // The credential follows the committed revocation; when an earlier
     // attempt already removed it, there is nothing left to do.
     for credential in manager.credentials() {
@@ -1502,6 +1505,7 @@ async fn passkey_promote_admin_inner(
             )
         },
     )?;
+    super::gateway::retire_inactive_walletconnect_attempts(state).await?;
     crate::auth::append_audit_event(
         &state.data_dir,
         audit_event(AuditEventInput {
@@ -1562,6 +1566,7 @@ async fn passkey_demote_guest_inner(
             )
         },
     )?;
+    super::gateway::retire_inactive_walletconnect_attempts(state).await?;
     crate::auth::append_audit_event(
         &state.data_dir,
         audit_event(AuditEventInput {
@@ -3527,6 +3532,7 @@ async fn recovery_kit_import_inner(
                 );
             }
         };
+        super::gateway::retire_inactive_walletconnect_attempts(state).await?;
         return Ok(RecoveryKitImportResponse {
             schema: "elastos.recovery-kit.import.response/v1".to_string(),
             principal_id: principal.principal_id,
@@ -3554,6 +3560,7 @@ async fn recovery_kit_import_inner(
             ..AuditEventInput::default()
         }),
     )?;
+    super::gateway::retire_inactive_walletconnect_attempts(state).await?;
     Ok(RecoveryKitImportResponse {
         schema: "elastos.recovery-kit.import.response/v1".to_string(),
         principal_id: principal.principal_id,

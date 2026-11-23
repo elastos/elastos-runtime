@@ -21,6 +21,8 @@ pub(in crate::api) use attempts::{
     install_confirmation, issue_lock, preflight, require_attempt, retire_attempt, AttemptCapacity,
 };
 
+pub(crate) use attempts::retire_inactive_attempts;
+
 #[derive(Debug)]
 struct AdminConsentRequired;
 impl std::fmt::Display for AdminConsentRequired {

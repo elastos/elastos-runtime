@@ -413,6 +413,13 @@ async fn response<T: Serialize>(
     }
 }
 
+pub(crate) async fn retire_inactive_attempts(state: &GatewayState) -> anyhow::Result<()> {
+    for id in crate::auth::wallet_signin::inactive_attempts(&home_launch_auth_data_dir(&state.data_dir))? {
+        retire_attempt(state, &id).await?;
+    }
+    Ok(())
+}
+
 pub(in crate::api) async fn retire_attempt(state: &GatewayState, id: &str) -> anyhow::Result<()> {
     let principal = actor(id);
     let mut inner = state.walletconnect.inner.lock().await;

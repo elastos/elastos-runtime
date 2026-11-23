@@ -146,9 +146,7 @@ pub(super) async fn method_complete(
                 )
             },
         )?;
-        for id in auth::inactive_attempts(&home_launch_auth_data_dir(&state.data_dir))? {
-            gateway_walletconnect::retire_attempt(&state, &id).await?;
-        }
+        gateway_walletconnect::retire_inactive_attempts(&state).await?;
         Ok::<_, anyhow::Error>(result)
     }
     .await;
