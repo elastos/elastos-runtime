@@ -34,6 +34,8 @@ pub(crate) struct Method {
 struct Pending {
     id: String,
     action: String,
+    #[serde(default)]
+    creates_method: bool,
     method: Method,
     origin: String,
     home: String,
@@ -289,6 +291,7 @@ fn reconcile(store: &mut Store, auth: &AuthState) {
         if p.result.is_none()
             && p.action != "add"
             && p.action != "signin"
+            && !p.creates_method
             && !live
                 .iter()
                 .any(|(id, g, _)| *id == p.method.method_id && *g == p.method.generation)
@@ -480,7 +483,7 @@ fn same_wallet(a: &Method, b: &Method) -> bool {
     a.address == b.address && a.chain_id == b.chain_id && a.network == b.network
 }
 fn approval(p: &Pending) -> Value {
-    serde_json::json!({"ceremony_id":p.id,"account_id":p.method.account_id,"action":p.action,"method_id":p.method.method_id,"authorizes_short_public_walletconnect":p.action == "enable" && compatible_relay_method(&p.method)})
+    serde_json::json!({"ceremony_id":p.id,"account_id":p.method.account_id,"action":p.action,"method_id":p.method.method_id,"connector":p.method.connector,"address":p.method.address,"chain_id":p.method.chain_id,"network":p.method.network,"authorizes_short_public_walletconnect":p.action == "enable" && compatible_relay_method(&p.method)})
 }
 fn purpose(p: &Pending) -> WalletProofPurpose {
     if p.action == "signin" {
@@ -579,7 +582,11 @@ pub(crate) fn begin(
         {
             return Err(Capacity.into());
         }
-        let mut method = if matches!(input.action.as_str(), "enable" | "disable" | "remove") {
+        let enable_by_identity = input.action == "enable" && input.method_id.is_empty();
+        let mut creates_method = input.action == "add" || enable_by_identity;
+        let mut method = if !enable_by_identity
+            && matches!(input.action.as_str(), "enable" | "disable" | "remove")
+        {
             store
                 .methods
                 .iter()
@@ -628,7 +635,17 @@ pub(crate) fn begin(
                 method.connector = input.connector.clone();
             }
         }
-        if input.action == "add" {
+        if enable_by_identity {
+            if let Some(existing) = store.methods.iter().find(|m| same_wallet(m, &method)) {
+                if existing.account_id != method.account_id {
+                    return Err(Conflict.into());
+                }
+                method = existing.clone();
+                method.connector = input.connector.clone();
+                creates_method = false;
+            }
+        }
+        if creates_method {
             if store.methods.len() >= MAX_METHODS {
                 return Err(Capacity.into());
             }
@@ -647,6 +664,7 @@ pub(crate) fn begin(
         let mut pending = Pending {
             id: format!("wallet:{}", random_secret_hex()),
             action: input.action,
+            creates_method,
             method,
             origin: origin.into(),
             home: home.into(),
@@ -858,7 +876,11 @@ pub(crate) fn complete(
         } else {
             // Consume passkey approval only after proof/ownership validation. A
             // failed write leaves authority unchanged; retry needs new approval.
-            if p.action == "add" {
+            let creates_method = p.action == "add" || p.creates_method;
+            if creates_method {
+                if store.methods.len() >= MAX_METHODS {
+                    return Err(Capacity.into());
+                }
                 if store.methods.iter().any(|m| same_wallet(m, &p.method)) {
                     return Err(Conflict.into());
                 }
@@ -870,8 +892,10 @@ pub(crate) fn complete(
                 }))?;
             }
             approve(&approval(&p))?;
-            if p.action == "add" {
-                store.methods.push(p.method.clone());
+            if creates_method {
+                let mut method = p.method.clone();
+                method.sign_in_enabled = p.action == "enable";
+                store.methods.push(method);
             } else if p.action == "remove" {
                 store.methods.retain(|m| m.method_id != p.method.method_id);
             } else {
@@ -890,7 +914,10 @@ pub(crate) fn complete(
                     }
                 }
                 for other in &mut store.pending {
-                    if other.method.method_id == p.method.method_id && other.id != p.id {
+                    if (other.method.method_id == p.method.method_id
+                        || same_wallet(&other.method, &p.method))
+                        && other.id != p.id
+                    {
                         other.cancelled = true;
                     }
                 }
@@ -1347,6 +1374,90 @@ pub(crate) mod tests {
             id = out["method_id"].as_str().unwrap().into();
         }
         unreachable!()
+    }
+    #[test]
+    fn wallet_payment_identity_enables_once_with_new_proofs_without_payment_authority() {
+        let f = fixture();
+        assert!(list(f.data.path(), &f.actor).unwrap()["methods"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        let b = begin(
+            f.data.path(),
+            ORIGIN,
+            "home-test",
+            input("enable", "", &f.address),
+            Some(f.actor.clone()),
+        )
+        .unwrap();
+        assert_eq!(
+            b.approval.as_ref().unwrap()["request"]["address"],
+            f.address
+        );
+        assert!(complete(
+            f.data.path(),
+            ORIGIN,
+            &completion(&f, &b),
+            Some(&f.actor),
+            |_| anyhow::bail!("passkey missing")
+        )
+        .is_err());
+        complete(
+            f.data.path(),
+            ORIGIN,
+            &completion(&f, &b),
+            Some(&f.actor),
+            |_| Ok(()),
+        )
+        .unwrap();
+        assert_eq!(signin(&f).principal_id, f.actor.principal_id);
+        let existing = begin(
+            f.data.path(),
+            ORIGIN,
+            "home-test",
+            input("enable", "", &f.address),
+            Some(f.actor.clone()),
+        )
+        .unwrap();
+        assert_eq!(
+            existing.approval.as_ref().unwrap()["request"]["method_id"],
+            b.approval.as_ref().unwrap()["request"]["method_id"]
+        );
+    }
+    #[test]
+    fn wallet_provisional_enable_never_adopts_a_replaced_or_removed_method() {
+        for remove in [false, true] {
+            let f = fixture();
+            let pending = begin(
+                f.data.path(),
+                ORIGIN,
+                "home-test",
+                input("enable", "", &f.address),
+                Some(f.actor.clone()),
+            )
+            .unwrap();
+            let id = change(&f, "add", "");
+            if remove {
+                change(&f, "remove", &id);
+            }
+            assert!(complete(
+                f.data.path(),
+                ORIGIN,
+                &completion(&f, &pending),
+                Some(&f.actor),
+                |_| Ok(())
+            )
+            .is_err());
+            assert!(begin(
+                f.data.path(),
+                ORIGIN,
+                "home-test",
+                input("signin", "", &f.address),
+                None
+            )
+            .and_then(|b| complete(f.data.path(), ORIGIN, &completion(&f, &b), None, |_| Ok(())))
+            .is_err());
+        }
     }
     #[test]
     fn wallet_added_off_then_signs_into_same_account_with_same_root_and_metadata() {

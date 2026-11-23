@@ -254,3 +254,23 @@ for the Chat launch token.
 `auth.session.revoke`, request `{"session_id":"<target>"}`, and the approval header
 when the target is another session. Signing out the current session stays direct.
 Runtime rechecks current account authority while it commits the revocation.
+
+## Enable a wallet already used for payments
+
+For an existing payment wallet with no Runtime method ID, begin `action: "enable"`
+with connector, full address, chain_id, network and browser_secret, omitting
+method_id. Runtime assigns its method ID before the fresh wallet signature and
+passkey approval. Completion creates the ON method atomically. If this account
+already owns its method, Runtime binds that exact method and generation. Another
+account's ownership is refused. Payment data supplies the selected identity; the
+new proofs supply authority. A removal or switch off cancels pending activation
+for that wallet identity, including an activation begun before its method existed.
+
+The returned approval request also includes connector, address, chain_id and
+network. Home shows those Runtime-bound values and echoes the full returned
+request unchanged when it asks for passkey approval.
+
+This Runtime lane changes the method API and keeps new wallet controls with the
+screens lane. The combined candidate must include System's explicit Remove
+account state and the permission approval bridge before installation. Runtime
+API tests exercise those intents directly; the lane alone is not a product release.
