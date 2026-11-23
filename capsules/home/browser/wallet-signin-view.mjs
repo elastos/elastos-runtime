@@ -48,8 +48,9 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
   async function chooseSignin(method) {
     const id=method?.chooseConnector?'walletconnect':method?optionId(method):'passkey';saveSigninChoice(remember?id:'');
     if(!method){close();onPasskey?.();return;}
-    initial={...initial,action:'signin',method:method.chooseConnector?null:method,automatic:true};await flow.start(initial);if(method.chooseConnector)await flow.choose('walletconnect');
+    initial={...initial,action:'signin',method:method.chooseConnector?null:method,chooseConnector:method.chooseConnector?method.connector:null,automatic:true};await restart();
   }
+  async function restart() {const options=initial;await flow.start(options);if(options.chooseConnector)await flow.choose(options.chooseConnector);}
   function chooseConnected(method) {initial={...initial,action:initial.action==='add'?'add':method.paymentOnly?'add_signin':'enable',method,automatic:true,delegateWalletConnect:Boolean(initial.selectWalletConnect)};return flow.start(initial);}
   function options(methods) {
     render({stage:'options',action:initial.action,methods});
@@ -119,12 +120,10 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
       } else if(state.stage==='internet-notice') {
         dialog.append(node('p','Home reaches your wallet over the internet through WalletConnect. The relay service can see this Home computer’s internet address.','connection-note'));
         dialog.append(button('Continue',()=>flow.connect()));
-      } else if(state.stage==='review'&&!state.automatic) {
-        dialog.append(node('p',state.action==='disable'?'Home will turn off sign-in for this wallet and end its sign-in sessions.':'Home will remove this sign-in method and end its sign-in sessions.','connection-note'));
-        dialog.append(button('Use passkey',()=>flow.confirm()));
+
       }
       if(state.wallet&&state.stage!=='review')dialog.append(node('p',`${connectorName(state.wallet.connector)} · ${shortWalletAddress(state.wallet.address)} · ${walletNetwork(state.wallet)}`,'connection-note'));
-      const statuses={loading:'Loading wallets…',connecting:'Open your wallet.',signing:'Sign the message in your wallet.',approval:'Confirm with your passkey.',passkey:'Confirm with your passkey.',completing:state.action==='signin'?'Checking sign-in…':'Saving change…'};
+      const statuses={loading:'Loading wallets…',connecting:'Open your wallet.',signing:'Sign the message in your wallet.',approval:'Confirm with your passkey.',passkey:state.action==='disable'?'Confirm with your passkey to turn off sign-in and end this wallet’s sign-in sessions.':state.action==='remove'?'Confirm with your passkey to remove this wallet and end its sign-in sessions.':'Confirm with your passkey.',completing:state.action==='signin'?'Checking sign-in…':'Saving change…'};
       if(state.message||statuses[state.stage]){const status=node('p',state.message||statuses[state.stage],'connection-note');status.setAttribute('role','status');dialog.append(status);}
       if(state.approvalNotice)dialog.append(node('p',state.approvalNotice,'connection-note'));
       if(state.signingMessage) {
@@ -133,7 +132,7 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
       if(state.stage==='approval')dialog.append(button('Use passkey',()=>flow.approve()));
       if(state.stage==='unknown')dialog.append(button('Check again',()=>flow.retry()));
       if(state.stage==='error'||state.stage==='list-error') {
-        if(state.retryable!==false)dialog.append(button('Try again',()=>state.stage==='list-error'?connected():flow.start(initial)));
+        if(state.retryable!==false)dialog.append(button('Try again',()=>state.stage==='list-error'?connected():restart()));
         if(state.action==='signin'&&onPasskey&&state.allowPasskey!==false&&initial.availability?.passkey!==false)dialog.append(button('Use passkey',()=>chooseSignin(null),true));
       }
       const actions=node('div',null,'connection-actions');

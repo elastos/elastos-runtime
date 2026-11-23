@@ -243,7 +243,9 @@ async function openSigninConnector(target) {
 
 async function signinWalletConnectWindow() {
   const existing=()=>[...launchedAppContexts.entries()].find(([,c])=>c.targetId==='wallet-walletconnect'&&c.source&&!c.source.closed&&c.expiresAt>Date.now());
-  const opened=!existing()?await openSigninConnector('wallet-walletconnect'):null;
+  const prior=existing();
+  if(prior)postToActiveShell({type:'home:gui-command',command:'open-target',target:'wallet-walletconnect',query:{}});
+  const opened=!prior?await openSigninConnector('wallet-walletconnect'):null;
   const deadline=Date.now()+15000;
   while(!existing()) {if(opened?.isOpen()===false)throw new Error('Wallet window closed');if(Date.now()>deadline)throw new Error('Wallet window did not open');await new Promise(resolve=>setTimeout(resolve,50));}
   const [homeToken,context]=existing();return {homeToken,source:context.source};

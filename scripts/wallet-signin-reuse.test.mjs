@@ -77,7 +77,7 @@ test('WalletConnect signs in through its restored session and keeps payments con
   const result=await client.effect({kind:'signin',message:'Runtime sign-in',address:wallet.address,chain_id:20});
   assert.equal(result.signature_type,'personal_sign');assert.equal(calls.filter(c=>c.method==='personal_sign').length,1);assert.equal(connects,0);
   await client.effect({kind:'stop-signin'});assert.equal(disconnects,0);assert.equal((await client.effect({kind:'status'})).status,'connected');
-  permission='off';await assert.rejects(client.effect({kind:'signin',message:'Runtime sign-in',address:wallet.address,chain_id:20}),/internet access/i);assert.equal(calls.filter(c=>c.method==='personal_sign').length,1);
+  permission='off';await assert.rejects(client.effect({kind:'signin',message:'Runtime sign-in',address:wallet.address,chain_id:20}),{code:'permission'});assert.equal(calls.filter(c=>c.method==='personal_sign').length,1);
 });
 
 test('default opaque storage getters are contained inside the browser hint boundary',()=>{

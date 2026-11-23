@@ -14,6 +14,8 @@ export const shortWalletAddress = value => value.length > 16 ? `${value.slice(0,
 export function walletSigninError(error, action) {
   if(error?.code === 'expired') return 'This request expired. Close the old request in your wallet, then try again.';
   if(error?.code === 'changed') return 'Your wallet is using a different account or network. Try again.';
+  if(error?.code === 'wallet-unavailable') return 'Open the wallet with this account, then try again.';
+  if(error?.code === 'permission') return 'Allow WalletConnect internet access in Inbox, then try again.';
   if(error?.code === 'missing') return 'Home could not find this wallet. Open a browser with the wallet installed, or choose another wallet.';
   if(error?.code === 'network') return 'Use Elastos Smart Chain or Base with WalletConnect.';
   if(error?.code === 'bitcoin-network') return 'Switch UniSat to Bitcoin mainnet, then try again.';

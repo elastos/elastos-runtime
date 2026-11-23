@@ -131,7 +131,7 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
     const config = await waitFor(api('wallet/config'),signal);
     const permission = await waitFor(api('internet'),signal);
     latestPermission = permission;
-    if (permission.status !== 'granted') throw muted('WalletConnect needs internet access. An admin of this Home can allow it in Inbox. Then select Connect wallet.');
+    if (permission.status !== 'granted') throw Object.assign(muted('WalletConnect needs internet access. An admin of this Home can allow it in Inbox. Then select Connect wallet.'),{code:'permission'});
     if (activeRevision !== undefined && activeRevision !== config.walletconnect.storage_revision) {
       provider = undefined;
       await waitFor(retireAdapter(),signal);

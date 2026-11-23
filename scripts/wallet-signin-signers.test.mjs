@@ -99,3 +99,12 @@ test('ambiguous extensions stop before access instead of opening another Home pi
   try{await assert.rejects(selectSigninWallet('metamask',options()),{code:'changed'});assert.equal(first.calls.length+second.calls.length,0);}
   finally{window.removeEventListener('eip6963:requestProvider',announce);}
 });
+
+test('locked extensions ask the user to open the wallet before retrying',async()=>{
+  const first=provider(),second=provider();
+  for(const p of [first,second])p.api.request=async input=>{p.calls.push(input);return input.method==='eth_chainId'?'0x14':[];};
+  const announce=()=>{for(const [rdns,p]of [['io.metamask',first],['com.brave.wallet',second]])window.dispatchEvent(new CustomEvent('eip6963:announceProvider',{detail:{provider:p.api,info:{uuid:rdns,rdns,name:rdns}}}));};
+  window.addEventListener('eip6963:requestProvider',announce);
+  try{await assert.rejects(selectSigninWallet('metamask',{...options(),method:{address,chain_id:20}}),{code:'wallet-unavailable'});assert(![...first.calls,...second.calls].some(c=>c.method==='eth_requestAccounts'||c.method==='personal_sign'));}
+  finally{window.removeEventListener('eip6963:requestProvider',announce);}
+});

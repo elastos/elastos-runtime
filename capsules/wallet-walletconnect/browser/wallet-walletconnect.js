@@ -372,7 +372,7 @@ addEventListener('message',async event=>{
   const reply=result=>window.top.postMessage({type:'home:wallet-signin-effect-result',homeToken:frameHomeToken,requestId:data.requestId,...result},homeOrigin);
   if(data.operation==='stop'){signinSelection=undefined;signinRequest=undefined;await connector.effect({kind:'stop-signin'});return;}
   if(signinBusy||hostEffectInFlight)return reply({error:true});
-  signinBusy=true;
+  signinBusy=true;let ownedRequest;
   try {
     let result;
     if(data.operation==='select') {
@@ -383,9 +383,9 @@ addEventListener('message',async event=>{
       const status=await connector.effect({kind:'status'}),selected=status.session;
       if(!selected||selected.address?.toLowerCase()!==data.address.toLowerCase()||selected.chain!==`eip155:${data.chain_id}`)throw new Error('Wallet changed');
       if(data.operation==='check')result={};
-      else {signinRequest={connector_id:CONNECTOR_ID,request_id:data.requestId,capsule_id:'home',requesting_app_name:'Home',intent:'auth_challenge',address:data.address,chain_namespace:`eip155:${data.chain_id}`,status:'pending',reason:'Use this wallet to sign in to this Home.',expires_at:Math.floor(Date.now()/1000)+180};hostEffectInFlight=true;result=await connector.effect({kind:'signin',address:data.address,chain_id:data.chain_id,message:data.message});}
+      else {signinRequest=ownedRequest={connector_id:CONNECTOR_ID,request_id:data.requestId,capsule_id:'home',requesting_app_name:'Home',intent:'auth_challenge',address:data.address,chain_namespace:`eip155:${data.chain_id}`,status:'pending',reason:'Use this wallet to sign in to this Home.',expires_at:Math.floor(Date.now()/1000)+180};hostEffectInFlight=true;result=await connector.effect({kind:'signin',address:data.address,chain_id:data.chain_id,message:data.message});}
     }
     reply({result});
   } catch(error) {reply({error:true,code:error.code});}
-  finally {signinRequest=undefined;signinBusy=false;hostEffectInFlight=false;currentPhase='idle';draw();}
+  finally {signinBusy=false;if(ownedRequest&&signinRequest===ownedRequest){signinRequest=undefined;hostEffectInFlight=false;currentPhase='idle';}draw();}
 });
