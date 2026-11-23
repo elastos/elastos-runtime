@@ -6,6 +6,7 @@ import { chromium, jsonResponse, textResponse, makeAppearanceRecord, makeSystemS
 import { productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 
 const explanation = "Add another admin passkey before removing this one.";
+const disabledExplanation = "Add another admin passkey first.";
 const owner = { principal_id: "alex", proof_binding_id: "proof:passkey:alex", display_name: "Alex", role: "admin", current: true,
   last_used_at: Date.UTC(2026, 10, 22, 16, 5) / 1000 };
 const guest = { principal_id: "sam", proof_binding_id: "proof:passkey:sam", display_name: "Sam", role: "guest", current: false };
@@ -14,6 +15,7 @@ const guestBackup={...guest,proof_binding_id:'proof:passkey:sam-backup'};
 
 async function fixture(run) {
   let passkeys = [owner], role = "admin", theme = "light", failure = null, afterFailurePasskeys = null;
+  let methods = [];
   let listReads = 0;
   const writes = [];
   const server = await startSystemFixtureServer({
@@ -26,7 +28,7 @@ async function fixture(run) {
         return true;
       }
       if (url.pathname === "/api/auth/wallet-methods") {
-        jsonResponse(response, { account_id: passkeys.find(key => key.current)?.principal_id || owner.principal_id, methods: [] });
+        jsonResponse(response, { account_id: passkeys.find(key => key.current)?.principal_id || owner.principal_id, methods });
         return true;
       }
       if (url.pathname === "/api/auth/passkeys") {
@@ -62,6 +64,7 @@ async function fixture(run) {
     const open = async (keys, options = {}) => {
       passkeys = keys.map(key => ({ ...key }));
       role = options.role || "admin";
+      methods = options.methods || [];
       theme = options.theme || "light";
       failure = options.failure || null;
       afterFailurePasskeys = options.afterFailurePasskeys || null;
@@ -79,8 +82,7 @@ async function fixture(run) {
   }
 }
 
-async function screenshot(page, name) {
-  const directory = process.env.LAST_ADMIN_SCREENSHOT_DIR;
+async function screenshot(page, name, directory = process.env.LAST_ADMIN_SCREENSHOT_DIR) {
   if (!directory) return;
   await mkdir(directory, { recursive: true });
   await page.screenshot({ path: join(directory, `${name}.png`) });
@@ -94,8 +96,8 @@ test("System protects the last admin with or without guests, in both themes and 
         let frame = await open([owner], { theme });
         const remove = frame.locator(".passkey-remove");
         assert.equal(await remove.isDisabled(), true);
-        assert.equal(await remove.getAttribute("title"), explanation);
-        const note = frame.getByText(explanation, { exact: true });
+        assert.equal(await remove.getAttribute("title"), disabledExplanation);
+        const note = frame.getByText(disabledExplanation, { exact: true });
         assert.equal(await note.isVisible(), true);
         assert.equal(await remove.getAttribute("aria-describedby"), await note.getAttribute("id"));
         const bounds = await note.boundingBox();
@@ -259,12 +261,13 @@ test("System distinguishes two passkeys and identifies this window at desktop an
       let frame = await open([{ ...owner, created_at: created, added_from: "Apple Passwords (added from Safari on Mac or iPad)" }, second]);
       const rows = frame.locator(".account-row");
       assert.equal(await rows.count(), 2);
-      assert.match(await rows.nth(0).locator(".passkey-added").textContent(), /^Added .+ · Apple Passwords \(added from Safari on Mac or iPad\)$/);
-      assert.match(await rows.nth(1).locator(".passkey-added").textContent(), /^Added .+ · Saved on a phone or tablet \(added from Safari on Mac or iPad\)$/);
-      assert.equal(await rows.nth(0).locator(".passkey-current").textContent(), "This window signed in with this passkey");
+      assert.equal(await rows.nth(0).locator(".passkey-name").textContent(), "Apple Passwords");
+      assert.match(await rows.nth(0).locator(".account-name-wrap").getAttribute("title"), /added from Safari on Mac or iPad/);
+      assert.equal(await rows.nth(1).locator(".passkey-name").textContent(), "Saved on a phone or tablet");
+      assert.equal(await rows.nth(0).locator(".passkey-current").textContent(), "This passkey");
       assert.notEqual(await rows.nth(0).locator(".account-used").textContent(), "Not used yet");
       assert.equal(await rows.nth(1).locator(".passkey-current").count(), 0);
-      assert.equal(await frame.getByText("Your browser will offer where to save the passkey, including a phone or tablet.", { exact: true }).isVisible(), true);
+      assert.equal(await frame.locator("#passkey-add-help").count(), 0);
       for (const label of await frame.locator(".passkey-added, .passkey-current").all()) {
         const bounds = await label.boundingBox();
         assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= width);
@@ -274,13 +277,78 @@ test("System distinguishes two passkeys and identifies this window at desktop an
       // Two additions from the same browser within a minute remain distinct.
       frame = await open([{ ...owner, created_at: created, added_from: "Apple Passwords (added from Safari on Mac or iPad)" },
         { ...second, created_at: created + 1, added_from: "Apple Passwords (added from Safari on Mac or iPad)" }]);
-      const labels = await frame.locator(".passkey-added").allTextContents();
+      const labels = await frame.locator(".passkey-name").allTextContents();
       assert.notEqual(labels[0], labels[1]);
       // Old credentials retain their creation date, and the marker follows the session.
       frame = await open([{ ...owner, created_at: created, current: false }, { ...second, current: true }]);
       assert.match(await frame.locator(".passkey-added").first().textContent(), /^Added /);
       assert.doesNotMatch(await frame.locator(".passkey-added").first().textContent(), / in /);
       assert.equal(await frame.locator(".account-row").nth(1).locator(".passkey-current").count(), 1);
+    }
+    assert.equal(writes.length, 0);
+  });
+});
+
+
+test("Accounts groups methods beneath their owner with equal add controls in both themes and widths", async () => {
+  await fixture(async ({ page, open, writes }) => {
+    const created = Date.UTC(2026, 10, 23, 13, 3) / 1000;
+    const key = { ...owner, created_at: created, last_used_at: created + 240, added_from: "Device passkey (added from Chrome on Mac or iPad)" };
+    const backup = { ...key, current: false, proof_binding_id: "proof:passkey:backup" };
+    const wallet = { method_id: "wallet:metamask", connector: "metamask", address: "0x1234567890123456789012345678901234567890", chain_id: 20, network: "", sign_in_enabled: true, last_used_at: created };
+    for (const theme of ["light", "dark"]) for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const [state, keys, options] of [
+        ["admin-one-passkey", [key], {}],
+        ["admin-two-passkeys-wallet", [key, backup], { methods: [wallet] }],
+        ["guest", [{ ...key, role: "guest" }], { role: "guest" }],
+      ]) {
+        const frame = await open(keys, { theme, ...options });
+        const block = frame.locator(".account-block");
+        assert.equal(await block.count(), 1);
+        assert.equal(await block.locator(".account-header h2").textContent(), "Alex");
+        assert.equal(await block.locator(".account-row").count(), keys.length + (options.methods?.length || 0));
+        assert.equal(await frame.getByText("This passkey", { exact: true }).count(), 1);
+        assert.equal(await frame.locator("#passkey-add-help").count(), 0);
+        const add = frame.locator(".account-add-actions button");
+        if (options.role === "guest") assert.equal(await frame.locator(".account-add-actions button:visible").count(), 0);
+        else {
+          const boxes = await Promise.all((await add.all()).map(button => button.boundingBox()));
+          assert.equal(boxes[0].height, boxes[1].height);
+          assert.equal(boxes[0].width, boxes[1].width);
+          assert.equal(boxes[0].y, boxes[1].y);
+          assert.ok(boxes[0].height >= 44);
+        }
+        assert.equal(await frame.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+        for (const note of await frame.locator(".passkey-removal-note").all()) {
+          const button = frame.locator(`[aria-describedby="${await note.getAttribute("id")}"]`);
+          assert.equal(await button.isDisabled(), true);
+          assert.equal(await note.evaluate(node => node.parentElement.contains(node.parentElement.querySelector("button"))), true);
+        }
+        if (options.methods) {
+          assert.equal(await block.getByRole("switch").getAttribute("aria-checked"), "true");
+          assert.equal(await block.getByRole("button", { name: "Remove account", exact: true }).count(), 0);
+          assert.equal(new Set(await block.locator(".passkey-name").allTextContents()).size, 2);
+          const remove = block.locator(".passkey-remove").first();
+          await remove.focus();
+          const focus = await remove.evaluate(node => { const style = getComputedStyle(node); return { width: style.outlineWidth, style: style.outlineStyle }; });
+          assert.notEqual(focus.style, "none");
+          assert.ok(parseFloat(focus.width) >= 2);
+          await remove.evaluate(node => node.blur());
+        }
+        await frame.evaluate(() => document.fonts.ready);
+        const background = await frame.locator("body").evaluate(node => getComputedStyle(node).backgroundColor);
+        const brightness = background.match(/\d+/g).slice(0, 3).map(Number).reduce((sum, value) => sum + value, 0) / 3;
+        assert.equal(brightness < 128, theme === "dark", "the rendered theme matches the capture name");
+        const notes = frame.locator(".account-actions:has(.passkey-removal-note)");
+        for (const actions of await notes.all()) assert.ok((await actions.boundingBox()).width >= 176);
+        await screenshot(page, `${state}-${theme}-${width}`, process.env.ACCOUNTS_SCREENSHOT_DIR);
+      }
+      const frame = await open([key, backup, guestBackup, guest], { theme, methods: [wallet] });
+      assert.equal(await frame.locator(".account-block").count(), 2);
+      assert.equal(await frame.locator(".account-block").first().locator("[data-wallet-method]").count(), 1);
+      assert.equal(await frame.locator(".account-block").last().locator("[data-wallet-method]").count(), 0);
+      assert.equal(await frame.locator(".account-header .passkey-promote").count(), 1);
     }
     assert.equal(writes.length, 0);
   });

@@ -303,7 +303,7 @@ async function exercise(engine,width) {
     await page.evaluate(()=>document.querySelector('iframe[title=system]').contentWindow.postMessage({type:'home:wallet-signin-changed'},'*'));
     await system.getByText('Morgan',{exact:true}).waitFor();
     assert(await system.locator('[data-passkey-revoke="passkey:other"]').isDisabled(),'every account keeps its final passkey');
-    await system.getByText('Keep a passkey on this account, or choose Remove account.',{exact:true}).first().waitFor();
+    await system.getByText('Keep one passkey, or remove the account.',{exact:true}).first().waitFor();
     await system.locator('[data-passkey-account-remove="passkey:other"]').click();
     await system.getByText('Home will remove this account’s passkeys and wallet sign-in access. All windows signed in to this account will be signed out.',{exact:true}).waitFor();await capture('last-passkey-review');
     await system.locator('#passkey-remove-dialog').getByRole('button',{name:'Cancel',exact:true}).click();fixture.state.otherAdmin=false;
@@ -328,9 +328,9 @@ async function exercise(engine,width) {
     const guestSystem=page.frameLocator('iframe[title=system]');await guestSystem.locator('[data-wallet-method] [role=switch]').waitFor();
     assert(!(await guestSystem.locator('[data-wallet-method] [role=switch]').isDisabled()),'Guest can turn off own method');assert.equal(await guestSystem.getByRole('button',{name:'Add wallet',exact:true}).count(),0);
     assert(!(await guestSystem.locator('[data-wallet-method]').getByRole('button',{name:'Remove',exact:true}).isDisabled()),'Guest can remove own method');
-    await guestSystem.getByText('Only an Admin can turn sign-in on.',{exact:true}).waitFor();
+    assert.equal(await guestSystem.getByText('Only an Admin can turn sign-in on.',{exact:true}).count(),0);
     assert(await guestSystem.locator('[data-passkey-revoke="passkey:0"]').isDisabled(),'an enabled wallet keeps the final-passkey protection');
-    await guestSystem.getByText('Keep a passkey on this account, or choose Remove account.',{exact:true}).waitFor();
+    await guestSystem.getByText('Keep one passkey, or remove the account.',{exact:true}).waitFor();
     await guestSystem.locator('[data-wallet-method]').scrollIntoViewIfNeeded();await capture('system-guest-last-method');
     await guestSystem.locator('[data-wallet-method] [role=switch]').click();await state('review');
     await page.locator('.signin-dialog').getByRole('button',{name:'Use passkey',exact:true}).click();await state('done');await page.locator('.signin-dialog').getByRole('button',{name:'Done',exact:true}).click();
