@@ -257,6 +257,16 @@ fn reconcile(store: &mut Store, auth: &AuthState) {
     store
         .methods
         .retain(|m| !reset_accounts.contains(&&m.account_id));
+    for pending in &mut store.pending {
+        if reset_accounts.contains(&&pending.method.account_id)
+            || pending
+                .actor
+                .as_ref()
+                .is_some_and(|actor| reset_accounts.contains(&&actor.principal_id))
+        {
+            pending.cancelled = true;
+        }
+    }
     let added: Vec<_> = auth
         .audit_chain
         .iter()
@@ -1748,10 +1758,30 @@ pub(crate) mod tests {
         )
         .unwrap();
         // Simulate rc.1: no new observer, same account/root/key; signed recovery event.
+        let pending_add = begin(
+            f.data.path(),
+            ORIGIN,
+            "home-test",
+            input("add", "", &f.address),
+            Some(f.actor.clone()),
+        )
+        .unwrap();
         let mut legacy = load_auth_state_with_identity(f.data.path()).unwrap().0;
         push_audit_event(f.data.path(), &mut legacy, event).unwrap();
         save_auth_state(f.data.path(), &legacy, None).unwrap();
         assert!(principal(f.data.path(), &id).is_err());
+        assert!(
+            complete(
+                f.data.path(),
+                ORIGIN,
+                &completion(&f, &pending_add),
+                Some(&f.actor),
+                |_| Ok(())
+            )
+            .is_err(),
+            "pre-recovery activation survived"
+        );
+
         assert!(load_active_session_grant(f.data.path(), &session.session_id, now_ts()).is_err());
     }
     #[test]
