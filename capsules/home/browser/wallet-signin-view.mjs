@@ -106,7 +106,7 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
       if(state.stage==='options') {
         const list=node('div',null,'connection-card connection-options-list');
         if(state.action==='signin'&&initial.availability?.passkey!==false){const passkey=option('Passkey','','',()=>chooseSignin(null));passkey.disabled=!window.PublicKeyCredential;list.append(passkey);}
-        for(const method of state.methods||[])list.append(option(method.displayName||connectorName(method.connector),method.chooseConnector?'Phone wallet':`${shortWalletAddress(method.address)} · ${walletNetwork(method)}`,method.connector==='metamask'&&method.providerId&&method.providerId!=='io.metamask'?'wallet':method.connector,()=>state.action==='signin'?chooseSignin(method):chooseConnected(method)));
+        for(const method of state.methods||[])list.append(option(method.displayName||connectorName(method.connector),method.chooseConnector?'':`${shortWalletAddress(method.address)} · ${walletNetwork(method)}`,method.connector==='metamask'&&method.providerId&&method.providerId!=='io.metamask'?'wallet':method.connector,()=>state.action==='signin'?chooseSignin(method):chooseConnected(method)));
         if(state.action!=='signin')list.append(option('New wallet','','wallet',()=>render({...state,stage:'new-wallet'})));
         dialog.append(list);
         if(state.action==='signin') {
