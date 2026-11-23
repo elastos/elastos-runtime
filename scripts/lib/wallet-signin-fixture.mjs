@@ -154,7 +154,7 @@ import {handleHomeWalletConnectorEffect} from '/apps/home/home-wallet-connector-
 const contexts=new WeakMap();
 async function openConnector(target) {
   let frame=document.querySelector('iframe[data-target='+target+']');
-  if(!frame){frame=document.createElement('iframe');frame.dataset.target=target;frame.title=target;frame.style.cssText='position:fixed;inset:40px 0 0;width:100%;height:calc(100vh - 40px);border:0;z-index:20;background:var(--el-surface)';frame.setAttribute('sandbox','allow-scripts allow-forms');frame.src='/apps/'+target+'/?home_origin='+encodeURIComponent(location.origin)+'#home_token=fixture-'+target;document.querySelector('#fixture-desktop').append(frame);await new Promise(resolve=>frame.onload=resolve);}
+  if(!frame){frame=document.createElement('iframe');frame.dataset.target=target;frame.title=target;frame.style.cssText='position:fixed;inset:0;width:100%;height:100vh;border:0;z-index:20;background:var(--el-surface)';frame.setAttribute('sandbox','allow-scripts allow-forms');frame.src='/apps/'+target+'/?home_origin='+encodeURIComponent(location.origin)+'#home_token=fixture-'+target;document.querySelector('#fixture-desktop').append(frame);await new Promise(resolve=>frame.onload=resolve);}
   document.querySelectorAll('#fixture-desktop iframe').forEach(f=>f.hidden=f!==frame);frame.hidden=false;if(target==='wallet')frame.contentWindow.postMessage({type:'elastos.wallet.connect-entry/v1'},'*');return {isOpen:()=>frame.isConnected,homeToken:'fixture-'+target,source:frame.contentWindow};
 }
 const selectWalletConnect=options=>selectConnectedWalletConnect(options,{open:()=>openConnector('wallet-walletconnect'),current:context=>[...document.querySelectorAll('#fixture-desktop iframe')].some(f=>f.isConnected&&f.contentWindow===context.source)});
@@ -164,11 +164,11 @@ await showHomeUnlock(async (result,flow)=>{if(window.walletFixture.openFailed)th
 const area=document.createElement('section');area.id='fixture-desktop';area.hidden=true;area.innerHTML='<h1>Home</h1><p>Alex</p>';document.body.append(area);
 window.showFixtureApps=()=>{
  document.querySelector('#home-unlock').hidden=true;document.querySelector('.home-host-shell').hidden=true;
- area.hidden=false;area.replaceChildren();area.style.cssText='height:100vh;display:grid;grid-template-rows:40px 1fr';
- const tabs=document.createElement('nav');tabs.style.cssText='display:flex;gap:12px;align-items:center;padding:4px 16px;border-bottom:1px solid var(--el-hairline);background:var(--el-surface)';tabs.innerHTML='<button id="show-system">System</button><button id="show-wallet">Wallet</button>';
+ area.hidden=false;area.replaceChildren();area.style.cssText='height:100vh;display:grid;grid-template-rows:1fr';
+ const tabs=document.createElement('nav');tabs.style.display='none';tabs.innerHTML='<button id="show-system">System</button><button id="show-wallet">Wallet</button>';
  const frames=[];
  for(const target of ['system','wallet']) {
-   const frame=document.createElement('iframe');frame.title=target;frame.dataset.target=target;frame.style.cssText='width:100%;height:calc(100vh - 50px);border:0';frame.setAttribute('sandbox','allow-scripts allow-forms');frame.src='/apps/'+target+'/?home_origin='+encodeURIComponent(location.origin)+'#home_token=fixture-'+target;frame.hidden=target!=='system';area.append(frame);frames.push(frame);
+   const frame=document.createElement('iframe');frame.title=target;frame.dataset.target=target;frame.style.cssText='width:100%;height:100vh;border:0';frame.setAttribute('sandbox','allow-scripts allow-forms');frame.src='/apps/'+target+'/?home_origin='+encodeURIComponent(location.origin)+'#home_token=fixture-'+target;frame.hidden=target!=='system';area.append(frame);frames.push(frame);
    tabs.querySelector('#show-'+target).onclick=()=>{area.querySelectorAll('iframe[data-target^=wallet-]').forEach(f=>f.hidden=true);frames.forEach(f=>f.hidden=f!==frame);frame.contentWindow.postMessage({type:'home:wallet-signin-changed'},'*');};
  }
  area.prepend(tabs);

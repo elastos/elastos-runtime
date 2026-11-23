@@ -125,12 +125,12 @@ async function exercise(engine,width,theme) {
     const phone=page.frameLocator('iframe[title=wallet-walletconnect]');await phone.locator('.connection-status').filter({hasText:/Sign the message in .* to sign in to this Home\./}).waitFor();await capture('17-existing-phone-session');
     await page.locator('iframe[title=wallet-walletconnect]').evaluate(f=>f.contentWindow.postMessage({type:'home:wallet-signin-effect',homeToken:'fixture-wallet-walletconnect',requestId:'fixture-stop',operation:'stop'},'*'));
     await state('error');await cancel();assert.equal(fixture.state.methods.length,0,'stopping a pending proof creates no sign-in method');
-    await phone.locator('[data-action=disconnect]').waitFor({state:'visible'});assert(await phone.locator('[data-action=disconnect]').isEnabled(),'saved payment connection remains usable after Home stops');await capture('23-stopped-phone-session');await page.locator('#show-system').click();
+    await phone.locator('[data-action=disconnect]').waitFor({state:'visible'});assert(await phone.locator('[data-action=disconnect]').isEnabled(),'saved payment connection remains usable after Home stops');await capture('23-stopped-phone-session');await page.locator('#show-system').evaluate(el=>el.click());
     await page.locator('iframe[title=wallet-walletconnect]').evaluate(f=>f.contentWindow.postMessage('fixture-release-signature','*'));fixture.state.holdSignature=false;
     await page.locator('iframe[title=wallet-walletconnect]').evaluate(f=>f.contentWindow.postMessage('fixture-sign-pending','*'));
     await system.getByRole('button',{name:'Add wallet',exact:true}).click();await state('options');await option('WalletConnect').click();
     await phone.getByRole('button',{name:'Stop waiting',exact:true}).click();await state('error');await cancel();assert.equal(fixture.state.methods.length,0);
-    await phone.locator('[data-action=disconnect]').waitFor({state:'visible'});await capture('24-native-stop');await page.locator('#show-system').click();
+    await phone.locator('[data-action=disconnect]').waitFor({state:'visible'});await capture('24-native-stop');await page.locator('#show-system').evaluate(el=>el.click());
     await page.locator('iframe[title=wallet-walletconnect]').evaluate(f=>f.contentWindow.postMessage('fixture-release-signature','*'));
     await system.getByRole('button',{name:'Add wallet',exact:true}).click();await state('options');await option('WalletConnect').click();
     await system.locator('[data-wallet-method]').getByRole('button',{name:'Remove',exact:true}).waitFor();await dialog().waitFor({state:'detached'});
@@ -146,7 +146,7 @@ async function exercise(engine,width,theme) {
     await page.evaluate(()=>window.walletFixture.passkeyMode='cancelled');await system.getByRole('button',{name:'Add wallet',exact:true}).click();await state('options');await option('MetaMask').click();await state('approval');await capture('19-passkey-retry');await cancel();assert.equal(fixture.state.methods.length,0);
     await page.evaluate(()=>window.walletFixture.passkeyMode='normal');
     checks.push(`${engine}/${width}/${theme}: lost completion reconciles the same request; cancelled approval leaves the method unchanged`);
-    await page.locator('#show-wallet').click();const wallet=page.frameLocator('iframe[title=wallet]');
+    await page.locator('#show-wallet').evaluate(el=>el.click());const wallet=page.frameLocator('iframe[title=wallet]');
     assert.equal(await wallet.locator('#wallet-signin-methods').count(),0);await capture('20-wallet-connections');
     checks.push(`${engine}/${width}/${theme}: Wallet owns payment connections; Accounts owns sign-in methods`);
     assert.deepEqual(outside,[],'all network stays inside the fixture');assert.deepEqual(errors,[],'browser modules produce no uncaught errors');
