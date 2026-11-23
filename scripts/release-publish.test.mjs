@@ -319,9 +319,11 @@ fs.writeFileSync(output + '/signing-input.json', JSON.stringify({ source: { comm
     args() { return JSON.parse(readFileSync(env.ARGUMENT_LOG)); } };
 }
 
-// Six concurrent fixtures took 108.05s on the Mac. Allow 180s (66%
-// headroom) under the shared build lease; each command keeps its 60s deadline.
-describe('release publication', { concurrency: 6, timeout: 180_000 }, () => {
+// Full Mac runs under the shared build lease: integrate-b-mac-behaviour-final.log
+// 180.49s, integrate-b-mac-behaviour-repeat.log 183.53s, rc1-followup-behaviour.log
+// 143.15s. Allow 300s; the 108.05s run was without the lease.
+// Each command keeps its 60s deadline.
+describe('release publication', { concurrency: 6, timeout: 300_000 }, () => {
 for (const selected of [[], ['aarch64-darwin', 'x86_64-linux'], ['aarch64-darwin']]) {
   test(`prepare passes each platform once: ${selected.join(',') || 'all'}`, async t => {
     const f = fixture(t);
