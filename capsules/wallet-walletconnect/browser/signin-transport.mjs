@@ -24,7 +24,6 @@ async function connect(transport) {
   if(connecting || provider)throw fault('invalid');connecting=true;
   if(typeof transport?.attempt_token!=='string' || typeof transport.instance_id!=='string' || (!Number.isSafeInteger(transport.storage_revision)||transport.storage_revision<0))throw fault('invalid');
   const api=createSigninTransportApi(homeOrigin,transport);
-  transportExpiry=Math.min(Date.now()/1000+180,transport.expires_at);
   const config=await api('wallet/config');
   adapter=await import('./vendor/reown-appkit.js');
   provider=await connectWithView(adapter,{
@@ -52,12 +51,13 @@ addEventListener('message',async event=>{
     else if(operation==='sign' && typeof message==='string' && message.length<=32768) {
       await check();
       const data='0x'+[...new TextEncoder().encode(message)].map(b=>b.toString(16).padStart(2,'0')).join('');
-      const signature=await provider.request({method:'personal_sign',params:[data,identity.address]},Math.max(1,Math.min(180,Math.ceil(transportExpiry-Date.now()/1000))));
+      // The SDK requires its standard 300-second request expiry. Runtime and
+      // the Home flow enforce the shorter ceremony deadline and retire this frame.
+      const signature=await provider.request({method:'personal_sign',params:[data,identity.address]});
       await check();if(typeof signature!=='string'||signature.length>16384)throw fault('invalid');
       result={signature,signature_type:'personal_sign',public_key:''};
     } else throw fault('invalid');
     reply({id,result});
   } catch(error) {reply({id,error:true,code:error.code,status:error.status});}
 });
-let transportExpiry=Date.now()/1000+180;
 if(homeOrigin && parent!==window)reply({event:'ready'});

@@ -143,6 +143,8 @@ relay keeps its live ceremony and instance binding across SDK storage writes;
 retirement and expiry end its authority.
 The permission reaches only WalletConnect setup and relay endpoints, ends at the
 ceremony deadline, and grants neither payment nor capsule launch authority.
+The SDK uses its standard 300-second signature request expiry. Runtime and the
+Home flow enforce the shorter ceremony deadline and retire the transport frame.
 MetaMask and UniSat use the selected extension to sign; they receive no Runtime
 network authority. Wallet rejection, missing extension and account change return
 to the signer choice; a fresh attempt uses a fresh browser secret.
