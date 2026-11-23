@@ -160,3 +160,11 @@ test('Wallet reads only its own method list through Home authority',async()=>{
   assert.deepEqual(replies[0].result,{status:'complete',account_id:'principal:alex',methods:[method],can_manage:false});
   assert(!Object.hasOwn(replies[0].result,'passkeys'));assert(!JSON.stringify(replies).includes('home-launch'));
 });
+
+test('a changed Home authority retires pending Wallet method requests',async()=>{
+  const replies=[],source={postMessage:message=>replies.push(message)},context={kind:'app-frame',targetId:'wallet',source,homeToken:'wallet-launch'};
+  let authority='home-one',release;
+  const data={type:'home:wallet-signin-request',requestId:'retired',homeToken:'wallet-launch',action:'enable',methodId:method.method_id};
+  handleWalletSigninRequest({source,data},context,{authorityToken:()=>authority,api:path=>path.endsWith('/passkeys')?Promise.resolve({passkeys:[]}):new Promise(resolve=>{release=resolve;}),manage:()=>{throw new Error('retired Home cannot start approval');},current:()=>true,changed(){}});
+  authority='home-two';release({account_id:'principal:alex',methods:[method]});await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(replies,[]);
+});
