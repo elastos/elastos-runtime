@@ -735,7 +735,7 @@ async fn wallet_session_can_sign_out_but_other_session_revocation_needs_passkey(
     let state = test_state(f.data.path());
     let pending = auth::begin(
         f.data.path(), ORIGIN, "home-test",
-        serde_json::from_value(json!({"action":"add","connector":"walletconnect","address":"","chain_id":0,"browser_secret":BROWSER})).unwrap(),
+        serde_json::from_value(json!({"action":"add","connector":"walletconnect","address":"","chain_id":0,"browser_secret":BROWSER,"allow_temporary_internet":true})).unwrap(),
         Some(f.actor.clone()),
     ).unwrap();
     gateway_walletconnect::install_confirmation(&state, &pending, &f.actor.session_id)
@@ -1073,7 +1073,7 @@ async fn walletconnect_passkey_session_end_retires_confirmation_relay() {
         let state = test_state(f.data.path());
         let pending = auth::begin(
             f.data.path(), ORIGIN, "home-test",
-            serde_json::from_value(json!({"action":"add","connector":"walletconnect","address":"","chain_id":0,"browser_secret":BROWSER})).unwrap(),
+            serde_json::from_value(json!({"action":"add","connector":"walletconnect","address":"","chain_id":0,"browser_secret":BROWSER,"allow_temporary_internet":true})).unwrap(),
             Some(f.actor.clone()),
         ).unwrap();
         gateway_walletconnect::install_confirmation(&state, &pending, &f.actor.session_id)
