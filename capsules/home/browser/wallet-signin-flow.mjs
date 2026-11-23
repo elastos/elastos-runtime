@@ -28,7 +28,7 @@ export function walletSigninError(error, action) {
 const fault = code => Object.assign(new Error(code),{code});
 export function createWalletSigninFlow({api,select,approve,render,onComplete=()=>{},randomSecret=walletBrowserSecret,now=()=>Date.now()/1000}) {
   let state={stage:'closed'}, run, timer;
-  function show(stage, extra={}) { state={...state,...extra,stage,expiresAt:run?.deadline};render(state); }
+  function show(stage, extra={}) { state={...state,message:'',...extra,stage,expiresAt:run?.deadline};render(state); }
   function live(current) { return run===current && !current.controller.signal.aborted; }
   function assertLive(current) {
     if(!live(current)) throw fault('cancelled');
