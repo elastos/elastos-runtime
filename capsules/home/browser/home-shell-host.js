@@ -1,3 +1,4 @@
+import {selectConnectedWalletConnect} from './wallet-signin-connector.mjs';
 import { handleWalletSigninRequest } from "./wallet-signin-host.mjs?v=wallet-signin-1";
 import { walletSigninApi } from "./wallet-signin-view.mjs?v=wallet-signin-1";
 import {
@@ -221,6 +222,11 @@ async function launchWalletConnectorFromTrustedSource(context, target) {
   ) {
     throw new Error("Home denied the Wallet connector launch");
   }
+  return openSigninConnector(target);
+}
+
+async function openSigninConnector(target) {
+  if(!WALLET_CONNECTOR_TARGETS.has(target))throw new Error("Unknown wallet connector");
   requireHomeGuiActive("launch Wallet connector");
   const launched = await launchHomeTarget(target);
   const descriptor = walletConnectorAttachmentDescriptor(target, launched);
@@ -232,6 +238,20 @@ async function launchWalletConnectorFromTrustedSource(context, target) {
   })) {
     throw new Error("Home GUI did not accept the Wallet connector attachment");
   }
+  const token=homeLaunchTokenFromRoute(launched.route);return {isOpen:()=>launchedAppContexts.has(token)};
+}
+
+async function signinWalletConnectWindow() {
+  const existing=()=>[...launchedAppContexts.entries()].find(([,c])=>c.targetId==='wallet-walletconnect'&&c.source&&!c.source.closed&&c.expiresAt>Date.now());
+  const prior=existing();
+  if(prior)postToActiveShell({type:'home:gui-command',command:'open-target',target:'wallet-walletconnect',query:{}});
+  const opened=!prior?await openSigninConnector('wallet-walletconnect'):null;
+  const deadline=Date.now()+15000;
+  while(!existing()) {if(opened?.isOpen()===false)throw new Error('Wallet window closed');if(Date.now()>deadline)throw new Error('Wallet window did not open');await new Promise(resolve=>setTimeout(resolve,50));}
+  const [homeToken,context]=existing();return {homeToken,source:context.source};
+}
+function currentSigninConnector(context) {
+  const active=launchedAppContexts.get(context.homeToken);return active?.source===context.source&&active.expiresAt>Date.now()&&!context.source.closed;
 }
 
 function retireLaunchedAppContext(homeToken) {
@@ -1718,6 +1738,9 @@ window.addEventListener("message", (event) => {
     api: (path, body, token) => path === "/api/auth/passkeys"
       ? fetchJson(path, {headers:{"x-elastos-home-token":token}}) : walletSigninApi(path, body, token),
     manage: manageWalletSignin,
+    openConnector: openSigninConnector,
+    focusCaller: ()=>postToActiveShell({type:"home:gui-command",command:"open-target",target:context.targetId,query:{}}),
+    selectWalletConnect: options=>selectConnectedWalletConnect(options,{open:signinWalletConnectWindow,current:currentSigninConnector}),
     current: () => homeMessageContext(event, data)?.homeToken === context.homeToken,
     changed: () => {
       void refreshSignedHomeSession();

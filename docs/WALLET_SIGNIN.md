@@ -287,6 +287,27 @@ sign-in keeps the same-origin Home boundary; other capsules receive a refusal.
 compatible relay option. These booleans reveal availability; account names,
 addresses and method IDs remain in the authenticated account list.
 
+Home's Sign in control lists Passkey and enabled wallet identities previously read
+by this browser through that authenticated list. Home stores only connector,
+address, network, chain and Wallet-supplied provider name and ID as browser-local
+display hints. Runtime checks the current method and wallet proof on every sign-in.
+Home offers an extension wallet only when its extension is present. WalletConnect
+is offered when Runtime reports a compatible sign-in method, including in the
+desktop app and a fresh browser with no local hints. That option opens the shared
+QR screen; Runtime checks the selected wallet after pairing. A fresh browser
+uses a passkey to learn named extension-wallet options. The Remember my choice checkbox stores
+only the selected option on this browser. Other options opens the list again.
+
+Accounts reads connected wallets through its own System launch authority.
+New wallet opens the existing connector window. Wallet owns saved connections;
+Home waits for Wallet's account summary before offering the new account.
+Choosing an account signs the Runtime `add_signin` message, then requests one
+passkey approval. Home closes the request when Runtime confirms success.
+WalletConnect uses its admitted connector window and saved payment session for
+this authenticated operation, with the connector's existing internet permission.
+Signed-out sign-in uses its isolated temporary
+transport and the shared connection QR screen, after explicit relay consent.
+
 ## Explicit account removal
 
 Ordinary passkey removal preserves every account's final active passkey under

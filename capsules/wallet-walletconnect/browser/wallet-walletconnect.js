@@ -1,6 +1,6 @@
 import {installWalletConnectStorage} from './walletconnect-storage.mjs';
 import {createWalletConnectClient} from './walletconnect-client.mjs';
-import {mountConnection, captureConnectionPresentation, connectionKey} from './wallet-connection-view.mjs';
+import {connectionView,reduceSummary,mountConnection, captureConnectionPresentation, connectionKey} from './wallet-connection-view.mjs';
 import {windowPresentation, walletConnectView, errorStage, baseActions, signableRequest, connectorId, sameAccount} from './walletconnect-window-state.mjs';
 import {createHomeClipboardClient} from "/apps/home/home-clipboard-client.js?v=home-20260726a";
 
@@ -27,6 +27,7 @@ let showPicker = false, addingAccount = false;
 let copying=false;
 let clipboardFeedback = '';
 let clipboardFeedbackKey;
+let signinSelection,signinBusy=false,signinRequest;
 
 const homeClipboard = createHomeClipboardClient({targetId: CONNECTOR_ID,homeOrigin,homeToken:frameHomeToken});
 homeClipboard.start();
@@ -43,6 +44,7 @@ const api = (resource, init={}) => {
 const connector = createWalletConnectClient({api,origin:runtimeOrigin,clearMemory,copyLink:copyConnectionLink,
   pairingView:{show(data, controls){qrData=data;qrControls=controls;draw();},hide(result){qrData=undefined;qrControls=undefined;clipboardFeedback='';if(result?.connected)currentPhase='confirming';draw();}},
   onPhase(phase, detail) {
+    if(signinRequest&&phase==='signature'){currentPhase=phase;draw();return;}
     if (phase === 'permission') {
       permissionStatus=detail.status;connectionState={...connectionState,permission:detail};draw();return;
     }
@@ -78,6 +80,7 @@ root.addEventListener('click', async event => {
   const button = event.target.closest('button[data-action]');
   if (!button || button.disabled || !mounted?.root.contains(button)) return;
   const action = button.dataset.action;
+  if(signinRequest&&action==='stop-waiting'){await stopHomeSignin();return;}
   if (action === 'connect' || action === 'start-over') return onConnect();
   if (action === 'finish' || action === 'send-message') return onConnect({fresh:false});
   if (action === 'cancel') return qrControls ? qrControls.cancel() : cancelWalletWait();
@@ -143,6 +146,11 @@ window.addEventListener('message',event=>{
 });
 
 function draw() {
+  if(signinRequest) {
+    const account={name:(connectionState?.session?.name||'Your wallet').slice(0,40),mark:'wallet',connection:'WalletConnect',accounts:[{address:signinRequest.address,networks:[signinRequest.chain_namespace==='eip155:20'?'Elastos Smart Chain':'Base']}]};
+    currentView=connectionView({window:'walletconnect',stage:'request-phone',purpose:'home-signin',summary:reduceSummary(signinRequest,{connector:CONNECTOR_ID}),account,homeOrigin,supportedActions:['stop-waiting']});
+    mounted=mountConnection(root,currentView,mounted);renderKey='signin:'+signinRequest.request_id;return;
+  }
   if(mounted){const saved=captureConnectionPresentation(mounted.root);if(saved.action)rememberedFocus={key:renderKey,action:document.activeElement?.dataset.action,focusKey:saved.key,outcome:saved.action};}
   if(activeRequest && /^(request|transaction)-/.test(outcome || '')) {
     if(dispatchedRequestId===activeRequest.request_id || unrecordedHash)requestOutcomes.set(activeRequest.request_id,{outcome,hash:unrecordedHash,dispatched:dispatchedRequestId===activeRequest.request_id,walletName:activeRequest.walletName});
@@ -353,3 +361,38 @@ function awaitingAccess() {return Boolean(pendingEffect) || permissionStatus !==
 function showError(error) {homeReadFailed=true;if(!launchExpired && !hostEffectInFlight && !knownOutcome()){outcome=activeRequest ? errorStage(error,recoveryAction,effectPhase) : 'link-error';}draw();}
 
 draw();watchConnection();refreshWalletState().catch(showError);
+
+// Both stop controls retire only the Home request that they observed.
+async function stopHomeSignin() {
+  const owned=signinRequest;signinSelection=undefined;
+  await connector.effect({kind:'stop-signin'});
+  if(owned&&signinRequest===owned){signinRequest=undefined;hostEffectInFlight=false;currentPhase='idle';draw();}
+}
+
+// Only Home can ask this admitted window to sign its Runtime-built message.
+addEventListener('message',async event=>{
+  const data=event.data;
+  if(event.source!==window.top||event.origin!==homeOrigin||data?.type!=='home:wallet-signin-effect'||data.homeToken!==frameHomeToken)return;
+  if(typeof data.requestId!=='string'||data.requestId.length>128||!['select','check','sign','stop'].includes(data.operation))return;
+  const keys=['type','homeToken','requestId','operation',...(['check','sign'].includes(data.operation)?['address','chain_id']:[]),...(data.operation==='sign'?['message']:[])];
+  if(Object.keys(data).length!==keys.length||keys.some(key=>!Object.hasOwn(data,key)))return;
+  const reply=result=>window.top.postMessage({type:'home:wallet-signin-effect-result',homeToken:frameHomeToken,requestId:data.requestId,...result},homeOrigin);
+  if(data.operation==='stop'){await stopHomeSignin();return;}
+  if(signinBusy||hostEffectInFlight)return reply({error:true});
+  signinBusy=true;let ownedRequest;
+  try {
+    let result;
+    if(data.operation==='select') {
+      await connector.effect({kind:'status'});
+      result=signinSelection=await connector.effect({kind:'signin-select'});
+    } else {
+      if(!signinSelection||data.address!==signinSelection.address||data.chain_id!==signinSelection.chain_id)throw new Error('Wallet changed');
+      const status=await connector.effect({kind:'status'}),selected=status.session;
+      if(!selected||selected.address?.toLowerCase()!==data.address.toLowerCase()||selected.chain!==`eip155:${data.chain_id}`)throw new Error('Wallet changed');
+      if(data.operation==='check')result={};
+      else {signinRequest=ownedRequest={connector_id:CONNECTOR_ID,request_id:data.requestId,capsule_id:'home',requesting_app_name:'Home',intent:'auth_challenge',address:data.address,chain_namespace:`eip155:${data.chain_id}`,status:'pending',reason:'Use this wallet to sign in to this Home.',expires_at:Math.floor(Date.now()/1000)+180};hostEffectInFlight=true;result=await connector.effect({kind:'signin',address:data.address,chain_id:data.chain_id,message:data.message});}
+    }
+    reply({result});
+  } catch(error) {reply({error:true,code:error.code});}
+  finally {signinBusy=false;if(ownedRequest&&signinRequest===ownedRequest){signinRequest=undefined;hostEffectInFlight=false;currentPhase='idle';}draw();}
+});

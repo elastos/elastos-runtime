@@ -557,8 +557,8 @@ function renderWalletSignin() {
     buttonClass:"wallet-button wallet-button-secondary",
     onAction:async (action, methodId) => {
       try {
-        const wallet = action === "add" ? connectedWalletSigninMethods(currentAccounts, data.methods).find(method => method.paymentOnly && method.method_id === methodId) : null;
-        const result = await requestWalletSigninChange({action, methodId:action === "add" ? "" : methodId, wallet, token:activeHomeToken, origin:homeParentOrigin});
+        const wallet = ["add", "add_signin"].includes(action) ? connectedWalletSigninMethods(currentAccounts, data.methods).find(method => method.paymentOnly && method.method_id === methodId) : null;
+        const result = await requestWalletSigninChange({action, methodId:["add", "add_signin"].includes(action) ? "" : methodId, wallet, token:activeHomeToken, origin:homeParentOrigin});
         await refreshWalletSignin();
         if (["failed", "changed", "busy"].includes(result?.status)) showStatus("Refresh the sign-in methods and try again.", "error");
       } catch (error) { showStatus(error.message, "error"); }

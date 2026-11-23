@@ -1,15 +1,16 @@
+import {saveSigninOptions} from './wallet-signin-options.mjs';
 import {connectorName,walletNetwork,shortWalletAddress} from './wallet-signin-flow.mjs';
 export async function readWalletSigninMethods(token,{origin}={}) {
   if(origin) {
     const result=await requestWalletSigninChange({action:'list',token,origin});
     if(result?.status!=='complete'||typeof result.account_id!=='string'||!Array.isArray(result.methods))throw new Error('Home could not load sign-in methods.');
-    return result;
+    saveSigninOptions(result.methods);return result;
   }
   const response=await fetch('/api/auth/wallet-methods',{cache:'no-store',signal:AbortSignal.timeout(15000),headers:{'x-elastos-home-token':token}});
   if(!response.ok)throw new Error('Home could not load sign-in methods.');
   const result=await response.json();
   if(typeof result.account_id!=='string'||!Array.isArray(result.methods)||result.methods.length>256)throw new Error('Home could not load sign-in methods.');
-  return result;
+  saveSigninOptions(result.methods);return result;
 }
 export function requestWalletSigninChange({action,methodId='',wallet,token,origin}) {
   if(window.top===window || !token || !origin)return Promise.reject(new Error('Open this app from Home to change wallet sign-in.'));
@@ -62,7 +63,9 @@ export function connectedWalletSigninMethods(accounts,methods) {
     if(connector!=='unisat' && (!Number.isSafeInteger(chain_id)||chain_id<=0))continue;
     const network=connector==='unisat'?'bitcoin':'';
     if(result.some(row=>(connector==='unisat'?row.address===account.address:row.address.toLowerCase()===account.address.toLowerCase())&&row.chain_id===chain_id&&row.network===network))continue;
-    result.push({connector,address:account.address,chain_id,network,sign_in_enabled:false,method_id:`payment:${account.account_id}`,paymentOnly:true,last_used_at:null});
+    const displayName=typeof account.wallet_display_name==='string'&&account.wallet_display_name.length<=80&&!/[\p{Cc}\p{Cf}]/u.test(account.wallet_display_name)?account.wallet_display_name:undefined;
+    const providerId=typeof account.provider_id==='string'&&account.provider_id.length<=128&&/^[a-z0-9]+(?:\.[a-z0-9-]+)+$/.test(account.provider_id)?account.provider_id:undefined;
+    result.push({connector,address:account.address,chain_id,network,...(displayName?{displayName}:{}),...(providerId?{providerId}:{}),sign_in_enabled:false,method_id:`payment:${account.account_id}`,paymentOnly:true,last_used_at:null});
   }
   return result;
 }

@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync, readFileSync } from "node:fs";
 import vm from "node:vm";
+import {readSigninOptions,readSigninChoice,saveSigninOptions} from "../capsules/home/browser/wallet-signin-options.mjs";
 import { ownerRecoveryCommand } from "../capsules/home/browser/owner-recovery-command.js";
 import { resolve } from "node:path";
 import { importProductSmokePlaywright, productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
@@ -31,6 +32,7 @@ function fixture({ guest = false, purpose = "create", terminalLoss = false, owne
   const values = new Map();
   const requests = [];
   const writes = [];
+  let authorityToken = "";
   let verified = false, acknowledged = false, creates = 0, gets = 0, now = 1000000;
   let writeFailure = false, readFailure = false, removeFailure = false;
   let beforeBegin = () => {}, afterBegin = () => {}, afterCreate = () => {};
@@ -43,6 +45,13 @@ function fixture({ guest = false, purpose = "create", terminalLoss = false, owne
     getItem(name) { if (readFailure) throw Error("storage denied"); return values.get(name) ?? null; },
     setItem(name, value) { if (writeFailure) throw Error("storage full"); values.set(name, String(value)); writes.push(String(value)); },
     removeItem(name) { if (removeFailure) throw Error("storage denied"); values.delete(name); },
+  };
+  // Browser-local wallet hints have a separate lifetime from pending registration.
+  const signinValues = new Map();
+  const signinStorage = {
+    getItem(name) { return signinValues.get(name) ?? null; },
+    setItem(name, value) { signinValues.set(name, String(value)); },
+    removeItem(name) { signinValues.delete(name); },
   };
   function reload() {
     const elements = new Map();
@@ -63,7 +72,7 @@ function fixture({ guest = false, purpose = "create", terminalLoss = false, owne
     };
     let opened = null;
     const context = vm.createContext({
-      ownerRecoveryCommand, createHomeWalletSignin, location: { origin: "https://home.test", hostname: "home.test" },
+      ownerRecoveryCommand, createHomeWalletSignin, readSigninOptions:()=>readSigninOptions(signinStorage),readSigninChoice:()=>readSigninChoice(signinStorage),saveSigninOptions:methods=>saveSigninOptions(methods,signinStorage), location: { origin: "https://home.test", hostname: "home.test" },
       document: { querySelector: element, querySelectorAll: () => [], getElementById: id => element("#" + id), body: element("body") },
       window: { PublicKeyCredential: {}, location: { protocol: "https:" }, sessionStorage: storage, atob, btoa,
         addEventListener() {}, clearTimeout() {}, setTimeout() {}, setInterval() { return 1; }, clearInterval() {} },
@@ -83,7 +92,7 @@ function fixture({ guest = false, purpose = "create", terminalLoss = false, owne
             signature: new Uint8Array([4]).buffer, userHandle: null } };
       } } },
       Date: class extends Date { static now() { return now; } }, Uint8Array, ArrayBuffer, TextEncoder, AbortController, AbortSignal, atob, btoa,
-      setHomeAuthorityToken() {}, clearHomeAuthorityToken() {},
+      setHomeAuthorityToken(value) {authorityToken=value||"";}, getHomeAuthorityToken() {return authorityToken;}, clearHomeAuthorityToken() {authorityToken="";},
       async fetchJson(path, options = {}) {
         requests.push({ path, options });
         if (path.startsWith("/api/auth/owner-recovery/")) {
@@ -420,7 +429,7 @@ for (const stage of ["before-begin", "after-create"]) {
   assert.equal(home.element("#home-enrollment-choice").hidden, false);
   home.element("#home-unlock-secondary").emit("click");
   assert.equal(home.element("#home-enrollment-choice").hidden, true);
-  assert.equal(home.element("#home-unlock-primary").textContent, "Use passkey");
+  assert.equal(home.element("#home-unlock-primary").textContent, "Sign in");
   home.element("#home-unlock-primary").emit("click"); await tick();
   assert.equal(f.gets(), 1);
   assert.equal(f.creates(), 0);

@@ -1,7 +1,9 @@
+import {readSigninOptions,readSigninChoice,saveSigninOptions} from "./wallet-signin-options.mjs";
 import { createHomeWalletSignin } from "./wallet-signin-view.mjs?v=wallet-signin-1";
 import {
   clearHomeAuthorityToken,
   fetchJson,
+  getHomeAuthorityToken,
   setHomeAuthorityToken,
 } from "./shell-core.js?v=home-wallpaper-20261030b";
 import { ownerRecoveryCommand } from "./owner-recovery-command.js?v=home-update-20261003a";
@@ -61,6 +63,7 @@ let unlockLeaveTimer = 0;
 let unlockPersonLabel = "";
 
 let walletSigninAvailable = false;
+let signinAvailability = {passkey:true,walletconnect:false};
 const walletSignin = createHomeWalletSignin({
   approve: requestPasskeyStepUp,
   onPasskey: () => runPasskeySignIn().catch(reportUnlockError),
@@ -91,6 +94,7 @@ export async function showHomeUnlock(onUnlocked, options = {}) {
   delete unlockPanel.dataset.flow;
   unlockPanel.style.removeProperty("--home-unlock-ground");
   walletSigninAvailable = false;
+  signinAvailability = {passkey:true,walletconnect:false};
   renderUnlockChecking();
   unlockPanel.hidden = false;
   unlockPanel.setAttribute("aria-hidden", "false");
@@ -99,6 +103,8 @@ export async function showHomeUnlock(onUnlocked, options = {}) {
   try {
     const status = await fetchJson("/api/auth/passkey/status");
     walletSigninAvailable = status.wallet_signin_available === true;
+    signinAvailability = {passkey:status.registered === true,walletconnect:status.walletconnect_signin_available === true};
+    if(!walletSigninAvailable)saveSigninOptions([]);
     if (!window.PublicKeyCredential) {
       unlockMode = "unsupported";
       renderUnlockMode({ registered: status.registered === true, guestRegistrationEnabled: false });
@@ -212,10 +218,11 @@ export function bindHomeUnlock() {
       runPasskeyCreate().catch(reportUnlockError);
       return;
     }
-    runPasskeySignIn().catch(reportUnlockError);
+    if(readSigninOptions().length||signinAvailability.walletconnect)void walletSignin.start({action:"signin",availability:signinAvailability});
+    else runPasskeySignIn().catch(reportUnlockError);
   };
-  for (const button of document.querySelectorAll("[data-home-wallet-signin]")) {
-    button.addEventListener("click", () => { if (!busy) void walletSignin.start({action:"signin"}); });
+  for (const button of document.querySelectorAll("[data-home-signin-options]")) {
+    button.addEventListener("click", () => { if (!busy) void walletSignin.start({action:"signin",otherOptions:true,availability:signinAvailability}); });
   }
   unlockPrimary?.addEventListener("click", startUnlock);
   unlockPerson?.addEventListener("click", startUnlock);
@@ -436,7 +443,7 @@ function passkeyAddFailure(stage, error) {
 }
 
 function renderUnlockChecking() {
-  for (const button of document.querySelectorAll("[data-home-wallet-signin]")) {
+  for (const button of document.querySelectorAll("[data-home-signin-options]")) {
     button.hidden = true;
     button.disabled = true;
   }
@@ -444,10 +451,10 @@ function renderUnlockChecking() {
     unlockTitle.textContent = "Sign in";
   }
   if (unlockCopy) {
-    unlockCopy.textContent = "Use your passkey to sign in to your apps and desktop.";
+    unlockCopy.textContent = "Sign in to your apps and desktop.";
   }
   if (unlockPrimary) {
-    unlockPrimary.textContent = "Use passkey";
+    unlockPrimary.textContent = "Sign in";
     unlockPrimary.disabled = true;
   }
   if (unlockSecondary) {
@@ -469,8 +476,8 @@ function renderUnlockChecking() {
 }
 
 function renderUnlockMode({ registered, guestRegistrationEnabled }) {
-  for (const button of document.querySelectorAll("[data-home-wallet-signin]")) {
-    button.hidden = !walletSigninAvailable || !registered || !["signin", "signin_guest_enabled", "unsupported"].includes(unlockMode);
+  for (const button of document.querySelectorAll("[data-home-signin-options]")) {
+    button.hidden = !walletSigninAvailable || !(readSigninOptions().length||signinAvailability.walletconnect) || !readSigninChoice() || !registered || !["signin", "signin_guest_enabled", "unsupported"].includes(unlockMode);
     button.disabled = busy;
   }
   const resumingOwner = unlockMode === "resume_owner";
@@ -492,15 +499,15 @@ function renderUnlockMode({ registered, guestRegistrationEnabled }) {
       unlockCopy.textContent = "Use a passkey to create your own guest account.";
     } else {
       unlockCopy.textContent = registered
-        ? "Use your passkey to sign in to your apps and desktop."
+        ? "Sign in to your apps and desktop."
         : "Create the admin passkey for this Home.";
     }
   }
   if (unlockPrimary) {
     unlockPrimary.textContent = resumingOwner ? "Resume Home setup" : creatingGuest
       ? "Create guest passkey"
-      : (registered ? "Use passkey" : "Create admin passkey");
-    unlockPrimary.disabled = unlockMode === "unsupported";
+      : (registered ? "Sign in" : "Create admin passkey");
+    unlockPrimary.disabled = unlockMode === "unsupported" && !(readSigninOptions().length||signinAvailability.walletconnect);
   }
   if (unlockSecondary) {
     unlockSecondary.hidden = !registered || !guestRegistrationEnabled && !resumingRegistration && !recoveringOwner;
@@ -535,10 +542,10 @@ function renderUnlockMode({ registered, guestRegistrationEnabled }) {
     unlockMonogram.textContent = [...unlockPersonLabel.trim()][0]?.toUpperCase() || "e";
   }
   if (unlockPerson) {
-    unlockPerson.disabled = unlockMode === "unsupported";
+    unlockPerson.disabled = unlockMode === "unsupported" && !(readSigninOptions().length||signinAvailability.walletconnect);
     const personLabel = unlockPersonLabel
-      ? `Use passkey for ${unlockPersonLabel}`
-      : "Use passkey";
+      ? `Sign in as ${unlockPersonLabel}`
+      : "Sign in";
     unlockPerson.setAttribute("aria-label", personLabel);
     unlockPerson.title = personLabel;
   }
@@ -986,6 +993,17 @@ async function runOwnerRecovery() {
   }
 }
 
+// Wallet display hints are optional. Late reads belong to this session and list.
+async function refreshSigninOptionsAfterUnlock(token) {
+  const previous=JSON.stringify(readSigninOptions());
+  const current=()=>getHomeAuthorityToken()===token&&JSON.stringify(readSigninOptions())===previous;
+  try {
+    if(!token||!current())return;
+    const result=await fetchJson("/api/auth/wallet-methods",{headers:{"x-elastos-home-token":token},signal:AbortSignal.timeout(15000)});
+    if(current())saveSigninOptions(result.methods);
+  }catch{if(current())saveSigninOptions([]);}
+}
+
 async function runPasskeySignIn() {
   if (busy || !window.PublicKeyCredential) {
     return;
@@ -1013,6 +1031,7 @@ async function runPasskeySignIn() {
     setHomeAuthorityToken(response?.home_token, response);
     stage = "open";
     await unlockComplete(response);
+    void refreshSigninOptionsAfterUnlock(response.home_token);
   } catch (error) {
     throw signInFailure(stage, error);
   } finally {
@@ -1085,12 +1104,12 @@ function reportUnlockError(error) {
 }
 
 function setButtonsDisabled(disabled) {
-  for (const button of document.querySelectorAll("[data-home-wallet-signin]")) button.disabled = disabled;
+  for (const button of document.querySelectorAll("[data-home-signin-options]")) button.disabled = disabled;
   if (unlockPerson) {
-    unlockPerson.disabled = disabled || unlockMode === "unsupported";
+    unlockPerson.disabled = disabled || unlockMode === "unsupported" && !(readSigninOptions().length||signinAvailability.walletconnect);
   }
   if (unlockPrimary) {
-    unlockPrimary.disabled = disabled || unlockMode === "unsupported";
+    unlockPrimary.disabled = disabled || unlockMode === "unsupported" && !(readSigninOptions().length||signinAvailability.walletconnect);
   }
   if (unlockSecondary) {
     unlockSecondary.disabled = disabled;

@@ -163,11 +163,13 @@ function reduceWalletChoice(row) {
 }
 
 export function connectionView(input) {
-  const allowed = ['window', 'stage', 'provider', 'summary', 'otherRequests', 'account', 'waitSeconds', 'qrData', 'homeOrigin', 'localSafety', 'compact', 'alternativeAllowed', 'previousFocus', 'targetNetwork', 'walletResult', 'transactionDisplay', 'requestContext','supportedActions','copyFeedback','connectionNotice','currentSelection','localReturn','transactionHash','showNextRequests','linkedConnection','walletChoices','walletIcon'];
+  const allowed = ['window', 'stage', 'provider', 'summary', 'otherRequests', 'account', 'waitSeconds', 'qrData', 'homeOrigin', 'localSafety', 'compact', 'alternativeAllowed', 'previousFocus', 'targetNetwork', 'walletResult', 'transactionDisplay', 'requestContext','supportedActions','copyFeedback','connectionNotice','currentSelection','localReturn','transactionHash','showNextRequests','linkedConnection','walletChoices','walletIcon','purpose'];
   requireValue(plain(input) && Object.keys(input).every(key => allowed.includes(key)), 'closed view input');
   const { window, stage } = input;
   requireValue(Object.hasOwn(screens, window) && Object.hasOwn(screens[window], stage), 'closed window/stage');
-  const screen = screens[window][stage];
+  requireValue(input.purpose===undefined||input.purpose==='home-signin'&&window==='walletconnect'&&stage==='request-phone','closed connection purpose');
+  const baseScreen=screens[window][stage];
+  const screen=input.purpose==='home-signin'?{...baseScreen,status:'Sign the message in {{wallet}} to sign in to this Home.',notice:'The request may remain open in your wallet if you stop waiting.',wait:false}:baseScreen;
   const supported=input.supportedActions===undefined?null:input.supportedActions;
   requireValue(supported===null||Array.isArray(supported)&&supported.length<=connectionActionIds.length&&new Set(supported).size===supported.length&&supported.every(a=>connectionActionIds.includes(a)),'closed supported actions');
   requireValue(input.copyFeedback===undefined||Object.hasOwn(copyFeedbacks,input.copyFeedback),'closed copy feedback');
@@ -181,6 +183,7 @@ export function connectionView(input) {
   requireValue(!provider?.providerId || (window === 'unisat' ? provider.providerId === 'unisat' : window === 'metamask' ? provider.providerId === null || extensionRdns(provider.providerId) : providers.has(provider.providerId)), 'provider belongs to window');
   requireValue(!provider || (window === 'unisat' ? provider.alternatives.length === 0 : provider.alternatives.every(p=>p!=='unisat')), 'provider alternatives belong to window');
   const summary = input.summary ? summaryProjection(input.summary) : null;
+  requireValue(input.purpose===undefined||summary?.actor==='home'&&summary.title==='Review sign-in request'&&!summary.transaction,'Home sign-in presentation');
   const requestScreen=!!screen.request||!!screen.optionalRequest&&!!summary;
   const context=input.requestContext?clone(input.requestContext):null;
   requireValue(!context||plain(context)&&Object.keys(context).length===4&&['id','app','actor','site'].every(k=>Object.hasOwn(context,k))&&bounded(context.id,256)&&context.id.length>0&&bounded(context.app,128)&&bounded(context.actor,128)&&(context.site===null||context.actor==='browser'&&displayOrigin(context.site)===context.site),'closed request context');

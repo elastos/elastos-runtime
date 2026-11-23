@@ -9,12 +9,28 @@ function abortable(promise,signal) {
 const hexMessage = text => '0x'+[...new TextEncoder().encode(text)].map(b=>b.toString(16).padStart(2,'0')).join('');
 export async function selectSigninWallet(connector,options) {
   if(connector==='walletconnect') return selectWalletConnect(options);
-  const {signal,choices,changed}=options;
+  const {signal,changed}=options;
   let provider,name;
   if(connector==='metamask') {
     const entries=signinBrowserWallets();
     if(!entries.length)throw fault('missing');
-    const entry=entries.length===1 ? entries[0] : await abortable(new Promise(resolve=>choices(entries.map((entry,index)=>({id:String(index),name:entry.name,choose:()=>resolve(entry)})))),signal);
+    let preferred=entries.find(entry=>entry.rdns===(options.method?.providerId||'io.metamask'));
+    if(options.method?.providerId&&!preferred)throw fault('missing');
+    if(options.method&&!options.method.providerId) {
+      let accountsVisible=false;
+      const matches=await abortable(Promise.all(entries.map(async entry=>{
+        let timer;
+        try {
+          const [accounts,chain]=await Promise.race([Promise.all([entry.provider.request({method:'eth_accounts'}),entry.provider.request({method:'eth_chainId'})]),new Promise((_,reject)=>{timer=setTimeout(()=>reject(fault('missing')),1000);})]);
+          if(Array.isArray(accounts)&&accounts.length)accountsVisible=true;
+          return typeof accounts?.[0]==='string'&&accounts[0].toLowerCase()===options.method.address.toLowerCase()&&Number(chain)===options.method.chain_id?entry:null;
+        }catch{return null;}finally{clearTimeout(timer);}
+      })),signal);
+      preferred=matches.find(entry=>entry?.rdns==='io.metamask')||matches.find(Boolean);
+      if(!preferred&&entries.length>1)throw fault(accountsVisible?'changed':'wallet-unavailable');
+    }
+    const entry=preferred || (entries.length===1 ? entries[0] : null);
+    if(!entry)throw fault('changed');
     provider=entry.provider;name=entry.name;
   } else {provider=window.unisat;name="UniSat";}
   if(!provider || connector==='unisat' && ['requestAccounts','getAccounts','getNetwork','signMessage'].some(key=>typeof provider[key]!=='function'))throw fault('missing');
