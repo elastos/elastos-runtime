@@ -60,6 +60,11 @@ export function clearHomeAuthorityToken() {
 
 export function getHomeAuthorityToken() { return homeAuthorityToken; }
 
+export function createHomeAuthorityCheck() {
+  const authority = homeAuthorityContext;
+  return () => Boolean(authority && authority === homeAuthorityContext && homeAuthorityToken);
+}
+
 export function hasHomeAuthorityToken() {
   return Boolean(homeAuthorityToken);
 }

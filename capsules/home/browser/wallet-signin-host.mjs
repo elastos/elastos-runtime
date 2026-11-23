@@ -1,6 +1,6 @@
 import {connectedWalletSigninMethods,requestConnectedSigninWallets} from './wallet-signin-methods.mjs';
 // The shell supplies a source/token-bound context from its launch registry.
-export function handleWalletSigninRequest(event,context,{api,manage,current,changed,authorityToken,openConnector,selectWalletConnect,focusCaller=()=>{}}) {
+export function handleWalletSigninRequest(event,context,{api,manage,current,changed,authorityToken,authorityCurrent,openConnector,selectWalletConnect,focusCaller=()=>{}}) {
   const data=event.data;
   if(data?.type!=='home:wallet-signin-request')return false;
   const keys=['type','requestId','homeToken','action','methodId'];
@@ -12,7 +12,8 @@ export function handleWalletSigninRequest(event,context,{api,manage,current,chan
     || typeof data.methodId!=='string' || data.methodId.length>256
     || (['list','add'].includes(data.action)?data.methodId!=='':!data.methodId))return true;
   const token=authorityToken();
-  const active=()=>current() && authorityToken()===token;
+  const sameAuthority=authorityCurrent?authorityCurrent():()=>authorityToken()===token;
+  const active=()=>current() && sameAuthority();
   const reply=result=>{if(active())event.source.postMessage({type:'home:wallet-signin-result',requestId:data.requestId,result},'*');};
   if(!token){reply({status:'failed'});return true;}
   Promise.all([api('/api/auth/wallet-methods',undefined,token),api('/api/auth/passkeys',undefined,token)])

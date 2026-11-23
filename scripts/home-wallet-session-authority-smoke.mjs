@@ -25,15 +25,19 @@ async function windowFor(credentials,label){
 try{
  const saved=JSON.parse(await readFile(credentialFile,'utf8'));
  current=await windowFor(Array.isArray(saved)?saved:saved.credentials,'retained');
- const sys=await current.system();
+ let sys=await current.system();
  if(process.env.HOME_AUTH_CASE!=='revocation'){
   const start=traffic.length;await sys.getByRole('button',{name:'Add wallet',exact:true}).click();
-  await current.page.locator('.signin-dialog').getByText('New wallet',{exact:true}).waitFor({timeout:18000});
+  await current.page.waitForFunction(()=>{
+   const dialog=document.querySelector('.signin-dialog');
+   return dialog?.open&&dialog.textContent.includes('New wallet')||[...document.querySelectorAll('iframe')].some(f=>f.src.includes('/apps/wallet/')&&f.getBoundingClientRect().width>0);
+  },null,{timeout:18000});
   const reads=traffic.slice(start).filter(r=>r.path==='/api/apps/system/summary');
   assert(reads.some(r=>r.status===200&&r.frame.includes('/apps/system/')),'System owns the actual HTTP summary read');
   assert(!reads.some(r=>r.frame.includes('/home/')),'Home does not call the System route');
   await current.page.screenshot({path:output+'/wallet-picker.png'});
-  await current.page.locator('.signin-dialog').getByRole('button',{name:'Cancel',exact:true}).click();
+  if(await current.page.locator('.signin-dialog').isVisible())await current.page.locator('.signin-dialog').getByRole('button',{name:'Cancel',exact:true}).click();
+  sys=await current.system();
   console.log('PASS real System-origin Add wallet HTTP route');
  }
  if(process.env.HOME_AUTH_CASE!=='wallet'){

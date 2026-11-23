@@ -23,6 +23,7 @@ import {
   shellState,
   fetchJson,
   createHomeBackgroundImageReader,
+  createHomeAuthorityCheck,
   targetById,
 } from "./shell-core.js?v=home-wallpaper-20261030b";
 import {
@@ -1746,6 +1747,7 @@ window.addEventListener("message", (event) => {
   }
   if (data.type === "home:wallet-signin-request" && handleWalletSigninRequest(event, context, {
     authorityToken: getHomeAuthorityToken,
+    authorityCurrent: createHomeAuthorityCheck,
     api: (path, body, token) => path === "/api/auth/passkeys"
       ? fetchJson(path, {headers:{"x-elastos-home-token":token}}) : walletSigninApi(path, body, token),
     manage: manageWalletSignin,
