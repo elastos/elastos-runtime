@@ -6,6 +6,13 @@ import { ownerRecoveryCommand } from "../capsules/home/browser/owner-recovery-co
 import { resolve } from "node:path";
 import { importProductSmokePlaywright, productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 
+// Import the new dependency itself; the existing passkey VM exercises the full auth file.
+const previousDocument = globalThis.document;
+globalThis.document = { querySelector: () => null };
+const { createHomeWalletSignin } = await import("../capsules/home/browser/wallet-signin-view.mjs");
+if (previousDocument === undefined) delete globalThis.document;
+else globalThis.document = previousDocument;
+
 const source = readFileSync(new URL("../capsules/home/browser/shell-auth.js", import.meta.url), "utf8")
   .replace(/^import\s*\{[\s\S]*?\}\s*from\s*"[^"]+";\n/gm, "")
   .replace(/export /g, "");
@@ -52,8 +59,8 @@ function fixture({ guest = false, purpose = "create", terminalLoss = false, owne
     };
     let opened = null;
     const context = vm.createContext({
-      ownerRecoveryCommand, location: { origin: "https://home.test", hostname: "home.test" },
-      document: { querySelector: element, getElementById: id => element("#" + id), body: element("body") },
+      ownerRecoveryCommand, createHomeWalletSignin, location: { origin: "https://home.test", hostname: "home.test" },
+      document: { querySelector: element, querySelectorAll: () => [], getElementById: id => element("#" + id), body: element("body") },
       window: { PublicKeyCredential: {}, location: { protocol: "https:" }, sessionStorage: storage, atob, btoa,
         addEventListener() {}, clearTimeout() {}, setTimeout() {}, setInterval() { return 1; }, clearInterval() {} },
       navigator: { credentials: { async create(options) {
@@ -637,8 +644,8 @@ if (process.argv.includes("--browser")) {
           await showHomeUnlock(() => { throw new Error("Unexpected enrollment dispatch"); });
         ` });
       }
-      assert(assets.has(name), "unexpected fixture request: " + url.pathname);
-      return route.fulfill({ contentType: assets.get(name),
+      assert(assets.has(name) || /^[a-z][a-z0-9-]*\.(mjs|js)$/.test(name), "unexpected fixture request: " + url.pathname);
+      return route.fulfill({ contentType: assets.get(name) || "text/javascript",
         body: readFileSync(new URL("../capsules/home/browser/" + name, import.meta.url)) });
     });
     for (const [width, height] of [[1280, 900], [390, 844], [320, 568]]) {

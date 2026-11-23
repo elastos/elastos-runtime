@@ -88,6 +88,6 @@ test("pairing copy names the wallet without an invented device name", () => {
   const source = readFileSync(new URL("./walletconnect/adapter.mjs", import.meta.url), "utf8");
   for (const text of [source, bundle.toString("utf8")]) {
     assert.doesNotMatch(text, /phone[ -]+wallet/i);
-    assert.ok(text.includes("Scan with your wallet, then approve the connection."));
+    assert.ok(text.includes("Scan with your wallet. Then approve the connection in your wallet."));
   }
 });

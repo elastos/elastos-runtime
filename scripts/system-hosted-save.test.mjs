@@ -1347,79 +1347,63 @@ test("Community missing configuration stays hidden and malformed state cannot en
 });
 
 test("Show me in Community offers three modes, sets only the caller's own and reverts on refusal", async () => {
-  const row = { hidden: true }, section = { hidden: true };
-  const option = mode => {
-    const attrs = new Map([["aria-checked", "false"]]), classes = new Set();
-    return {
-      dataset: { presenceMode: mode }, disabled: true, classes,
-      classList: { toggle: (name, on) => (on ? classes.add(name) : classes.delete(name)) },
-      setAttribute: (key, value) => attrs.set(key, value), getAttribute: key => attrs.get(key),
-    };
-  };
-  const options = ["always", "while_open", "hidden"].map(option);
-  const checked = () => options.filter(o => o.getAttribute("aria-checked") === "true").map(o => o.dataset.presenceMode);
-  const fields = new Map(), hidden = new Map(), requests = [];
-  let reply = { schema: "elastos.community-presence/v1", configured: true, joined: true, community_presence: "requested" };
-  const context = vm.createContext({
-    communitySection: section, communityPresenceRow: row, communityPresenceOptions: options, hasShellAccess: () => true,
-    setTextFields: (key, value) => fields.set(key, value),
-    setHiddenFields: (key, value) => hidden.set(key, value),
-    shellHeaders: value => value || {}, publicSystemError: (_, fallback) => fallback,
-    AbortController, runtimeUpdateRequests: new Set(),
-    window: { setTimeout: () => 1, clearTimeout: () => {} },
-    fetchJson: async (path, init) => { requests.push({ path, ...init }); return reply; },
+  const { chromium, jsonResponse, makeAppearanceRecord, makeSystemSummary, startSystemFixtureServer } = await import("./system-uiux-fixture.mjs");
+  let configured = true, joined = true, mode = "requested", refuse = false, unavailable = false, presenceReads = 0;
+  const requests = [];
+  const server = await startSystemFixtureServer({
+    title: "Community presence",
+    async onApiRequest({ request, response, url }) {
+      if (url.pathname === "/api/apps/system/summary") { jsonResponse(response, makeSystemSummary(makeAppearanceRecord())); return true; }
+      if (url.pathname === "/api/apps/system/community") { jsonResponse(response, { schema:"elastos.community-membership/v1", configured, joined }); return true; }
+      if (url.pathname !== "/api/apps/system/community/presence") return false;
+      presenceReads++;
+      if (unavailable) { jsonResponse(response, {error:"Unavailable"}, 503); return true; }
+      if (request.method === "POST") {
+        let raw = ""; for await (const chunk of request) raw += chunk;
+        requests.push({path:url.pathname, body:JSON.parse(raw)});
+        if (refuse) { jsonResponse(response, {error:"Changed"}, 409); return true; }
+        mode = JSON.parse(raw).mode;
+      }
+      jsonResponse(response, {schema:"elastos.community-presence/v1", configured, joined, community_presence:mode}); return true;
+    },
   });
-  const start = source.indexOf("function configureCommunityPresence(");
-  const end = source.indexOf("function configureAiProvider(", start);
-  const fetchStart = source.indexOf("async function fetchRuntimeUpdateJson(");
-  const fetchEnd = source.indexOf("async function onRuntimeUpdateApply(", fetchStart);
-  vm.runInContext(`let communityPresenceBusy = false; var communityMembership = null; ${source.slice(start, end)} ${source.slice(fetchStart, fetchEnd)}`, context);
-
-  await context.refreshCommunityPresence();
-  assert.equal(row.hidden, false);
-  assert.deepEqual(checked(), [], "an open request shows no choice until the person makes one");
-  assert.ok(options.every(o => !o.disabled));
-
-  reply = { ...reply, community_presence: "while_open" };
-  await context.updateCommunityPresence("while_open");
-  const post = requests.at(-1);
-  assert.equal(post.path, "/api/apps/system/community/presence");
-  assert.deepEqual(JSON.parse(post.body), { mode: "while_open" });
-  assert.deepEqual(checked(), ["while_open"]);
-  assert.ok(options.find(o => o.dataset.presenceMode === "while_open").classes.has("active"));
-
-  context.fetchJson = async () => { throw new Error("request failed: 409"); };
-  await context.updateCommunityPresence("always");
-  assert.deepEqual(checked(), ["while_open"], "a refused change keeps the last accepted choice");
-  assert.equal(hidden.get("community-presence-status"), false);
-
-  context.fetchJson = async () => ({ ...reply, community_presence: "refused" });
-  await context.refreshCommunityPresence();
-  assert.deepEqual(checked(), ["hidden"], "Never in Inbox shows as Hidden");
-
-  context.fetchJson = async () => ({ ...reply, joined: false, community_presence: "always" });
-  await context.refreshCommunityPresence();
-  assert.ok(options.every(o => o.disabled), "a Home that left Community cannot change it until it rejoins");
-
-  row.hidden = true;
-  context.fetchJson = async () => ({ ...reply, configured: false });
-  await context.refreshCommunityPresence();
-  assert.equal(row.hidden, true, "a Home without Community keeps the row hidden");
-  assert.equal(section.hidden, true);
-  context.fetchJson = async () => { throw new Error("request failed: 500"); };
-  await context.refreshCommunityPresence();
-  assert.equal(section.hidden, false, "a presence load failure is visible");
-  assert.equal(row.hidden, false);
-  assert.equal(hidden.get("community-presence-status"), false);
-  assert.ok(options.every(o => o.disabled));
-
-  section.hidden = true; row.hidden = true;
-  context.communityMembership = { configured: false };
-  let reads = 0;
-  context.fetchJson = async () => { reads++; throw new Error("request failed: 500"); };
-  await context.refreshCommunityPresence();
-  assert.equal(reads, 0, "a Home without Community never reads presence");
-  assert.equal(section.hidden, true, "and a presence failure cannot reveal it");
+  const browser = await chromium.launch({headless:true});
+  try {
+    const page = await browser.newPage(); page.setDefaultTimeout(5000);
+    async function open() {
+      await page.goto(`${server.baseUrl}/fixture?settings=security`);
+      const frame = await page.locator("#system-frame").elementHandle().then(h => h.contentFrame());
+      await frame.waitForFunction(() => document.querySelector('[data-field="runtime-version"]').textContent.length > 0);
+      return frame;
+    }
+    let frame = await open();
+    const checked = () => frame.locator('#community-presence [aria-checked="true"]').evaluateAll(nodes => nodes.map(node => node.dataset.presenceMode));
+    await frame.waitForFunction(() => !document.querySelector('[data-presence-mode="always"]').disabled);
+    assert.deepEqual(await checked(), [], "an open request shows no choice");
+    await frame.locator('[data-presence-mode="while_open"]').click();
+    await frame.waitForFunction(() => !document.querySelector('[data-presence-mode="while_open"]').disabled);
+    assert.deepEqual(requests.at(-1), {path:"/api/apps/system/community/presence", body:{mode:"while_open"}});
+    assert.deepEqual(await checked(), ["while_open"]);
+    refuse = true; await frame.locator('[data-presence-mode="always"]').click();
+    await frame.locator('[data-field="community-presence-status"]').waitFor({state:"visible"});
+    assert.deepEqual(await checked(), ["while_open"], "refusal keeps the saved choice");
+    refuse = false; mode = "refused"; frame = await open();
+    await frame.waitForFunction(() => document.querySelector('[data-presence-mode="hidden"]').getAttribute("aria-checked") === "true");
+    assert.deepEqual(await checked(), ["hidden"]);
+    joined = false; mode = "always"; frame = await open();
+    await frame.waitForFunction(() => document.querySelector('[data-presence-mode="always"]').getAttribute("aria-checked") === "true");
+    assert.equal(await frame.locator('#community-presence button:enabled').count(), 0);
+    configured = false; frame = await open();
+    assert.equal(await frame.locator('#community-presence-row').isVisible(), false);
+    configured = true; joined = true; unavailable = true; frame = await open();
+    await frame.locator('[data-field="community-presence-status"]').waitFor({state:"visible"});
+    assert.equal(await frame.locator('#community-presence-row').isVisible(), true);
+    assert.equal(await frame.locator('#community-presence button:enabled').count(), 0);
+    configured = false; const before = presenceReads; frame = await open();
+    assert.equal(await frame.locator('#community-membership').isVisible(), false);
+    assert.equal(presenceReads, before, "unconfigured Home leaves presence unread");
+    assert.deepEqual(server.requestFailures, []);
+  } finally { await browser.close(); await server.close(); }
 });
 
 test("System refreshes an active update each second and slows down when hidden", () => {
