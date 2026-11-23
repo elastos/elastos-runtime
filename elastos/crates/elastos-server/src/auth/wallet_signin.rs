@@ -1311,6 +1311,43 @@ pub(crate) mod tests {
         )
         .unwrap()
     }
+    pub(crate) fn enabled_session_for_actor(
+        data: &Path,
+        actor: &AuthSessionGrantV1,
+    ) -> AuthSessionGrantV1 {
+        let key = SigningKey::from_bytes((&[7u8; 32]).into()).unwrap();
+        let point = key.verifying_key().to_encoded_point(false);
+        let address = format!(
+            "0x{}",
+            hex::encode(&sha3::Keccak256::digest(&point.as_bytes()[1..])[12..])
+        );
+        let mut id = String::new();
+        for action in ["add", "enable", "signin"] {
+            let owner = (action != "signin").then_some(actor);
+            let b = begin(
+                data,
+                ORIGIN,
+                "home-test",
+                input(action, &id, &address),
+                owner.cloned(),
+            )
+            .unwrap();
+            let proof = Complete {
+                ceremony_id: b.ceremony_id,
+                browser_secret: BROWSER.into(),
+                signature: signed(&key, &b.message),
+                signature_type: "personal_sign".into(),
+                public_key: String::new(),
+                step_up_token: String::new(),
+            };
+            let out = complete(data, ORIGIN, &proof, owner, |_| Ok(())).unwrap();
+            if action == "signin" {
+                return serde_json::from_value(out).unwrap();
+            }
+            id = out["method_id"].as_str().unwrap().into();
+        }
+        unreachable!()
+    }
     #[test]
     fn wallet_added_off_then_signs_into_same_account_with_same_root_and_metadata() {
         let f = fixture();

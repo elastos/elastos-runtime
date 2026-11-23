@@ -3191,6 +3191,42 @@ mod owner_recovery_tests {
     }
 
     #[test]
+    fn owner_recovery_kit_clears_wallet_methods_and_sessions_preserving_account_root() {
+        let mut home = home();
+        let actor = load_auth_state(home.root.path())
+            .unwrap()
+            .sessions
+            .into_iter()
+            .find(|s| s.grant.proof_binding_id == home.admin.proof_binding_id)
+            .unwrap()
+            .grant;
+        let wallet = wallet_signin::tests::enabled_session_for_actor(home.root.path(), &actor);
+        assert!(load_active_session_grant(home.root.path(), &wallet.session_id, now_ts()).is_ok());
+        let code = arm(&home);
+        let response = begin(&mut home, &code).unwrap();
+        let kit = home.kit.clone();
+        let recovered = complete(&mut home, &code, &response, &kit).unwrap();
+        assert_eq!(recovered.principal_id, wallet.principal_id);
+        assert_eq!(
+            load_principal_for_proof_binding(home.root.path(), &recovered.proof_binding_id)
+                .unwrap()
+                .localhost_root,
+            home.admin.localhost_root
+        );
+        assert!(wallet_signin::principal(home.root.path(), &wallet.proof_binding_id).is_err());
+        assert!(load_active_session_grant(home.root.path(), &wallet.session_id, now_ts()).is_err());
+        assert!(
+            wallet_signin::list(home.root.path(), &recovered).unwrap()["methods"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            load_active_session_grant(home.root.path(), &recovered.session_id, now_ts()).is_ok()
+        );
+    }
+
+    #[test]
     fn owner_recovery_refusals_leave_auth_state_byte_identical() {
         for case in ["expired", "wrong-code", "guest-kit", "other-home-kit"] {
             let mut home = home();
