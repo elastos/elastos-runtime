@@ -1,4 +1,4 @@
-import { readWalletSigninMethods, requestWalletSigninChange, renderWalletSigninCards, watchWalletSigninMethods } from "/apps/home/wallet-signin-methods.mjs?v=wallet-signin-1";
+import { readWalletSigninMethods, requestWalletSigninChange, renderWalletSigninCards, watchWalletSigninMethods, connectedWalletSigninMethods } from "/apps/home/wallet-signin-methods.mjs?v=wallet-signin-1";
 import { createWalletActivity } from "./wallet-activity.js?v=wallet-20261115a";
 import {
   createWalletApi,
@@ -86,6 +86,7 @@ const homeClipboard = createHomeClipboardClient({
 });
 homeClipboard.start();
 let currentAccounts = [];
+let walletSigninListVersion = 0;
 let currentDefaults = [];
 let currentBalanceRows = [];
 let currentPrices = {};
@@ -528,13 +529,15 @@ async function refreshWalletState() {
 async function refreshWalletSignin() {
   const mount = document.querySelector("#wallet-signin-methods");
   if (!mount || !activeHomeToken) return;
+  const version = ++walletSigninListVersion;
   try {
     const [data, passkeys] = await Promise.all([
       readWalletSigninMethods(activeHomeToken),
       fetchJson("/api/auth/passkeys", {headers:shellHeaders()}),
     ]);
+    if (version !== walletSigninListVersion) return;
     const ownPasskey = passkeys.passkeys?.find(row => row.principal_id === data.account_id && !row.revoked_at);
-    renderWalletSigninCards(mount, data.methods, {canManage:ownPasskey?.role === "admin",
+    renderWalletSigninCards(mount, connectedWalletSigninMethods(currentAccounts, data.methods), {canManage:ownPasskey?.role === "admin",
       buttonClass:"wallet-button wallet-button-secondary",
       onAction:async (action, methodId) => {
         try {
@@ -544,6 +547,7 @@ async function refreshWalletSignin() {
         } catch (error) { showStatus(error.message, "error"); }
       }});
   } catch {
+    if (version !== walletSigninListVersion) return;
     mount.replaceChildren(textNode("p", "Home could not load sign-in methods.", "signin-method-note"));
     const retry = textNode("button", "Try again", "wallet-button wallet-button-secondary");
     retry.type = "button";retry.onclick = refreshWalletSignin;mount.append(retry);

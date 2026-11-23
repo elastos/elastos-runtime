@@ -42,7 +42,10 @@ async function connect(transport) {
     reply({event:'pairing',qr,uri:pairingUri});
   },hide(){} });
   identity=await readIdentity();
-  for(const name of ['accountsChanged','chainChanged','disconnect','session_delete'])provider.on(name,()=>reply({event:'changed'}));
+  for(const name of ['accountsChanged','chainChanged','disconnect','session_delete'])provider.on(name,value=>{
+    const same=name==='accountsChanged'?typeof value?.[0]==='string'&&value[0].toLowerCase()===identity.address.toLowerCase():name==='chainChanged'?Number(value)===identity.chain_id:false;
+    if(!same)reply({event:'changed'});
+  });
   return identity;
 }
 let pairingUri='';

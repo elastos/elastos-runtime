@@ -25,8 +25,13 @@ export function walletSigninControls(method,{canManage,onAction,buttonClass=''})
   const controls=text('div','','signin-method-controls');
   const toggle=text('button','Sign in','signin-switch');toggle.type='button';toggle.setAttribute('role','switch');toggle.setAttribute('aria-checked',String(method.sign_in_enabled===true));
   toggle.setAttribute('aria-label',`Sign in with ${connectorName(method.connector)} ${shortWalletAddress(method.address)} on ${walletNetwork(method)}`);
-  toggle.disabled=!canManage;toggle.onclick=()=>onAction(method.sign_in_enabled?'disable':'enable',method.method_id);controls.append(toggle);
-  const remove=text('button','Remove',buttonClass);remove.type='button';remove.disabled=!canManage;remove.onclick=()=>onAction('remove',method.method_id);controls.append(remove);
+  toggle.disabled=!canManage || method.paymentOnly;toggle.onclick=()=>onAction(method.sign_in_enabled?'disable':'enable',method.method_id);controls.append(toggle);
+  if(method.paymentOnly) {
+    const add=text('button','Add wallet',buttonClass);add.type='button';add.disabled=!canManage;add.onclick=()=>onAction('add','');controls.append(add);
+    controls.append(text('small','Add this wallet to your account before turning on Sign in.','signin-method-note'));
+  } else {
+    const remove=text('button','Remove',buttonClass);remove.type='button';remove.disabled=!canManage;remove.onclick=()=>onAction('remove',method.method_id);controls.append(remove);
+  }
   if(!canManage)controls.append(text('small','An Admin manages his own wallet sign-in methods.','signin-method-note'));
   return controls;
 }
@@ -54,4 +59,18 @@ export function watchWalletSigninMethods(refresh,origin) {
   window.addEventListener('message',event=>{
     if(event.source===window.top && event.origin===origin && event.data?.type==='home:wallet-signin-changed' && Object.keys(event.data).length===1)void refresh();
   });
+}
+
+export function connectedWalletSigninMethods(accounts,methods) {
+  const result=[...methods];
+  for(const account of accounts) {
+    const connector=({'wallet-metamask':'metamask','wallet-walletconnect':'walletconnect','wallet-unisat':'unisat'})[account.connector_id];
+    if(!connector || typeof account.address!=='string')continue;
+    const chain_id=connector==='unisat'?0:Number(account.chain_namespace?.split(':')[1]);
+    if(connector!=='unisat' && (!Number.isSafeInteger(chain_id)||chain_id<=0))continue;
+    const network=connector==='unisat'?'livenet':'';
+    if(result.some(row=>(connector==='unisat'?row.address===account.address:row.address.toLowerCase()===account.address.toLowerCase())&&row.chain_id===chain_id&&row.network===network))continue;
+    result.push({connector,address:account.address,chain_id,network,sign_in_enabled:false,method_id:`payment:${account.account_id}`,paymentOnly:true,last_used_at:null});
+  }
+  return result;
 }

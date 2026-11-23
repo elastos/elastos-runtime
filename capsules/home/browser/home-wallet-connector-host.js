@@ -963,7 +963,7 @@ export function signinBrowserWallets() {
   if (entries.length) return entries;
   const legacy = window.ethereum;
   if (!legacy || typeof legacy.request !== 'function') return [];
-  const providers = Array.isArray(legacy.providers) ? legacy.providers.slice(0, 8) : [legacy];
-  return [...new Set(providers)].filter(provider => typeof provider?.request === 'function')
-    .map((provider, index) => ({provider, name: provider.isMetaMask ? 'MetaMask' : `Browser wallet ${index + 1}`, uuid: `legacy-${index}`}));
+  // Older extensions expose one selected EIP-1193 provider without names.
+  // EIP-6963 above supplies the explicit choice when several wallets are present.
+  return [{provider:legacy, name:legacy.isMetaMask ? 'MetaMask' : 'Browser wallet', uuid:'legacy'}];
 }

@@ -1,4 +1,4 @@
-import { signinBrowserWallets } from './home-wallet-connector-host.js?v=wallet-signin-1';
+import { signinBrowserWallets } from './home-wallet-connector-host.js?v=home-wallpaper-20261030b';
 const fault = code => Object.assign(new Error(code),{code});
 function abortable(promise,signal) {
   if(signal.aborted) {Promise.resolve(promise).catch(()=>{});return Promise.reject(fault('cancelled'));}
@@ -28,7 +28,13 @@ export async function selectSigninWallet(connector,options) {
   if(connector!=='unisat' && (!Number.isSafeInteger(chain_id)||chain_id<=0))throw fault('changed');
   const listeners=[];
   for(const event of ['accountsChanged',connector==='unisat'?'networkChanged':'chainChanged','disconnect']) {
-    const listener=()=>changed();provider.on?.(event,listener);listeners.push([event,listener]);
+    const listener=value=>{
+      const same=event==='accountsChanged'
+        ? typeof value?.[0]==='string' && (connector==='unisat'?value[0]===address:value[0].toLowerCase()===address.toLowerCase())
+        : event==='chainChanged'?Number(value)===chain_id:event==='networkChanged'?value===network:false;
+      if(!same)changed();
+    };
+    provider.on?.(event,listener);listeners.push([event,listener]);
   }
   const close=()=>{for(const [event,listener]of listeners)provider.removeListener?.(event,listener);};
   signal.addEventListener('abort',close,{once:true});

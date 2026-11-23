@@ -37,6 +37,7 @@ const dockAutoHideInput = document.querySelector("#dock-autohide");
 const uiSoundsInput = document.querySelector("#ui-sounds");
 const passkeyStatusNode = document.querySelector('[data-field="passkey-status"]');
 const accountListNode = document.querySelector("#account-list");
+let walletSigninListVersion = 0;
 let walletSigninMethods = {account_id:"", methods:[]};
 const walletAddButton = document.querySelector("#wallet-signin-add");
 const passkeyAddButton = document.querySelector("#passkey-add");
@@ -2516,11 +2517,15 @@ async function changeWalletSignin(action, methodId = "") {
 
 async function refreshAccountList() {
   if (!accountListNode || !hasShellAccess()) return;
+  const version = ++walletSigninListVersion;
   const data = await fetchJson("/api/auth/passkeys", {headers:shellHeaders()});
   try {
-    walletSigninMethods = await readWalletSigninMethods(apiHomeToken);
+    const methods = await readWalletSigninMethods(apiHomeToken);
+    if (version !== walletSigninListVersion) return;
+    walletSigninMethods = methods;
     renderAccounts(Array.isArray(data.passkeys) ? data.passkeys : []);
   } catch {
+    if (version !== walletSigninListVersion) return;
     walletSigninMethods = {account_id:"", methods:[]};
     renderAccounts(Array.isArray(data.passkeys) ? data.passkeys : []);
     const retry = document.createElement("button");
@@ -2549,7 +2554,7 @@ function renderAccounts(accounts) {
   const adminAccountCount = new Set(activeAccounts
     .filter((account) => readText(account.role) === "admin")
     .map((account) => readText(account.principal_id))).size;
-  const currentPrincipalId = readText(activeAccounts.find((account) => account.current)?.principal_id);
+  const currentPrincipalId = walletSigninMethods.account_id || readText(activeAccounts.find((account) => account.current)?.principal_id);
   const table = document.createElement("table");
   table.className = "account-table";
   table.innerHTML = `

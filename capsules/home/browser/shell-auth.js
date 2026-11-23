@@ -303,6 +303,7 @@ export async function requestPasskeyStepUp(appToken, operation, request, { signa
   try {
     const begin = await fetchJson("/api/auth/passkey-step-up/begin", {
       method: "POST",
+      signal,
       body: JSON.stringify({
         schema: "elastos.auth.passkey-step-up.begin.request/v1",
         app_token: appToken,
@@ -324,6 +325,7 @@ export async function requestPasskeyStepUp(appToken, operation, request, { signa
     }
     const response = await fetchJson("/api/auth/passkey-step-up/complete", {
       method: "POST",
+      signal,
       body: JSON.stringify({
         schema: "elastos.auth.passkey-step-up.complete.request/v1",
         ceremony_id: ceremonyId,

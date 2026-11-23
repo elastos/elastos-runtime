@@ -100,7 +100,9 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
     try {
       const result=await api(state.action==='signin'?'/api/auth/wallet/signin/complete':'/api/auth/wallet-methods/complete',JSON.parse(current.completion));
       if(!live(current))return;
-      if(state.action==='signin' ? !result?.app_token || !result?.session_id || !result?.principal_id || !result?.proof_binding_id : !['complete','removed'].includes(result?.status)) throw fault('invalid');
+      if(state.action==='signin' ? !result?.app_token || !result?.session_id || !result?.principal_id || !result?.proof_binding_id
+        : result?.status!==(state.action==='remove'?'removed':'complete') || typeof result?.method_id!=='string'
+          || state.action!=='remove' && result.sign_in_enabled!==(state.action==='enable')) throw fault('invalid');
       clearTimeout(timer);run=null;stopLocal(current);
       // Completion retires its ceremony. Pairing-only ceremonies still need cancellation.
       current.ceremonies.delete(current.ceremony.ceremony_id);void clear(current);
