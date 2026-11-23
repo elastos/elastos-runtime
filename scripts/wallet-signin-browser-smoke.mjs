@@ -28,7 +28,10 @@ async function exercise(engine,width) {
     }
     return route.continue();
   });
-  async function state(stage){await page.locator(`.signin-dialog[data-state="${stage}"]`).waitFor({timeout:15000});}
+  async function state(stage){
+    await page.locator(`.signin-dialog[data-state="${stage}"]`).waitFor({timeout:15000});
+    if(stage==='done')assert(['Wallet added. Sign in is off.','Wallet sign-in is on.','Wallet sign-in is off.','Wallet removed.'].includes(await page.locator('.signin-dialog [role=status]').innerText()),'Confirmed completion replaces prior errors');
+  }
   async function capture(name,scope=page) {
     await page.evaluate(()=>document.fonts.ready);
     const fit=await scope.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth}));
@@ -225,7 +228,7 @@ async function exercise(engine,width) {
       await state(outcome==='unknown'?'unknown':'error');await capture(`${action}-${outcome}`);
       if(outcome==='unknown') {
         const before=fixture.state.calls.filter(c=>c.path==='/api/auth/wallet-methods/complete').at(-1).body;
-        await page.locator('.signin-dialog').getByRole('button',{name:'Check again',exact:true}).click();await state('done');
+        await page.locator('.signin-dialog').getByRole('button',{name:'Check again',exact:true}).click();await state('done');await capture(`${action}-retry-done`);
         assert(JSON.stringify(fixture.state.calls.filter(c=>c.path==='/api/auth/wallet-methods/complete').at(-1).body)===JSON.stringify(before),'Method retry keeps the exact approved proof body');
         await page.locator('.signin-dialog').getByRole('button',{name:'Done',exact:true}).click();
       } else await cancel();
