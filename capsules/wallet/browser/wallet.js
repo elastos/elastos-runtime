@@ -531,13 +531,9 @@ async function refreshWalletSignin() {
   if (!mount || !activeHomeToken) return;
   const version = ++walletSigninListVersion;
   try {
-    const [data, passkeys] = await Promise.all([
-      readWalletSigninMethods(activeHomeToken),
-      fetchJson("/api/auth/passkeys", {headers:shellHeaders()}),
-    ]);
+    const data = await readWalletSigninMethods(activeHomeToken, {origin:homeParentOrigin});
     if (version !== walletSigninListVersion) return;
-    const ownPasskey = passkeys.passkeys?.find(row => row.principal_id === data.account_id && !row.revoked_at);
-    renderWalletSigninCards(mount, connectedWalletSigninMethods(currentAccounts, data.methods), {canManage:ownPasskey?.role === "admin",
+    renderWalletSigninCards(mount, connectedWalletSigninMethods(currentAccounts, data.methods), {canManage:data.can_manage === true,
       buttonClass:"wallet-button wallet-button-secondary",
       onAction:async (action, methodId) => {
         try {

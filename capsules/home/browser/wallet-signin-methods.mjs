@@ -1,6 +1,11 @@
 import {connectorName,walletNetwork,shortWalletAddress} from './wallet-signin-flow.mjs';
-export async function readWalletSigninMethods(token) {
-  const response=await fetch('/api/auth/wallet-methods',{cache:'no-store',signal:AbortSignal.timeout(15000),headers:{Authorization:`Bearer ${token}`}});
+export async function readWalletSigninMethods(token,{origin}={}) {
+  if(origin) {
+    const result=await requestWalletSigninChange({action:'list',token,origin});
+    if(result?.status!=='complete'||typeof result.account_id!=='string'||!Array.isArray(result.methods))throw new Error('Home could not load sign-in methods.');
+    return result;
+  }
+  const response=await fetch('/api/auth/wallet-methods',{cache:'no-store',signal:AbortSignal.timeout(15000),headers:{Authorization:`Bearer ${token}`,'x-elastos-home-token':token}});
   if(!response.ok)throw new Error('Home could not load sign-in methods.');
   const result=await response.json();
   if(typeof result.account_id!=='string'||!Array.isArray(result.methods)||result.methods.length>256)throw new Error('Home could not load sign-in methods.');
@@ -68,7 +73,7 @@ export function connectedWalletSigninMethods(accounts,methods) {
     if(!connector || typeof account.address!=='string')continue;
     const chain_id=connector==='unisat'?0:Number(account.chain_namespace?.split(':')[1]);
     if(connector!=='unisat' && (!Number.isSafeInteger(chain_id)||chain_id<=0))continue;
-    const network=connector==='unisat'?'livenet':'';
+    const network=connector==='unisat'?'bitcoin':'';
     if(result.some(row=>(connector==='unisat'?row.address===account.address:row.address.toLowerCase()===account.address.toLowerCase())&&row.chain_id===chain_id&&row.network===network))continue;
     result.push({connector,address:account.address,chain_id,network,sign_in_enabled:false,method_id:`payment:${account.account_id}`,paymentOnly:true,last_used_at:null});
   }

@@ -30,7 +30,7 @@ test('compatible EIP-1193 provider signs the UTF-8 message bytes with personal_s
 test('UniSat uses the contract proof modes for SegWit and legacy addresses',async()=>{
   for(const [btc,type,mode]of [[bitcoin,'bip322_simple','bip322-simple'],[legacy,'bitcoin_signed_message','ecdsa']]) {
     const p=provider();p.state.btc=btc;window.unisat=p.api;
-    const wallet=await selectSigninWallet('unisat',options());const proof=await wallet.sign('exact Home message');
+    const wallet=await selectSigninWallet('unisat',options());assert.equal(wallet.network,'bitcoin');await wallet.check();const proof=await wallet.sign('exact Home message');
     assert.equal(proof.signature_type,type);assert.equal(proof.public_key,btc===legacy?'public-key':'');
     assert.deepEqual(p.calls.find(call=>call.method==='signMessage'),{method:'signMessage',message:'exact Home message',mode});wallet.close();
   }

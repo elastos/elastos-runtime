@@ -6,7 +6,7 @@ function node(tag,text,className) {const el=document.createElement(tag);if(text)
 export async function walletSigninApi(path,body,token='') {
   const response=await fetch(path,{
     method:body===undefined?'GET':'POST',cache:'no-store',signal:AbortSignal.timeout(15000),
-    headers:{'content-type':'application/json',...(token?{Authorization:`Bearer ${token}`}:{})},
+    headers:{'content-type':'application/json',...(token?{Authorization:`Bearer ${token}`,'x-elastos-home-token':token}:{})},
     ...(body===undefined?{}:{body:JSON.stringify(body)}),
   });
   if(!response.ok)throw Object.assign(new Error('Home refused the wallet request'),{status:response.status});
@@ -73,6 +73,7 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
         const row=node('div');row.append(node('dt',label),node('dd',value));details.append(row);
       }
       dialog.append(details,node('p',effects[state.action]));
+      if(state.approvalNotice)dialog.append(node('p',state.approvalNotice,'signin-note'));
       if(state.stage==='review') {
         if(['signin','add','enable'].includes(state.action)) {
           dialog.append(node('p','Review the message before signing.','signin-note'));

@@ -8,7 +8,7 @@ export function walletSigninOriginAllowed(value) {
 }
 export const connectorName = id => ({metamask:'MetaMask',walletconnect:'WalletConnect',unisat:'UniSat'})[id] || 'Wallet';
 export const walletNetwork = wallet => wallet.connector === 'unisat'
-  ? (wallet.network === 'livenet' ? 'Bitcoin' : `Bitcoin ${wallet.network}`)
+  ? (wallet.network === 'bitcoin' ? 'Bitcoin' : `Bitcoin ${wallet.network}`)
   : ({20:'Elastos Smart Chain',8453:'Base',1:'Ethereum'})[wallet.chain_id] || `Network ${wallet.chain_id}`;
 export const shortWalletAddress = value => value.length > 22 ? `${value.slice(0,10)}…${value.slice(-8)}` : value;
 export function walletSigninError(error, action) {
@@ -106,7 +106,7 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
           || state.action!=='add' && request.method_id!==state.method.method_id) throw fault('invalid');
       }
       current.ceremony=ceremony;
-      show('review',{wallet:{...current.target,displayName:current.wallet?.name},message:'',signingMessage:ceremony.message});
+      show('review',{wallet:{...current.target,displayName:current.wallet?.name},message:'',signingMessage:ceremony.message,approvalNotice:typeof ceremony.approval?.notice==='string'?ceremony.approval.notice.slice(0,4096):''});
     } catch(error) { fail(current,error); }
   }
   function fail(current,error) {

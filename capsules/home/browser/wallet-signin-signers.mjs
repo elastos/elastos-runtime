@@ -38,7 +38,7 @@ export async function selectSigninWallet(connector,options) {
   }
   const close=()=>{for(const [event,listener]of listeners)provider.removeListener?.(event,listener);};
   signal.addEventListener('abort',close,{once:true});
-  return {connector,address,chain_id,network,name,
+  return {connector,address,chain_id,network:connector==='unisat'?'bitcoin':network,name,
     async check(){
       signal.throwIfAborted();
       const current=connector==='unisat' ? await abortable(provider.getAccounts(),signal) : await request('eth_accounts');

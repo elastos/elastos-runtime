@@ -16,6 +16,7 @@ import {
   SYSTEM_APP_ID,
   homeActiveShellName,
   hasHomeAuthorityToken,
+  getHomeAuthorityToken,
   clearHomeAuthorityToken,
   shellState,
   fetchJson,
@@ -1713,6 +1714,7 @@ window.addEventListener("message", (event) => {
     return;
   }
   if (handleWalletSigninRequest(event, context, {
+    authorityToken: getHomeAuthorityToken,
     api: (path, body, token) => path === "/api/auth/passkeys"
       ? fetchJson(path, {headers:{"x-elastos-home-token":token}}) : walletSigninApi(path, body, token),
     manage: manageWalletSignin,

@@ -4,7 +4,7 @@ import {resolve,extname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=fileURLToPath(new URL('../../',import.meta.url));
 export const evmAddress='0x'+'12'.repeat(20),walletconnectAddress='0x'+'56'.repeat(20),bitcoinAddress='bc1q'+'a'.repeat(38);
-export const sampleMethod=(connector='metamask',sign_in_enabled=false)=>({method_id:`wallet:${connector}`,connector,address:connector==='unisat'?bitcoinAddress:connector==='walletconnect'?walletconnectAddress:evmAddress,chain_id:connector==='unisat'?0:20,network:connector==='unisat'?'livenet':'',sign_in_enabled,created_at:Math.floor(Date.parse('2026-11-20T15:00:00Z')/1000),last_used_at:Math.floor(Date.parse('2026-11-21T15:00:00Z')/1000)});
+export const sampleMethod=(connector='metamask',sign_in_enabled=false)=>({method_id:`wallet:${connector}`,connector,address:connector==='unisat'?bitcoinAddress:connector==='walletconnect'?walletconnectAddress:evmAddress,chain_id:connector==='unisat'?0:20,network:connector==='unisat'?'bitcoin':'',sign_in_enabled,created_at:Math.floor(Date.parse('2026-11-20T15:00:00Z')/1000),last_used_at:Math.floor(Date.parse('2026-11-21T15:00:00Z')/1000)});
 export async function signinFixture() {
   const state={methods:['metamask','unisat','walletconnect'].map(connector=>sampleMethod(connector,true)),calls:[],ceremonies:new Map(),scenario:'normal',signed:false,passkeyCount:1,serial:0,role:'admin',stepUps:new Map()};
   let origin;
@@ -20,6 +20,8 @@ export async function signinFixture() {
         // Keep secrets and signatures out of the evidence. Assertions use memory only.
         call={path,body,headers:req.headers};state.calls.push(call);
         const now=Date.now()/1000;
+        if((path.startsWith('/api/auth/wallet-methods')||path==='/api/auth/passkeys') && !['fixture-home','fixture-system'].includes(req.headers['x-elastos-home-token']))return json({},403);
+        if(path.startsWith('/api/auth/wallet-methods')&&req.headers.authorization!==`Bearer ${req.headers['x-elastos-home-token']}`)return json({},403);
         const passkeys=()=>[...Array.from({length:state.passkeyCount},(_,index)=>({proof_binding_id:`passkey:${index}`,principal_id:'principal:alex',display_name:'Alex',added_from:index?'Security key':'Safari on Mac',role:state.role,current:index===0,created_at:Math.floor(Date.parse('2026-11-20T15:00:00Z')/1000),last_used_at:Math.floor(Date.parse('2026-11-21T15:00:00Z')/1000)})),...(state.otherAdmin?[{proof_binding_id:'passkey:other',principal_id:'principal:morgan',display_name:'Morgan',added_from:'Security key',role:'admin',current:false,created_at:Math.floor(Date.parse('2026-11-20T15:00:00Z')/1000)}]:[])];
         if(path==='/api/auth/passkey/authenticate/begin')return json({ceremony_id:'passkey-login',options:{publicKey:{challenge:'YWJj',rpId:'127.0.0.1',allowCredentials:[{type:'public-key',id:'YWJj'}]}}});
         if(path==='/api/auth/passkey/authenticate/complete'){state.signed=true;return json({home_token:'fixture-home',session_id:'fixture-session',principal_id:'principal:alex',proof_binding_id:'proof:passkey:one'});}
@@ -38,9 +40,9 @@ export async function signinFixture() {
           if(body.action==='add' && state.methods.some(m=>m.address.toLowerCase()===body.address.toLowerCase() && m.chain_id===body.chain_id && m.network===body.network))return json({},409);
           const method=body.method_id?state.methods.find(m=>m.method_id===body.method_id):body;
           const ceremony_id=`ceremony:${++state.serial}`,expires_at=now+(state.scenario==='expired'?1:180);
-          const approval={operation:'auth.wallet.method',request:{ceremony_id,account_id:'principal:alex',action:body.action,method_id:body.method_id||`wallet:${body.connector}`}};
+          const approval={operation:'auth.wallet.method',notice:body.action==='enable'&&method?.connector!=='unisat'?'This wallet will also allow short WalletConnect sign-in connections to this Home.':'Confirm this wallet sign-in method change with your passkey.',request:{ceremony_id,account_id:'principal:alex',action:body.action,method_id:body.method_id||`wallet:${body.connector}`}};
           const result={ceremony_id,message:['disable','remove'].includes(body.action)?'':`Sign in to ${origin}\nAccount: ${method?.address||'Select wallet'}\nRequest: ${ceremony_id}`,expires_at,approval,
-            ...(method?.connector==='walletconnect'?{attempt_token:'fixture-attempt',instance_id:ceremony_id,storage_revision:'"1"'}:{})};
+            ...(method?.connector==='walletconnect'?{attempt_token:'fixture-attempt',instance_id:ceremony_id,storage_revision:0}:{})};
           state.ceremonies.set(ceremony_id,{...result,secret:body.browser_secret,action:body.action||'signin',method});return json(result);
         }
         if(path==='/api/auth/wallet/signin/select') {
@@ -64,7 +66,7 @@ export async function signinFixture() {
           if(!c||c.secret!==body.browser_secret||c.cancelled||now>=c.expires_at)return json({error:'wallet_signin_refused'},403);
           if(state.scenario==='refused')return json({error:'wallet_signin_refused'},403);
           if(c.action==='signin' && !state.methods.some(m=>m.sign_in_enabled && m.address.toLowerCase()===c.method.address.toLowerCase() && m.chain_id===c.method.chain_id && m.network===c.method.network))return json({error:'wallet_signin_refused'},403);
-          if(c.action!=='signin'&&JSON.stringify(state.stepUps.get(body.step_up_token))!==JSON.stringify(c.approval))return json({},403);
+          if(c.action!=='signin'&&JSON.stringify(state.stepUps.get(body.step_up_token))!==JSON.stringify({operation:c.approval.operation,request:c.approval.request}))return json({},403);
           if(!['disable','remove'].includes(c.action)&&body.signature!=='fixture-signature')return json({},403);
           if(!c.result){
             if(c.action==='signin') {
@@ -84,7 +86,7 @@ export async function signinFixture() {
         if(path.startsWith('/api/apps/wallet-walletconnect/')) {
           const c=state.ceremonies.get(req.headers['x-elastos-wallet-instance']);
           if(!c||c.cancelled||now>=c.expires_at||req.headers['x-elastos-wallet-attempt']!=='fixture-attempt')return json({},403);
-          if(path.endsWith('/storage')&&req.headers['if-match']!=='"1"')return json({},409);
+          if(req.headers['if-match']!=='"0"')return json({},409);
         }
         if(path==='/api/apps/wallet-walletconnect/wallet/config')return json({walletconnect:{project_id:'fixture-project'}});
         if(path==='/api/apps/wallet-walletconnect/storage')return json({});
@@ -119,7 +121,7 @@ addEventListener('message',event=>{
  const frame=[...document.querySelectorAll('#fixture-desktop iframe')].find(f=>f.contentWindow===event.source);
  if(!frame)return;
  const context={kind:'app-frame',targetId:frame.dataset.target,source:event.source,homeToken:'fixture-'+frame.dataset.target};
- handleWalletSigninRequest(event,context,{api:(path,body,token)=>walletSigninApi(path,body,token),manage:manageWalletSignin,current:()=>frame.isConnected,changed:()=>{for(const f of document.querySelectorAll('#fixture-desktop iframe'))f.contentWindow.postMessage({type:'home:wallet-signin-changed'},'*');}});
+ handleWalletSigninRequest(event,context,{authorityToken:()=> 'fixture-home',api:(path,body,token)=>walletSigninApi(path,body,token),manage:manageWalletSignin,current:()=>frame.isConnected,changed:()=>{for(const f of document.querySelectorAll('#fixture-desktop iframe'))f.contentWindow.postMessage({type:'home:wallet-signin-changed'},'*');}});
 });
 window.fixtureReady=true;
 `);return;

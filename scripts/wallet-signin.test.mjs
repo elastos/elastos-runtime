@@ -98,7 +98,7 @@ test('Home accepts method intents only from the bound System or Wallet frame',as
   const source={postMessage(){}},context={kind:'app-frame',targetId:'system',source,homeToken:'launch'};
   const data={type:'home:wallet-signin-request',requestId:'one',homeToken:'launch',action:'enable',methodId:method.method_id};
   let reads=0,managed=0;
-  const options={api:async path=>{reads++;return path.endsWith('/passkeys')?{passkeys:[{principal_id:'principal:one',display_name:'Alex'}]}:{account_id:'principal:one',methods:[method]};},manage:async input=>{managed++;assert.equal(input.method,method);return {status:'complete'};},current:()=>true,changed(){}};
+  const options={authorityToken:()=> 'home-authority',api:async (path,_body,token)=>{assert.equal(token,'home-authority');reads++;return path.endsWith('/passkeys')?{passkeys:[{principal_id:'principal:one',display_name:'Alex'}]}:{account_id:'principal:one',methods:[method]};},manage:async input=>{managed++;assert.equal(input.token,'home-authority');assert.equal(input.method,method);return {status:'complete'};},current:()=>true,changed(){}};
   for(const invalid of [{...context,targetId:'browser'},{...context,source:{}},{...context,homeToken:'other'}])handleWalletSigninRequest({source,data},invalid,options);
   assert.equal(reads,0);assert.equal(managed,0);
   handleWalletSigninRequest({source,data},context,options);await new Promise(resolve=>setImmediate(resolve));
@@ -130,7 +130,7 @@ test('WalletConnect pairing and Add wallet each have their own browser secret',a
 
 test('Bitcoin method selection keeps address case while EVM accepts checksum case',async()=>{
   for(const connector of ['unisat','metamask']) {
-    const wallet={...method,connector,address:connector==='unisat'?'1A'+'b'.repeat(30):'0x'+'ab'.repeat(20),chain_id:connector==='unisat'?0:20,network:connector==='unisat'?'livenet':''};
+    const wallet={...method,connector,address:connector==='unisat'?'1A'+'b'.repeat(30):'0x'+'ab'.repeat(20),chain_id:connector==='unisat'?0:20,network:connector==='unisat'?'bitcoin':''};
     const states=[];
     const flow=createWalletSigninFlow({api:async path=>path.endsWith('/begin')?{ceremony_id:'one',message:'message',expires_at:Date.now()/1000+120,approval:{operation:'auth.wallet.method',request:{ceremony_id:'one',action:'enable',account_id:'principal:alex',method_id:method.method_id}}}:{},
       select:async()=>({...wallet,address:wallet.address.toLowerCase(),close(){}}),approve(){},render:s=>states.push(s)});
@@ -148,4 +148,15 @@ test('an account change after dispatch keeps the uncertain result retryable',asy
   assert.equal(f.states.at(-1).stage,'unknown');f.change('changed');assert.equal(f.states.at(-1).stage,'unknown');await f.flow.retry();
   assert.equal(f.states.at(-1).stage,'done');
   const sent=f.calls.filter(c=>c.path?.endsWith('/complete'));assert.deepEqual(sent[0].body,sent[1].body);assert.equal(f.calls.filter(c=>c.sign).length,1);
+});
+
+test('Wallet reads only its own method list through Home authority',async()=>{
+  const replies=[],source={postMessage:message=>replies.push(message)},context={kind:'app-frame',targetId:'wallet',source,homeToken:'wallet-launch'};
+  const data={type:'home:wallet-signin-request',requestId:'list',homeToken:'wallet-launch',action:'list',methodId:''};
+  handleWalletSigninRequest({source,data},context,{authorityToken:()=> 'home-launch',api:async(path,_body,token)=>{
+    assert.equal(token,'home-launch');return path.endsWith('/passkeys')?{passkeys:[{principal_id:'other',role:'admin'},{principal_id:'principal:alex',role:'guest'}]}:{account_id:'principal:alex',methods:[method]};
+  },manage:()=>{throw new Error('list does not change authority');},current:()=>true,changed(){}});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(replies[0].result,{status:'complete',account_id:'principal:alex',methods:[method],can_manage:false});
+  assert(!Object.hasOwn(replies[0].result,'passkeys'));assert(!JSON.stringify(replies).includes('home-launch'));
 });

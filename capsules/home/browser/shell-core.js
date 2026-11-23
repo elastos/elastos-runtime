@@ -58,6 +58,8 @@ export function clearHomeAuthorityToken() {
   homeAuthorityContext = null;
 }
 
+export function getHomeAuthorityToken() { return homeAuthorityToken; }
+
 export function hasHomeAuthorityToken() {
   return Boolean(homeAuthorityToken);
 }
