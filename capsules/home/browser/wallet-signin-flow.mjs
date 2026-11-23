@@ -106,7 +106,7 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
           || state.action!=='add' && request.method_id!==state.method.method_id) throw fault('invalid');
       }
       current.ceremony=ceremony;
-      show('review',{wallet:{...current.target,displayName:current.wallet?.name},message:'',signingMessage:ceremony.message,approvalNotice:typeof ceremony.approval?.notice==='string'?ceremony.approval.notice.slice(0,4096):''});
+      show('review',{wallet:{...current.target,displayName:current.wallet?.name},message:'',signingMessage:ceremony.message,approvalNotice:state.action!=='signin'&&typeof ceremony.approval?.notice==='string'?ceremony.approval.notice.slice(0,4096):''});
     } catch(error) { fail(current,error); }
   }
   function fail(current,error) {

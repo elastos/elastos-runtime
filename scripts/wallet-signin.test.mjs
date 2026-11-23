@@ -168,3 +168,9 @@ test('a changed Home authority retires pending Wallet method requests',async()=>
   handleWalletSigninRequest({source,data},context,{authorityToken:()=>authority,api:path=>path.endsWith('/passkeys')?Promise.resolve({passkeys:[]}):new Promise(resolve=>{release=resolve;}),manage:()=>{throw new Error('retired Home cannot start approval');},current:()=>true,changed(){}});
   authority='home-two';release({account_id:'principal:alex',methods:[method]});await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(replies,[]);
 });
+
+test('signed-out sign-in ignores method-change approval notices',async()=>{
+  const states=[];
+  const flow=createWalletSigninFlow({api:async()=>({ceremony_id:'one',message:'sign in',expires_at:Date.now()/1000+120,approval:{notice:'Confirm this method change with your passkey.'}}),select:async()=>({...method,close(){}}),approve:()=>{throw new Error('signin uses the wallet');},render:s=>states.push(s)});
+  await flow.start();await flow.choose('metamask');assert.equal(states.at(-1).stage,'review');assert.equal(states.at(-1).approvalNotice,'');
+});

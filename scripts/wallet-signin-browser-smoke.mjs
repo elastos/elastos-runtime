@@ -91,10 +91,10 @@ async function exercise(engine,width) {
         await page.evaluate(()=>window.walletFixture.copyFailed=true);await page.locator('.signin-dialog').getByRole('button',{name:'Copy link',exact:true}).click();await page.getByText('Could not copy. Try again.',{exact:true}).waitFor();await capture('walletconnect-copy-failed');
         await pair();
       }
-      await state('review');await capture(`${connector}-signin-review`);
+      await state('review');assert.equal(await page.locator('.signin-dialog').getByText('Confirm this wallet sign-in method change with your passkey.',{exact:true}).count(),0);await capture(`${connector}-signin-review`);
       assert.equal(fixture.state.calls.filter(c=>c.path.endsWith('/signin/complete')).length,0,'no completion before review');
       await page.locator('.signin-dialog').getByRole('button',{name:'Sign in with wallet',exact:true}).click();
-      await page.waitForFunction(()=>window.openedPrincipal==='principal:alex');assert.equal(await page.evaluate(()=>window.openedFlow.walletSignin),true);
+      await page.waitForFunction(()=>window.openedPrincipal==='principal:alex');assert.equal(await page.evaluate(()=>window.openedFlow.walletSignin),true);assert(!fixture.state.calls.some(c=>c.path.startsWith('/api/auth/passkey-step-up/')),'Wallet sign-in opens without passkey approval');
       assert((await context.cookies(fixture.origin)).some(cookie=>cookie.name==='fixture-session'&&cookie.httpOnly),'Runtime session cookie is retained');await capture(`${connector}-same-account`);
       const persistent=await page.evaluate(()=>({local:Object.entries(localStorage),session:Object.entries(sessionStorage)}));
       assert(!JSON.stringify(persistent).includes('fixture-signature'));

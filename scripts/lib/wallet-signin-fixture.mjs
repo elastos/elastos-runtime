@@ -42,7 +42,7 @@ export async function signinFixture() {
           const method=body.method_id?state.methods.find(m=>m.method_id===body.method_id):body;
           const ceremony_id=`ceremony:${++state.serial}`,expires_at=now+(state.scenario==='expired'?1:180);
           const approval={operation:'auth.wallet.method',notice:body.action==='enable'&&method?.connector!=='unisat'?relayNotice:'Confirm this wallet sign-in method change with your passkey.',request:{ceremony_id,account_id:'principal:alex',action:body.action,method_id:body.method_id||`wallet:${body.connector}`}};
-          const result={ceremony_id,message:['disable','remove'].includes(body.action)?'':`Sign in to ${origin}\nAccount: ${method?.address||'Select wallet'}\nRequest: ${ceremony_id}`,expires_at,approval,
+          const result={ceremony_id,message:['disable','remove'].includes(body.action)?'':`Sign in to ${origin}\nAccount: ${method?.address||'Select wallet'}\nRequest: ${ceremony_id}`,expires_at,...(body.action?{approval}:{}),
             ...(method?.connector==='walletconnect'?{attempt_token:`fixture-attempt:${ceremony_id}`,instance_id:`instance:${ceremony_id}`,storage_revision:0}:{})};
           state.ceremonies.set(ceremony_id,{...result,secret:body.browser_secret,action:body.action||'signin',method});return json(result);
         }
