@@ -75,3 +75,11 @@ test("the locked SDK reaches QR through Home, stores its keys through Runtime, a
     await new Promise(resolve => server.close(resolve));
   }
 });
+
+test("pairing copy names the wallet without an invented device name", () => {
+  const source = readFileSync(new URL("./walletconnect/adapter.mjs", import.meta.url), "utf8");
+  for (const text of [source, bundle.toString("utf8")]) {
+    assert.doesNotMatch(text, /phone[ -]+wallet/i);
+    assert.ok(text.includes("Scan with your wallet, then approve the connection."));
+  }
+});

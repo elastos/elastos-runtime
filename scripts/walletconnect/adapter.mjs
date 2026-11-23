@@ -82,7 +82,7 @@ export async function connectWalletConnectEvm(options) {
   title.id = "wallet-qr-title";
   title.textContent = "Connect wallet";
   const text = document.createElement("p");
-  text.textContent = "Scan with your phone wallet, then approve the connection there.";
+  text.textContent = "Scan with your wallet, then approve the connection.";
   const canvas = document.createElement("canvas");
   const cancel = document.createElement("button");
   cancel.className = "wallet-button wallet-button-secondary";
