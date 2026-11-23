@@ -54,6 +54,15 @@ struct Pending {
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct PasskeyAddApproval {
+    ceremony_id: String,
+    actor: AuthSessionGrantV1,
+    approver: String,
+    expires_at: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Store {
     schema: String,
     methods: Vec<Method>,
@@ -61,6 +70,8 @@ struct Store {
     sessions: Vec<StoredAuthSession>,
     audit_sequence: u64,
     audit_hash: String,
+    #[serde(default)]
+    passkey_add: Vec<PasskeyAddApproval>,
 }
 impl Default for Store {
     fn default() -> Self {
@@ -71,6 +82,7 @@ impl Default for Store {
             sessions: vec![],
             audit_sequence: 0,
             audit_hash: String::new(),
+            passkey_add: vec![],
         }
     }
 }
@@ -310,6 +322,7 @@ fn mutate<T>(
     reconcile(&mut store, &auth);
     let now = now_ts();
     store.pending.retain(|p| p.expires_at > now);
+    store.passkey_add.retain(|p| p.expires_at > now);
     store.sessions.retain(|s| s.grant.expires_at > now);
     let result = f(&auth, &mut store)?;
     write(data, &store)?;
@@ -1081,6 +1094,63 @@ pub(crate) fn inactive_attempts(data: &Path) -> anyhow::Result<Vec<String>> {
         })
         .map(|p| p.id.clone())
         .collect())
+}
+
+pub(crate) fn remember_passkey_add(
+    data: &Path,
+    ceremony: &str,
+    actor: &AuthSessionGrantV1,
+    approver: &str,
+) -> anyhow::Result<()> {
+    mutate(data, |auth, store| {
+        require_actor(auth, store, actor, true)?;
+        require(auth.principals.iter().any(|p| {
+            p.principal_id == actor.principal_id
+                && p.proof_binding_id == approver
+                && active_passkey(p)
+        }))?;
+        if store.passkey_add.len() >= MAX_PENDING {
+            return Err(Capacity.into());
+        }
+        store.passkey_add.push(PasskeyAddApproval {
+            ceremony_id: ceremony.into(),
+            actor: actor.clone(),
+            approver: approver.into(),
+            expires_at: (now_ts() + TTL).min(actor.expires_at),
+        });
+        Ok(())
+    })
+}
+pub(crate) fn passkey_add_approver(
+    data: &Path,
+    ceremony: &str,
+    actor: &AuthSessionGrantV1,
+) -> anyhow::Result<PrincipalRecord> {
+    let (auth, store) = loaded(data)?;
+    require_actor(&auth, &store, actor, true)?;
+    let approval = store
+        .passkey_add
+        .iter()
+        .find(|p| {
+            p.ceremony_id == ceremony && p.expires_at > now_ts() && same_grant(&p.actor, actor)
+        })
+        .ok_or(Refused)?;
+    auth.principals
+        .into_iter()
+        .find(|p| {
+            p.proof_binding_id == approval.approver
+                && p.principal_id == actor.principal_id
+                && active_passkey(p)
+        })
+        .ok_or_else(|| Refused.into())
+}
+
+pub(crate) fn availability(data: &Path) -> anyhow::Result<(bool, bool)> {
+    let (_, store) = loaded(data)?;
+    Ok((
+        store.methods.iter().any(|m| m.sign_in_enabled),
+        has_relay_method(&store),
+    ))
 }
 
 #[cfg(test)]

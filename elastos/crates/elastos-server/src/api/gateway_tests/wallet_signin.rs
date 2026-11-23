@@ -238,9 +238,24 @@ async fn real_step_up(
     credential: &str,
     count: u32,
 ) -> String {
+    real_step_up_for_launch(
+        app, token, token, operation, request, approver, credential, count,
+    )
+    .await
+}
+async fn real_step_up_for_launch(
+    app: &Router,
+    token: &str,
+    app_token: &str,
+    operation: &str,
+    request: &Value,
+    approver: &str,
+    credential: &str,
+    count: u32,
+) -> String {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use p256::ecdsa::{signature::Signer, Signature, SigningKey};
-    let (status,begin)=call(app,"/api/auth/passkey-step-up/begin",Some(token),Some(json!({"schema":"elastos.auth.passkey-step-up.begin.request/v1","app_token":token,"operation":operation,"request":request,"approving_passkey_id":approver}))).await;
+    let (status,begin)=call(app,"/api/auth/passkey-step-up/begin",Some(token),Some(json!({"schema":"elastos.auth.passkey-step-up.begin.request/v1","app_token":app_token,"operation":operation,"request":request,"approving_passkey_id":approver}))).await;
     assert_eq!(status, StatusCode::OK, "{begin}");
     assert_eq!(
         begin["options"]["publicKey"]["allowCredentials"][0]["id"],
@@ -354,4 +369,104 @@ async fn wallet_session_guest_switch_requires_passkey_and_host_terminal_stays_wi
     // test focused on the host/System authority boundary and the safe refusal.
     assert_eq!(call(&app,"/api/auth/passkey-step-up/cancel",Some(&token),Some(json!({"schema":"elastos.auth.passkey-step-up.cancel.request/v1","ceremony_id":begin["ceremony_id"]}))).await.0,StatusCode::OK);
     assert!(!credential.is_empty());
+}
+
+fn new_passkey_response(challenge: &str, id: &[u8]) -> Value {
+    let r = crate::auth::passkey_attestation_with_id_for_test(challenge, "localhost", ORIGIN, id);
+    json!({"id":r._id,"rawId":r._raw_id,"type":r._type,"response":{"clientDataJson":r.response.client_data_json,"attestationObject":r.response.attestation_object}})
+}
+#[tokio::test]
+async fn wallet_session_add_passkey_retains_the_exact_approving_key_until_completion() {
+    let f = wallet_fixture::fixture();
+    wallet_fixture::enabled(&f);
+    let (approver, credential) = install_real_approver(
+        f.data.path(),
+        &f.actor.principal_id,
+        b"add-passkey-approver",
+    );
+    let session = wallet_fixture::signin(&f);
+    let home =
+        issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &session).unwrap();
+    let system = issue_home_projection_launch_token_with_context(
+        f.data.path(),
+        SYSTEM_CAPSULE_ID,
+        SYSTEM_CAPSULE_ID,
+        &HomeLaunchTokenContext {
+            principal_id: session.principal_id.clone(),
+            session_id: session.session_id.clone(),
+            proof_binding_id: Some(session.proof_binding_id.clone()),
+            grant_id: session.grant_id.clone(),
+        },
+    )
+    .unwrap();
+    let app = gateway_router(test_state(f.data.path()));
+    for counter in 1..=2 {
+        let approval = real_step_up_for_launch(
+            &app,
+            &home,
+            &system,
+            "auth.passkey.add",
+            &json!({"schema":"elastos.auth.passkey.add.intent/v1"}),
+            &approver,
+            &credential,
+            counter,
+        )
+        .await;
+        let (status,begin)=call(&app,"/api/auth/passkey/add/begin",Some(&home),Some(json!({"schema":"elastos.auth.passkey.add.begin.request/v1","app_token":system,"step_up_token":approval}))).await;
+        assert_eq!(status, StatusCode::OK, "{begin}");
+        if counter == 2 {
+            crate::auth::revoke_passkey_binding(f.data.path(), &approver, now_ts()).unwrap();
+        }
+        let id = if counter == 1 {
+            b"wallet-added-passkey".as_slice()
+        } else {
+            b"revoked-approver-passkey".as_slice()
+        };
+        let (status,result)=call(&app,"/api/auth/passkey/add/complete",Some(&home),Some(json!({"schema":"elastos.auth.passkey.add.complete.request/v1","app_token":system,"ceremony_id":begin["ceremony_id"],"response":new_passkey_response(begin["options"]["publicKey"]["challenge"].as_str().unwrap(),id)}))).await;
+        if counter == 1 {
+            assert_eq!(status, StatusCode::OK, "{result}");
+            let p = crate::auth::load_principal_for_proof_binding(
+                f.data.path(),
+                result["proof_binding_id"].as_str().unwrap(),
+            )
+            .unwrap();
+            assert_eq!(p.principal_id, f.actor.principal_id);
+            assert_eq!(
+                p.localhost_root,
+                crate::auth::principal_localhost_root(&f.actor.principal_id)
+            );
+        } else {
+            assert!(
+                !status.is_success(),
+                "revoked approving key granted authority: {result}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn wallet_signin_public_availability_tracks_switch_without_account_details() {
+    let f = wallet_fixture::fixture();
+    let app = gateway_router(test_state(f.data.path()));
+    assert_eq!(
+        call(&app, "/api/auth/passkey/status", None, None).await.1["wallet_signin_available"],
+        false
+    );
+    wallet_fixture::enabled(&f);
+    let (status, state) = call(&app, "/api/auth/passkey/status", None, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(state["wallet_signin_available"], true);
+    assert_eq!(state["walletconnect_signin_available"], true);
+    assert!(state.get("methods").is_none());
+    assert!(state.get("account_id").is_none());
+    assert!(state.get("address").is_none());
+}
+#[tokio::test]
+async fn wallet_method_management_accepts_trusted_opaque_system_origin() {
+    let f = wallet_fixture::fixture();
+    let token =
+        issue_home_launch_token_for_auth_grant(f.data.path(), SYSTEM_CAPSULE_ID, &f.actor).unwrap();
+    let app = gateway_router(test_state(f.data.path()));
+    let response=app.oneshot(Request::builder().uri("/api/auth/wallet-methods/begin").method("POST").header(HOST,"localhost:61180").header("origin","null").header("x-elastos-home-token",token).header(CONTENT_TYPE,"application/json").body(Body::from(json!({"action":"add","connector":"metamask","address":f.address,"chain_id":20,"browser_secret":BROWSER}).to_string())).unwrap()).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
 }

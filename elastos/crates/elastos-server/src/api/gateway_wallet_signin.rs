@@ -7,6 +7,17 @@ use serde_json::json;
 fn origin(headers: &HeaderMap) -> anyhow::Result<String> {
     Ok(crate::api::handlers::identity::derive_rp(headers)?.origin)
 }
+// Only the trusted Home/System caller can use its opaque capsule origin for
+// management. Signed-out authentication keeps the same-origin front door.
+fn management_origin(state: &GatewayState, headers: &HeaderMap) -> anyhow::Result<String> {
+    if headers.get("origin").and_then(|v| v.to_str().ok()) == Some("null") {
+        actor(state, headers)?;
+        let mut admitted = headers.clone();
+        admitted.remove("origin");
+        return origin(&admitted);
+    }
+    origin(headers)
+}
 fn actor(
     state: &GatewayState,
     headers: &HeaderMap,
@@ -90,7 +101,7 @@ pub(super) async fn method_begin(
         let (_, a) = actor(&state, &headers)?;
         let result = auth::begin(
             &home_launch_auth_data_dir(&state.data_dir),
-            &origin(&headers)?,
+            &management_origin(&state, &headers)?,
             &load_existing_gateway_runtime_did(&state.data_dir).ok_or(auth::Refused)?,
             input,
             Some(a.clone()),
@@ -116,12 +127,12 @@ pub(super) async fn method_complete(
             &home_launch_auth_data_dir(&state.data_dir),
             &input.ceremony_id,
             &input.browser_secret,
-            &origin(&headers)?,
+            &management_origin(&state, &headers)?,
             &a,
         )?;
         let result = auth::complete(
             &home_launch_auth_data_dir(&state.data_dir),
-            &origin(&headers)?,
+            &management_origin(&state, &headers)?,
             &input,
             Some(&a),
             |intent| {
@@ -232,7 +243,7 @@ pub(super) async fn select(
     headers: HeaderMap,
     Json(input): Json<Select>,
 ) -> Response {
-    response(origin(&headers).and_then(|o| {
+    response(management_origin(&state, &headers).and_then(|o| {
         auth::select(
             &home_launch_auth_data_dir(&state.data_dir),
             &input.ceremony_id,
@@ -259,7 +270,7 @@ pub(super) async fn cancel(
             &home_launch_auth_data_dir(&state.data_dir),
             &input.ceremony_id,
             &input.browser_secret,
-            &origin(&headers)?,
+            &management_origin(&state, &headers)?,
         )?;
         gateway_walletconnect::retire_attempt(&state, &input.ceremony_id).await?;
         Ok::<_, anyhow::Error>(json!({"status":"cancelled"}))

@@ -164,6 +164,8 @@ pub struct PasskeyStatusResponse {
     pub registered: bool,
     pub owner_setup_pending: bool,
     pub guest_registration_enabled: bool,
+    pub wallet_signin_available: bool,
+    pub walletconnect_signin_available: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -438,8 +440,15 @@ pub async fn passkey_status(State(state): State<GatewayState>) -> Response {
         Err(err) => return auth_error_response(err),
     };
     let manager = manager.lock().await;
+    let (wallet_signin_available, walletconnect_signin_available) =
+        crate::auth::wallet_signin::availability(&super::gateway::home_launch_auth_data_dir(
+            &state.data_dir,
+        ))
+        .unwrap_or((false, false));
     Json(PasskeyStatusResponse {
         registered: manager.status().registered,
+        wallet_signin_available,
+        walletconnect_signin_available,
         owner_setup_pending: match crate::auth::owner_setup_pending(&state.data_dir) {
             Ok(pending) => pending,
             Err(err) => return auth_error_response(err),
@@ -753,18 +762,9 @@ async fn passkey_add_begin_inner(
     if input.schema != PASSKEY_ADD_BEGIN_REQUEST_SCHEMA {
         anyhow::bail!("unsupported passkey add request schema");
     }
-    let (launch, principal) = require_passkey_add_launch(state, headers, &input.app_token)?;
+    let (launch, mut principal) = require_passkey_add_launch(state, headers, &input.app_token)?;
     let rp = super::handlers::identity::derive_rp(headers)?;
-    if principal
-        .proof_binding
-        .passkey
-        .as_ref()
-        .is_none_or(|passkey| passkey.rp_id != rp.id)
-    {
-        anyhow::bail!("passkey add relying party mismatch");
-    }
-    let proof_binding_id = principal.proof_binding_id.as_str();
-    consume_passkey_step_up_token(
+    let approving_passkey = super::gateway::consume_passkey_step_up_token_with_approver(
         &state.data_dir,
         &input.step_up_token,
         &launch,
@@ -772,6 +772,26 @@ async fn passkey_add_begin_inner(
         PASSKEY_ADD_OPERATION,
         &passkey_add_intent(),
     )?;
+    let auth_data_dir = super::gateway::home_launch_auth_data_dir(&state.data_dir);
+    if launch
+        .context
+        .proof_binding_id
+        .as_deref()
+        .is_some_and(|id| id.starts_with("proof:signin-wallet:"))
+    {
+        principal =
+            crate::auth::load_principal_for_proof_binding(&auth_data_dir, &approving_passkey)?;
+    }
+    anyhow::ensure!(
+        principal.principal_id == launch.context.principal_id
+            && principal
+                .proof_binding
+                .passkey
+                .as_ref()
+                .is_some_and(|p| p.rp_id == rp.id),
+        "passkey add relying party mismatch"
+    );
+    let proof_binding_id = principal.proof_binding_id.as_str();
     let ceremony_id = format!("passkey:add:{}", random_hex(16));
     let manager = state.identity_manager()?;
     let mut manager = manager.lock().await;
@@ -786,6 +806,24 @@ async fn passkey_add_begin_inner(
         },
         &ceremony_id,
     )?;
+    if launch
+        .context
+        .proof_binding_id
+        .as_deref()
+        .is_some_and(|id| id.starts_with("proof:signin-wallet:"))
+    {
+        let actor = crate::auth::load_active_session_grant(
+            &auth_data_dir,
+            &launch.context.session_id,
+            crate::auth::now_ts(),
+        )?;
+        crate::auth::wallet_signin::remember_passkey_add(
+            &auth_data_dir,
+            &ceremony_id,
+            &actor,
+            proof_binding_id,
+        )?;
+    }
     Ok(PasskeyBeginResponse {
         schema: "elastos.auth.passkey.add.begin/v1".into(),
         ceremony_id,
@@ -802,12 +840,31 @@ async fn passkey_add_complete_inner(
     if input.schema != PASSKEY_ADD_COMPLETE_REQUEST_SCHEMA {
         anyhow::bail!("unsupported passkey add request schema");
     }
-    let (launch, principal) = require_passkey_add_launch(state, headers, &input.app_token)?;
+    let (launch, mut principal) = require_passkey_add_launch(state, headers, &input.app_token)?;
     let rp = super::handlers::identity::derive_rp(headers)?;
+    let auth_data_dir = super::gateway::home_launch_auth_data_dir(&state.data_dir);
+    if launch
+        .context
+        .proof_binding_id
+        .as_deref()
+        .is_some_and(|id| id.starts_with("proof:signin-wallet:"))
+    {
+        let actor = crate::auth::load_active_session_grant(
+            &auth_data_dir,
+            &launch.context.session_id,
+            crate::auth::now_ts(),
+        )?;
+        principal = crate::auth::wallet_signin::passkey_add_approver(
+            &auth_data_dir,
+            &input.ceremony_id,
+            &actor,
+        )?;
+    }
+
     let manager = state.identity_manager()?;
     let mut manager = manager.lock().await;
     let added = crate::auth::complete_passkey_add(
-        &state.data_dir,
+        &auth_data_dir,
         &mut manager,
         &crate::auth::PasskeyAddClient {
             origin: &rp.origin,
@@ -1186,10 +1243,12 @@ fn account_passkey_for_context(
             .starts_with("proof:signin-wallet:"),
         "passkey account required"
     );
-    crate::auth::active_passkey_principals(&state.data_dir)?
-        .into_iter()
-        .find(|p| p.principal_id == principal.principal_id)
-        .ok_or_else(|| anyhow::anyhow!("account passkey unavailable"))
+    crate::auth::active_passkey_principals(&super::gateway::home_launch_auth_data_dir(
+        &state.data_dir,
+    ))?
+    .into_iter()
+    .find(|p| p.principal_id == principal.principal_id)
+    .ok_or_else(|| anyhow::anyhow!("account passkey unavailable"))
 }
 
 async fn passkey_revoke_inner(
@@ -3617,8 +3676,10 @@ fn require_active_principal_for_context(
         .proof_binding_id
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("missing proof-bound auth session"))?;
-    let principal =
-        crate::auth::load_principal_for_proof_binding(&state.data_dir, proof_binding_id)?;
+    let principal = crate::auth::load_principal_for_proof_binding(
+        &super::gateway::home_launch_auth_data_dir(&state.data_dir),
+        proof_binding_id,
+    )?;
     crate::auth::ensure_proof_binding_not_revoked(&principal)?;
     if principal.principal_id != context.principal_id {
         anyhow::bail!("auth session principal mismatch");

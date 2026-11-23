@@ -5581,6 +5581,27 @@ pub(super) fn require_admin_principal(
     require_admin_proof_binding(data_dir, context.proof_binding_id.as_deref())
 }
 
+/// Account role check for actions whose consumer separately requires a fresh passkey.
+pub(super) fn require_admin_signin_principal(
+    data_dir: &std::path::Path,
+    context: &HomeLaunchTokenContext,
+) -> anyhow::Result<()> {
+    let id = context
+        .proof_binding_id
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("admin sign-in required"))?;
+    let p =
+        crate::auth::load_principal_for_proof_binding(&home_launch_auth_data_dir(data_dir), id)?;
+    crate::auth::ensure_proof_binding_not_revoked(&p)?;
+    anyhow::ensure!(
+        p.principal_id == context.principal_id
+            && crate::auth::is_admin(&p)
+            && (p.proof_binding.passkey.is_some() || id.starts_with("proof:signin-wallet:")),
+        "admin sign-in required"
+    );
+    Ok(())
+}
+
 fn require_admin_proof_binding(
     data_dir: &std::path::Path,
     proof_binding_id: Option<&str>,

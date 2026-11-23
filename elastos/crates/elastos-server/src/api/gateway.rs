@@ -204,7 +204,7 @@ pub(crate) use gateway_passkey_step_up::{
 };
 pub(super) use gateway_passkey_step_up::{
     consume_or_recover_passkey_step_up_effect, consume_passkey_step_up_token,
-    require_hosted_step_up_launch,
+    consume_passkey_step_up_token_with_approver, require_hosted_step_up_launch,
 };
 #[cfg(test)]
 pub(crate) use gateway_provider_proxy::runtime_custody_publish_creator_tail_for_test;

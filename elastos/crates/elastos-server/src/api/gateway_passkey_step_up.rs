@@ -455,6 +455,24 @@ pub(in crate::api) fn consume_passkey_step_up_token(
     .map(|_| ())
 }
 
+/// Return the verified approver separately from the original sign-in session.
+pub(in crate::api) fn consume_passkey_step_up_token_with_approver(
+    data_dir: &Path,
+    token: &str,
+    launch: &RequiredHomeLaunchToken,
+    max_age_secs: u64,
+    operation: &str,
+    request: &serde_json::Value,
+) -> anyhow::Result<String> {
+    consume_passkey_step_up_token(data_dir, token, launch, max_age_secs, operation, request)?;
+    let envelope: PasskeyStepUpEnvelope =
+        serde_json::from_slice(&URL_SAFE_NO_PAD.decode(token.trim())?)?;
+    Ok(envelope
+        .payload
+        .approving_passkey_id
+        .unwrap_or(envelope.payload.proof_binding_id))
+}
+
 pub(in crate::api) fn consume_or_recover_passkey_step_up_effect(
     data_dir: &Path,
     token: &str,

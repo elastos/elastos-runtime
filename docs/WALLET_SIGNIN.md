@@ -203,5 +203,16 @@ attempts that have yet to select an address.
 For wallet sessions, `/api/apps/system/access/guest-registration` requires a
 fresh passkey token in `x-elastos-step-up-token`, operation
 `auth.account.guest-registration`, request `{"enabled":true}` or false as sent.
-Host controls, including the host terminal, require a passkey session. Profile
+Host terminal and host audit controls require a passkey session. Update approvals
+use the existing fresh passkey step-up flow from either sign-in session. Profile
 and Library account access accept the Runtime-verified wallet account binding.
+
+System can call management routes from its opaque capsule origin with its verified
+System launch header. Home owns WebAuthn and receives the System launch plus the
+returned approval intent through the existing approval bridge. Public signed-out
+sign-in keeps the same-origin Home boundary; other capsules receive a refusal.
+
+`GET /api/auth/passkey/status` adds `wallet_signin_available` and
+`walletconnect_signin_available`. Home uses them to show the wallet choice and its
+compatible relay option. These booleans reveal availability; account names,
+addresses and method IDs remain in the authenticated account list.

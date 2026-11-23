@@ -253,7 +253,7 @@ pub(super) async fn answer(
                 if c.status != if stopping { "granted" } else { "requested" } {
                     return Err(ConsentConflict.into());
                 }
-                consume_passkey_step_up_token(
+                let approving_passkey = consume_passkey_step_up_token_with_approver(
                     &state.data_dir,
                     token.unwrap_or_default(),
                     launch,
@@ -271,7 +271,7 @@ pub(super) async fn answer(
                 c.status = if stopping { "revoked" } else { "granted" }.into();
                 c.cleanup_pending = stopping;
                 c.principal = Some(launch.context.principal_id.clone());
-                c.proof = launch.context.proof_binding_id.clone();
+                c.proof = Some(approving_passkey);
                 if !stopping {
                     let capability = state.browser_internet.capability_manager()?.grant(
                         &launch.context.principal_id,
