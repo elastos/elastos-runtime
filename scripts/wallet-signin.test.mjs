@@ -7,7 +7,7 @@ afterEach(async()=>{await Promise.all([...activeFlows].map(flow=>flow.cancel()))
 
 const method = {method_id:'wallet:one',connector:'metamask',address:'0x'+'12'.repeat(20),chain_id:20,network:'',sign_in_enabled:false};
 function fixture({lost=false}={}) {
-  const calls=[], states=[]; let completeCalls=0,lastAction;
+  const calls=[], states=[]; let completeCalls=0,lastAction,notifyChange;
   const flow=createWalletSigninFlow({
     randomSecret:()=> 'a'.repeat(64),
     api:async(path,body)=>{
@@ -16,11 +16,11 @@ function fixture({lost=false}={}) {
       if(path.endsWith('/complete')) { if(lost && completeCalls++===0) throw new TypeError('lost reply'); return {status:lastAction==='remove'?'removed':'complete',method_id:method.method_id,sign_in_enabled:lastAction==='enable'}; }
       return {};
     },
-    select:async()=>({...method,check:async()=>{},sign:async message=>{calls.push({sign:message});return {signature:'proof',signature_type:'personal_sign',public_key:''};},close(){}}),
+    select:async(_connector,options)=>{notifyChange=options.changed;return {...method,check:async()=>{},sign:async message=>{calls.push({sign:message});return {signature:'proof',signature_type:'personal_sign',public_key:''};},close(){}};},
     approve:async approval=>{calls.push({approve:approval});return 'step-up';},
     render:state=>states.push(state),
   });
-  return {flow,calls,states};
+  return {flow,calls,states,change:code=>notifyChange?.(code)};
 }
 test('enable reviews before signature, then requests exact passkey approval',async()=>{
   const f=fixture();await f.flow.start({action:'enable',method,account:'Alex'});
@@ -141,4 +141,11 @@ test('Bitcoin method selection keeps address case while EVM accepts checksum cas
 test('wallet sign-in uses HTTPS outside numeric loopback and localhost',()=>{
   for(const origin of ['https://home.example','http://localhost:8090','http://127.0.0.1:8090','http://127.42.0.1:8090','http://[::1]:8090'])assert(walletSigninOriginAllowed(origin),origin);
   for(const origin of ['http://home.example','http://127.example','http://192.168.1.2:8090'])assert.equal(walletSigninOriginAllowed(origin),false,origin);
+});
+
+test('an account change after dispatch keeps the uncertain result retryable',async()=>{
+  const f=fixture({lost:true});await f.flow.start({action:'enable',method});await f.flow.confirm();await f.flow.approve();
+  assert.equal(f.states.at(-1).stage,'unknown');f.change('changed');assert.equal(f.states.at(-1).stage,'unknown');await f.flow.retry();
+  assert.equal(f.states.at(-1).stage,'done');
+  const sent=f.calls.filter(c=>c.path?.endsWith('/complete'));assert.deepEqual(sent[0].body,sent[1].body);assert.equal(f.calls.filter(c=>c.sign).length,1);
 });

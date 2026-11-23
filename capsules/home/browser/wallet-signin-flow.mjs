@@ -74,7 +74,12 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
           signal:current.controller.signal,transport,
           pairing:pairing=>{if(live(current))show('pairing',{pairing});},
           choices:choices=>{if(live(current))show('wallet-choice',{choices});},
-          changed:(code='changed')=>{if(live(current)){show('error',{message:walletSigninError(fault(code),state.action)});run=null;clearTimeout(timer);void clear(current);}},
+          changed:(code='changed')=>{
+            if(!live(current))return;
+            // A dispatched proof may already be committed. Keep its exact retry body.
+            if(current.completion){current.wallet?.close?.();current.wallet=null;return;}
+            show('error',{message:walletSigninError(fault(code),state.action)});run=null;clearTimeout(timer);void clear(current);
+          },
         });
         assertLive(current);
         const wallet=current.wallet;
@@ -156,6 +161,10 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
       try {
         assertLive(current);show('passkey');
         const step_up_token=await approve(current.ceremony.approval,{signal:current.controller.signal});assertLive(current);
+        if(current.wallet) {
+          try {await current.wallet.check();assertLive(current);}
+          catch(error){fail(current,error);return;}
+        }
         current.completion=JSON.stringify({ceremony_id:current.ceremony.ceremony_id,browser_secret:current.secret,...current.proof,step_up_token});
         await complete(current);
       } catch(error) {
