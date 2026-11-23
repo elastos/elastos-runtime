@@ -86,3 +86,22 @@ for (const reason of ['expiry','permission']) test(`pairing closes with its ${re
     assert.equal(removed,1);assert.equal(closed,1);assert.equal(aborted,1);
   } finally {delete globalThis.document;delete globalThis.walletConnectSdkFixture;}
 });
+
+test('authentication-only pairing proposes personal_sign while payment pairing keeps transactions', async () => {
+  const {restoreWalletConnectEvm,disconnectWalletConnectEvm}=await import('./walletconnect/adapter.mjs');
+  let proposed;
+  globalThis.walletConnectSdkFixture=async options=>{
+    proposed=options;
+    return {connected:true,session:{expiry:Date.now()/1000+600},disconnect:async()=>{},
+      signer:{client:{core:{relayer:{connected:true,transportClose:async()=>{}}}}}};
+  };
+  try {
+    for(const authenticationOnly of [true,false]) {
+      const api=async()=>({});
+      await restoreWalletConnectEvm({contextKey:`methods-${authenticationOnly}`,chains:[20,8453],authenticationOnly,api});
+      assert.deepEqual(proposed.methods,authenticationOnly?['personal_sign']:['personal_sign','eth_sendTransaction']);
+      assert.deepEqual(proposed.optionalMethods,[]);
+      await disconnectWalletConnectEvm({api});
+    }
+  } finally {delete globalThis.walletConnectSdkFixture;}
+});

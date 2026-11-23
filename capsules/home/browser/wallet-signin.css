@@ -13,6 +13,7 @@
   background: var(--el-accent); color: var(--el-accent-ink); margin: 10px 0; }
 .signin-secondary { background: var(--el-inset); color: var(--el-text); }
 .signin-button small { display: block; font-size: 12px; font-weight: 400; color: var(--el-muted); }
+.signin-button:disabled { cursor: default; opacity: .65; }
 .signin-button:focus-visible, .signin-dialog summary:focus-visible { outline: 3px solid var(--el-focus); outline-offset: 2px; }
 .signin-details { padding: 14px; background: var(--el-inset); border-radius: var(--el-radius-md); }
 .signin-details div + div { margin-top: 12px; }

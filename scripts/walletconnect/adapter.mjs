@@ -40,7 +40,7 @@ export async function restoreWalletConnectEvm(options) {
     customStoragePrefix: options.contextKey,
     chains: [],
     optionalChains: options.chains,
-    methods: ["personal_sign", "eth_sendTransaction"],
+    methods: options.authenticationOnly ? ["personal_sign"] : ["personal_sign", "eth_sendTransaction"],
     optionalMethods: [],
     disableProviderPing: true,
     events: ["accountsChanged", "chainChanged"],

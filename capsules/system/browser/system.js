@@ -42,6 +42,7 @@ let walletSigninMethods = {account_id:"", methods:[]};
 const walletAddButton = document.querySelector("#wallet-signin-add");
 const passkeyAddButton = document.querySelector("#passkey-add");
 const passkeyRemoveDialog = document.querySelector("#passkey-remove-dialog");
+const LAST_ACCOUNT_PASSKEY_REMOVAL_MESSAGE = "Keep a passkey on this account, or choose Remove account.";
 const LAST_ADMIN_PASSKEY_REMOVAL_MESSAGE = "Add another admin passkey before removing this one.";
 const recoveryDownloadButton = document.querySelector("#recovery-download");
 const recoveryProfileSetup = document.querySelector("#recovery-profile-setup");
@@ -141,6 +142,7 @@ let accentCustomWriteTimer = 0;
 let deviceDidValue = "";
 let deviceDidCopyTimer = 0;
 let systemSummaryInFlight = null;
+let currentProofBindingId = "";
 let runtimeUpdate;
 let runtimeUpdatePending = null;
 let runtimeUpdateBusy = false;
@@ -2585,7 +2587,6 @@ function renderAccounts(accounts) {
       adminPasskeyCount,
       adminAccountCount,
       currentPrincipalId,
-      ownPasskeyCount:activeAccounts.filter(row => row.principal_id === currentPrincipalId).length,
       accountPasskeyCount:activeAccounts.filter(row => row.principal_id === account.principal_id).length,
     }));
   }
@@ -2681,24 +2682,34 @@ function accountRow(passkey, listState = {}) {
   remove.dataset.passkeyRevoke = passkey.proof_binding_id || "";
   remove.dataset.current = passkey.current ? "true" : "false";
   remove.dataset.accountName = readText(passkey.display_name);
-  remove.dataset.lastPasskey = Number(listState.accountPasskeyCount) === 1 ? "true" : "false";
+  remove.dataset.accountId = readText(passkey.principal_id);
   remove.dataset.ownAccount = passkey.current || ownAccount ? "true" : "false";
   const protectsLastAdmin = readText(passkey.role) === "admin"
     && Number(listState.adminPasskeyCount) <= 1;
   remove.disabled = !remove.dataset.passkeyRevoke || !hasShellAccess() || protectsLastAdmin;
-  const protectsLastMethod = ownAccount && Number(listState.ownPasskeyCount) <= 1
-    && !walletSigninMethods.methods.some(method => method.sign_in_enabled);
-  if (protectsLastMethod) remove.disabled = true;
-  if (protectsLastAdmin || protectsLastMethod) {
+  const protectsLastPasskey = Number(listState.accountPasskeyCount) <= 1;
+  if (protectsLastPasskey) remove.disabled = true;
+  if (protectsLastAdmin || protectsLastPasskey) {
     const explanation = document.createElement("p");
     explanation.className = "passkey-removal-note";
     explanation.id = `passkey-removal-${passkey.proof_binding_id}`;
-    explanation.textContent = protectsLastAdmin ? LAST_ADMIN_PASSKEY_REMOVAL_MESSAGE : "Keep at least one sign-in method for this account.";
+    explanation.textContent = protectsLastAdmin ? LAST_ADMIN_PASSKEY_REMOVAL_MESSAGE : LAST_ACCOUNT_PASSKEY_REMOVAL_MESSAGE;
     nameWrap.append(explanation);
     remove.title = explanation.textContent;
     remove.setAttribute("aria-describedby", explanation.id);
   }
   actions.append(remove);
+  if (protectsLastPasskey && (ownAccount || canManagePasskeyRoles)) {
+    const removeAccount = document.createElement("button");
+    removeAccount.className = "system-button system-button-secondary account-remove";
+    removeAccount.type = "button";
+    removeAccount.textContent = "Remove account";
+    Object.assign(removeAccount.dataset, remove.dataset, { passkeyAccountRemove: remove.dataset.passkeyRevoke });
+    delete removeAccount.dataset.passkeyRevoke;
+    removeAccount.disabled = !removeAccount.dataset.passkeyAccountRemove || !hasShellAccess() || protectsLastAdmin;
+    if (protectsLastAdmin) removeAccount.title = LAST_ADMIN_PASSKEY_REMOVAL_MESSAGE;
+    actions.append(removeAccount);
+  }
 
   const actionsCell = accountCell("Actions", "account-actions-cell");
   actionsCell.append(actions);
@@ -2735,14 +2746,16 @@ async function onAccountListClick(event) {
     "[data-passkey-promote]",
     "[data-passkey-demote]",
     "[data-passkey-revoke]",
+    "[data-passkey-account-remove]",
   ].join(", "));
   if (!button || button.disabled || !hasShellAccess() || passkeyRemoveDialog.open) {
     return;
   }
   const promote = Boolean(button.dataset.passkeyPromote);
   const demote = Boolean(button.dataset.passkeyDemote);
+  const removeAccount = Boolean(button.dataset.passkeyAccountRemove);
   let action = "revoke";
-  let proofBindingId = readText(button.dataset.passkeyRevoke);
+  let proofBindingId = readText(button.dataset.passkeyRevoke || button.dataset.passkeyAccountRemove);
   if (promote) {
     action = "promote-admin";
     proofBindingId = readText(button.dataset.passkeyPromote);
@@ -2753,17 +2766,26 @@ async function onAccountListClick(event) {
   if (!proofBindingId) {
     return;
   }
-  const revokingCurrent = button.dataset.current === "true";
+  const revokingCurrent = button.dataset.current === "true" || removeAccount && button.dataset.ownAccount === "true";
   try {
     if (!promote && !demote && !await confirmPasskeyRemoval(button)) {
       button.focus();
       return;
     }
     button.disabled = true;
+    showPasskeyStatus("Confirm with your passkey.", "muted");
+    const request = removeAccount
+      ? { proof_binding_id: proofBindingId, account_id: button.dataset.accountId, remove_account: true }
+      : { proof_binding_id: proofBindingId };
+    const operation = promote ? "auth.account.promote" : demote ? "auth.account.demote"
+      : removeAccount ? "auth.account.remove" : "auth.passkey.remove";
+    const stepUpToken = removeAccount || !currentProofBindingId.startsWith("proof:passkey:")
+      ? await requestPasskeyStepUp(operation, request) : "";
     showPasskeyStatus(promote || demote ? "Updating" : "Removing", "muted");
     await fetchJson(`/api/auth/passkeys/${encodeURIComponent(proofBindingId)}/${action}`, {
       method: "POST",
-      headers: shellHeaders(),
+      headers: shellHeaders({ "content-type": "application/json", ...(stepUpToken ? { "x-elastos-step-up-token": stepUpToken } : {}) }),
+      body: JSON.stringify(removeAccount ? { account_id: request.account_id, remove_account: true } : {}),
     });
     if (!promote && revokingCurrent) {
       apiHomeToken = "";
@@ -2775,9 +2797,9 @@ async function onAccountListClick(event) {
     }
     notifyHomeSummaryChanged();
   } catch (error) {
-    const lastAdminRefusal = !promote && !demote && error.status === 409
-      && error.detail === LAST_ADMIN_PASSKEY_REMOVAL_MESSAGE;
-    showPasskeyStatus(String(lastAdminRefusal ? error.detail : error.message || error), "error");
+    const removalRefusal = !promote && !demote && error.status === 409
+      && [LAST_ADMIN_PASSKEY_REMOVAL_MESSAGE, LAST_ACCOUNT_PASSKEY_REMOVAL_MESSAGE].includes(error.detail);
+    showPasskeyStatus(String(removalRefusal ? error.detail : error.message || error), "error");
     button.disabled = false;
     if (error.status === 409) {
       try {
@@ -2791,16 +2813,21 @@ async function onAccountListClick(event) {
 
 function confirmPasskeyRemoval(button) {
   const ownAccount = button.dataset.ownAccount === "true";
+  const removeAccount = Boolean(button.dataset.passkeyAccountRemove);
   const accountName = readText(button.dataset.accountName);
+  const item = removeAccount ? "account" : "passkey";
+  passkeyRemoveDialog.querySelector('#passkey-remove-title').textContent = removeAccount ? "Remove account?" : "Remove passkey?";
+  passkeyRemoveDialog.querySelector('button[value="remove"]').textContent = removeAccount ? "Remove account" : "Remove passkey";
   passkeyRemoveDialog.querySelector('[data-field="passkey-remove-person"]').textContent =
-    ownAccount ? "Remove your passkey from this Home?"
-      : accountName ? `Remove the passkey for ${accountName} from this Home?`
-        : "Remove this passkey from this Home?";
+    ownAccount ? `Remove your ${item} from this Home?`
+      : accountName ? `Remove the ${item} for ${accountName} from this Home?`
+        : `Remove this ${item} from this Home?`;
   const walletNote = passkeyRemoveDialog.querySelector('[data-field="passkey-remove-wallets"]');
-  walletNote.hidden = button.dataset.lastPasskey !== "true";
-  walletNote.textContent = "This is the account's last passkey. Home will also clear its wallet sign-in access.";
+  walletNote.hidden = !removeAccount;
+  walletNote.textContent = "Home will remove this account’s passkeys and wallet sign-in access. All windows signed in to this account will be signed out.";
   const currentNote = passkeyRemoveDialog.querySelector('[data-field="passkey-remove-current"]');
-  currentNote.hidden = button.dataset.current !== "true";
+  currentNote.hidden = removeAccount || button.dataset.current !== "true";
+  passkeyRemoveDialog.querySelector('[data-field="passkey-remove-sessions"]').hidden = removeAccount;
   passkeyRemoveDialog.querySelector('[data-field="passkey-remove-copy"]').textContent =
     ownAccount
       ? "If a copy remains on your device, security key or in your password manager, you can delete it there."
@@ -3788,6 +3815,7 @@ function passkeyRoleLabel(role) {
 
 function setPasskeyAuthority(authority) {
   const proofBinding = readText(authority && authority.proof_binding_id);
+  currentProofBindingId = proofBinding;
   if (!proofBinding || !proofBinding.startsWith("proof:passkey:")) {
     return;
   }

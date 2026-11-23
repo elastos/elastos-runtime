@@ -60,9 +60,16 @@ async function exercise(engine,width) {
     await page.goto(fixture.origin+'/home/'+(scenario==='unsupported-browser'?'?no-passkeys=1':''),{waitUntil:'domcontentloaded'});await page.waitForFunction(()=>window.fixtureReady);
     await page.evaluate(()=>document.documentElement.dataset.elTheme='light');
   }
-  async function start(connector='metamask') {
+  async function internetNotice(name) {
+    await state('internet-notice');
+    await page.getByText('Home reaches your wallet over the internet through WalletConnect.',{exact:false}).waitFor();
+    if(name)await capture(name);
+    await page.locator('.signin-dialog').getByRole('button',{name:'Continue',exact:true}).click();
+  }
+  async function start(connector='metamask',noticeName) {
     await page.locator('[data-home-wallet-signin]:visible').click();await state('choice');
     await page.locator('.signin-dialog').getByRole('button',{name:({metamask:'MetaMask',unisat:'UniSat',walletconnect:'WalletConnect'})[connector],exact:connector!=='metamask'}).click();
+    if(connector==='walletconnect')await internetNotice(noticeName);
   }
   async function cancel(){await page.locator('.signin-dialog').getByRole('button',{name:'Cancel',exact:true}).click();await page.locator('.signin-dialog').waitFor({state:'detached'});}
   async function pair(){const frame=page.frames().find(frame=>frame.url().includes('signin-transport.html'));assert(frame);await page.evaluate(()=>{const f=document.querySelector('iframe[title=WalletConnect]');f.contentWindow.postMessage('fixture-pair','*');});await state('review');}
@@ -87,14 +94,14 @@ async function exercise(engine,width) {
     await home({scenario:'unsupported-browser'});await page.locator('#home-unlock-status').filter({hasText:'Passkeys are not available in this browser.'}).waitFor();await capture('passkeys-unavailable');
     await start();await state('review');await page.locator('.signin-dialog').getByRole('button',{name:'Sign in with wallet',exact:true}).click();await page.waitForFunction(()=>window.openedPrincipal==='principal:alex');fixture.state.calls=[];
     for(const connector of ['metamask','unisat','walletconnect']) {
-      await home();await start(connector);
+      await home();await start(connector,connector==='walletconnect'?'walletconnect-internet-notice':undefined);
       if(connector==='walletconnect') {
         await state('pairing');await capture('walletconnect-pairing');
         await page.locator('.signin-dialog').getByRole('button',{name:'Copy link',exact:true}).click();await page.getByText('Link copied.',{exact:true}).waitFor();await capture('walletconnect-link-copied');
         await page.evaluate(()=>window.walletFixture.copyFailed=true);await page.locator('.signin-dialog').getByRole('button',{name:'Copy link',exact:true}).click();await page.getByText('Could not copy. Try again.',{exact:true}).waitFor();await capture('walletconnect-copy-failed');
         await pair();
       }
-      await state('review');assert.equal(await page.locator('.signin-dialog').getByText('Confirm this wallet sign-in method change with your passkey.',{exact:true}).count(),0);await capture(`${connector}-signin-review`);
+      await state('review');await page.getByText('Continue only if you started this sign-in in this browser.',{exact:true}).waitFor();assert.equal(await page.locator('.signin-dialog').getByText('Confirm this wallet sign-in method change with your passkey.',{exact:true}).count(),0);await capture(`${connector}-signin-review`);
       assert.equal(fixture.state.calls.filter(c=>c.path.endsWith('/signin/complete')).length,0,'no completion before review');
       await page.locator('.signin-dialog').getByRole('button',{name:'Sign in with wallet',exact:true}).click();
       await page.waitForFunction(()=>window.openedPrincipal==='principal:alex');assert.equal(await page.evaluate(()=>window.openedFlow.walletSignin),true);assert(!fixture.state.calls.some(c=>c.path.startsWith('/api/auth/passkey-step-up/')),'Wallet sign-in opens without passkey approval');
@@ -106,6 +113,17 @@ async function exercise(engine,width) {
       checks.push(`${engine}/${width} ${connector}: same account opens directly`);
       fixture.state.calls=[];
     }
+    for(const methods of [[],[sampleMethod('unisat',true)],[{...sampleMethod('metamask',true),chain_id:1}],[sampleMethod('walletconnect',false)]]) {
+      await home({methods});await page.locator('[data-home-wallet-signin]:visible').click();await state('choice');
+      const choice=page.locator('.signin-dialog').getByRole('button',{name:'WalletConnect',exact:false});
+      await page.getByText('Add a wallet for Elastos Smart Chain or Base and turn Sign in on first.',{exact:true}).waitFor();assert(await choice.isDisabled());
+      if(methods.length===0)await capture('walletconnect-needs-enabled-wallet');await cancel();
+    }
+    await home();await page.locator('[data-home-wallet-signin]:visible').click();await state('choice');
+    const beforeNotice=fixture.state.calls.filter(c=>c.path.endsWith('/signin/begin')).length;
+    await page.locator('.signin-dialog').getByRole('button',{name:'WalletConnect',exact:true}).click();await state('internet-notice');await cancel();
+    assert.equal(fixture.state.calls.filter(c=>c.path.endsWith('/signin/begin')).length,beforeNotice,'Cancel before internet consent starts no pairing');
+    checks.push(`${engine}/${width}: WalletConnect requires compatible enabled method and internet consent`);
     await home();await page.evaluate(()=>window.walletFixture.openFailed=true);await start();await state('review');await page.locator('.signin-dialog').getByRole('button',{name:'Sign in with wallet',exact:true}).click();
     await page.locator('#home-unlock-face-status').filter({hasText:'Home could not open after sign-in. Reload this page.'}).waitFor();await capture('home-open-failed');
     for(const scenario of ['missing','rejected','changed','busy','offline','refused','unknown','expired','pending','account-choice','disabled','unadded']) {
@@ -164,7 +182,9 @@ async function exercise(engine,width) {
     await state('error');await capture('walletconnect-account-changed');await cancel();
     await home();await start('walletconnect');await state('pairing');await cancel();
     assert.equal(await page.locator('iframe[title=WalletConnect]').count(),0,'Cancel removes the temporary SDK document');
-    await home();fixture.state.methods=[sampleMethod('metamask',false)];await page.evaluate(()=>window.showFixtureApps());
+    await home();await start();await state('review');await page.locator('.signin-dialog').getByRole('button',{name:'Sign in with wallet',exact:true}).click();await page.waitForFunction(()=>window.openedPrincipal==='principal:alex');
+    assert.equal(fixture.state.walletSession,true,'System journey starts from a wallet session');
+    fixture.state.methods=[sampleMethod('metamask',false)];await page.evaluate(()=>window.showFixtureApps());
     const system=page.frameLocator('iframe[title=system]');
     await system.getByRole('button',{name:'Add wallet',exact:true}).waitFor();
     await system.locator('[data-wallet-method]').waitFor();await capture('system-methods',await page.frames().find(f=>f.url().includes('/apps/system/')));
@@ -189,10 +209,12 @@ async function exercise(engine,width) {
     assert(await wallet.locator('[data-wallet-method="payment:payment:one"] [role=switch]').isDisabled());await wallet.locator('#wallet-signin-methods').scrollIntoViewIfNeeded();await capture('wallet-payment-only');
     await page.locator('#show-system').click();
     for(const connector of ['metamask','unisat','walletconnect']) {
+      const publicBegins=fixture.state.calls.filter(c=>c.path==='/api/auth/wallet/signin/begin').length;
       await system.getByRole('button',{name:'Add wallet',exact:true}).click();await state('choice');await capture(`add-${connector}-choice`);
       await page.locator('.signin-dialog').getByRole('button',{name:({metamask:'MetaMask',unisat:'UniSat',walletconnect:'WalletConnect'})[connector],exact:connector!=='metamask'}).click();
-      if(connector==='walletconnect'){await state('pairing');await pair();}
+      if(connector==='walletconnect'){await internetNotice();await state('pairing');await pair();}
       await state('review');await capture(`add-${connector}-review`);await page.locator('.signin-dialog').getByRole('button',{name:'Sign message',exact:true}).click();await state('approval');await page.locator('.signin-dialog').getByRole('button',{name:'Use passkey',exact:true}).click();await state('done');await capture(`add-${connector}-done`);await page.locator('.signin-dialog').getByRole('button',{name:'Done',exact:true}).click();
+      assert.equal(fixture.state.calls.filter(c=>c.path==='/api/auth/wallet/signin/begin').length,publicBegins,'Add uses signed-in pairing only');
       assert.equal(fixture.state.methods.find(m=>m.connector===connector).sign_in_enabled,false,'added wallet defaults off');
       assert.equal(fixture.state.methods.find(m=>m.connector===connector).last_used_at,null,'new method has never signed in');
       await system.locator(`[data-wallet-method="wallet:${connector}"]`).getByText('Not used yet',{exact:true}).waitFor();
@@ -200,7 +222,7 @@ async function exercise(engine,width) {
     for(const connector of ['unisat','walletconnect']) {
       const row=system.locator(`[data-wallet-method="wallet:${connector}"]`);
       await row.getByRole('switch').click();
-      if(connector==='walletconnect'){await state('pairing');await pair();}
+      if(connector==='walletconnect'){await internetNotice();await state('pairing');await pair();}
       await state('review');await capture(`${connector}-enable-review`);
       await page.locator('.signin-dialog').getByRole('button',{name:'Sign message',exact:true}).click();await state('approval');await capture(`${connector}-enable-approval`);
       await page.locator('.signin-dialog').getByRole('button',{name:'Use passkey',exact:true}).click();await state('done');await capture(`${connector}-enable-done`);await page.locator('.signin-dialog').getByRole('button',{name:'Done',exact:true}).click();
@@ -240,26 +262,56 @@ async function exercise(engine,width) {
     await system.locator('[data-wallet-method="wallet:metamask"] [role=switch][aria-checked=false]').waitFor();
     await system.getByRole('button',{name:'Add wallet',exact:true}).click();await state('choice');await page.locator('.signin-dialog').getByRole('button',{name:'MetaMask',exact:false}).click();await state('error');await capture('add-already-added');
     await page.locator('.signin-dialog').getByRole('button',{name:'Refresh',exact:true}).click();await page.locator('.signin-dialog').waitFor({state:'detached'});await system.locator('[data-wallet-method="wallet:metamask"]').waitFor();
+    fixture.state.passkeyCount=2;
+    await page.evaluate(()=>document.querySelector('iframe[title=system]').contentWindow.postMessage({type:'home:wallet-signin-changed'},'*'));
+    const passkeyRemovals=()=>fixture.state.calls.filter(c=>/\/passkeys\/.*\/revoke$/.test(c.path));
+    const beforeRemoval=passkeyRemovals().length;
+    for(const mode of ['cancelled','normal']) {
+      await system.locator('[data-passkey-revoke="passkey:1"]').click();
+      await page.evaluate(mode=>window.walletFixture.passkeyMode=mode,mode);
+      await system.locator('#passkey-remove-dialog').getByRole('button',{name:'Remove passkey',exact:true}).click();
+      if(mode==='cancelled') {await system.getByText('Passkey verification failed.',{exact:true}).waitFor();assert.equal(passkeyRemovals().length,beforeRemoval);}
+      else {await system.getByText('Removed',{exact:true}).waitFor();assert.equal(passkeyRemovals().length,beforeRemoval+1);}
+    }
+    const passkeyApproval=fixture.state.calls.filter(c=>c.path==='/api/auth/passkey-step-up/begin').at(-1);
+    assert.equal(passkeyApproval.body.operation,'auth.passkey.remove');assert.deepEqual(passkeyApproval.body.request,{proof_binding_id:'passkey:1'});
+    assert(passkeyRemovals().at(-1).headers['x-elastos-step-up-token']);assert.equal(fixture.state.passkeyCount,1);
     fixture.state.otherAdmin=true;
     await page.evaluate(()=>document.querySelector('iframe[title=system]').contentWindow.postMessage({type:'home:wallet-signin-changed'},'*'));
     await system.getByText('Morgan',{exact:true}).waitFor();
-    await system.locator('[data-passkey-revoke="passkey:other"]').click();
-    await system.getByText("This is the account's last passkey. Home will also clear its wallet sign-in access.",{exact:true}).waitFor();await capture('last-passkey-review');
+    assert(await system.locator('[data-passkey-revoke="passkey:other"]').isDisabled(),'every account keeps its final passkey');
+    await system.getByText('Keep a passkey on this account, or choose Remove account.',{exact:true}).first().waitFor();
+    await system.locator('[data-passkey-account-remove="passkey:other"]').click();
+    await system.getByText('Home will remove this account’s passkeys and wallet sign-in access. All windows signed in to this account will be signed out.',{exact:true}).waitFor();await capture('last-passkey-review');
     await system.locator('#passkey-remove-dialog').getByRole('button',{name:'Cancel',exact:true}).click();fixture.state.otherAdmin=false;
+    fixture.state.otherAdmin=true;
+    for(const [label,operation]of [['Make guest','auth.account.demote'],['Make admin','auth.account.promote']]) {
+      await page.evaluate(()=>document.querySelector('iframe[title=system]').contentWindow.postMessage({type:'home:wallet-signin-changed'},'*'));
+      await system.getByRole('button',{name:label,exact:true}).click();await system.getByText('Updated',{exact:true}).waitFor();
+      const approval=fixture.state.calls.filter(c=>c.path==='/api/auth/passkey-step-up/begin').at(-1);
+      assert.equal(approval.body.operation,operation);assert.deepEqual(approval.body.request,{proof_binding_id:'passkey:other'});
+    }
+    await system.locator('[data-passkey-account-remove="passkey:other"]').click();
+    await system.locator('#passkey-remove-dialog').getByRole('button',{name:'Remove account',exact:true}).click();
+    await system.getByText('Removed',{exact:true}).waitFor();
+    const accountRemoval=fixture.state.calls.filter(c=>c.path.endsWith('/passkey%3Aother/revoke')).at(-1);
+    assert.deepEqual(accountRemoval.body,{account_id:'principal:morgan',remove_account:true});assert(accountRemoval.headers['x-elastos-step-up-token']);
+    assert(!fixture.state.otherAdmin);checks.push(`${engine}/${width}: wallet session approves exact role and account removal requests`);
     fixture.state.scenario='passkeys-load-failed';await page.evaluate(()=>document.querySelector('iframe[title=system]').contentWindow.postMessage({type:'home:wallet-signin-changed'},'*'));
     await system.getByText('Home could not load sign-in methods.',{exact:true}).waitFor();await capture('system-passkeys-load-failed');
     fixture.state.scenario='normal';await system.locator('#account-list').getByRole('button',{name:'Try again',exact:true}).click();await system.getByText('Safari on Mac',{exact:false}).waitFor();await capture('system-reloaded');
     fixture.state.scenario='load-failed';await page.evaluate(()=>{for(const f of document.querySelectorAll('#fixture-desktop iframe'))f.contentWindow.postMessage({type:'home:wallet-signin-changed'},'*');});await system.getByText('Home could not load wallet sign-in methods.',{exact:true}).waitFor();await capture('system-load-failed');
-    fixture.state.role='guest';await home({methods:[sampleMethod('metamask',false)]});await page.evaluate(()=>window.showFixtureApps());
+    fixture.state.role='guest';await home({methods:[sampleMethod('metamask',true)]});await page.evaluate(()=>window.showFixtureApps());
     const guestSystem=page.frameLocator('iframe[title=system]');await guestSystem.locator('[data-wallet-method] [role=switch]').waitFor();
     assert(await guestSystem.locator('[data-wallet-method] [role=switch]').isDisabled());assert.equal(await guestSystem.getByRole('button',{name:'Add wallet',exact:true}).count(),0);
-    await guestSystem.getByText('Keep at least one sign-in method for this account.',{exact:true}).waitFor();await capture('system-guest-last-method');
+    assert(await guestSystem.locator('[data-passkey-revoke="passkey:0"]').isDisabled(),'an enabled wallet keeps the final-passkey protection');
+    await guestSystem.getByText('Keep a passkey on this account, or choose Remove account.',{exact:true}).waitFor();await capture('system-guest-last-method');
     await page.locator('#show-wallet').click();const guestWallet=page.frameLocator('iframe[title=wallet]');await guestWallet.locator('#wallet-signin-methods [role=switch]').waitFor();assert(await guestWallet.locator('#wallet-signin-methods [role=switch]').isDisabled());await guestWallet.locator('#wallet-signin-methods').scrollIntoViewIfNeeded();await capture('wallet-guest');
     checks.push(`${engine}/${width}: Guest controls and last sign-in method protected`);
     assert.deepEqual(outside,[],'all traffic uses fixture Runtime');
     assert.deepEqual(errors,[],'no page errors');
     const signerPaths=fixture.state.calls.filter(c=>c.path.startsWith('/api/auth/wallet-methods'));
-    assert(signerPaths.every(c=>c.headers.authorization?.startsWith('Bearer ')),'method routes carry launch authorization');
+    assert(signerPaths.every(c=>c.headers['x-elastos-home-token']&&!c.headers.authorization),'method routes carry only the Home token header');
     const transports=fixture.state.calls.filter(c=>c.path.startsWith('/api/apps/wallet-walletconnect/'));
     assert(transports.length>0);assert(transports.every(c=>c.headers['x-elastos-wallet-attempt']?.startsWith('fixture-attempt:')&&c.headers['x-elastos-wallet-instance']&&c.headers['if-match']==='"0"'),'temporary connector and revision headers');
     assert(!fixture.state.calls.some(c=>c.path.startsWith('/api/auth/wallet-methods')&&c.headers['x-elastos-home-token']==='fixture-wallet'),'Wallet uses Home authority for methods');
@@ -275,7 +327,7 @@ try {
   passed=true;
 } finally {
   const sources={};
-  for(const file of ['capsules/home/browser/home-clipboard-host.js','capsules/home/browser/home-clipboard-protocol.js','scripts/lib/wallet-signin-fixture.mjs','scripts/wallet-signin-browser-smoke.mjs','capsules/home/browser/index.html','capsules/home/browser/shell-core.js','capsules/home/browser/home-shell-host.js','capsules/system/browser/index.html','capsules/wallet/browser/index.html','capsules/home/browser/wallet-signin-flow.mjs','capsules/home/browser/wallet-signin-signers.mjs','capsules/home/browser/wallet-signin-view.mjs','capsules/home/browser/wallet-signin-host.mjs','capsules/home/browser/wallet-signin-methods.mjs','capsules/home/browser/wallet-signin.css','capsules/home/browser/shell-auth.js','capsules/system/browser/system.js','capsules/wallet/browser/wallet.js','capsules/wallet-walletconnect/browser/signin-transport.mjs','capsules/wallet-walletconnect/browser/walletconnect-pairing.mjs'])sources[file]=createHash('sha256').update(await readFile(file)).digest('hex');
+  for(const file of ['scripts/walletconnect/adapter.mjs','capsules/wallet-walletconnect/vendor/reown-appkit.js','capsules/wallet-walletconnect/vendor/adapter.json','capsules/home/browser/home-clipboard-host.js','capsules/home/browser/home-clipboard-protocol.js','scripts/lib/wallet-signin-fixture.mjs','scripts/wallet-signin-browser-smoke.mjs','capsules/home/browser/index.html','capsules/home/browser/shell-core.js','capsules/home/browser/home-shell-host.js','capsules/system/browser/index.html','capsules/wallet/browser/index.html','capsules/home/browser/wallet-signin-flow.mjs','capsules/home/browser/wallet-signin-signers.mjs','capsules/home/browser/wallet-signin-view.mjs','capsules/home/browser/wallet-signin-host.mjs','capsules/home/browser/wallet-signin-methods.mjs','capsules/home/browser/wallet-signin.css','capsules/home/browser/shell-auth.js','capsules/system/browser/system.js','capsules/wallet/browser/wallet.js','capsules/wallet-walletconnect/browser/signin-transport.mjs','capsules/wallet-walletconnect/browser/walletconnect-pairing.mjs'])sources[file]=createHash('sha256').update(await readFile(file)).digest('hex');
   await writeFile(join(output,'index.json'),JSON.stringify({status:passed?'PASS':'FAIL',environment:{node:process.version,platform:process.platform,arch:process.arch,browsers:browserVersions},head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),tree:execFileSync('git',['rev-parse','HEAD^{tree}'],{encoding:'utf8'}).trim(),dirty:execFileSync('git',['status','--short'],{encoding:'utf8'}).trim(),sources,pictures,checks},null,2)+'\n');
   await writeFile(join(output,'index.html'),`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Wallet sign-in screens</title><style>body{font:14px/1.5 system-ui;margin:24px;background:#f4f5f7;color:#18202b}main{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:20px}article{background:white;border:1px solid #ccd0d8;border-radius:12px;padding:16px}img{width:100%;height:240px;object-fit:contain;background:#e4e7eb}h2{font-size:14px}</style><h1>Wallet sign-in fixture screens: ${passed?'PASS':'FAIL'}</h1><p>Fixture Runtime. Wallet signers and passkeys are replaced at their boundaries.</p><p>${pictures.length} captures. <a href="index.json">Hashes, source identity and checks</a></p><main>${pictures.map(p=>`<article><h2>${p.engine} · ${p.width} px · ${p.state}</h2><a href="${encodeURIComponent(basename(p.file))}"><img loading="lazy" src="${encodeURIComponent(basename(p.file))}" alt="${p.state}"></a></article>`).join('')}</main></html>`);
 

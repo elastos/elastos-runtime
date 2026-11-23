@@ -32,7 +32,7 @@ async function connect(transport) {
   const config=await api('wallet/config');
   adapter=await import('./vendor/reown-appkit.js');
   provider=await connectWithView(adapter,{
-    contextKey:`signin-${crypto.randomUUID()}`,projectId:config.walletconnect.project_id,chains:[20,8453],api,
+    contextKey:`signin-${crypto.randomUUID()}`,projectId:config.walletconnect.project_id,chains:[20,8453],api,authenticationOnly:true,
     runtimeUrl:`${homeOrigin}/api/apps/wallet-walletconnect`,relayUrl:`${homeOrigin.replace(/^http/,'ws')}/api/apps/wallet-walletconnect/relay`,
     metadata:{name:'ElastOS Home',description:'Sign in to your Home',url:homeOrigin,icons:[]},
   },{show:(qr,actions,uri)=>{

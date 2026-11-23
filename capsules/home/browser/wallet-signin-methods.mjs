@@ -5,7 +5,7 @@ export async function readWalletSigninMethods(token,{origin}={}) {
     if(result?.status!=='complete'||typeof result.account_id!=='string'||!Array.isArray(result.methods))throw new Error('Home could not load sign-in methods.');
     return result;
   }
-  const response=await fetch('/api/auth/wallet-methods',{cache:'no-store',signal:AbortSignal.timeout(15000),headers:{Authorization:`Bearer ${token}`,'x-elastos-home-token':token}});
+  const response=await fetch('/api/auth/wallet-methods',{cache:'no-store',signal:AbortSignal.timeout(15000),headers:{'x-elastos-home-token':token}});
   if(!response.ok)throw new Error('Home could not load sign-in methods.');
   const result=await response.json();
   if(typeof result.account_id!=='string'||!Array.isArray(result.methods)||result.methods.length>256)throw new Error('Home could not load sign-in methods.');

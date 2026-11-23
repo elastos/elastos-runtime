@@ -116,16 +116,33 @@ test('every method action checks the approval against the reviewed ceremony and 
   }
 });
 
-test('WalletConnect pairing and Add wallet each have their own browser secret',async()=>{
-  const calls=[];let serial=0;
-  const flow=createWalletSigninFlow({randomSecret:()=>String(++serial).padStart(64,'0'),
-    api:async(path,body)=>{calls.push({path,body});if(path.endsWith('/begin')) {
-      const ceremony_id=path.includes('/wallet-methods/')?'addition':'pairing';
-      return {ceremony_id,message:'message',expires_at:Date.now()/1000+120,approval:{operation:'auth.wallet.method',request:{ceremony_id,action:'add',account_id:'principal:alex',method_id:'new'}}};
-    }return {};},select:async()=>({...method,connector:'walletconnect',close(){}}),approve:()=>{},render(){}});
-  await flow.start({action:'add'});await flow.choose('walletconnect');
-  const begins=calls.filter(c=>c.path.endsWith('/begin'));await flow.cancel();assert.equal(begins.length,2);assert.notEqual(begins[0].body.browser_secret,begins[1].body.browser_secret);
-  for(const begin of begins){const id=begin.path.includes('/wallet-methods/')?'addition':'pairing';assert(calls.some(c=>c.path.endsWith('/cancel')&&c.body.ceremony_id===id&&c.body.browser_secret===begin.body.browser_secret));}
+test('WalletConnect Add pairs in the signed-in ceremony and selects its exact approval',async()=>{
+  const calls=[],states=[];
+  const flow=createWalletSigninFlow({randomSecret:()=> 'a'.repeat(64),
+    api:async(path,body)=>{
+      calls.push({path,body});
+      if(path.endsWith('/begin') || path.endsWith('/select'))return {ceremony_id:'addition',message:path.endsWith('/select')?'Add this wallet':'',expires_at:Date.now()/1000+120,
+        approval:{operation:'auth.wallet.method',request:{ceremony_id:'addition',action:'add',account_id:'principal:alex',method_id:'new',address:body.address}}};
+      return {};
+    },select:async(_connector,{transport})=>{assert.equal(transport.ceremony_id,'addition');return {...method,connector:'walletconnect',close(){}};},approve(){},render:s=>states.push(s)});
+  await flow.start({action:'add',accountId:'principal:alex'});await flow.choose('walletconnect');
+  assert.equal(states.at(-1).stage,'internet-notice');assert.equal(calls.length,0,'consent precedes transport');
+  await flow.connect();assert.equal(states.at(-1).stage,'review');
+  assert.deepEqual(calls.map(c=>c.path),['/api/auth/wallet-methods/begin','/api/auth/wallet/signin/select']);
+  assert.equal(calls[0].body.address,'');assert.equal(calls[0].body.action,'add');assert.equal(calls[0].body.allow_temporary_internet,true);
+  assert.equal(calls[1].body.address,method.address);assert.equal(calls[1].body.browser_secret,calls[0].body.browser_secret);
+  await flow.cancel();assert.equal(calls.at(-1).body.ceremony_id,'addition');
+});
+
+test('signed-out WalletConnect requires an enabled compatible method and internet consent',async()=>{
+  for(const available of [true,false]) {
+    const calls=[],states=[];
+    const flow=createWalletSigninFlow({api:async(path,body)=>{calls.push({path,body});return path.endsWith('/status')?{walletconnect_signin_available:available}:{ceremony_id:'signin',message:'',expires_at:Date.now()/1000+120};},
+      select:async()=>({...method,connector:'walletconnect',close(){}}),approve(){},render:s=>states.push(s)});
+    await flow.start();assert.equal(states.at(-1).walletconnectAvailable,available);await flow.choose('walletconnect');
+    assert.equal(states.at(-1).stage,available?'internet-notice':'choice');assert.equal(calls.filter(c=>c.path.endsWith('/begin')).length,0);
+    await flow.cancel();assert.equal(calls.filter(c=>c.path.endsWith('/begin')).length,0,'Cancel grants no temporary transport');
+  }
 });
 
 test('Bitcoin method selection keeps address case while EVM accepts checksum case',async()=>{
@@ -193,4 +210,15 @@ test('method refresh preserves control focus and refreshes when the page returns
     fakeDocument.visibilityState='hidden';fakeDocument.dispatchEvent(new Event('visibilitychange'));assert.equal(refreshed,1);
     fakeWindow.dispatchEvent(Object.assign(new Event('message'),{source:fakeWindow.top,origin:'https://home.example',data:{type:'home:wallet-signin-changed'}}));assert.equal(refreshed,2);
   } finally {globalThis.window=previousWindow;globalThis.document=previousDocument;}
+});
+
+test('a late WalletConnect availability reply keeps an active browser-wallet review',async()=>{
+  let releaseStatus;
+  const states=[];
+  const flow=createWalletSigninFlow({api:async path=>path.endsWith('/status')?await new Promise(resolve=>releaseStatus=resolve):{ceremony_id:'one',message:'Sign in',expires_at:Date.now()/1000+120},
+    select:async()=>({...method,close(){}}),approve(){},render:s=>states.push(s)});
+  const starting=flow.start();
+  await flow.choose('metamask');assert.equal(states.at(-1).stage,'review');
+  releaseStatus({walletconnect_signin_available:true});await starting;
+  assert.equal(flow.state.stage,'review');assert.equal(states.at(-1).stage,'review');
 });

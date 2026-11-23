@@ -64,12 +64,14 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
       const method=state.method;
       let ceremony;
       if(state.action!=='signin' && state.action!=='add') {
-        ceremony=await begin(current,'/api/auth/wallet-methods/begin',{action:state.action,method_id:method.method_id});
+        ceremony=await begin(current,'/api/auth/wallet-methods/begin',{action:state.action,method_id:method.method_id,...(connector==='walletconnect'&&state.action==='enable'?{allow_temporary_internet:true}:{})});
         current.target=method;
       }
       if(['signin','add','enable'].includes(state.action)) {
         let transport=ceremony;
-        if(connector==='walletconnect' && !transport) transport=await begin(current,'/api/auth/wallet/signin/begin',{connector,address:'',chain_id:20,network:''});
+        if(connector==='walletconnect' && !transport) transport=await begin(current,state.action==='add'?'/api/auth/wallet-methods/begin':'/api/auth/wallet/signin/begin',{
+          ...(state.action==='add'?{action:'add'}:{}),connector,address:'',chain_id:20,network:'',allow_temporary_internet:true,
+        });
         current.wallet=await select(connector,{
           signal:current.controller.signal,transport,
           pairing:pairing=>{if(live(current))show('pairing',{pairing});},
@@ -86,13 +88,14 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
         const identity={connector,address:wallet.address,chain_id:wallet.chain_id,network:wallet.network};
         if(method && ((connector==='unisat'?wallet.address!==method.address:wallet.address.toLowerCase()!==method.address.toLowerCase()) || wallet.chain_id!==method.chain_id || wallet.network!==method.network)) throw fault('changed');
         current.target=method || identity;
-        if(state.action==='signin') {
-          ceremony=connector==='walletconnect'
-            ? await api('/api/auth/wallet/signin/select',{ceremony_id:transport.ceremony_id,browser_secret:current.secret,address:wallet.address,chain_id:wallet.chain_id})
-            : await begin(current,'/api/auth/wallet/signin/begin',identity);
-          if(connector==='walletconnect') { ceremony={...transport,...ceremony};deadline(current,ceremony.expires_at); }
+        if(connector==='walletconnect' && ['signin','add'].includes(state.action)) {
+          const selected=await api('/api/auth/wallet/signin/select',{ceremony_id:transport.ceremony_id,browser_secret:current.secret,address:wallet.address,chain_id:wallet.chain_id});
+          assertLive(current);
+          if(selected.ceremony_id!==transport.ceremony_id)throw fault('invalid');
+          ceremony={...transport,...selected};deadline(current,ceremony.expires_at);
+        } else if(state.action==='signin') {
+          ceremony=await begin(current,'/api/auth/wallet/signin/begin',identity);
         } else if(state.action==='add') {
-          if(connector==='walletconnect')current.secret=randomSecret();
           ceremony=await begin(current,'/api/auth/wallet-methods/begin',{action:'add',...identity});
         }
       }
@@ -137,10 +140,27 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
     async start({action='signin',method=null,account='',accountId='',token='' }={}) {
       const previous=run;run=null;clearTimeout(timer);void clear(previous);
       const current=run={secret:randomSecret(),controller:new AbortController(),ceremonies:new Map(),deadline:now()+180};
-      state={stage:'choice',action,method,account,accountId,token};show('choice');deadline(current,current.deadline);
-      if(method && live(current)) await prepare(current,method.connector);
+      state={stage:'choice',action,method,account,accountId,token,walletconnectAvailable:action==='signin'?null:true};show('choice');deadline(current,current.deadline);
+      if(action==='signin') {
+        let available=false;
+        try {available=(await api('/api/auth/passkey/status')).walletconnect_signin_available===true;}catch{}
+        if(!live(current))return;
+        state={...state,walletconnectAvailable:available};
+        if(state.stage==='choice')show('choice');
+      }
+      if(method && live(current)) {
+        if(method.connector==='walletconnect'&&action==='enable')show('internet-notice',{connector:method.connector});
+        else await prepare(current,method.connector);
+      }
     },
-    async choose(connector) { if(run && state.stage==='choice' && ['metamask','walletconnect','unisat'].includes(connector))await prepare(run,connector); },
+    async choose(connector) {
+      if(!run || state.stage!=='choice' || !['metamask','walletconnect','unisat'].includes(connector))return;
+      if(connector==='walletconnect') {
+        if(state.walletconnectAvailable!==true)return;
+        show('internet-notice',{connector});
+      } else await prepare(run,connector);
+    },
+    async connect() {if(run && state.stage==='internet-notice')await prepare(run,'walletconnect');},
     async confirm() {
       const current=run;if(!current || state.stage!=='review')return;
       try {

@@ -1,6 +1,6 @@
 import { connectWalletConnectEvm } from './vendor/reown-appkit.js';
 window.methods = []; window.nativeUrls = []; window.proposalReady = false;
-window.runtimeTrace = [];
+window.runtimeTrace = []; window.proposedMethods = null;
 window.keys = Object.create(null); window.cancelled = false; window.failed = false;
 class RelaySocket {
   constructor(url) {
@@ -18,6 +18,9 @@ class RelaySocket {
       window.proposalReady = /^[a-f0-9]{64}$/.test(message.params?.pairingTopic)
         && typeof message.params?.sessionProposal === 'string'
         && message.params.sessionProposal.length > 0;
+      globalThis['_walletConnectCore_principal-fixture'].crypto.decode(message.params.pairingTopic,message.params.sessionProposal,{encoding:'base64'}).then(proposal=>{
+        window.proposedMethods=[...new Set(Object.values({...proposal.params.requiredNamespaces,...proposal.params.optionalNamespaces}).flatMap(ns=>ns.methods))];
+      }).catch(error=>{window.failed=error.message;});
     }
     const result = message.method.endsWith('batchSubscribe') ? message.params.topics.map((_, i) => 'sub-' + i)
       : message.method.endsWith('subscribe') ? 'fixture-subscription' : true;
@@ -37,7 +40,7 @@ const api = async (path, input) => {
   return structuredClone(window.keys);
 };
 window.pending = connectWalletConnectEvm({
-  contextKey:'principal-fixture', projectId:'fixture-project-id', chains:[1], api,
+  authenticationOnly:new URLSearchParams(location.search).has('authentication'),contextKey:'principal-fixture', projectId:'fixture-project-id', chains:[1], api,
   relayUrl:location.origin.replace(/^http/, 'ws') + '/relay',
   runtimeUrl:location.origin + '/api/apps/wallet-walletconnect',
   metadata:{name:'Isolated Runtime fixture', description:'WalletConnect test', url:location.origin, icons:[]},

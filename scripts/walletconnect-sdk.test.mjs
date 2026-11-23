@@ -23,14 +23,14 @@ test("the locked SDK reaches QR through Home, stores its keys through Runtime, a
   try {
     const engine = process.env.WALLETCONNECT_TEST_ENGINE || "chromium";
     browser = await engines[engine].launch({ headless: true });
-    for (const width of [1280, 390]) {
+    for (const authenticationOnly of [false,true]) for (const width of [1280, 390]) {
       const context = await browser.newContext({ viewport: { width, height: 800 } });
       // CSP remains the same Home-only network boundary used by the product.
       await context.route("**/*", route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
       const page = await context.newPage();
       const pageErrors = [];
       page.on("pageerror", error => pageErrors.push(error.message));
-      await page.goto(origin);
+      await page.goto(origin+(authenticationOnly?'?authentication=1':''));
       try {
         await page.locator("dialog[open] canvas").waitFor({ timeout: 20000 });
       } catch (cause) {
@@ -40,7 +40,7 @@ test("the locked SDK reaches QR through Home, stores its keys through Runtime, a
       }
       try {
         await page.waitForFunction(() => window.proposalReady
-          && Object.keys(window.keys).some(key => key.includes("keychain")), null, { timeout: 10000 });
+          && window.proposedMethods && Object.keys(window.keys).some(key => key.includes("keychain")), null, { timeout: 10000 });
       } catch (cause) {
         const state = await page.evaluate(() => ({ methods: window.methods, proposalReady: window.proposalReady, keyNames: Object.keys(window.keys),
           localKeyCount: localStorage.length, nativeOrigins: window.nativeUrls.map(url => new URL(url).origin) }));
@@ -48,13 +48,14 @@ test("the locked SDK reaches QR through Home, stores its keys through Runtime, a
       }
       const state = await page.evaluate(() => ({
         homeOnly: window.nativeUrls.length > 0 && window.nativeUrls.every(url => url === location.origin.replace(/^http/, "ws") + "/relay"),
-        proposed: window.proposalReady,
+        proposed: window.proposalReady, methods:window.proposedMethods,
         runtimeKeys: Object.keys(window.keys).some(key => key.includes("keychain")),
         localKeys: localStorage.length,
         canvas: document.querySelector("canvas").width,
         fits: document.querySelector("dialog").getBoundingClientRect().width <= innerWidth,
       }));
       assert.equal(state.homeOnly, true, "SDK sockets terminate at Home");
+      assert.deepEqual(state.methods,authenticationOnly?['personal_sign']:['personal_sign','eth_sendTransaction']);
       assert.equal(state.proposed, true, "the pinned SDK publishes its pairing proposal through Home");
       assert.equal(state.runtimeKeys, true, "SDK keychain reaches the Runtime storage adapter");
       assert.equal(state.localKeys, 0);
@@ -62,7 +63,7 @@ test("the locked SDK reaches QR through Home, stores its keys through Runtime, a
       assert.equal(state.fits, true);
       if (process.env.WALLETCONNECT_SCREENSHOTS) {
         mkdirSync(process.env.WALLETCONNECT_SCREENSHOTS, { recursive: true });
-        await page.screenshot({ path: `${process.env.WALLETCONNECT_SCREENSHOTS}/qr-${width}.png` });
+        await page.screenshot({ path: `${process.env.WALLETCONNECT_SCREENSHOTS}/qr-${authenticationOnly?'signin':'payment'}-${width}.png` });
       }
       await page.getByRole("button", { name: "Cancel", exact: true }).click();
       await page.waitForFunction(() => window.cancelled);

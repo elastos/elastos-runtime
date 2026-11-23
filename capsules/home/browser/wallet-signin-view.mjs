@@ -7,7 +7,7 @@ function node(tag,text,className) {const el=document.createElement(tag);if(text)
 export async function walletSigninApi(path,body,token='') {
   const response=await fetch(path,{
     method:body===undefined?'GET':'POST',cache:'no-store',signal:AbortSignal.timeout(15000),
-    headers:{'content-type':'application/json',...(token?{Authorization:`Bearer ${token}`,'x-elastos-home-token':token}:{})},
+    headers:{'content-type':'application/json',...(token?{'x-elastos-home-token':token}:{})},
     ...(body===undefined?{}:{body:JSON.stringify(body)}),
   });
   if(!response.ok)throw Object.assign(new Error('Home refused the wallet request'),{status:response.status});
@@ -50,9 +50,16 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
       for(const connector of ['walletconnect','metamask','unisat']) {
         const choice=button(connectorName(connector),()=>flow.choose(connector),true);
         if(connector==='metamask')choice.append(node('small','Compatible browser wallets'));
+        if(connector==='walletconnect' && state.walletconnectAvailable!==true) {
+          choice.disabled=true;
+          choice.append(node('small',state.walletconnectAvailable===null?'Checking wallet sign-in availability…':'Add a wallet for Elastos Smart Chain or Base and turn Sign in on first.'));
+        }
         choices.append(choice);
       }
       dialog.append(choices);
+    } else if(state.stage==='internet-notice') {
+      dialog.append(node('p','Home reaches your wallet over the internet through WalletConnect. The relay service can see this Home computer’s internet address.'));
+      dialog.append(button('Continue',()=>flow.connect()));
     } else if(state.stage==='wallet-choice') {
       dialog.append(node('p','Choose a browser wallet.'));
       for(const choice of state.choices)dialog.append(button(choice.name,choice.choose,true));
@@ -76,6 +83,7 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
       dialog.append(details,node('p',effects[state.action]));
       if(state.approvalNotice)dialog.append(node('p',state.approvalNotice,'signin-note'));
       if(state.stage==='review') {
+        if(state.action==='signin')dialog.append(node('p','Continue only if you started this sign-in in this browser.','signin-note'));
         if(['signin','add','enable'].includes(state.action)) {
           dialog.append(node('p','Review the message before signing.','signin-note'));
           const message=node('details');message.append(node('summary','Message'),node('pre',flowMessage()));dialog.append(message);
