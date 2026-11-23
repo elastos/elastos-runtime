@@ -478,9 +478,9 @@ Peer discovery, gossip messaging, and peer-to-peer content transfer. Built into 
 - `tunnel-provider` capsule using **cloudflared** (HTTP tunnel to public internet)
 
 **Transport:** Carrier starts through the release's meeting point and moves to a
-direct Iroh QUIC route when holepunching works. A release carries one HTTPS
-origin and SHA-256 hashes
-of its primary and optional backup DER SubjectPublicKeyInfo (SPKI) inside the Runtime binary. The signed
+direct Iroh QUIC route when holepunching works. Traffic stays on the meeting
+point when holepunching fails. Homes on the same network found by mDNS connect
+directly. A release carries one HTTPS origin and SHA-256 hashes of its primary and optional backup DER SubjectPublicKeyInfo (SPKI) inside the Runtime binary. The signed
 release binds that binary's checksum. Both long-lived and temporary endpoints
 use this pair; explicit dials, memory, mDNS and gossip accept that origin only.
 TLS verifies possession of an approved public key. The system resolver
@@ -544,8 +544,11 @@ as root after operator approval. The installer records the
 installed artifact receipt and the exact resources it creates. To undo this
 installation, run `undo-sidecar.py --approved-seed-undo --destroy-sidecar-state`
 from the kit after operator approval. The undo checks recorded filesystem
-identities and removes the sidecar's resources and isolated identity. The
-public Home remains under its existing service's ownership.
+identities and removes the sidecar's resources and isolated identity. Undo
+leaves the Certbot lineage and cloud firewall rules. It also leaves the expiry
+cron unless the operator runs `h-cron-undo.sh`. Use their installation records to remove
+these resources. The public Home remains under its existing service's
+ownership.
 
 The sidecar has a dedicated Certbot lineage, `elastos-meeting-point`, and its
 own key. Certificate and key copies under `/etc/elastos-meeting-point` are
@@ -585,14 +588,18 @@ openssl x509 -in meeting-point.crt -pubkey -noout |
 Commit the hex digest in `carrier-relay-spki-sha256.txt`: the primary pin on
 the first data line and an optional backup pin on the second. Pass only the
 approved HTTPS origin as `carrier_relay_url` to the release-package workflow.
+Enable `seed_package` so publication can verify the attested seed receipt.
 Native builders read the pins from this repository file. A build with a meeting
 point address and an empty pin file fails. Source release builds use
-`ELASTOS_RELEASE_RELAY_URL` and the same file. Before signing, the release
-operator compares the `carrier_relay` origin and `spki_sha256` list in each
-`platform-input.json` and the seed's `seed-input.json` with the approved pair.
+`ELASTOS_RELEASE_RELAY_URL` and the same file. For publication, set
+`RELEASE_CARRIER_RELAY_URL` to the release's approved `carrier_relay_url` input,
+or to an empty value for a direct-only release. The publish step refuses a
+mismatch or a missing `carrier_relay` field in any `*.platform-input.json` or
+`seed-input.json` receipt. Each receipt must match the approved origin and the
+ordered pins read from the repository pin file at the source commit. A
+direct-only release passes when every receipt carries `carrier_relay: null`.
 The release signer verifies attested platform artifact checksums through the
-existing release ceremony; the operator owns the relay-pair comparison. The
-sidecar presents a key approved by released Homes. Its listener owns incoming
+existing release ceremony. The sidecar presents a key approved by released Homes. Its listener owns incoming
 connections and source accounting.
 
 From a different network, check `https://<approved-origin>/healthz` with a TLS
@@ -617,9 +624,12 @@ Certificate renewal with the same key keeps the SPKI hash and requires no Home
 release. Before rotating keys, commit the new key as the backup pin and ship the
 signed update. After Homes accept that update, the operator can switch the seed
 to that key. A later release can promote it to primary and replace the backup.
-Irzhy approves the identity and rotation before enablement.
+The pin pair was approved on 22 Nov under Anders's delegation, through agent
+review and devils-advocate review. Issue [#345](https://github.com/elastos/elastos-runtime/issues/345)
+holds the approval record. Identity and rotation changes require approval.
 
-To stop the meeting point, the operator stops `elastos-meeting-point.service`.
+To stop the meeting point, the operator runs
+`systemctl disable --now elastos-meeting-point.service`.
 Use the kit's approved undo procedure when retiring the installation. To return
 Homes to direct-only behavior, ship a signed release with the meeting point
 origin build input absent. The seed operator and release signer own these

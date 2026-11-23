@@ -27,6 +27,8 @@
 # RELEASE_APPROVAL names a pre-existing operator-owned approval outside RELEASE_WORK.
 # It pins source H, trusted builder W/tree/ref, the public delivery tuple and gh.
 # Historical packages need a new attested build; this tool creates no approval.
+# RELEASE_CARRIER_RELAY_URL is the approved release carrier_relay_url input;
+# set it explicitly to empty for direct-only. Pins are read at the source commit.
 # RELEASE_COMMUNITY_DIR (prepare) names the custodian's community-profile output
 # for the Community network the approved source pins; unset, the release names none.
 set -euo pipefail
@@ -67,6 +69,87 @@ checked_artifact() {
     [[ "$(gh api "repos/$REPO/compare/$commit...develop" --jq .status)" =~ ^(ahead|identical)$ ]] \
         || die "source $commit is not on develop"
     echo "$found"
+}
+
+# The publish input names the approved origin; pins come from the exact source commit.
+# An explicit empty origin approves a direct-only release, whose receipts carry null.
+checked_relay_receipts() {
+    [[ "${RELEASE_CARRIER_RELAY_URL+x}" ]] || die "set RELEASE_CARRIER_RELAY_URL (empty for direct-only)"
+    python3 -I -S - "$ROOT" "$@" <<'RELAY'
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+from urllib.parse import urlsplit
+
+root, commit, *paths = sys.argv[1:]
+try:
+    origin = os.environ["RELEASE_CARRIER_RELAY_URL"]
+    expected = None
+    if origin:
+        parsed = urlsplit(origin)
+        if (parsed.scheme != "https" or not parsed.hostname or parsed.username is not None
+                or parsed.password is not None or parsed.path not in ("", "/")
+                or parsed.query or parsed.fragment or any(c.isspace() for c in origin)):
+            raise ValueError("approved carrier_relay requires an HTTPS origin")
+        _ = parsed.port
+        raw = subprocess.check_output(["git", "-C", root, "show",
+                                       commit + ":carrier-relay-spki-sha256.txt"], timeout=30, text=True)
+        pins = [line.split("#", 1)[0].strip() for line in raw.splitlines()]
+        pins = [pin.lower() for pin in pins if pin]
+        if not 1 <= len(pins) <= 2 or any(not re.fullmatch(r"[0-9a-f]{64}", pin) for pin in pins):
+            raise ValueError("approved carrier_relay requires repository SPKI pins")
+        expected = {"origin": origin, "spki_sha256": pins}
+    if not paths:
+        raise ValueError("carrier_relay receipts required")
+    for name in paths:
+        path = Path(name)
+        if path.stat().st_size > 1024 * 1024:
+            raise ValueError(f"{path.name}: carrier_relay receipt exceeds size limit")
+        receipt = json.loads(path.read_text())
+        if "carrier_relay" not in receipt or receipt["carrier_relay"] != expected:
+            raise ValueError(f"{path.name}: carrier_relay differs from approved source pair or is missing")
+except (ValueError, OSError, subprocess.SubprocessError) as error:
+    sys.exit(f"release-publish: carrier_relay refused: {error}")
+RELAY
+}
+
+# Name each expected receipt explicitly so removal cannot shrink the comparison set.
+checked_prepared_relay() {
+    local work="$1" platform name
+    local receipts=("$work/relay-receipts/seed-input.json")
+    name=$(jq -er .input "$work/run.json")
+    while read -r platform; do
+        receipts+=("$work/relay-receipts/$platform.N.platform-input.json"
+                   "$work/relay-receipts/$platform.N1.platform-input.json"
+                   "$work/inputs/$platform/$name/platform-input.json"
+                   "$work/unsigned/provenance/$platform.receipt.json")
+    done < <(jq -er '.platforms[]' "$work/run.json")
+    checked_relay_receipts "$(jq -er .source.commit "$work/unsigned/signing-input.json")" "${receipts[@]}"
+}
+
+# Verify the seed's attested receipt and payload before comparing its relay identity.
+stage_seed_receipt() {
+    local run="$1" destination="$2" id digest commit attempt proof_id proof_digest proof_attempt artifact
+    artifact=$(checked_artifact "$run" release-seed) || die "seed receipt required; build with seed_package enabled"
+    read -r id digest commit attempt <<< "$artifact"
+    python3 -I -S -c 'import subprocess, sys; subprocess.run(["gh", "api", sys.argv[1]], stdout=sys.stdout.buffer, check=True, timeout=600)' \
+        "repos/$REPO/actions/artifacts/$id/zip" > "$destination/seed.zip" || die "seed artifact download failed or timed out"
+    [[ "$(sha "$destination/seed.zip")" == "$digest" ]] || die "seed artifact digest differs"
+    python3 -I -S "$ROOT/scripts/release-provenance-seal.py" unzip --input "$destination/seed.zip" --output "$destination/seed-package"
+    artifact=$(checked_artifact "$run" release-proof-seed) || die "attested seed proof required"
+    read -r proof_id proof_digest _ proof_attempt <<< "$artifact"
+    python3 -I -S -c 'import subprocess, sys; subprocess.run(["gh", "api", sys.argv[1]], stdout=sys.stdout.buffer, check=True, timeout=600)' \
+        "repos/$REPO/actions/artifacts/$proof_id/zip" > "$destination/seed-proof.zip" || die "seed proof download failed or timed out"
+    [[ "$(sha "$destination/seed-proof.zip")" == "$proof_digest" ]] || die "seed proof digest differs"
+    python3 -I -S "$ROOT/scripts/release-provenance-seal.py" unzip --input "$destination/seed-proof.zip" --output "$destination/seed-proof"
+    provenance seed --run "$run" --prefix release-seed --receipt "$destination/seed-proof/seed-input.json" \
+        --payload-root "$destination/seed-package" --bundle "$destination/seed-proof/provenance.jsonl" > /dev/null \
+        || die "attested seed receipt refused"
+    cp "$destination/seed-proof/seed-input.json" "$destination/relay-receipts/seed-input.json"
+    rm -r "$destination/seed.zip" "$destination/seed-proof.zip" "$destination/seed-package" "$destination/seed-proof"
 }
 
 # Bind the package source to successful CI on develop or its merge queue.
@@ -189,7 +272,7 @@ prepare() {
     run_attempt=$(provenance run --run "$run") || die "package producer refused"
     work=$(work_dir "$version")
     [[ ! -e "$work" ]] || die "$work exists; remove it to prepare again"
-    mkdir -p "$work/state" "$work/data"
+    mkdir -p "$work/state" "$work/data" "$work/relay-receipts"
     # Check the delivery identities first: seconds, while the platform inputs below
     # take hours to download (#319).
     curl -fsS --max-time 20 "$ORIGIN/.well-known/elastos/carrier-bootstrap.json?role=publisher" > "$work/bootstrap.json"
@@ -229,6 +312,11 @@ prepare() {
             --receipt "$work/proof/$name.platform-input.json" --bundle "$work/proof/provenance.jsonl" \
             --payload-root "$input/$name" --platform "$platform" --version "$version" > /dev/null \
             || die "$platform attested receipt refused"
+        checked_relay_receipts "$commit" "$work/proof/"*.platform-input.json
+        local relay_receipt
+        for relay_receipt in "$work/proof/"*.platform-input.json; do
+            cp "$relay_receipt" "$work/relay-receipts/$platform.${relay_receipt##*/}"
+        done
         cp "$work/proof/$name.platform-input.json" "$input/$name/platform-input.json"
         cp "$work/proof/provenance.jsonl" "$input/provenance.jsonl"
         rm -rf "$work/proof" "$work/proof.zip"
@@ -240,6 +328,8 @@ prepare() {
               proof_artifact: {id: $proof_id, digest: $proof_digest, name: $proof_name, attempt: $proof_attempt}}]' )
         args+=(--platform-input "$platform=$input/$name")
     done
+    stage_seed_receipt "$run" "$work"
+    checked_relay_receipts "$commit" "$work/relay-receipts/"*.json
     name="$pair"
     ci_run=$(checked_ci "$commit")
     echo "# Develop CI run: $(jq -r '[(.id | tostring), .url] | join(" ")' <<< "$ci_run")"
@@ -294,6 +384,7 @@ policy() {
     approval_sha256=$(jq -r .sha256 <<< "$approval_json")
     [[ "$(jq -r '[.approval.path, .approval.sha256] | join(" ")' "$work/run.json")" == "$RELEASE_APPROVAL $approval_sha256" ]] \
         || die "prepared independent approval changed"
+    checked_prepared_relay "$work"
     publication_record "$work"
     python=$(python3 -c 'import os, sys; print(os.path.realpath(sys.executable))')
     signer=$(realpath "$2") key=$(realpath "$3") openssl=$(realpath "$4")
@@ -352,6 +443,7 @@ seed() {
         [[ "$(jq -Sc . <<< "$candidate")" == "$(jq -Sc . <<< "$recorded")" ]] \
             || die "$platform package changed after preparation; prepare and sign the new candidate"
     done < <(jq -er '.platforms[]' "$work/run.json")
+    checked_prepared_relay "$work"
     publication_record "$work"
     stage="$RELEASE_SEED_STAGE/$version"
     (cd "$signed" && shasum -a 256 -- *) > "$work/signed.SHA256SUMS"
@@ -429,6 +521,7 @@ seed_upgrade() {
     python3 -I -S "$ROOT/scripts/release-provenance-seal.py" unzip --input "$seed_proof_dir/proof.zip" --output "$seed_proof_dir/proof"
     receipt=$(provenance seed --run "$1" --prefix release-seed --receipt "$seed_proof_dir/proof/seed-input.json" \
         --payload-root "$seed_proof_dir/package" --bundle "$seed_proof_dir/proof/provenance.jsonl") || die "attested seed receipt refused"
+    checked_relay_receipts "$commit" "$seed_proof_dir/proof/seed-input.json"
     source_tree=$(jq -er .source.tree <<< "$receipt")
     echo "# Approved source: $commit tree $source_tree; package run $1"
     seed_preamble "$RELEASE_SEED_STAGE/seed-upgrade-$1"

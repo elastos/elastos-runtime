@@ -89,7 +89,7 @@ console.log(JSON.stringify({ schema: 'elastos.collaboration.operator-receipt/v1'
     for (const [name, version] of [['N', installVersion], ['N1', updateVersion]]) {
       const dir = join(input, name);
       mkdirSync(join(dir, 'artifacts'), { recursive: true });
-      const receipt = { schema: 'elastos.release-platform-input/v1', platform, version, source: { commit, tree, clean: true }, ...changes[platform] };
+      const receipt = { schema: 'elastos.release-platform-input/v1', platform, version, source: { commit, tree, clean: true }, carrier_relay: changes.relay ?? null, ...changes[platform], ...changes[platform + name] };
       writeFileSync(join(dir, 'platform-input.json'), JSON.stringify(receipt));
       const verifier = platform === 'aarch64-darwin' && changes.network;
       writeFileSync(join(dir, 'artifacts', `elastos-${platform}`), verifier ? runtime : `${platform}-${version}`,
@@ -116,7 +116,7 @@ console.log(JSON.stringify({ schema: 'elastos.collaboration.operator-receipt/v1'
     config.artifacts[prefix] = { id: String(index + 1), digest: sha(readFileSync(zip)), zip, attempt: changes.nativeAttempt || 1 };
     proofFixture(prefix, index + 101, platform, input);
   }
-  if (changes.seedFixture) {
+  if ((!changes.ciOnly && !changes.noSeed) || changes.seedFixture) {
     const parts = join(root, 'seed-package');
     mkdirSync(parts);
     const files = {};
@@ -126,7 +126,7 @@ console.log(JSON.stringify({ schema: 'elastos.collaboration.operator-receipt/v1'
       files[name] = { sha256: sha(bytes), size: bytes.length };
     }
     writeFileSync(join(parts, 'seed-input.json'), JSON.stringify({ schema: 'elastos.release-seed-input/v1',
-      source: { commit, tree }, version: '1.2.3-alpha.1', files }));
+      source: { commit, tree }, version: '1.2.3-alpha.1', files, carrier_relay: changes.relay ?? null, ...changes.seed }));
     writeFileSync(join(parts, 'provenance.jsonl'), '{}');
     const names = ['elastos', 'ipfs-provider', 'source.tar.gz', 'seed-input.json', 'provenance.jsonl'];
     writeFileSync(join(parts, 'SHA256SUMS'), names.map(name => `${sha(readFileSync(join(parts, name)))}  ${name}\n`).join(''));
@@ -217,6 +217,9 @@ if (command === 'gh') {
   if (args.includes('add')) fs.cpSync(c.repo, args[args.indexOf('add') + 3], { recursive: true });
   else if (args.includes('rev-parse')) console.log(c.tree);
   else if (args.includes('show')) {
+    if (args.at(-1) === c.commit + ':carrier-relay-spki-sha256.txt') {
+      console.log(c.pins || '# primary then backup\\n' + '1'.repeat(64) + '\\n' + '2'.repeat(64)); process.exit(0);
+    }
     const pin = { [c.commit + ':scripts/update-hop-previous-release.json']: c.updatePin,
       [c.commit + ':scripts/update-hop-oldest-release.json']: c.oldestPin }[args.at(-1)];
     if (!pin) process.exit(91);
@@ -271,7 +274,7 @@ fs.writeFileSync(output + '/signing-input.json', JSON.stringify({ source: { comm
 `, { mode: 0o755 });
   const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, FIXTURE_CONFIG: join(root, 'config.json'),
     RELEASE_WORK: join(root, 'work'), RELEASE_ORIGIN: 'https://fixture.invalid',
-    RELEASE_APPROVAL: approvalPath,
+    RELEASE_APPROVAL: approvalPath, RELEASE_CARRIER_RELAY_URL: changes.relay?.origin || '',
     RELEASE_SEED: 'fixture.invalid', RELEASE_SEED_DATA: join(root, 'xdg/elastos'),
     RELEASE_SEED_UNIT: 'fixture.service', RELEASE_SEED_STAGE: join(root, 'stage'),
     RELEASE_SEED_USER: 'fixture-user',
@@ -1047,4 +1050,61 @@ test('the printed seed download and signing commands keep the GitHub token out o
   const signerEnv = readFileSync(envLog, 'utf8');
   assert.match(signerEnv, new RegExp(`^GH_TOKEN=${token}$`, 'm'));
   assert.equal(signerEnv.includes('FIXTURE_CALLER_SECRET'), false, signerEnv);
+});
+
+const approvedRelay = { origin: 'https://relay.fixture.invalid:4433/', spki_sha256: ['1'.repeat(64), '2'.repeat(64)] };
+for (const [label, changes] of [
+  ['platform mismatch', { 'x86_64-linux': { carrier_relay: null } }],
+  ['unselected N1 receipt mismatch', { 'x86_64-linuxN1': { carrier_relay: null } }],
+  ['missing platform field', { 'aarch64-linux': { carrier_relay: undefined } }],
+  ['wrong origin', { relay: { ...approvedRelay, origin: 'https://wrong.invalid/' } }],
+  ['reversed pins', { 'aarch64-darwin': { carrier_relay: { ...approvedRelay, spki_sha256: [...approvedRelay.spki_sha256].reverse() } } }],
+  ['seed mismatch', { seed: { carrier_relay: null } }],
+  ['missing seed field', { seed: { carrier_relay: undefined } }],
+]) {
+  test(`relay publish refuses ${label} before preparing signing input`, t => {
+    const f = fixture(t, { relay: approvedRelay, ...changes });
+    const result = f.prepare('1.2.3-alpha.1', [], { RELEASE_CARRIER_RELAY_URL: approvedRelay.origin });
+    assert.notEqual(result.status, 0, result.stdout);
+    assert.match(result.stderr, /carrier_relay/);
+    assert.equal(existsSync(f.env.ARGUMENT_LOG), false);
+  });
+}
+for (const relay of [null, approvedRelay]) {
+  test(`relay publish accepts matching ${relay ? 'approved pair' : 'direct-only'} receipts`, t => {
+    const f = fixture(t, { relay });
+    const result = f.prepare();
+    assert.equal(result.status, 0, result.stderr);
+  });
+}
+
+for (const command of ['policy', 'seed']) {
+  test(`relay publish ${command} checks the prepared seed receipt again`, t => {
+    const f = fixture(t, { relay: approvedRelay });
+    assert.equal(f.prepare().status, 0);
+    const receipt = join(f.root, 'work/1.2.3-alpha.1/relay-receipts/seed-input.json');
+    rmSync(receipt);
+    const args = command === 'policy'
+      ? ['policy', '1.2.3-alpha.1', '/fixture/signer', '/fixture/key', '/fixture/openssl']
+      : ['seed', '1.2.3-alpha.1', signedSet(f, { signer_did: did })];
+    const result = spawnSync('bash', [f.script, ...args], { encoding: 'utf8', env: f.env });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /carrier_relay refused/);
+    assert.doesNotMatch(result.stdout, /Sign, typing|On the seed as/);
+  });
+}
+test('relay publish seed-upgrade refuses a seed with a missing relay field', t => {
+  const f = fixture(t, { ciOnly: true, seedFixture: true, seed: { carrier_relay: undefined } });
+  const result = f.seedUpgrade();
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /carrier_relay/);
+  assert.doesNotMatch(result.stdout, /On the seed as/);
+});
+
+test('relay publish requires an attested seed receipt before preparing signing input', t => {
+  const f = fixture(t, { noSeed: true });
+  const result = f.prepare();
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /seed receipt required; build with seed_package enabled/);
+  assert.equal(existsSync(f.env.ARGUMENT_LOG), false);
 });
