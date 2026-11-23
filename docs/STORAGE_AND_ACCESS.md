@@ -2,24 +2,35 @@
 
 Status: target architecture and product contract. This document records the
 storage direction. Product support requires implementation and acceptance.
-Current verified behavior and open work belong in
-[GitHub issues](https://github.com/elastos/elastos-runtime/issues). The
-[implementation guide](OBJECT_PROTECTION_IMPLEMENTATION.md) defines the staged
-provider boundary and acceptance tests.
+For what is stored and protected today, read
+[Security: stored keys and recovery](../SECURITY.md#stored-keys-and-recovery).
+The gaps belong to [backup and recovery (#567)](https://github.com/elastos/elastos-runtime/issues/567),
+[file backup (#603)](https://github.com/elastos/elastos-runtime/issues/603),
+[key custody (#210)](https://github.com/elastos/elastos-runtime/issues/210),
+[host protection (#209)](https://github.com/elastos/elastos-runtime/issues/209),
+[replicas on your own devices (#498)](https://github.com/elastos/elastos-runtime/issues/498),
+and [isolation (#173)](https://github.com/elastos/elastos-runtime/issues/173).
 
-## The product people should experience
+## Two kinds of data
 
-ElastOS gives people familiar files and folders whose ownership and permissions
-continue to work across devices, apps, groups, and services. A person can save a
-document, share it, remove access, and recover it after losing a device. The
-system handles encryption, location, and delivery.
+Finished things stay fixed: a photo, a saved document revision, or an app package.
+Living things keep changing: a conversation, a Browser profile, or a game in progress.
+A content fingerprint (CID) names a saved revision or published content, never a
+store that is still changing. This target model uses five building blocks:
 
-User-controlled encrypted storage is the default for private objects. The owner
-chooses where data is kept, how access is granted, and how recovery works.
-Protected sharing grants specific uses; export and redistribution require
-separate permission. Open publishing and permanent transfers remain deliberate
-owner choices. Users should see ordinary actions such as Open, Share, Manage
-access, Export, and Restore.
+| Building block | Meaning |
+|---|---|
+| Working copy | A file or database where an app makes frequent local writes. |
+| Revision | A fixed save of the working copy, named by its CID. |
+| Head | A signed pointer that selects the current revision (the signed mutable head). |
+| Key | A secret that encrypts private data and lets an authorised reader open it. |
+| Replica | A revision kept in another place under the owner's storage policy. |
+
+The owner should choose where data stays and who can use it; Runtime should
+handle encryption, permission checks, and delivery. Protected sharing
+should grant specific uses, with separate permission for export or redistribution.
+Open publishing and permanent transfers should remain deliberate owner choices.
+People should see familiar actions: Open, Share, Manage access, Export, and Restore.
 
 ## One object model, four responsibilities
 
@@ -31,19 +42,8 @@ access, Export, and Restore.
 | Availability | Storage, retrieval, retention, replication, and repair | Content and availability providers under the owner's storage agreement |
 
 Runtime owns permission checks, provider selection, lifecycle, and audit.
-Providers implement their protocols. Carrier handles Runtime-selected peer
-communication. These roles follow [PRINCIPLES.md](../PRINCIPLES.md) and the
+Providers implement their protocols; Carrier handles Runtime-selected peer communication. These roles follow [PRINCIPLES.md](../PRINCIPLES.md) and the
 [content-provider contract](CONTENT_AVAILABILITY.md).
-
-```mermaid
-flowchart TD
-    A[Person, app, or agent] --> B[Runtime: object, action, authority, lifecycle]
-    B --> C[Protection and permitted-use providers]
-    B --> D[Content provider: store, fetch, retain, repair]
-    E[Owner, group, or license authority] --> B
-    C --> F[Encrypted object and bound access session]
-    D --> F
-```
 
 A provider that stores encrypted blocks gains storage responsibility, not
 permission to read them. A valid grant establishes authority, not availability.
@@ -51,13 +51,13 @@ A content hash verifies bytes, not the latest ownership or permission state.
 
 ## What an object contains
 
-An object has a stable identity and immutable revisions. A signed mutable head
-selects the current revision. Names and folders resolve that identity; moving
-an object between storage providers should preserve its identity and rights.
+In this model, an object keeps a stable identity across revisions. Names and
+folders resolve that identity. Moving an object between storage providers should
+preserve its identity and rights.
 Moving it into another workspace is an authority change that needs an explicit
 audience and history decision.
 
-The object model binds its encrypted content, integrity information, protection
+The target object model binds its encrypted content, integrity information, protection
 format, and authority reference. Private metadata includes names, thumbnails,
 search indexes, and other revealing details. Keep that metadata encrypted or
 inside an explicitly trusted execution boundary. Public distribution exposes
@@ -71,54 +71,61 @@ inside their private boundaries rather than public manifests.
 
 ## Shared application state
 
-Browser profiles, game saves, Assistant conversations, Builder work and logs use
-the same object ownership, protection, revision, availability and recovery
-mechanics. Their mutable state stays separate from executable capsules, model
-packages and service offers. Updating a capsule preserves the identity and
-permissions of the user's state.
+Frequent writes belong in the working copy. In this target contract, each kind
+of data defines when to save a fixed revision:
 
-Each payload keeps its own format and save boundary. Chromium needs a consistent
-profile checkpoint; a game supplies save bytes; conversations preserve drafts
-and message history; run journals preserve ordered events and durable operation
-identities. Reuse existing protected storage, content and authority mechanisms
-with narrow payload adapters. A common contract does not require one file layout
+- A person saves or publishes finished content through its app; an app that
+  saves automatically declares that boundary.
+- The Browser Engine makes a consistent profile save; copying a mounted disk
+  while it changes cannot produce that save.
+- A game supplies its save bytes at its own save boundary.
+- A conversation app saves drafts and message history at its declared boundaries.
+- Builder work uses the same ownership, protection, revision, availability, and recovery rules.
+- A run journal saves ordered events and durable operation identities.
+
+The selected durable store should acknowledge a save only after it commits a
+usable revision. Interrupted writes, full storage, and failed migration should
+preserve the previous revision and report unsaved work. Local save and confirmed
+remote retention are separate outcomes.
+
+State should stay separate from executable capsules, model packages, and service
+offers, so an update preserves the identity and permissions of the user's state.
+Narrow adapters should connect each file layout to the same protection, content,
+and authority contracts. This common contract does not require one file layout
 or a new storage service.
 
-A successful save is acknowledged by the selected durable store after it commits
-a usable revision. Interrupted writes, exhausted
-storage and failed migration preserve the previous committed revision and report
-unsaved work. Local commit and confirmed remote retention are separate outcomes.
-Copying an actively mounted Browser disk is not a consistent checkpoint. One
-Runtime holds writable ownership of a Browser profile; transfer fences that
-writer before another begins. Other payloads declare merge or conflict behavior.
+Storage placement should be separate from execution placement. For a remote
+Browser Engine with local storage, the consumer's store should keep the current
+revision and give the Engine an authorised working copy. Saves should return
+through the common protected-state and content path; a remote working copy alone
+cannot satisfy a local-save claim. One Runtime should own the writable profile,
+and transfer should stop that writer before another starts. Other payloads
+should declare their merge or conflict rules. Host failure should preserve the
+last acknowledged revision and report pending edits and unresolved writer ownership.
 
-Durable storage placement is separate from execution placement. With a remote
-Browser Engine and local storage, the consumer's store retains the canonical
-checkpoint and the Engine receives an authorised working copy. Checkpoints
-return through the common protected-state and content path. A remote working
-copy alone cannot satisfy a local-save claim. Host failure preserves the last
-acknowledged checkpoint; pending edits and unresolved writer ownership remain
-explicit. Availability peers retain only the objects selected by the owner's
-storage and access policy.
+Recovery should restore a revision and usable keys under fresh authority on a
+compatible Runtime. Restored conversations and logs should keep operation
+identity without replaying inference, tools, payments, or approvals. Active
+sessions and stale grants should gain no authority from recovery. Storage peers
+should keep only the protected revisions selected by the owner's policy;
+execution providers should separately need permission to use readable state.
 
-Recovery restores the selected revision and usable keys under fresh authority on
-a compatible Runtime. Restored conversations and logs retain operation identity
-without replaying inference, tools, payments or approvals. Active authentication
-sessions and stale grants are not recovered as authority. A storage replica holds
-protected bytes; an execution provider separately needs permission to use
-readable state within an accepted execution boundary.
+User history, provider settlement journals, and Runtime audit records should each
+have an owner, integrity rule, and bounded retention policy for secret redaction,
+removed history, and pending replica cleanup. Log controls should grant only the
+permitted rights. Acceptance must meet the release plan's Required SA1-SA6 criteria and
+prove each payload's saves, restore, and failure handling. Game-save checks cover the shipped GBA
+surface; this contract adds no separate emulator product.
 
-Logs share storage and protection mechanics while retaining their own semantics.
-User history, provider settlement journals and Runtime audit records each have
-an explicit owner, integrity rule and bounded retention policy. Secret redaction,
-pruned-history reporting and pending replica cleanup are part of that policy.
-User-facing log controls confer only the rights granted over those records.
+## Encryption and isolation
 
-The release plan's Required SA1-SA6 criteria qualify this contract for each
-shipped payload. Reuse common mechanism tests, then prove actual payload saves,
-restore and failure handling. Existing game-save checks cover the shipped GBA
-surface; this contract adds no separate emulator product. Current implementation
-and acceptance limits remain in the owning GitHub issue.
+Private data and metadata should use encryption by default, with usable keys
+outside the data folder. Encryption protects against a reader who lacks the key;
+key custody determines whether the storage host can read it. Isolation should
+limit a running app to its permitted data and services through a sandbox or
+virtual machine. A virtual machine supplies an execution boundary; stored data
+still needs encryption and separate key custody. The [current boundaries](../SECURITY.md#current-isolation-and-target-boundary) and
+[stored-key limits](../SECURITY.md#stored-keys-and-recovery) are recorded in Security.
 
 ## The everyday object journey
 
@@ -138,18 +145,18 @@ and acceptance limits remain in the owning GitHub issue.
 Apps, games, models, and media use the same content foundation. Installing or
 executing an app is a separate permission from storing its signed package.
 Permission to use a model through an approved inference provider is separate
-from permission to export its weights. Marketplace licensing adds rights and
-payment evidence to this object journey.
+from permission to export its weights. Marketplace licensing should add rights
+and payment evidence to this object journey.
 
-## Copying storage and granting a copy are different actions
+## Storage replicas and exports are different actions
 
-ElastOS copies encrypted blocks for delivery, caching, backup, and repair under
-the storage policy. These copies can retain the object's protection and
+Runtime should replicate encrypted blocks for delivery, caching, backup, and repair
+under the storage policy. These replicas can retain the object's protection and
 authority requirements. An independently usable export, redistribution to a
 new audience, or release of reusable decryption material is a separate action.
 
-An owner's private files remain under that owner's control. Protected sharing
-can grant View or Use while retaining separate rights for Edit, Export, and
+In this target, private files should remain under their owner's control.
+Protected sharing should grant View or Use while retaining separate rights for Edit, Export, and
 Manage access. These are product meanings, not a requirement to add a separate
 public API or capability token type for every button.
 
@@ -184,11 +191,11 @@ recordings. Ordinary export paths still require full permission enforcement.
 
 Availability is specific to an operation. Data, keys, a permitted execution
 provider, and sufficiently current authority may be available locally, through
-nearby peers, or through remote services. Runtime hides routing details while
-reporting useful states: Ready, Retrieving content, Permission check
+nearby peers, or through remote services. Runtime should hide routing details and
+report useful states: Ready, Retrieving content, Permission check
 unavailable, Access removed, or Required protection unavailable.
 
-The owner's own files remain usable when their local content, keys, and
+The owner's own files should remain usable when their local content, keys, and
 authority suffice. A recipient's saved permission proves a grant at a point in
 time. It cannot reveal a later revocation that has not reached that recipient.
 Shared access therefore needs a policy for freshness: check authority for each
@@ -220,17 +227,22 @@ policy and enter shared history only after current write authority is checked.
 
 ## Groups, devices, and recovery
 
-A workspace can belong to a group with an explicit management policy. Its
+A group workspace should have an explicit management policy. Its
 continuity should survive the departure of the person who created it. Joining
 and leaving affect membership, devices, delegated grants, and future keys.
 Define whether new members receive old revisions; possession of an old group
 key must not grant access to future protected revisions after removal.
 
-Each device has revocable credentials and the minimum key material required for
-its authorised work. Keep a recovery root separate from routine device use.
+Each device should have revocable credentials and only the key material needed
+for its authorised work. Keep a recovery root separate from routine device use.
 Loss of a device is different from compromise of a root or recovery authority:
 the latter can require wider credential and data-key changes. Identity recovery
 alone is insufficient when object keys or encrypted data are missing.
+
+Today's Recovery Kit restores the same Profile signing seed and the same
+built-in Wallet private keys that were in the export; a new passkey does not
+replace them. See [Security: stored keys and recovery](../SECURITY.md#stored-keys-and-recovery)
+for disk encryption, Kit contents, and what needs separate backups.
 
 Recovery can use the owner's other devices or explicitly selected people or
 services. Explain which parties or threshold can restore access, what they

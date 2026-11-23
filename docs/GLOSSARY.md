@@ -12,32 +12,10 @@ Key terms used in the ElastOS codebase and documentation.
 
 ## Current isolation and target boundary
 
-First-party apps run as web projections in the browser's opaque sandboxed
-frames. Runtime checks each app's signed launch token and actor before it performs an effect.
-Home can currently obtain every app's capability, so a compromised Home can
-reach those apps' authority. The target limits Home to delegation and gives each
-app a separate, revocable capability. The WASM Component authoring path runs in
-Wasmtime with memory and fuel limits and Runtime Bus hostcalls.
-
-Providers run as native operating-system processes with the Runtime user's
-rights. Only the model provider is partly confined. The trusted shell helper
-also runs as a native host process. The web Terminal is disabled by default;
-host developer mode and closed guest registration are required to enable it.
-An enabled Terminal runs commands with the host user's rights.
-
-The seed operator can read hosted data, wallet keys and recovery material.
-Passkeys control sign-in; stored data and keys remain accessible to the Runtime
-account and root while Home is locked. Protection against hosted operators and
-root, and against other software or OS users while a self-hosted Home is locked,
-is the target of [hosted protection](https://github.com/elastos/elastos-runtime/issues/209)
-and [locked Home protection](https://github.com/elastos/elastos-runtime/issues/210).
-An unlocked self-hosted Home trusts its owner and their host software. Recovery
-from a stolen device or profile key requires a new identity.
-
-The [isolation plan](https://github.com/elastos/elastos-runtime/issues/173)
-records the remaining gates. Source checks describe this source tree. Accepted
-installed proof binds the exact Runtime, components and app assets to the
-journeys tested on that device.
+[Security](../SECURITY.md#current-isolation-and-target-boundary) owns the current
+app, provider, Home, and host boundaries and their limitations. Its
+[storage table](../SECURITY.md#stored-keys-and-recovery) describes disk encryption,
+key custody, and recovery coverage.
 
 ## ElastOS Four Quadrants
 
@@ -49,9 +27,11 @@ for the canonical definition.
 ## Runtime
 
 The trusted base (`elastos` binary). It checks signatures,
-capabilities, routing, lifecycle, and audit. Capsules and providers run outside
-the trusted core. Native host and engine adapters may also sit outside it, but
-they do not become capsules merely because they are separate processes.
+capabilities, routing, lifecycle, and audit. Providers run outside the trusted
+core as native processes. Release capsules run as WASM components inside the
+Runtime process with memory and fuel limits. Native host and engine adapters may
+also sit outside the trusted core, but they do not become capsules merely
+because they are separate processes.
 Also called the ElastOS kernel. In this repository, ElastOS alone means the
 whole system, not only the Runtime. A PC² Host is the computer the Runtime runs
 on: today an app on macOS or Linux, later possibly a dedicated appliance image.
@@ -71,15 +51,23 @@ The default human proof for Home. A passkey proves control of a local account to
 the runtime and unlocks short-lived sessions. It is not a wallet, not a DID, and
 normally does not expose raw key material for encryption.
 
+## Recovery Kit
+
+The recovery file saved by System's **Download Recovery Kit**. Keep it private,
+with its optional password. The [storage table](../SECURITY.md#stored-keys-and-recovery)
+defines its contents and the data that needs separate backups.
+
 ## Profile DID
 
 The stable person/contact identity used by signed People, discovery, accepted
 contacts, and direct-conversation identity. A Profile DID belongs to a
 principal-owned signed Profile document and can remain stable across device
-replacement or revocation when a valid Recovery Kit restores it. A stolen
-profile key requires a new identity. It is not the passkey and not the local principal
-identifier. It represents the person in collaboration, but the signed Profile
-document is not the human actor or the delivery device.
+replacement or revocation; see the
+[recovery coverage](../SECURITY.md#stored-keys-and-recovery). Recovery restores
+the same Profile signing seed from the Kit; a new passkey does not replace it.
+It is not the passkey and not the local principal identifier. It represents the
+person in collaboration, but the signed Profile document is not the human actor
+or the delivery device.
 
 ## WebAuthn PRF
 
@@ -317,15 +305,21 @@ access-control system.
 
 ## CID (Content ID)
 
-A content-addressed identifier (hash of the content). Used for capsule identity, IPFS references, and the `elastos://` namespace. The identity is the content, not the location.
+A content fingerprint that names fixed bytes or a fixed graph of content, such
+as a saved revision or published package. A CID names content rather than its
+location; a changing working copy needs a new revision before it can have a CID.
+Availability receipts separately state which provider accepted or verified a
+responsibility to keep those bytes reachable. A CID grants no permission and
+makes no person, device, account, or global name claim.
 
-CID is not an availability guarantee. A CID says what bytes or graph root are
-being referenced; availability receipts say which provider accepted or verified
-responsibility to keep that content reachable.
+## Working copy, revision, head, key, replica
 
-A CID is also not a person, device, account, or global name claim. A stable
-object may later have a signed head or object DID that points to changing CID
-revisions, but each CID already identifies one immutable byte graph.
+In the [target storage model](STORAGE_AND_ACCESS.md#two-kinds-of-data), a working
+copy is a file or database for frequent writes. A revision is a fixed save named
+by its CID. A head is the signed pointer that selects the current revision,
+also called a signed mutable head. A key encrypts private data and lets an
+authorised reader open it. A replica is a revision kept elsewhere under the owner's
+storage policy.
 
 ## Service Offer
 

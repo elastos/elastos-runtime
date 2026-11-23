@@ -47,8 +47,12 @@ account and root while Home is locked. Protection against hosted operators and
 root, and against other software or OS users while a self-hosted Home is locked,
 is the target of [hosted protection](https://github.com/elastos/elastos-runtime/issues/209)
 and [locked Home protection](https://github.com/elastos/elastos-runtime/issues/210).
-An unlocked self-hosted Home trusts its owner and their host software. Recovery
-from a stolen device or profile key requires a new identity.
+An unlocked self-hosted Home trusts its owner and their host software. The
+Recovery Kit restores the same Profile signing seed and the same built-in Wallet
+private keys that were in the export. A new passkey controls sign-in only; it
+does not replace those keys. If your device or a Recovery Kit copy was stolen,
+move funds to new wallet keys and create a new Profile before you treat the old
+identity as closed.
 
 The [isolation plan](https://github.com/elastos/elastos-runtime/issues/173)
 records the remaining gates. Source checks describe this source tree. Accepted

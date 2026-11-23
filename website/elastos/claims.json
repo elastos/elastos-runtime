@@ -12,7 +12,7 @@
     "apps": "opaque-browser-frames-runtime-checks",
     "home": "cross-app-capabilities",
     "providers": "native-processes-model-partly-confined",
-    "stolen_device_key": "new-identity",
+    "stolen_device_key": "kit-same-keys-rotate-profile-when-closed",
     "stored_keys": "beside-data-backups-include-all-keys",
     "seed_operator": "can-read-data-wallet-keys-recovery-phrases",
     "proof": "requires-integrated-s0-and-installed-acceptance",

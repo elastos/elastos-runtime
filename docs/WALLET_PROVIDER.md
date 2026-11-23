@@ -8,8 +8,15 @@ The contract is:
 
 `signed launch-token v4 -> verified RuntimeWalletAuthority -> private RuntimeWalletAdapter -> WalletProviderRequestV2 (Wallet Bus 2.3) -> wallet-provider`
 
-Capsules never receive private keys, browser wallet objects, raw wallet RPC,
-node RPC, seed phrases, or provider SDK handles. A wallet address is a proof
+Ordinary signing keeps private keys inside wallet-provider; explicit recovery
+export and import can pass secret key material through Wallet or System.
+Ordinary app capsules use typed Runtime wallet operations and never receive
+browser wallet objects, raw wallet RPC, node RPC, or provider SDK handles.
+The MetaMask, UniSat, and WalletConnect connector paths keep browser wallet
+objects and SDK handles inside the Wallet trust boundary and launch only from
+Wallet flows. Trusted Home holds the injected MetaMask and UniSat provider
+objects; the configured WalletConnect connector capsule holds its pinned SDK's
+EIP-1193 provider and calls wallet RPC through it. A wallet address is a proof
 binding on a Runtime principal, not the principal itself.
 
 The generic provider plane exposes only read-only
@@ -92,22 +99,30 @@ intent and returns no signature. Runtime resolves and supplies the exact
 principal-owned account, chain namespace, intent, resource, reason, payload, and
 expiry before invoking the private adapter.
 
-Built-in wallet keys are provider-owned and encrypted at rest under
-`localhost://ElastOS/SystemServices/Wallet/wallet-key.hex`. They are
+Built-in wallet signing keys are provider-owned and encrypted at rest in
+`localhost://ElastOS/SystemServices/Wallet/wallet-state.json`. The nearby
+`wallet-key.hex` file is plain hex on disk and names the provider storage key.
+They are
 passkey-controlled, not passkey-derived: a long-lived Wallet/System/Inbox launch
 token may list and review requests, but every built-in signature, transaction
 send, account deletion, and Wallet recovery-key export/import must include a
 fresh passkey-bound Home token before the provider uses or changes key material.
-App capsules never receive the private key, wallet object, or raw wallet RPC.
+Ordinary signing keeps private keys inside wallet-provider; explicit recovery
+export and import can pass secret key material through Wallet or System.
 External wallets still use the same approval request and completion receipt
 shape, but the final signature is completed by the connector capsule that owns
 the linked account.
 
 Full Recovery Kits and individual Wallet recovery keys are intentionally
-different. `elastos.recovery-kit/v1` restores the encrypted user root and every
-recoverable built-in Wallet key included in the exported bundle. External
-wallets such as MetaMask, WalletConnect, Ledger, Essentials, and UniSat restore
-only their links/metadata because their private keys stay in those wallets.
+different. System's Recovery Kit restores recovery authority, the data key,
+included Profile and contacts, and exported built-in Wallet keys. User files and
+external-wallet links need separate backups. The Recovery Kit does not restore
+MetaMask, WalletConnect, Ledger, Essentials, or UniSat links. Their private
+keys stay in those wallets. Link them again, or restore `wallet-state.json` from
+a separate copy of the data folder. After Kit import, Home may write a new
+`wallet-key.hex`. A lone `wallet-state.json` from an older copy may not open
+managed accounts until you import the Recovery Kit again or export the affected
+Wallet recovery keys before removal.
 `elastos.wallet.recovery-key/v1` remains an advanced per-account escape hatch
 for one built-in wallet key. An old managed account whose key cannot decrypt on
 the current Runtime must remain fail-closed until a full bundle or that account's
@@ -250,7 +265,7 @@ owns proof verification, linked accounts, approval state, receipts, and audit;
 the connector owns only Reown/AppKit browser UX plus the operator-pinned local
 adapter. Mode A is the first target: ElastOS acts as the dApp and external
 wallets sign Runtime challenges or requests. Mode B, where external dApps treat
-ElastOS as a WalletConnect wallet, is a later security milestone. Internal
+ElastOS as a WalletConnect wallet, is a later security milestone. Ordinary app
 capsules do not use WalletConnect or generic Wallet provider calls; their
 product routes enter the private typed Wallet Bus through verified Runtime
 authority.
@@ -327,7 +342,8 @@ before they can be claimed as supported.
 - No address-only login.
 - No wallet-address-derived encryption keys.
 - No arbitrary signing.
-- No app-visible wallet RPC or node RPC.
+- Ordinary app capsules use typed Runtime operations; wallet connectors keep
+  wallet RPC inside the Wallet trust boundary, and chain-provider owns node RPC.
 - No private keys outside wallet-provider authority.
 - No Essentials or UniversalX requirement for default Home unlock.
 - No blockchain UI before fail-closed tests and capability schema exist.
