@@ -121,12 +121,12 @@ async function exercise(engine,width,theme) {
     const phone=page.frameLocator('iframe[title=wallet-walletconnect]');await phone.locator('.connection-status').filter({hasText:/Sign the message in .* to sign in to this Home\./}).waitFor();await capture('17-existing-phone-session');
     await page.locator('iframe[title=wallet-walletconnect]').evaluate(f=>f.contentWindow.postMessage({type:'home:wallet-signin-effect',homeToken:'fixture-wallet-walletconnect',requestId:'fixture-stop',operation:'stop'},'*'));
     await state('error');await cancel();assert.equal(fixture.state.methods.length,0,'stopping a pending proof creates no sign-in method');
-    await phone.locator('[data-action=disconnect]').waitFor({state:'visible'});assert(await phone.locator('[data-action=disconnect]').isEnabled(),'saved payment connection remains usable after Home stops');await capture('23-stopped-phone-session');
+    await phone.locator('[data-action=disconnect]').waitFor({state:'visible'});assert(await phone.locator('[data-action=disconnect]').isEnabled(),'saved payment connection remains usable after Home stops');await capture('23-stopped-phone-session');await page.locator('#show-system').click();
     await page.locator('iframe[title=wallet-walletconnect]').evaluate(f=>f.contentWindow.postMessage('fixture-release-signature','*'));fixture.state.holdSignature=false;
     await page.locator('iframe[title=wallet-walletconnect]').evaluate(f=>f.contentWindow.postMessage('fixture-sign-pending','*'));
     await system.getByRole('button',{name:'Add wallet',exact:true}).click();await state('options');await option('WalletConnect').click();
     await phone.getByRole('button',{name:'Stop waiting',exact:true}).click();await state('error');await cancel();assert.equal(fixture.state.methods.length,0);
-    await phone.locator('[data-action=disconnect]').waitFor({state:'visible'});await capture('24-native-stop');
+    await phone.locator('[data-action=disconnect]').waitFor({state:'visible'});await capture('24-native-stop');await page.locator('#show-system').click();
     await page.locator('iframe[title=wallet-walletconnect]').evaluate(f=>f.contentWindow.postMessage('fixture-release-signature','*'));
     await system.getByRole('button',{name:'Add wallet',exact:true}).click();await state('options');await option('WalletConnect').click();
     await system.getByRole('button',{name:'Turn off sign-in',exact:true}).waitFor();await dialog().waitFor({state:'detached'});

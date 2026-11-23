@@ -169,7 +169,7 @@ window.showFixtureApps=()=>{
  const frames=[];
  for(const target of ['system','wallet']) {
    const frame=document.createElement('iframe');frame.title=target;frame.dataset.target=target;frame.style.cssText='width:100%;height:calc(100vh - 50px);border:0';frame.setAttribute('sandbox','allow-scripts allow-forms');frame.src='/apps/'+target+'/?home_origin='+encodeURIComponent(location.origin)+'#home_token=fixture-'+target;frame.hidden=target!=='system';area.append(frame);frames.push(frame);
-   tabs.querySelector('#show-'+target).onclick=()=>{frames.forEach(f=>f.hidden=f!==frame);frame.contentWindow.postMessage({type:'home:wallet-signin-changed'},'*');};
+   tabs.querySelector('#show-'+target).onclick=()=>{area.querySelectorAll('iframe[data-target^=wallet-]').forEach(f=>f.hidden=true);frames.forEach(f=>f.hidden=f!==frame);frame.contentWindow.postMessage({type:'home:wallet-signin-changed'},'*');};
  }
  area.prepend(tabs);
 };
