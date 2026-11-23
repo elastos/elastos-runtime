@@ -179,6 +179,15 @@ async fn wallet_one_state_http_remove_ends_pairing_and_preserves_payment_permiss
     let payment = json!({"id":"payment-fixture", "status":"granted", "at":now_ts()});
     std::fs::create_dir_all(payment_path.parent().unwrap()).unwrap();
     std::fs::write(&payment_path, serde_json::to_vec(&payment).unwrap()).unwrap();
+    let granted_bytes = std::fs::read(&payment_path).unwrap();
+    change(&app, &token, &f, "remove", id).await;
+    assert_eq!(
+        std::fs::read(&payment_path).unwrap(),
+        granted_bytes,
+        "method removal preserves a granted payment permission"
+    );
+    let replacement = change(&app, &token, &f, "add", "").await;
+    let id = replacement["method_id"].as_str().unwrap();
     let inbox = wallet_app_token(f.data.path(), INBOX_CAPSULE_ID, &f.actor);
     let mut headers = HeaderMap::new();
     headers.insert("x-elastos-home-token", inbox.parse().unwrap());
