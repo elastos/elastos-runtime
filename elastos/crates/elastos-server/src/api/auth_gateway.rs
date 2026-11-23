@@ -3456,121 +3456,125 @@ async fn recovery_kit_import_inner(
         },
         None => None,
     };
-    let protected_object_inventory =
-        principal_root_protected_object_inventory(&state.data_dir, &kit.localhost_root);
-    let _protection_activation =
-        crate::auth::begin_declarative_principal_root_protection_activation_with_candidate(
-            &state.data_dir,
-            &protection,
-            &candidate_data_key,
-            &protected_object_inventory,
-        )?;
-    if let Some(protector) = verified_did_recovery_protector {
-        protection.protectors.push(protector);
-    }
-    if input.reassign_to_current_principal {
-        let proof_binding_id = principal.proof_binding_id.clone();
-        let grant = AuthSessionGrantV1 {
-            schema: AuthSessionGrantV1::SCHEMA.to_string(),
-            grant_id: format!("grant:{}", random_hex(16)),
-            session_id: format!("auth:{}", random_hex(16)),
-            principal_id: kit.principal_id.clone(),
-            proof_binding_id: proof_binding_id.clone(),
-            issued_at: now,
-            expires_at: now.saturating_add(AUTH_SESSION_TTL_SECS),
-            apps: vec![
-                HOME_CAPSULE_ID.to_string(),
-                super::gateway::SYSTEM_CAPSULE_ID.to_string(),
-            ],
-        };
-        #[cfg(test)]
-        crate::auth::consume_recovery_reassignment_test_fault(
-            &state.data_dir,
-            crate::auth::RecoveryReassignmentTestFault::TokenPreparation,
-        )?;
-        let home_token =
-            issue_home_launch_token_for_auth_grant(&state.data_dir, HOME_CAPSULE_ID, &grant)?;
-        let system_token = issue_home_launch_token_for_auth_grant(
-            &state.data_dir,
-            super::gateway::SYSTEM_CAPSULE_ID,
-            &grant,
-        )?;
-        let signed_audit_event = crate::auth::sign_audit_event(
+    // Keep the root activation lock inside the synchronous commit boundary.
+    let response = (|| -> anyhow::Result<RecoveryKitImportResponse> {
+        let protected_object_inventory =
+            principal_root_protected_object_inventory(&state.data_dir, &kit.localhost_root);
+        let _protection_activation =
+            crate::auth::begin_declarative_principal_root_protection_activation_with_candidate(
+                &state.data_dir,
+                &protection,
+                &candidate_data_key,
+                &protected_object_inventory,
+            )?;
+        if let Some(protector) = verified_did_recovery_protector {
+            protection.protectors.push(protector);
+        }
+        if input.reassign_to_current_principal {
+            let proof_binding_id = principal.proof_binding_id.clone();
+            let grant = AuthSessionGrantV1 {
+                schema: AuthSessionGrantV1::SCHEMA.to_string(),
+                grant_id: format!("grant:{}", random_hex(16)),
+                session_id: format!("auth:{}", random_hex(16)),
+                principal_id: kit.principal_id.clone(),
+                proof_binding_id: proof_binding_id.clone(),
+                issued_at: now,
+                expires_at: now.saturating_add(AUTH_SESSION_TTL_SECS),
+                apps: vec![
+                    HOME_CAPSULE_ID.to_string(),
+                    super::gateway::SYSTEM_CAPSULE_ID.to_string(),
+                ],
+            };
+            #[cfg(test)]
+            crate::auth::consume_recovery_reassignment_test_fault(
+                &state.data_dir,
+                crate::auth::RecoveryReassignmentTestFault::TokenPreparation,
+            )?;
+            let home_token =
+                issue_home_launch_token_for_auth_grant(&state.data_dir, HOME_CAPSULE_ID, &grant)?;
+            let system_token = issue_home_launch_token_for_auth_grant(
+                &state.data_dir,
+                super::gateway::SYSTEM_CAPSULE_ID,
+                &grant,
+            )?;
+            let signed_audit_event = crate::auth::sign_audit_event(
+                &state.data_dir,
+                audit_event(AuditEventInput {
+                    event_type: "auth.recovery_kit.reassigned",
+                    principal_id: Some(kit.principal_id.clone()),
+                    proof_binding_id: Some(proof_binding_id.clone()),
+                    session_id: Some(grant.session_id.clone()),
+                    result: "ok",
+                    reason:
+                        "principal root reassigned from verified Recovery Kit and session reissued",
+                    occurred_at: now,
+                    ..AuditEventInput::default()
+                }),
+            )?;
+            let principal = match crate::auth::commit_recovered_root_reassignment(
+                &state.data_dir,
+                crate::auth::RecoveredRootReassignment {
+                    proof_binding_id,
+                    recovered_principal_id: kit.principal_id.clone(),
+                    recovered_localhost_root: kit.localhost_root.clone(),
+                    protection,
+                    kit: kit.clone(),
+                    replacement_grant: grant,
+                    signed_audit_event,
+                    updated_at: now,
+                },
+            ) {
+                Ok(principal) => principal,
+                Err(err) => {
+                    return fail_recovery_kit_request(
+                        state,
+                        &context,
+                        &principal,
+                        "auth.recovery_kit.import.rejected",
+                        format!("recovery root reassignment failed: {err}"),
+                    );
+                }
+            };
+            return Ok(RecoveryKitImportResponse {
+                schema: "elastos.recovery-kit.import.response/v1".to_string(),
+                principal_id: principal.principal_id,
+                localhost_root: principal.localhost_root,
+                status: "reassigned".to_string(),
+                previous_principal_id: Some(previous_principal_id),
+                previous_localhost_root: Some(previous_localhost_root),
+                home_token: Some(home_token),
+                system_token: Some(system_token),
+            });
+        }
+
+        crate::auth::attach_recovery_archive(&state.data_dir, &mut protection, &kit)?;
+        crate::auth::store_principal_root_protection(&state.data_dir, protection)?;
+        crate::auth::append_audit_event(
             &state.data_dir,
             audit_event(AuditEventInput {
-                event_type: "auth.recovery_kit.reassigned",
-                principal_id: Some(kit.principal_id.clone()),
-                proof_binding_id: Some(proof_binding_id.clone()),
-                session_id: Some(grant.session_id.clone()),
+                event_type: "auth.recovery_kit.imported",
+                principal_id: Some(principal.principal_id.clone()),
+                proof_binding_id: Some(principal.proof_binding_id.clone()),
+                session_id: Some(context.session_id.clone()),
                 result: "ok",
-                reason: "principal root reassigned from verified Recovery Kit and session reissued",
+                reason: "principal recovery kit imported and verified",
                 occurred_at: now,
                 ..AuditEventInput::default()
             }),
         )?;
-        let principal = match crate::auth::commit_recovered_root_reassignment(
-            &state.data_dir,
-            crate::auth::RecoveredRootReassignment {
-                proof_binding_id,
-                recovered_principal_id: kit.principal_id.clone(),
-                recovered_localhost_root: kit.localhost_root.clone(),
-                protection,
-                kit: kit.clone(),
-                replacement_grant: grant,
-                signed_audit_event,
-                updated_at: now,
-            },
-        ) {
-            Ok(principal) => principal,
-            Err(err) => {
-                return fail_recovery_kit_request(
-                    state,
-                    &context,
-                    &principal,
-                    "auth.recovery_kit.import.rejected",
-                    format!("recovery root reassignment failed: {err}"),
-                );
-            }
-        };
-        super::gateway::retire_inactive_walletconnect_attempts(state).await?;
-        return Ok(RecoveryKitImportResponse {
+        Ok(RecoveryKitImportResponse {
             schema: "elastos.recovery-kit.import.response/v1".to_string(),
             principal_id: principal.principal_id,
             localhost_root: principal.localhost_root,
-            status: "reassigned".to_string(),
-            previous_principal_id: Some(previous_principal_id),
-            previous_localhost_root: Some(previous_localhost_root),
-            home_token: Some(home_token),
-            system_token: Some(system_token),
-        });
-    }
-
-    crate::auth::attach_recovery_archive(&state.data_dir, &mut protection, &kit)?;
-    crate::auth::store_principal_root_protection(&state.data_dir, protection)?;
-    crate::auth::append_audit_event(
-        &state.data_dir,
-        audit_event(AuditEventInput {
-            event_type: "auth.recovery_kit.imported",
-            principal_id: Some(principal.principal_id.clone()),
-            proof_binding_id: Some(principal.proof_binding_id.clone()),
-            session_id: Some(context.session_id.clone()),
-            result: "ok",
-            reason: "principal recovery kit imported and verified",
-            occurred_at: now,
-            ..AuditEventInput::default()
-        }),
-    )?;
+            status: "imported".to_string(),
+            previous_principal_id: None,
+            previous_localhost_root: None,
+            home_token: None,
+            system_token: None,
+        })
+    })()?;
     super::gateway::retire_inactive_walletconnect_attempts(state).await?;
-    Ok(RecoveryKitImportResponse {
-        schema: "elastos.recovery-kit.import.response/v1".to_string(),
-        principal_id: principal.principal_id,
-        localhost_root: principal.localhost_root,
-        status: "imported".to_string(),
-        previous_principal_id: None,
-        previous_localhost_root: None,
-        home_token: None,
-        system_token: None,
-    })
+    Ok(response)
 }
 
 fn create_recovery_kit_for_principal(
