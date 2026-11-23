@@ -10,6 +10,7 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 
 ### Added
 
+- You can add a wallet to your account and turn on sign-in for it, then sign in with that wallet instead of a passkey. MetaMask, UniSat and WalletConnect wallets work.
 - WalletConnect links your wallet to Wallet. Scan the QR code with your wallet, or copy the connection link.
 - Compatible browser wallets can link through the MetaMask option. When MetaMask is installed, the option uses MetaMask.
 - To start Home without opening a browser window, use elastos home --browser --no-open. Updates and Undo keep this choice.
@@ -41,8 +42,7 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 - You can dismiss an unfinished wallet payment in Wallet. Home can record a later wallet confirmation for up to 24 hours after the request expires.
 - Assistant opens from Marketplace and offers to get a model when none is installed.
 - Typing in a new document stays in the document.
-- After you refuse internet access, Browser asks again when you press Return, and returns to full screen when you allow it.
-- Browser keeps your page when its internet access is renewed.
+- After you refuse internet access, Browser asks again when you press Return, and returns to full screen when you allow it. Browser keeps your page when its internet access is renewed.
 - Home keeps at least one admin passkey. Removing a passkey asks you to confirm and signs out the windows that used it.
 - Updating works for a Home installed through a linked folder.
 
@@ -63,6 +63,7 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 
 ### Added
 
+- You can add a wallet to your account and turn on sign-in for it, then sign in with that wallet instead of a passkey. MetaMask, UniSat and WalletConnect wallets work.
 - WalletConnect links your wallet to Wallet. Scan the QR code with your wallet, or copy the connection link.
 - Compatible browser wallets can link through the MetaMask option. When MetaMask is installed, the option uses MetaMask.
 - To start Home without opening a browser window, use elastos home --browser --no-open. Updates and Undo keep this choice.
@@ -93,8 +94,7 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 - You can dismiss an unfinished wallet payment in Wallet. Home can record a later wallet confirmation for up to 24 hours after the request expires.
 - Assistant opens from Marketplace and offers to get a model when none is installed.
 - Typing in a new document stays in the document.
-- After you refuse internet access, Browser asks again when you press Return, and returns to full screen when you allow it.
-- Browser keeps your page when its internet access is renewed.
+- After you refuse internet access, Browser asks again when you press Return, and returns to full screen when you allow it. Browser keeps your page when its internet access is renewed.
 - Home keeps at least one admin passkey. Removing a passkey asks you to confirm and signs out the windows that used it.
 - Updating works for a Home installed through a linked folder.
 
