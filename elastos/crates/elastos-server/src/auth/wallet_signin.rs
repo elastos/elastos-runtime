@@ -1415,88 +1415,63 @@ pub(crate) mod tests {
         unreachable!()
     }
     #[test]
-    fn wallet_payment_identity_enables_once_with_new_proofs_without_payment_authority() {
+    fn wallet_enable_requires_added_method_id() {
+        for state in ["absent", "added", "enabled", "removed"] {
+            let f = fixture();
+            if state != "absent" {
+                let id = change(&f, "add", "");
+                if state == "enabled" {
+                    change(&f, "enable", &id);
+                } else if state == "removed" {
+                    change(&f, "remove", &id);
+                }
+            }
+            for method_id in ["", "proof:signin-wallet:unknown"] {
+                assert!(
+                    begin(
+                        f.data.path(),
+                        ORIGIN,
+                        "home-test",
+                        input("enable", method_id, &f.address),
+                        Some(f.actor.clone()),
+                    )
+                    .is_err(),
+                    "enable requires an owned method ID after Add ({state})"
+                );
+            }
+        }
+    }
+    #[test]
+    fn wallet_legacy_provisional_enable_cannot_create_method() {
         let f = fixture();
-        assert!(list(f.data.path(), &f.actor).unwrap()["methods"]
-            .as_array()
-            .unwrap()
-            .is_empty());
-        let b = begin(
+        begin(
             f.data.path(),
             ORIGIN,
             "home-test",
-            input("enable", "", &f.address),
+            input("add", "", &f.address),
             Some(f.actor.clone()),
         )
         .unwrap();
-        assert_eq!(
-            b.approval.as_ref().unwrap()["request"]["address"],
-            f.address
-        );
+        // Model a saved enable-by-identity ceremony from the older contract.
+        let file = path(f.data.path()).unwrap();
+        let mut saved: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+        saved["pending"][0]["action"] = "enable".into();
+        saved["pending"][0]["creates_method"] = true.into();
+        write_secret_bytes_atomic(&file, &serde_json::to_vec(&saved).unwrap()).unwrap();
+        let saved = read(f.data.path()).unwrap();
+        let b = begin_result(&saved.pending[0], None).unwrap();
         assert!(complete(
             f.data.path(),
             ORIGIN,
             &completion(&f, &b),
             Some(&f.actor),
-            |_| anyhow::bail!("passkey missing")
+            |_| panic!("a provisional enable cannot consume approval"),
         )
         .is_err());
-        complete(
-            f.data.path(),
-            ORIGIN,
-            &completion(&f, &b),
-            Some(&f.actor),
-            |_| Ok(()),
-        )
-        .unwrap();
-        assert_eq!(signin(&f).principal_id, f.actor.principal_id);
-        let existing = begin(
-            f.data.path(),
-            ORIGIN,
-            "home-test",
-            input("enable", "", &f.address),
-            Some(f.actor.clone()),
-        )
-        .unwrap();
-        assert_eq!(
-            existing.approval.as_ref().unwrap()["request"]["method_id"],
-            b.approval.as_ref().unwrap()["request"]["method_id"]
-        );
-    }
-    #[test]
-    fn wallet_provisional_enable_never_adopts_a_replaced_or_removed_method() {
-        for remove in [false, true] {
-            let f = fixture();
-            let pending = begin(
-                f.data.path(),
-                ORIGIN,
-                "home-test",
-                input("enable", "", &f.address),
-                Some(f.actor.clone()),
-            )
-            .unwrap();
-            let id = change(&f, "add", "");
-            if remove {
-                change(&f, "remove", &id);
-            }
-            assert!(complete(
-                f.data.path(),
-                ORIGIN,
-                &completion(&f, &pending),
-                Some(&f.actor),
-                |_| Ok(())
-            )
-            .is_err());
-            assert!(begin(
-                f.data.path(),
-                ORIGIN,
-                "home-test",
-                input("signin", "", &f.address),
-                None
-            )
-            .and_then(|b| complete(f.data.path(), ORIGIN, &completion(&f, &b), None, |_| Ok(())))
-            .is_err());
-        }
+        assert!(list(f.data.path(), &f.actor).unwrap()["methods"]
+            .as_array()
+            .unwrap()
+            .is_empty());
     }
     #[test]
     fn wallet_completed_changes_leave_live_approval_capacity_available() {
