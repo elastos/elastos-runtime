@@ -9,7 +9,7 @@ function abortable(promise,signal) {
 const hexMessage = text => '0x'+[...new TextEncoder().encode(text)].map(b=>b.toString(16).padStart(2,'0')).join('');
 export async function selectSigninWallet(connector,options) {
   if(connector==='walletconnect') return selectWalletConnect(options);
-  const {signal,choices,changed}=options;
+  const {signal,changed}=options;
   let provider,name;
   if(connector==='metamask') {
     const entries=signinBrowserWallets();
@@ -27,7 +27,8 @@ export async function selectSigninWallet(connector,options) {
       preferred=matches.find(entry=>entry?.rdns==='io.metamask')||matches.find(Boolean);
       if(!preferred&&entries.length>1)throw fault('changed');
     }
-    const entry=preferred || (entries.length===1 ? entries[0] : await abortable(new Promise(resolve=>choices(entries.map((entry,index)=>({id:String(index),name:entry.name,choose:()=>resolve(entry)})))),signal));
+    const entry=preferred || (entries.length===1 ? entries[0] : null);
+    if(!entry)throw fault('changed');
     provider=entry.provider;name=entry.name;
   } else {provider=window.unisat;name="UniSat";}
   if(!provider || connector==='unisat' && ['requestAccounts','getAccounts','getNetwork','signMessage'].some(key=>typeof provider[key]!=='function'))throw fault('missing');

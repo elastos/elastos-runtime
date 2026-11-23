@@ -116,8 +116,6 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
         const list=node('div',null,'connection-card connection-options-list');
         for(const kind of ['metamask','unisat','walletconnect'])list.append(option(connectorName(kind),'',kind,()=>openConnector(kind)));
         dialog.append(list);
-      } else if(state.stage==='wallet-choice') {
-        for(const choice of state.choices)dialog.append(option(choice.name,'','',choice.choose));
       } else if(state.stage==='internet-notice') {
         dialog.append(node('p','Home reaches your wallet over the internet through WalletConnect. The relay service can see this Home computer’s internet address.','connection-note'));
         dialog.append(button('Continue',()=>flow.connect()));

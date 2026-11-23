@@ -75,7 +75,6 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
         current.wallet=await select(connector,{
           signal:current.controller.signal,transport,method,action:state.action,
           pairing:pairing=>{if(live(current))show('pairing',{pairing});},
-          choices:choices=>{if(live(current))show('wallet-choice',{choices});},
           changed:(code='changed')=>{
             if(!live(current))return;
             // A dispatched proof may already be committed. Keep its exact retry body.

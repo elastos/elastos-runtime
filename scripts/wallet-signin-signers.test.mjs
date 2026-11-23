@@ -89,3 +89,13 @@ test('a connected account without a provider hint uses the matching extension ac
     brave.state.chain='0x2105';await assert.rejects(selectSigninWallet('metamask',{...options(),method:{address,chain_id:20}}),{code:'changed'});
   }finally{window.removeEventListener('eip6963:requestProvider',announce);}
 });
+
+test('ambiguous extensions stop before access instead of opening another Home picker',async()=>{
+  const first=provider(),second=provider();
+  const announce=()=>{
+    for(const [rdns,p]of [['io.rabby',first],['com.brave.wallet',second]])window.dispatchEvent(new CustomEvent('eip6963:announceProvider',{detail:{provider:p.api,info:{uuid:rdns,rdns,name:rdns}}}));
+  };
+  window.addEventListener('eip6963:requestProvider',announce);
+  try{await assert.rejects(selectSigninWallet('metamask',options()),{code:'changed'});assert.equal(first.calls.length+second.calls.length,0);}
+  finally{window.removeEventListener('eip6963:requestProvider',announce);}
+});
