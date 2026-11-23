@@ -2,6 +2,10 @@
 export function walletBrowserSecret() {
   return [...crypto.getRandomValues(new Uint8Array(32))].map(b=>b.toString(16).padStart(2,'0')).join('');
 }
+export function walletSigninOriginAllowed(value) {
+  const url=new URL(value),host=url.hostname;
+  return url.protocol==='https:' || url.protocol==='http:' && (host==='localhost' || host==='[::1]' || /^127\.(?:\d{1,3}\.){2}\d{1,3}$/.test(host));
+}
 export const connectorName = id => ({metamask:'MetaMask',walletconnect:'WalletConnect',unisat:'UniSat'})[id] || 'Wallet';
 export const walletNetwork = wallet => wallet.connector === 'unisat'
   ? (wallet.network === 'livenet' ? 'Bitcoin' : `Bitcoin ${wallet.network}`)
@@ -75,7 +79,7 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
         assertLive(current);
         const wallet=current.wallet;
         const identity={connector,address:wallet.address,chain_id:wallet.chain_id,network:wallet.network};
-        if(method && (wallet.address.toLowerCase()!==method.address.toLowerCase() || wallet.chain_id!==method.chain_id || wallet.network!==method.network)) throw fault('changed');
+        if(method && ((connector==='unisat'?wallet.address!==method.address:wallet.address.toLowerCase()!==method.address.toLowerCase()) || wallet.chain_id!==method.chain_id || wallet.network!==method.network)) throw fault('changed');
         current.target=method || identity;
         if(state.action==='signin') {
           ceremony=connector==='walletconnect'

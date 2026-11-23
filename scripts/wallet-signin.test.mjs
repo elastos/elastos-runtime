@@ -1,6 +1,6 @@
 import test, {afterEach} from 'node:test';
 import assert from 'node:assert/strict';
-import { createWalletSigninFlow as createProductFlow } from '../capsules/home/browser/wallet-signin-flow.mjs';
+import { createWalletSigninFlow as createProductFlow, walletSigninOriginAllowed } from '../capsules/home/browser/wallet-signin-flow.mjs';
 const activeFlows=new Set();
 const createWalletSigninFlow=options=>{const flow=createProductFlow(options);activeFlows.add(flow);return flow;};
 afterEach(async()=>{await Promise.all([...activeFlows].map(flow=>flow.cancel()));activeFlows.clear();});
@@ -126,4 +126,19 @@ test('WalletConnect pairing and Add wallet each have their own browser secret',a
   await flow.start({action:'add'});await flow.choose('walletconnect');
   const begins=calls.filter(c=>c.path.endsWith('/begin'));await flow.cancel();assert.equal(begins.length,2);assert.notEqual(begins[0].body.browser_secret,begins[1].body.browser_secret);
   for(const begin of begins){const id=begin.path.includes('/wallet-methods/')?'addition':'pairing';assert(calls.some(c=>c.path.endsWith('/cancel')&&c.body.ceremony_id===id&&c.body.browser_secret===begin.body.browser_secret));}
+});
+
+test('Bitcoin method selection keeps address case while EVM accepts checksum case',async()=>{
+  for(const connector of ['unisat','metamask']) {
+    const wallet={...method,connector,address:connector==='unisat'?'1A'+'b'.repeat(30):'0x'+'ab'.repeat(20),chain_id:connector==='unisat'?0:20,network:connector==='unisat'?'livenet':''};
+    const states=[];
+    const flow=createWalletSigninFlow({api:async path=>path.endsWith('/begin')?{ceremony_id:'one',message:'message',expires_at:Date.now()/1000+120,approval:{operation:'auth.wallet.method',request:{ceremony_id:'one',action:'enable',account_id:'principal:alex',method_id:method.method_id}}}:{},
+      select:async()=>({...wallet,address:wallet.address.toLowerCase(),close(){}}),approve(){},render:s=>states.push(s)});
+    await flow.start({action:'enable',method:wallet});assert.equal(states.at(-1).stage,connector==='unisat'?'error':'review');await flow.cancel();
+  }
+});
+
+test('wallet sign-in uses HTTPS outside numeric loopback and localhost',()=>{
+  for(const origin of ['https://home.example','http://localhost:8090','http://127.0.0.1:8090','http://127.42.0.1:8090','http://[::1]:8090'])assert(walletSigninOriginAllowed(origin),origin);
+  for(const origin of ['http://home.example','http://127.example','http://192.168.1.2:8090'])assert.equal(walletSigninOriginAllowed(origin),false,origin);
 });
