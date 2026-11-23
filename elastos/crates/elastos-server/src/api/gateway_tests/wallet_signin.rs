@@ -1331,3 +1331,40 @@ async fn walletconnect_passkey_demotion_retires_confirmation_relay() {
         "passkey demotion must cancel the open relay"
     );
 }
+
+#[tokio::test]
+async fn wallet_guest_lists_its_own_passkeys_without_exposing_other_accounts() {
+    let f = wallet_fixture::fixture();
+    wallet_fixture::enabled(&f);
+    let (first, _) =
+        install_real_approver(f.data.path(), &f.actor.principal_id, b"guest-list-first");
+    let (second, _) =
+        install_real_approver(f.data.path(), &f.actor.principal_id, b"guest-list-second");
+    install_real_approver(
+        f.data.path(),
+        "person:local:other",
+        b"guest-list-other-admin",
+    );
+    crate::auth::demote_passkey_to_guest(f.data.path(), &first, now_ts()).unwrap();
+    let wallet = wallet_fixture::signin(&f);
+    let app = gateway_router(test_state(f.data.path()));
+    for capsule in [HOME_CAPSULE_ID, SYSTEM_CAPSULE_ID] {
+        let token =
+            issue_home_launch_token_for_auth_grant(f.data.path(), capsule, &wallet).unwrap();
+        let (status, list) = call(&app, "/api/auth/passkeys", Some(&token), None).await;
+        assert_eq!(status, StatusCode::OK, "{list}");
+        let passkeys = list["passkeys"].as_array().unwrap();
+        assert_eq!(
+            passkeys.len(),
+            2,
+            "a Guest wallet session lists the account's own passkeys"
+        );
+        for passkey in passkeys {
+            assert_eq!(passkey["principal_id"], f.actor.principal_id);
+            assert_eq!(passkey["role"], "guest");
+            assert_eq!(passkey["current"], false, "the current proof is the wallet");
+            let proof = passkey["proof_binding_id"].as_str().unwrap();
+            assert!(proof == first || proof == second);
+        }
+    }
+}

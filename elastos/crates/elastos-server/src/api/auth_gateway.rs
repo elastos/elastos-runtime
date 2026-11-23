@@ -1295,7 +1295,9 @@ async fn passkey_list_inner(
         .into_iter()
         .filter(|credential| {
             actor_is_admin
-                || current_proof_binding_id == Some(passkey_proof_binding_id(credential).as_str())
+                || principals_by_proof
+                    .get(passkey_proof_binding_id(credential).as_str())
+                    .is_some_and(|principal| principal.principal_id == actor.principal_id)
         })
         .collect::<Vec<_>>();
     drop(manager);
