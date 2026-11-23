@@ -968,7 +968,7 @@ async fn walletconnect_review_note_storage_post_advances_etag_and_fences_stale_w
     headers.insert("x-elastos-wallet-attempt", attempt.attempt_token.as_ref().unwrap().parse().unwrap());
     headers.insert("x-elastos-wallet-instance", attempt.instance_id.parse().unwrap());
     headers.insert("if-match", format!("\"{}\"", attempt.storage_revision).parse().unwrap());
-    let write = || Ok(AxumJson(gateway_walletconnect::StorageWrite { key: "pairing".into(), value: Some(json!("first")) }));
+    let write = || Ok(AxumJson(serde_json::from_value(json!({"key":"pairing","value":"first"})).unwrap()));
     let response = gateway_walletconnect::storage(AxumState(state.clone()), axum::http::Method::POST, headers.clone(), write()).await;
     assert_eq!(response.status(), StatusCode::OK);
     let next = format!("\"{}\"", attempt.storage_revision + 1);
@@ -976,7 +976,7 @@ async fn walletconnect_review_note_storage_post_advances_etag_and_fences_stale_w
     let response = gateway_walletconnect::storage(AxumState(state.clone()), axum::http::Method::POST, headers.clone(), write()).await;
     assert_eq!(response.status(), StatusCode::CONFLICT);
     headers.insert("if-match", next.parse().unwrap());
-    let remove = Ok(AxumJson(gateway_walletconnect::StorageWrite { key: "pairing".into(), value: None }));
+    let remove = Ok(AxumJson(serde_json::from_value(json!({"key":"pairing","value":null})).unwrap()));
     let response = gateway_walletconnect::storage(AxumState(state.clone()), axum::http::Method::POST, headers, remove).await;
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(response.headers()["etag"], format!("\"{}\"", attempt.storage_revision + 2));
