@@ -526,7 +526,7 @@ fn normalize(input: &Begin) -> anyhow::Result<(String, String)> {
     }
 }
 fn compatible_relay_method(m: &Method) -> bool {
-    m.connector != "unisat" && matches!(m.chain_id, 20 | 8453)
+    m.connector == "walletconnect" && matches!(m.chain_id, 20 | 8453)
 }
 fn has_relay_method(store: &Store) -> bool {
     store
@@ -1357,6 +1357,42 @@ pub(crate) mod tests {
     pub(crate) fn enabled(f: &Fixture) -> String {
         change(f, "add", "")
     }
+    pub(crate) fn enabled_relay(f: &Fixture) -> String {
+        let mut req = input("add", "", &f.address);
+        req.connector = "walletconnect".into();
+        req.allow_temporary_internet = true;
+        let b = begin(
+            f.data.path(),
+            ORIGIN,
+            "home-test",
+            req,
+            Some(f.actor.clone()),
+        )
+        .unwrap();
+        let out = complete(
+            f.data.path(),
+            ORIGIN,
+            &completion(f, &b),
+            Some(&f.actor),
+            |_| Ok(()),
+        )
+        .unwrap();
+        out["method_id"].as_str().unwrap().into()
+    }
+    #[test]
+    fn wallet_metamask_does_not_admit_anonymous_phone_pairing() {
+        let f = fixture();
+        enabled(&f);
+        let (available, relay, connectors) = availability(f.data.path()).unwrap();
+        assert!(available);
+        assert!(!relay);
+        assert_eq!(connectors, vec!["metamask"]);
+        let mut req = input("signin", "", "");
+        req.connector = "walletconnect".into();
+        req.chain_id = 0;
+        req.allow_temporary_internet = true;
+        assert!(begin(f.data.path(), ORIGIN, "home-test", req, None).is_err());
+    }
     #[test]
     fn wallet_one_state_add_is_live_and_retired_actions_are_refused() {
         let f = fixture();
@@ -1481,9 +1517,11 @@ pub(crate) mod tests {
     #[test]
     fn wallet_one_state_removing_final_compatible_method_ends_unselected_pairing() {
         let f = fixture();
-        let id = enabled(&f);
+        let id = enabled_relay(&f);
         let mut second = input("add", "", &f.address);
         second.chain_id = 8453;
+        second.connector = "walletconnect".into();
+        second.allow_temporary_internet = true;
         let b = begin(
             f.data.path(),
             ORIGIN,
@@ -1554,8 +1592,8 @@ pub(crate) mod tests {
             .is_empty());
         let expected = b.approval.as_ref().unwrap()["request"].clone();
         assert_eq!(expected["action"], "add");
-        assert_eq!(expected["authorizes_short_public_walletconnect"], true);
-        assert_eq!(b.approval.as_ref().unwrap()["notice"], RELAY_NOTICE);
+        assert_eq!(expected["authorizes_short_public_walletconnect"], false);
+        assert_ne!(b.approval.as_ref().unwrap()["notice"], RELAY_NOTICE);
         assert_eq!(
             approval_intent(f.data.path(), &b.ceremony_id, &f.actor).unwrap(),
             expected
@@ -1681,7 +1719,7 @@ pub(crate) mod tests {
         }
     }
     #[test]
-    fn wallet_add_relay_disclosure_matches_compatible_chains() {
+    fn wallet_metamask_add_keeps_relay_permission_off_on_every_chain() {
         for chain in [20, 8453, 1] {
             let f = fixture();
             let mut req = input("add", "", &f.address);
@@ -1699,12 +1737,9 @@ pub(crate) mod tests {
             let approval = b.approval.as_ref().unwrap();
             assert_eq!(
                 approval["request"]["authorizes_short_public_walletconnect"],
-                matches!(chain, 20 | 8453)
+                false
             );
-            assert_eq!(
-                approval["notice"] == RELAY_NOTICE,
-                matches!(chain, 20 | 8453)
-            );
+            assert_ne!(approval["notice"], RELAY_NOTICE);
             complete(
                 f.data.path(),
                 ORIGIN,
@@ -2185,7 +2220,7 @@ pub(crate) mod tests {
     #[test]
     fn wallet_cancel_clears_transport_and_denies_completion() {
         let f = fixture();
-        enabled(&f);
+        enabled_relay(&f);
         let mut request = input("signin", "", "");
         request.connector = "walletconnect".into();
         request.allow_temporary_internet = true;
@@ -2221,7 +2256,7 @@ pub(crate) mod tests {
     fn wallet_signed_out_ceremonies_verify_before_method_lookup() {
         for chain in [20, 8453] {
             let f = fixture();
-            enabled(&f);
+            enabled_relay(&f);
             let mut store = read(f.data.path()).unwrap();
             store.methods[0].chain_id = chain;
             let address_for = |key: &SigningKey| {
@@ -2350,7 +2385,7 @@ pub(crate) mod tests {
     #[test]
     fn wallet_reads_preserve_file_identity_and_real_changes_are_saved() {
         let f = fixture();
-        let id = enabled(&f);
+        let id = enabled_relay(&f);
         let b = begin(
             f.data.path(),
             ORIGIN,
@@ -3012,7 +3047,7 @@ pub(crate) mod tests {
         req.chain_id = 0;
         req.allow_temporary_internet = true;
         assert!(begin(f.data.path(), ORIGIN, "home-test", req, None).is_err());
-        let id = enabled(&f);
+        let id = enabled_relay(&f);
         let mut req = input("signin", "", "");
         req.connector = "walletconnect".into();
         req.chain_id = 0;
@@ -3044,11 +3079,14 @@ pub(crate) mod tests {
     #[test]
     fn wallet_add_approval_discloses_short_public_relay_authority() {
         let f = fixture();
+        let mut input = input("add", "", &f.address);
+        input.connector = "walletconnect".into();
+        input.allow_temporary_internet = true;
         let request = begin(
             f.data.path(),
             ORIGIN,
             "home-test",
-            input("add", "", &f.address),
+            input,
             Some(f.actor.clone()),
         )
         .unwrap();
@@ -3139,7 +3177,7 @@ mod review_probe {
     #[test]
     fn review_probe_signed_out_wallet_oracle() {
         let f = fixture();
-        enabled(&f);
+        enabled_relay(&f);
         let unknown = "0x000000000000000000000000000000000000dead";
         let wc_known = wc_selected_is_live(&f, &f.address);
         let wc_unknown = wc_selected_is_live(&f, unknown);

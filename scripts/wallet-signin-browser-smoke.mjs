@@ -122,7 +122,7 @@ async function exercise(engine,width,theme) {
     await system.getByRole('button',{name:'Add wallet',exact:true}).click();await state('options');
     const sdkBefore=fixture.state.calls.filter(c=>c.path==='/api/fixture-sdk'&&c.body.method==='personal_sign').length;
     fixture.state.holdSignature=true;await option('WalletConnect').click();
-    const phone=page.frameLocator('iframe[title=wallet-walletconnect]');await phone.locator('.connection-status').filter({hasText:/Sign the message in .* to sign in to this Home\./}).waitFor();await capture('17-existing-phone-session');
+    const phone=page.frameLocator('iframe[title=wallet-walletconnect]');await phone.locator('.connection-status').filter({hasText:/Sign the message in .* to add this wallet to Home\./}).waitFor();await capture('17-existing-phone-session');
     await page.locator('iframe[title=wallet-walletconnect]').evaluate(f=>f.contentWindow.postMessage({type:'home:wallet-signin-effect',homeToken:'fixture-wallet-walletconnect',requestId:'fixture-stop',operation:'stop'},'*'));
     await state('error');await cancel();assert.equal(fixture.state.methods.length,0,'stopping a pending proof creates no sign-in method');
     await phone.locator('[data-action=disconnect]').waitFor({state:'visible'});assert(await phone.locator('[data-action=disconnect]').isEnabled(),'saved payment connection remains usable after Home stops');await capture('23-stopped-phone-session');await page.locator('#show-system').evaluate(el=>el.click());

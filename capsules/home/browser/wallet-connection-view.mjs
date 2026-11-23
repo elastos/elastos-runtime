@@ -169,7 +169,7 @@ export function connectionView(input) {
   requireValue(Object.hasOwn(screens, window) && Object.hasOwn(screens[window], stage), 'closed window/stage');
   requireValue(input.purpose===undefined||input.purpose==='home-signin'&&window==='walletconnect'&&stage==='request-phone','closed connection purpose');
   const baseScreen=screens[window][stage];
-  const screen=input.purpose==='home-signin'?{...baseScreen,status:'Sign the message in {{wallet}} to sign in to this Home.',notice:'The request may remain open in your wallet if you stop waiting.',wait:false}:baseScreen;
+  const screen=input.purpose==='home-signin'?{...baseScreen,status:'Sign the message in {{wallet}} to add this wallet to Home.',notice:'The request may remain open in your wallet if you stop waiting.',wait:false}:baseScreen;
   const supported=input.supportedActions===undefined?null:input.supportedActions;
   requireValue(supported===null||Array.isArray(supported)&&supported.length<=connectionActionIds.length&&new Set(supported).size===supported.length&&supported.every(a=>connectionActionIds.includes(a)),'closed supported actions');
   requireValue(input.copyFeedback===undefined||Object.hasOwn(copyFeedbacks,input.copyFeedback),'closed copy feedback');

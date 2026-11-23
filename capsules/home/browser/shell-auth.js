@@ -3,7 +3,6 @@ import { createHomeWalletSignin } from "./wallet-signin-view.mjs?v=wallet-signin
 import {
   clearHomeAuthorityToken,
   fetchJson,
-  getHomeAuthorityToken,
   setHomeAuthorityToken,
 } from "./shell-core.js?v=home-wallpaper-20261030b";
 import { ownerRecoveryCommand } from "./owner-recovery-command.js?v=home-update-20261003a";

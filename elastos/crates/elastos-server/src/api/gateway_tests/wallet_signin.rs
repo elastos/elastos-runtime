@@ -623,7 +623,7 @@ async fn wallet_signin_public_options_come_from_runtime_without_account_details(
         call(&app, "/api/auth/passkey/status", None, None).await.1["wallet_signin_available"],
         false
     );
-    wallet_fixture::enabled(&f);
+    wallet_fixture::enabled_relay(&f);
     let (status, state) = call(&app, "/api/auth/passkey/status", None, None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(state["wallet_signin_available"], true);
@@ -859,7 +859,7 @@ async fn wallet_inbox_positive_permissions_require_exact_fresh_passkey() {
 #[tokio::test]
 async fn wallet_session_can_sign_out_but_other_session_revocation_needs_passkey() {
     let f = wallet_fixture::fixture();
-    wallet_fixture::enabled(&f);
+    wallet_fixture::enabled_relay(&f);
     let session = wallet_fixture::signin(&f);
     let (approver, credential) =
         install_real_approver(f.data.path(), "person:local:alice", b"session-approver");
@@ -918,7 +918,7 @@ async fn wallet_session_can_sign_out_but_other_session_revocation_needs_passkey(
 #[tokio::test]
 async fn wallet_explicit_account_removal_requires_exact_passkey_intent() {
     let f = wallet_fixture::fixture();
-    wallet_fixture::enabled(&f);
+    wallet_fixture::enabled_relay(&f);
     let session = wallet_fixture::signin(&f);
     install_real_approver(f.data.path(), "person:local:bob", b"other-admin");
     let (approver, credential) =
@@ -1119,7 +1119,7 @@ async fn wallet_hosted_permission_can_be_approved_then_ended_or_denied() {
 #[tokio::test]
 async fn walletconnect_review_note_storage_post_advances_etag_and_fences_stale_writes() {
     let f = wallet_fixture::fixture();
-    wallet_fixture::enabled(&f);
+    wallet_fixture::enabled_relay(&f);
     let state = test_state(f.data.path());
     let attempt = auth::begin(
         f.data.path(),

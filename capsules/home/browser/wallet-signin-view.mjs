@@ -45,8 +45,8 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
     if(kind==='passkey'){const icon=document.createElementNS('http://www.w3.org/2000/svg','svg');icon.setAttribute('viewBox','0 0 24 24');icon.setAttribute('class','signin-passkey-icon');icon.setAttribute('aria-hidden','true');icon.innerHTML='<circle cx="8" cy="8" r="5"/><path d="m11.5 11.5 8 8m-3-3 3-3m-6 0 3-3"/>';el.append(icon);}else if(kind){const icon=node('img');icon.alt='';icon.src=`./connection-${kind}.png`;el.append(icon);}
     const copy=node('span');copy.append(node('span',label,'connection-option-label'));if(detail)copy.append(node('span',detail,'connection-note'));el.append(copy,node('span','›'));return el;
   }
-  async function chooseSignin(method) {
-    const id=method?.chooseConnector?signinChoiceId(method):method?optionId(method):'passkey';saveSigninChoice(remember?id:'');
+  async function chooseSignin(method,{saveChoice=true}={}) {
+    const id=method?.chooseConnector?signinChoiceId(method):method?optionId(method):'passkey';if(saveChoice)saveSigninChoice(remember?id:'');
     if(!method){close();onPasskey?.();return;}
     initial={...initial,action:'signin',method:method.chooseConnector?null:method,chooseConnector:method.chooseConnector?method.connector:null,providerId:method.providerId,automatic:true};await restart();
   }
@@ -115,7 +115,7 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
         }
       }
       if(state.wallet&&state.stage!=='review')dialog.append(node('p',`${connectorName(state.wallet.connector)} · ${shortWalletAddress(state.wallet.address)} · ${walletNetwork(state.wallet)}`,'connection-note'));
-      const statuses={loading:'Loading wallets…',connecting:'Open your wallet.',signing:'Sign the message in your wallet.',approval:'Confirm with your passkey.',passkey:state.action==='remove'?'Confirm with your passkey to remove this wallet and end its sign-in sessions.':'Confirm with your passkey.',completing:state.action==='signin'?'Checking sign-in…':'Saving change…'};
+      const statuses={choice:'Opening wallet…',loading:'Loading wallets…',connecting:'Open your wallet.',signing:'Sign the message in your wallet.',approval:'Confirm with your passkey.',passkey:state.action==='remove'?'Confirm with your passkey to remove this wallet and end its sign-in sessions.':'Confirm with your passkey.',completing:state.action==='signin'?'Checking sign-in…':'Saving change…'};
       if(state.message||statuses[state.stage]){const status=node('p',state.message||statuses[state.stage],'connection-note');status.setAttribute('role','status');dialog.append(status);}
       if(state.approvalNotice&&state.wallet?.connector==='walletconnect')dialog.append(node('p',state.approvalNotice,'connection-note'));
       if(state.signingMessage) {
@@ -125,7 +125,7 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
       if(state.stage==='unknown')dialog.append(button('Check again',()=>flow.retry()));
       if(state.stage==='error'||state.stage==='list-error') {
         if(state.retryable!==false)dialog.append(button('Try again',()=>state.stage==='list-error'?connected():restart()));
-        if(state.action==='signin'&&onPasskey&&state.allowPasskey!==false&&initial.availability?.passkey!==false)dialog.append(button('Use passkey',()=>chooseSignin(null),true));
+        if(state.action==='signin'&&onPasskey&&state.allowPasskey!==false&&initial.availability?.passkey!==false)dialog.append(button('Use passkey',()=>chooseSignin(null,{saveChoice:false}),true));
       }
       const actions=node('div',null,'connection-actions');
       actions.append(button('Cancel',()=>flow.cancel(),true));dialog.append(actions);

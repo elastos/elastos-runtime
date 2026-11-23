@@ -180,7 +180,7 @@ test('System reads its own method list through Home authority',async()=>{
   assert(!Object.hasOwn(replies[0].result,'passkeys'));assert(!JSON.stringify(replies).includes('home-launch'));
 });
 
-test('a changed Home authority retires pending Wallet method requests',async()=>{
+test('a changed Home authority retires pending System method requests',async()=>{
   const replies=[],source={postMessage:message=>replies.push(message)},context={kind:'app-frame',targetId:'system',source,homeToken:'wallet-launch'};
   let authority='home-one',release;
   const data={type:'home:wallet-signin-request',requestId:'retired',homeToken:'wallet-launch',action:'remove',methodId:method.method_id};
@@ -255,7 +255,7 @@ test('fixture cancel revokes a completed sign-in session, matching Runtime',asyn
 });
 
 import {walletSigninControls} from '../capsules/home/browser/wallet-signin-methods.mjs';
-test('Guests retain Remove and only Admins can Add connected payment wallets',()=>{
+test('Every account has one Remove control for its wallet method',()=>{
   const previous=globalThis.document;
   globalThis.document={createElement:tag=>({tag,children:[],setAttribute(){},append(...nodes){this.children.push(...nodes);}})};
   try {
@@ -381,7 +381,7 @@ const {connectionView,reduceSummary,viewText}=await import('../capsules/_shared/
 test('the shared phone wait presents Home sign-in without disconnecting the payment session',()=>{
   const summary=reduceSummary({connector_id:'wallet-walletconnect',request_id:'signin',capsule_id:'home',requesting_app_name:'Home',intent:'auth_challenge',address:wallet.address,status:'pending',reason:'Sign in',expires_at:180},{connector:'wallet-walletconnect'});
   const view=connectionView({window:'walletconnect',stage:'request-phone',purpose:'home-signin',summary,supportedActions:['stop-waiting']});
-  assert.match(viewText(view.status),/sign in to this Home/);assert.doesNotMatch(viewText(view.notice),/disconnect/);assert.equal(view.wait,null);
+  assert.match(viewText(view.status),/add this wallet to Home/);assert.doesNotMatch(viewText(view.notice),/disconnect/);assert.equal(view.wait,null);
   assert.throws(()=>connectionView({window:'walletconnect',stage:'request-phone',purpose:'home-signin',summary:{...summary,actor:'browser'}}),/Home sign-in presentation/);
   assert.throws(()=>connectionView({window:'walletconnect',stage:'linked',purpose:'home-signin'}),/closed connection purpose/);
 });

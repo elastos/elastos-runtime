@@ -10,7 +10,7 @@ export async function readWalletSigninMethods(token,{origin}={}) {
   if(typeof result.account_id!=='string'||!Array.isArray(result.methods)||result.methods.length>256)throw new Error('Home could not load sign-in methods.');
   return result;
 }
-export function requestWalletSigninChange({action,methodId='',wallet,token,origin}) {
+export function requestWalletSigninChange({action,methodId='',token,origin}) {
   if(window.top===window || !token || !origin)return Promise.reject(new Error('Open this app from Home to change wallet sign-in.'));
   const requestId=crypto.randomUUID();
   return new Promise((resolve,reject)=>{
@@ -20,7 +20,7 @@ export function requestWalletSigninChange({action,methodId='',wallet,token,origi
       clearTimeout(timeout);window.removeEventListener('message',receive);resolve(event.data.result);
     };
     window.addEventListener('message',receive);
-    window.top.postMessage({type:'home:wallet-signin-request',requestId,homeToken:token,action,methodId,...(wallet?{wallet:{connector:wallet.connector,address:wallet.address,chain_id:wallet.chain_id,network:wallet.network}}:{})},origin);
+    window.top.postMessage({type:'home:wallet-signin-request',requestId,homeToken:token,action,methodId},origin);
   });
 }
 function text(tag,value,className) {const el=document.createElement(tag);el.textContent=value;if(className)el.className=className;return el;}

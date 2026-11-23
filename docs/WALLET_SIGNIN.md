@@ -95,7 +95,7 @@ connections and their Inbox permissions keep their separate lifecycle.
 Begin returns:
 
 ```json
-{"ceremony_id":"wallet:…","message":"Home-built message, empty for remove","expires_at":1800000180,"approval":{"operation":"auth.wallet.method","request":{"ceremony_id":"wallet:…","account_id":"principal:…","action":"add","method_id":"wallet:…","connector":"metamask","address":"0x…","chain_id":20,"network":"","authorizes_short_public_walletconnect":true},"notice":"Runtime relay disclosure"},"instance_id":"…","storage_revision":0}
+{"ceremony_id":"wallet:…","message":"Home-built message, empty for remove","expires_at":1800000180,"approval":{"operation":"auth.wallet.method","request":{"ceremony_id":"wallet:…","account_id":"principal:…","action":"add","method_id":"wallet:…","connector":"metamask","address":"0x…","chain_id":20,"network":"","authorizes_short_public_walletconnect":false},"notice":"Confirm this wallet sign-in method change with your passkey."},"instance_id":"…","storage_revision":0}
 ```
 
 Show the account, Home origin, full wallet address, network, exact message and
@@ -250,25 +250,23 @@ file refuses wallet access while passkey access remains available.
 
 ## Short WalletConnect sign-in permission
 
-The Add review displays `approval.notice` before passkey
-approval. The
-`approval.request.authorizes_short_public_walletconnect` field is true for an
-ordinary EVM wallet on Elastos Smart Chain (20) or Base (8453), whether it was
-added through MetaMask or WalletConnect. This permission lets visitors start
-bounded sign-in relay connections. The relay service can see the Home
-computer's internet address. Runtime binds this effect to the fresh approval.
-Payment connections keep their separate Inbox permission.
+WalletConnect enrollment displays Runtime's short `approval.notice` before
+passkey approval. `approval.request.authorizes_short_public_walletconnect` is true
+only for a WalletConnect method on Elastos Smart Chain (20) or Base (8453).
+MetaMask and UniSat enrollment preserve their extension-only sign-in permission.
+The phone relay can see this computer's internet address. Runtime binds the relay
+grant to the fresh approval; payment connections keep their separate Inbox permission.
 
-A WalletConnect add/sign-in begin sends `allow_temporary_internet: true`
-only after the person continues past a plain notice that the wallet is reached
-over the internet. The field defaults to false and records consent; authentication
-comes from the signed wallet proof and Runtime's current account state.
-Signed-out pairing also requires at least one compatible EVM sign-in method on
-this Home, on chain 20 or 8453, through either MetaMask or WalletConnect.
-`has_relay_method` checks this Home-wide condition; it does not require a prior
-WalletConnect method or the selected address. Runtime checks the condition
-during relay admission and use. Removing the final compatible method also
-ends pairing attempts that have yet to select an address.
+A WalletConnect add/sign-in begin sends `allow_temporary_internet: true` after the
+person selects the phone option beside Runtime's notice, or uses the connector's
+existing internet permission during authenticated enrollment. The field defaults
+to false. Runtime verifies the signed wallet proof against this Home's current
+account state.
+
+Signed-out pairing requires at least one compatible WalletConnect sign-in method
+on this Home. `has_relay_method` checks this Home-wide condition before an address
+is selected and during relay use. Removing the final compatible method also ends
+anonymous pairing attempts that have yet to select an address.
 
 For wallet sessions, `/api/apps/system/access/guest-registration` requires a
 fresh passkey token in `x-elastos-step-up-token`, operation
