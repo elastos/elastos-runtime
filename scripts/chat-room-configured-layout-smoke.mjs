@@ -1706,13 +1706,14 @@ async function runScenario(scenario) {
       assert(!(await original.innerText()).includes(pendingNote), "the pending note appeared before 60 seconds");
       await page.clock.fastForward(15_000);
       await frame.waitForFunction(note => document.querySelector('[data-direct-message-id="message:retry-original"]')?.textContent.includes(note), pendingNote);
-      assert((await original.innerText()).includes("Sending"), "the pending note replaced the Sending label");
+      assert(await original.locator(".message-meta span:last-child").innerText() === "Unconfirmed",
+        "a message still pending after 60 seconds must show Unconfirmed");
       const draft = "Keep my current draft while retrying a different message";
       await frame.locator("#message-input").fill(draft);
       await original.locator('[data-direct-action="retry"]').click();
       await waitFor(() => trace.retryPosts.length === 1);
       if (holds.retry) {
-        await frame.waitForFunction(() => document.querySelector('[data-direct-message-id="message:retry-original"]')?.textContent.includes("Sending"));
+        await frame.waitForFunction(() => document.querySelector('[data-direct-message-id="message:retry-original"] .message-meta span:last-child')?.textContent === "Unconfirmed");
         assert(await frame.locator("#send-button").isDisabled()
           && await original.locator('[data-direct-action="retry"]').isDisabled()
           && await original.locator('[data-direct-action="retry"]').innerText() === "Trying again", "in-flight Retry gives no feedback or permits duplicate intent");
@@ -1742,7 +1743,8 @@ async function runScenario(scenario) {
       } else {
         await frame.waitForFunction(() => {
           const node = document.querySelector('[data-direct-message-id="message:retry-original"]');
-          return !!node && !node.textContent.includes("Sending") && !node.querySelector("[data-direct-action]");
+          return !!node && /^\d{2}:\d{2}$/.test(node.querySelector(".message-meta span:last-child")?.textContent)
+            && !node.querySelector("[data-direct-action]");
         });
         assert(await original.locator('[data-direct-action]').count() === 0, "settled receipt retains Retry");
         assert(await frame.locator("#message-input").inputValue() === draft, "Retry cleared the current draft");
