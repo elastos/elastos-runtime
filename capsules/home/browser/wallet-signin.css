@@ -40,3 +40,7 @@
 .home-unlock .home-unlock-passkey-label { margin: 12px 0 0; font-size: 14px; font-weight: 600; }
 
 .signin-method-controls > button, #wallet-signin-add { min-height: 44px; }
+
+.account-row[data-wallet-method] .account-name-wrap .signin-method-note {
+  white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere;
+}

@@ -36,6 +36,8 @@ async function exercise(engine,width) {
     assert.deepEqual(methodControls,[],`${name}: method controls fit and have 44px targets`);
     const misplaced=await scope.evaluate(()=>[...document.querySelectorAll('tr[data-wallet-method] .account-name')].filter(cell=>{const title=cell.querySelector('strong'),details=cell.querySelector('.signin-method-note');return title&&details&&details.getBoundingClientRect().left+1<title.getBoundingClientRect().left;}).length);
     assert.equal(misplaced,0,`${name}: wallet details stay in the value column`);
+    const clipped=await scope.evaluate(()=>[...document.querySelectorAll('tr[data-wallet-method] .signin-method-note')].filter(node=>node.scrollWidth>node.clientWidth+1).length);
+    assert.equal(clipped,0,`${name}: connector, address and network text stays visible`);
     const bad=await page.locator('.signin-dialog button:visible').evaluateAll(buttons=>buttons.filter(button=>{const r=button.getBoundingClientRect();return r.height<44||r.left<0||r.right>innerWidth+1;}).map(button=>button.textContent));
     assert.deepEqual(bad,[],`${name}: controls fit and are 44px high`);
     if(await page.locator('.signin-dialog').count()) {
