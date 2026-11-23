@@ -6257,11 +6257,27 @@ async fn linked_start_controller_fixture() {
                 candidate_phase: None,
                 interrupt_after_ready: Some(RestartPhase::CandidateReady),
             };
-            let result = crate::update::on_heap(|| {
-                crate::update::run_restarting_update(&data, &fetch, request.head_cid, &mut owner)
+            let stopped = tokio::spawn(async move {
+                crate::update::on_heap(|| {
+                    crate::update::run_restarting_update(
+                        &data,
+                        &fetch,
+                        request.head_cid,
+                        &mut owner,
+                    )
+                })
+                .await
             })
-            .await;
-            panic!("linked interruption fixture must stop at CandidateReady: {result:?}");
+            .await
+            .expect_err("linked interruption fixture must stop at CandidateReady");
+            assert!(stopped.is_panic());
+            let panic = stopped.into_panic();
+            assert_eq!(
+                panic.downcast_ref::<String>().map(String::as_str),
+                Some("fixture lost its controller at CandidateReady")
+            );
+            eprintln!("linked fixture observed expected controller loss at CandidateReady");
+            return;
         }
         let (_, server, serving) =
             crate::setup::tests::carrier_cid_source(&data, &source, items).await;
