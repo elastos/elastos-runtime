@@ -243,6 +243,7 @@ async fn real_step_up(
     )
     .await
 }
+#[allow(clippy::too_many_arguments)]
 async fn real_step_up_for_launch(
     app: &Router,
     token: &str,
