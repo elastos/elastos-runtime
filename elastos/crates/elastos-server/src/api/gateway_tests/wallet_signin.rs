@@ -190,6 +190,8 @@ async fn wallet_one_state_http_remove_ends_pairing_and_preserves_payment_permiss
     let id = replacement["method_id"].as_str().unwrap();
     let inbox = wallet_app_token(f.data.path(), INBOX_CAPSULE_ID, &f.actor);
     let mut headers = HeaderMap::new();
+    headers.insert(HOST, "localhost:61180".parse().unwrap());
+    headers.insert("origin", "null".parse().unwrap());
     headers.insert("x-elastos-home-token", inbox.parse().unwrap());
     let launch =
         require_home_launch_token_binding(f.data.path(), &headers, &[INBOX_CAPSULE_ID]).unwrap();
