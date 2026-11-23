@@ -33,6 +33,7 @@ async function exercise(engine,width,theme) {
   async function home() {await page.goto(fixture.origin+'/home/',{waitUntil:'domcontentloaded'});await page.waitForFunction(()=>window.fixtureReady);}
   async function capture(name) {
     const file=`${engine}-${width}-${theme}-${name}.png`;
+    await page.waitForFunction(()=>[...document.querySelectorAll('.signin-dialog img')].every(img=>img.complete&&img.naturalWidth>0),null,{timeout:5000});
     await page.screenshot({path:join(output,file),fullPage:true});
     const overflow=await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth);
     assert.equal(overflow,false,`horizontal overflow at ${name}`);
