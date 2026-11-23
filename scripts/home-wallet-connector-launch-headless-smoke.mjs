@@ -834,7 +834,7 @@ try {
     const reply=await ask();
     await homeGui.locator('.window[data-target="wallet"]').waitFor({state:'visible',timeout:15000});
     const visible=await homeWindowSnapshot(homeGui,'wallet');
-    const visibleToken=new URLSearchParams(new URL(visible.route).hash.slice(1)).get('home_token');
+    const visibleToken=new URLSearchParams(new URL(visible.route,origin).hash.slice(1)).get('home_token');
     const desktopToken=new URLSearchParams(new URL(homeGui.url()).hash.slice(1)).get('home_token');
     assert(JSON.stringify(Object.keys(reply).sort())===JSON.stringify(['homeToken','requestId','type','walletToken']), 'real Desktop reply has separate envelope and Wallet tokens',reply);
     assert(reply.homeToken===desktopToken&&reply.walletToken===visibleToken&&reply.walletToken!==railToken,'real reply selects the visible Wallet rather than Desktop or rail',reply);
