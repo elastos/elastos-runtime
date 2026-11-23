@@ -442,7 +442,9 @@ pub(crate) fn require_profile_authority_passkey_binding(
 ) -> anyhow::Result<()> {
     let proof_binding_id =
         proof_binding_id.ok_or_else(|| anyhow!("proof-bound passkey session required"))?;
-    if !proof_binding_id.starts_with("proof:passkey:") {
+    if !proof_binding_id.starts_with("proof:passkey:")
+        && !proof_binding_id.starts_with("proof:signin-wallet:")
+    {
         anyhow::bail!("proof-bound passkey session required");
     }
     let principal = crate::auth::load_principal_for_proof_binding(data_dir, proof_binding_id)?;
@@ -2017,5 +2019,41 @@ mod tests {
         assert!(err
             .to_string()
             .contains("profile revision chain is invalid"));
+    }
+    #[test]
+    fn wallet_signin_profile_binding_is_account_bound_and_revocable() {
+        let f = crate::auth::wallet_signin::tests::fixture();
+        let method = crate::auth::wallet_signin::tests::enabled(&f);
+        require_profile_authority_passkey_binding(
+            f.data.path(),
+            &f.actor.principal_id,
+            Some(&method),
+        )
+        .unwrap();
+        assert!(require_profile_authority_passkey_binding(
+            f.data.path(),
+            "person:local:other",
+            Some(&method)
+        )
+        .is_err());
+        crate::auth::revoke_session_grant(
+            f.data.path(),
+            &f.actor.session_id,
+            crate::auth::now_ts(),
+        )
+        .unwrap();
+        // Account method revocation is independent of ending the actor's session.
+        crate::auth::revoke_passkey_binding(
+            f.data.path(),
+            &f.actor.proof_binding_id,
+            crate::auth::now_ts(),
+        )
+        .unwrap();
+        assert!(require_profile_authority_passkey_binding(
+            f.data.path(),
+            &f.actor.principal_id,
+            Some(&method)
+        )
+        .is_err());
     }
 }

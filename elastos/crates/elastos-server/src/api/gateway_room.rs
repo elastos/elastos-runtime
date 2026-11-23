@@ -945,11 +945,29 @@ pub(super) async fn chat_room_request_approve(
     if state.collaboration_chat_product_port.is_some() {
         return configured_legacy_room_control_unsupported_response();
     }
-    if let Err(err) = require_home_launch_token(&state.data_dir, &headers, CHAT_ROOM_CAPSULE_ID) {
+    let launch =
+        match require_home_launch_token_binding(&state.data_dir, &headers, &[CHAT_ROOM_CAPSULE_ID])
+        {
+            Ok(launch) => launch,
+            Err(err) => return room_service_error_response(err),
+        };
+    if let Err(err) = ensure_admin_context(&state.data_dir, &launch.context) {
+        return room_service_error_response(err);
+    }
+    if let Err(err) = crate::api::auth_gateway::wallet_action_approval(
+        &state,
+        &launch,
+        headers
+            .get("x-elastos-step-up-token")
+            .and_then(|v| v.to_str().ok()),
+        "inbox.approve",
+        &serde_json::json!({"action_id":format!("room-approve-request:{request_id}")}),
+    ) {
         return room_service_error_response(err);
     }
     let data_dir = state.data_dir.clone();
     match tokio::task::spawn_blocking(move || {
+        ensure_admin_context(&data_dir, &launch.context)?;
         let outcome = crate::room_service::approve_request(&data_dir, &request_id)?;
         let summary = crate::room_service::load_summary(&data_dir).unwrap_or_default();
         let _ = crate::notifications::sync_room_notifications(&data_dir, &summary);

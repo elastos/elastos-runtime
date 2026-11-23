@@ -5574,9 +5574,25 @@ async function revokeCurrentPasskey(page, proofBindingId, homeToken) {
   }
   assert(homeToken, "revokeCurrentPasskey requires a passkey-issued Home token");
   return page.evaluate(async ({ id, token }) => {
+    const headers = { "x-elastos-home-token": token };
+    let removal;
+    const listed = await fetch("/api/auth/passkeys", { headers });
+    if (!listed.ok) throw new Error("Test cleanup could not read its account methods");
+    const { passkeys } = await listed.json();
+    const target = passkeys.find((entry) => entry.proof_binding_id === id);
+    if (!target) throw new Error("Test cleanup lost its recorded passkey");
+    const sameAccount = passkeys.filter((entry) => entry.principal_id === target.principal_id && !entry.revoked_at);
+    if (sameAccount.length === 1) {
+      const { requestPasskeyStepUp } = await import("./shell-auth.js");
+      const request = { proof_binding_id: id, account_id: target.principal_id, remove_account: true };
+      headers["x-elastos-step-up-token"] = await requestPasskeyStepUp(token, "auth.account.remove", request);
+      headers["Content-Type"] = "application/json";
+      removal = JSON.stringify({ remove_account: true, account_id: target.principal_id });
+    }
     const response = await fetch(`/api/auth/passkeys/${encodeURIComponent(id)}/revoke`, {
       method: "POST",
-      headers: { "x-elastos-home-token": token },
+      headers,
+      body: removal,
     });
     const text = await response.text();
     let body = {};

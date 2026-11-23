@@ -164,6 +164,8 @@ pub struct PasskeyStatusResponse {
     pub registered: bool,
     pub owner_setup_pending: bool,
     pub guest_registration_enabled: bool,
+    pub wallet_signin_available: bool,
+    pub walletconnect_signin_available: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -438,8 +440,15 @@ pub async fn passkey_status(State(state): State<GatewayState>) -> Response {
         Err(err) => return auth_error_response(err),
     };
     let manager = manager.lock().await;
+    let (wallet_signin_available, walletconnect_signin_available) =
+        crate::auth::wallet_signin::availability(&super::gateway::home_launch_auth_data_dir(
+            &state.data_dir,
+        ))
+        .unwrap_or((false, false));
     Json(PasskeyStatusResponse {
         registered: manager.status().registered,
+        wallet_signin_available,
+        walletconnect_signin_available,
         owner_setup_pending: match crate::auth::owner_setup_pending(&state.data_dir) {
             Ok(pending) => pending,
             Err(err) => return auth_error_response(err),
@@ -508,12 +517,50 @@ fn principal_root_migration_required_response(err: &anyhow::Error) -> Option<Res
         .map(|outcome| (StatusCode::CONFLICT, Json(outcome.clone())).into_response())
 }
 
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PasskeyRevokeRequest {
+    #[serde(default)]
+    remove_account: bool,
+    #[serde(default)]
+    account_id: Option<String>,
+}
+
 pub async fn passkey_revoke(
     State(state): State<GatewayState>,
     Path(proof_binding_id): Path<String>,
     headers: HeaderMap,
+    body: axum::body::Bytes,
 ) -> Response {
-    match passkey_revoke_inner(&state, &headers, proof_binding_id).await {
+    if body.len() > 96 * 1024 {
+        return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+    }
+    let input = if body.is_empty() {
+        PasskeyRevokeRequest::default()
+    } else {
+        if !headers
+            .get("content-type")
+            .and_then(|h| h.to_str().ok())
+            .is_some_and(|h| h.starts_with("application/json"))
+        {
+            return (
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "account removal requires JSON",
+            )
+                .into_response();
+        }
+        match serde_json::from_slice::<PasskeyRevokeRequest>(&body) {
+            Ok(input) => input,
+            Err(_) => {
+                return (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "invalid passkey removal request",
+                )
+                    .into_response()
+            }
+        }
+    };
+    match passkey_revoke_scoped_inner(&state, &headers, proof_binding_id, input).await {
         Ok((response, clear_current_cookie)) => {
             let mut http_response = Json(response).into_response();
             if clear_current_cookie {
@@ -738,7 +785,7 @@ fn require_passkey_add_launch(
         &[super::gateway::SYSTEM_CAPSULE_ID],
     )?;
     super::gateway::require_hosted_step_up_launch(&host_context, &launch)?;
-    let principal = require_active_passkey_principal_for_context(state, &launch.context)?;
+    let principal = account_passkey_for_context(state, &launch.context)?;
     if !crate::auth::is_admin(&principal) {
         anyhow::bail!("admin passkey required to add a passkey");
     }
@@ -753,18 +800,9 @@ async fn passkey_add_begin_inner(
     if input.schema != PASSKEY_ADD_BEGIN_REQUEST_SCHEMA {
         anyhow::bail!("unsupported passkey add request schema");
     }
-    let (launch, principal) = require_passkey_add_launch(state, headers, &input.app_token)?;
+    let (launch, mut principal) = require_passkey_add_launch(state, headers, &input.app_token)?;
     let rp = super::handlers::identity::derive_rp(headers)?;
-    if principal
-        .proof_binding
-        .passkey
-        .as_ref()
-        .is_none_or(|passkey| passkey.rp_id != rp.id)
-    {
-        anyhow::bail!("passkey add relying party mismatch");
-    }
-    let proof_binding_id = principal.proof_binding_id.as_str();
-    consume_passkey_step_up_token(
+    let approving_passkey = super::gateway::consume_passkey_step_up_token_with_approver(
         &state.data_dir,
         &input.step_up_token,
         &launch,
@@ -772,6 +810,26 @@ async fn passkey_add_begin_inner(
         PASSKEY_ADD_OPERATION,
         &passkey_add_intent(),
     )?;
+    let auth_data_dir = super::gateway::home_launch_auth_data_dir(&state.data_dir);
+    if launch
+        .context
+        .proof_binding_id
+        .as_deref()
+        .is_some_and(|id| id.starts_with("proof:signin-wallet:"))
+    {
+        principal =
+            crate::auth::load_principal_for_proof_binding(&auth_data_dir, &approving_passkey)?;
+    }
+    anyhow::ensure!(
+        principal.principal_id == launch.context.principal_id
+            && principal
+                .proof_binding
+                .passkey
+                .as_ref()
+                .is_some_and(|p| p.rp_id == rp.id),
+        "passkey add relying party mismatch"
+    );
+    let proof_binding_id = principal.proof_binding_id.as_str();
     let ceremony_id = format!("passkey:add:{}", random_hex(16));
     let manager = state.identity_manager()?;
     let mut manager = manager.lock().await;
@@ -800,6 +858,24 @@ async fn passkey_add_begin_inner(
         .map(|profile| profile.document().display_name.as_str())
         .unwrap_or(&principal.display_name);
     crate::auth::name_passkey_registration(&mut options, account_name, &rp.origin)?;
+    if launch
+        .context
+        .proof_binding_id
+        .as_deref()
+        .is_some_and(|id| id.starts_with("proof:signin-wallet:"))
+    {
+        let actor = crate::auth::load_active_session_grant(
+            &auth_data_dir,
+            &launch.context.session_id,
+            crate::auth::now_ts(),
+        )?;
+        crate::auth::wallet_signin::remember_passkey_add(
+            &auth_data_dir,
+            &ceremony_id,
+            &actor,
+            proof_binding_id,
+        )?;
+    }
     Ok(PasskeyBeginResponse {
         schema: "elastos.auth.passkey.add.begin/v1".into(),
         ceremony_id,
@@ -816,12 +892,31 @@ async fn passkey_add_complete_inner(
     if input.schema != PASSKEY_ADD_COMPLETE_REQUEST_SCHEMA {
         anyhow::bail!("unsupported passkey add request schema");
     }
-    let (launch, principal) = require_passkey_add_launch(state, headers, &input.app_token)?;
+    let (launch, mut principal) = require_passkey_add_launch(state, headers, &input.app_token)?;
     let rp = super::handlers::identity::derive_rp(headers)?;
+    let auth_data_dir = super::gateway::home_launch_auth_data_dir(&state.data_dir);
+    if launch
+        .context
+        .proof_binding_id
+        .as_deref()
+        .is_some_and(|id| id.starts_with("proof:signin-wallet:"))
+    {
+        let actor = crate::auth::load_active_session_grant(
+            &auth_data_dir,
+            &launch.context.session_id,
+            crate::auth::now_ts(),
+        )?;
+        principal = crate::auth::wallet_signin::passkey_add_approver(
+            &auth_data_dir,
+            &input.ceremony_id,
+            &actor,
+        )?;
+    }
+
     let manager = state.identity_manager()?;
     let mut manager = manager.lock().await;
     let added = crate::auth::complete_passkey_add(
-        &state.data_dir,
+        &auth_data_dir,
         &mut manager,
         &crate::auth::PasskeyAddClient {
             origin: &rp.origin,
@@ -833,6 +928,7 @@ async fn passkey_add_complete_inner(
         &input.ceremony_id,
         &input.response,
     )?;
+    super::gateway::retire_inactive_walletconnect_attempts(state).await?;
     record_passkey_added_from(
         &state.data_dir,
         headers,
@@ -957,6 +1053,7 @@ async fn owner_recovery_complete_inner(
         &input.response,
         &kit,
     )?;
+    super::gateway::retire_inactive_walletconnect_attempts(state).await?;
     record_passkey_added_from(
         &state.data_dir,
         headers,
@@ -992,7 +1089,23 @@ pub async fn revoke_session(
         ));
     }
 
-    match crate::auth::revoke_session_grant(&auth_data_dir, &session_id, now) {
+    match crate::auth::revoke_session_grant_approved(&auth_data_dir, &session_id, now, || {
+        if session_id != context.session_id {
+            let current_actor = require_active_principal_for_context(&state, &context)?;
+            anyhow::ensure!(
+                crate::auth::is_admin(&current_actor),
+                "admin authority required to revoke another auth session"
+            );
+            wallet_session_approval(
+                &state,
+                &headers,
+                &context,
+                "auth.session.revoke",
+                &json!({"session_id":session_id}),
+            )?;
+        }
+        Ok(())
+    }) {
         Ok(()) => {
             if auth_data_dir != state.data_dir {
                 let _ = crate::auth::revoke_session_grant(&state.data_dir, &session_id, now);
@@ -1010,6 +1123,9 @@ pub async fn revoke_session(
                     ..AuditEventInput::default()
                 }),
             );
+            if let Err(err) = super::gateway::retire_inactive_walletconnect_attempts(&state).await {
+                return auth_error_response(err);
+            }
             Json(AuthRevokeResponse {
                 status: "revoked".to_string(),
                 session_id,
@@ -1023,7 +1139,12 @@ pub async fn revoke_session(
 pub async fn sign_out_session(State(state): State<GatewayState>, headers: HeaderMap) -> Response {
     let secure = super::gateway::request_uses_tls(&headers);
     let mut http_response = match sign_out_session_inner(&state, &headers) {
-        Ok(response) => Json(response).into_response(),
+        Ok(response) => {
+            match super::gateway::retire_inactive_walletconnect_attempts(&state).await {
+                Ok(()) => Json(response).into_response(),
+                Err(err) => auth_error_response(err),
+            }
+        }
         Err(err) => auth_error_response(err),
     };
     if let Ok(cookie) = super::gateway::home_session_clear_cookie_header(&headers, secure) {
@@ -1212,38 +1333,187 @@ async fn passkey_list_inner(
     })
 }
 
+pub(in crate::api) fn wallet_action_approval(
+    state: &GatewayState,
+    launch: &super::gateway::RequiredHomeLaunchToken,
+    token: Option<&str>,
+    operation: &str,
+    request: &Value,
+) -> anyhow::Result<Option<String>> {
+    if launch
+        .context
+        .proof_binding_id
+        .as_deref()
+        .is_some_and(|id| id.starts_with("proof:signin-wallet:"))
+    {
+        return super::gateway::consume_passkey_step_up_token_with_approver(
+            &state.data_dir,
+            token.unwrap_or_default(),
+            launch,
+            180,
+            operation,
+            request,
+        )
+        .map(Some);
+    }
+    Ok(None)
+}
+
+pub(in crate::api) fn wallet_session_approval(
+    state: &GatewayState,
+    headers: &HeaderMap,
+    context: &super::gateway::HomeLaunchTokenContext,
+    operation: &str,
+    request: &Value,
+) -> anyhow::Result<()> {
+    if matches!(
+        operation,
+        "auth.account.promote" | "auth.account.demote" | "auth.account.guest-registration"
+    ) {
+        let current_actor = require_active_principal_for_context(state, context)?;
+        anyhow::ensure!(
+            crate::auth::is_admin(&current_actor),
+            "admin passkey required for account administration"
+        );
+    }
+    if context
+        .proof_binding_id
+        .as_deref()
+        .is_some_and(|id| id.starts_with("proof:signin-wallet:"))
+    {
+        let launch = require_home_launch_token_binding(
+            &state.data_dir,
+            headers,
+            &[HOME_CAPSULE_ID, super::gateway::SYSTEM_CAPSULE_ID],
+        )?;
+        let token = headers
+            .get("x-elastos-step-up-token")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default();
+        consume_passkey_step_up_token(&state.data_dir, token, &launch, 180, operation, request)?;
+    }
+    Ok(())
+}
+fn account_passkey_for_context(
+    state: &GatewayState,
+    context: &super::gateway::HomeLaunchTokenContext,
+) -> anyhow::Result<crate::auth::PrincipalRecord> {
+    let principal = require_active_principal_for_context(state, context)?;
+    if principal.proof_binding.passkey.is_some() {
+        return Ok(principal);
+    }
+    anyhow::ensure!(
+        principal
+            .proof_binding_id
+            .starts_with("proof:signin-wallet:"),
+        "passkey account required"
+    );
+    crate::auth::active_passkey_principals(&super::gateway::home_launch_auth_data_dir(
+        &state.data_dir,
+    ))?
+    .into_iter()
+    .find(|p| p.principal_id == principal.principal_id)
+    .ok_or_else(|| anyhow::anyhow!("account passkey unavailable"))
+}
+
+#[cfg(test)]
 async fn passkey_revoke_inner(
     state: &GatewayState,
     headers: &HeaderMap,
     proof_binding_id: String,
 ) -> anyhow::Result<(PasskeyRevokeResponse, bool)> {
+    passkey_revoke_scoped_inner(
+        state,
+        headers,
+        proof_binding_id,
+        PasskeyRevokeRequest::default(),
+    )
+    .await
+}
+
+async fn passkey_revoke_scoped_inner(
+    state: &GatewayState,
+    headers: &HeaderMap,
+    proof_binding_id: String,
+    request: PasskeyRevokeRequest,
+) -> anyhow::Result<(PasskeyRevokeResponse, bool)> {
     let context = require_auth_home_or_system_context(state, headers)?;
     validate_passkey_proof_binding_id(&proof_binding_id)?;
-    let actor_proof_binding_id = context
-        .proof_binding_id
+    let target = crate::auth::load_principal_for_proof_binding(&state.data_dir, &proof_binding_id)?;
+    let account_id = request
+        .account_id
         .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("missing proof-bound auth session"))?;
+        .unwrap_or(&target.principal_id);
+    anyhow::ensure!(
+        account_id == target.principal_id
+            && (!request.remove_account || request.account_id.is_some()),
+        "explicit account removal intent required"
+    );
+    let actor = account_passkey_for_context(state, &context)?;
+    let actor_proof_binding_id = actor.proof_binding_id.as_str();
     // The identity lock serializes every credential-store change with the one
     // auth write that checks and revokes.
     let manager = state.identity_manager()?;
     let mut manager = manager.lock().await;
+    let removed_credentials: Vec<_> = crate::auth::list_passkey_principals(&state.data_dir)?
+        .into_iter()
+        .filter(|p| {
+            if request.remove_account {
+                p.principal_id == account_id
+            } else {
+                p.proof_binding_id == proof_binding_id
+            }
+        })
+        .filter_map(|p| p.proof_binding.passkey.map(|k| k.credential_id))
+        .collect();
     let now = crate::auth::now_ts();
-    crate::auth::revoke_passkey_for_actor(
+    crate::auth::revoke_passkey_for_actor_approved(
         &state.data_dir,
         &context.principal_id,
         actor_proof_binding_id,
-        &proof_binding_id,
+        crate::auth::PasskeyRemovalTarget {
+            proof_binding_id: &proof_binding_id,
+            account_id,
+            remove_account: request.remove_account,
+        },
         now,
+        || {
+            if request.remove_account {
+                let launch = require_home_launch_token_binding(
+                    &state.data_dir,
+                    headers,
+                    &[HOME_CAPSULE_ID, super::gateway::SYSTEM_CAPSULE_ID],
+                )?;
+                let token = headers
+                    .get("x-elastos-step-up-token")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or_default();
+                consume_passkey_step_up_token(
+                    &state.data_dir,
+                    token,
+                    &launch,
+                    180,
+                    "auth.account.remove",
+                    &json!({"proof_binding_id":proof_binding_id,"account_id":account_id,"remove_account":true}),
+                )
+            } else {
+                wallet_session_approval(
+                    state,
+                    headers,
+                    &context,
+                    "auth.passkey.remove",
+                    &json!({"proof_binding_id":proof_binding_id}),
+                )
+            }
+        },
     )?;
+    super::gateway::retire_inactive_walletconnect_attempts(state).await?;
     // The credential follows the committed revocation; when an earlier
     // attempt already removed it, there is nothing left to do.
-    if let Some(credential_id) = manager
-        .credentials()
-        .into_iter()
-        .find(|credential| passkey_proof_binding_id(credential) == proof_binding_id)
-        .map(|credential| credential.credential_id)
-    {
-        manager.revoke_credential(&credential_id)?;
+    for credential in manager.credentials() {
+        if removed_credentials.contains(&credential.credential_id) {
+            manager.revoke_credential(&credential.credential_id)?;
+        }
     }
     drop(manager);
     let actor = context.principal_id.clone();
@@ -1261,8 +1531,8 @@ async fn passkey_revoke_inner(
         }),
     )?;
 
-    let clear_current_cookie =
-        context.proof_binding_id.as_deref() == Some(proof_binding_id.as_str());
+    let clear_current_cookie = (request.remove_account && context.principal_id == account_id)
+        || context.proof_binding_id.as_deref() == Some(proof_binding_id.as_str());
     Ok((
         PasskeyRevokeResponse {
             status: "revoked".to_string(),
@@ -1294,7 +1564,21 @@ async fn passkey_promote_admin_inner(
     }
 
     let now = crate::auth::now_ts();
-    let promoted = crate::auth::promote_passkey_to_admin(&state.data_dir, &proof_binding_id, now)?;
+    let promoted = crate::auth::promote_passkey_to_admin_approved(
+        &state.data_dir,
+        &proof_binding_id,
+        now,
+        || {
+            wallet_session_approval(
+                state,
+                headers,
+                &context,
+                "auth.account.promote",
+                &json!({"proof_binding_id":proof_binding_id}),
+            )
+        },
+    )?;
+    super::gateway::retire_inactive_walletconnect_attempts(state).await?;
     crate::auth::append_audit_event(
         &state.data_dir,
         audit_event(AuditEventInput {
@@ -1341,7 +1625,21 @@ async fn passkey_demote_guest_inner(
     }
 
     let now = crate::auth::now_ts();
-    let demoted = crate::auth::demote_passkey_to_guest(&state.data_dir, &proof_binding_id, now)?;
+    let demoted = crate::auth::demote_passkey_to_guest_approved(
+        &state.data_dir,
+        &proof_binding_id,
+        now,
+        || {
+            wallet_session_approval(
+                state,
+                headers,
+                &context,
+                "auth.account.demote",
+                &json!({"proof_binding_id":proof_binding_id}),
+            )
+        },
+    )?;
+    super::gateway::retire_inactive_walletconnect_attempts(state).await?;
     crate::auth::append_audit_event(
         &state.data_dir,
         audit_event(AuditEventInput {
@@ -1376,7 +1674,7 @@ pub(in crate::api) fn principal_root_recovery_status_for_context(
     state: &GatewayState,
     context: &super::gateway::HomeLaunchTokenContext,
 ) -> anyhow::Result<PrincipalRootRecoveryStatusV1> {
-    let principal = require_active_passkey_principal_for_context(state, context)?;
+    let principal = require_active_principal_for_context(state, context)?;
     principal_root_recovery_status_for_verified_principal(
         &state.data_dir,
         &principal.principal_id,
@@ -1904,7 +2202,7 @@ async fn full_recovery_bundle_export_inner(
     }
     let wallet_authority = runtime_wallet_authority(&launch)?;
     let context = launch.context.clone();
-    let principal = require_active_passkey_principal_for_context(state, &context)?;
+    let principal = require_active_principal_for_context(state, &context)?;
     if input.principal_id != principal.principal_id
         || input.localhost_root != principal.localhost_root
     {
@@ -3231,119 +3529,125 @@ async fn recovery_kit_import_inner(
         },
         None => None,
     };
-    let protected_object_inventory =
-        principal_root_protected_object_inventory(&state.data_dir, &kit.localhost_root);
-    let _protection_activation =
-        crate::auth::begin_declarative_principal_root_protection_activation_with_candidate(
-            &state.data_dir,
-            &protection,
-            &candidate_data_key,
-            &protected_object_inventory,
-        )?;
-    if let Some(protector) = verified_did_recovery_protector {
-        protection.protectors.push(protector);
-    }
-    if input.reassign_to_current_principal {
-        let proof_binding_id = principal.proof_binding_id.clone();
-        let grant = AuthSessionGrantV1 {
-            schema: AuthSessionGrantV1::SCHEMA.to_string(),
-            grant_id: format!("grant:{}", random_hex(16)),
-            session_id: format!("auth:{}", random_hex(16)),
-            principal_id: kit.principal_id.clone(),
-            proof_binding_id: proof_binding_id.clone(),
-            issued_at: now,
-            expires_at: now.saturating_add(AUTH_SESSION_TTL_SECS),
-            apps: vec![
-                HOME_CAPSULE_ID.to_string(),
-                super::gateway::SYSTEM_CAPSULE_ID.to_string(),
-            ],
-        };
-        #[cfg(test)]
-        crate::auth::consume_recovery_reassignment_test_fault(
-            &state.data_dir,
-            crate::auth::RecoveryReassignmentTestFault::TokenPreparation,
-        )?;
-        let home_token =
-            issue_home_launch_token_for_auth_grant(&state.data_dir, HOME_CAPSULE_ID, &grant)?;
-        let system_token = issue_home_launch_token_for_auth_grant(
-            &state.data_dir,
-            super::gateway::SYSTEM_CAPSULE_ID,
-            &grant,
-        )?;
-        let signed_audit_event = crate::auth::sign_audit_event(
+    // Keep the root activation lock inside the synchronous commit boundary.
+    let response = (|| -> anyhow::Result<RecoveryKitImportResponse> {
+        let protected_object_inventory =
+            principal_root_protected_object_inventory(&state.data_dir, &kit.localhost_root);
+        let _protection_activation =
+            crate::auth::begin_declarative_principal_root_protection_activation_with_candidate(
+                &state.data_dir,
+                &protection,
+                &candidate_data_key,
+                &protected_object_inventory,
+            )?;
+        if let Some(protector) = verified_did_recovery_protector {
+            protection.protectors.push(protector);
+        }
+        if input.reassign_to_current_principal {
+            let proof_binding_id = principal.proof_binding_id.clone();
+            let grant = AuthSessionGrantV1 {
+                schema: AuthSessionGrantV1::SCHEMA.to_string(),
+                grant_id: format!("grant:{}", random_hex(16)),
+                session_id: format!("auth:{}", random_hex(16)),
+                principal_id: kit.principal_id.clone(),
+                proof_binding_id: proof_binding_id.clone(),
+                issued_at: now,
+                expires_at: now.saturating_add(AUTH_SESSION_TTL_SECS),
+                apps: vec![
+                    HOME_CAPSULE_ID.to_string(),
+                    super::gateway::SYSTEM_CAPSULE_ID.to_string(),
+                ],
+            };
+            #[cfg(test)]
+            crate::auth::consume_recovery_reassignment_test_fault(
+                &state.data_dir,
+                crate::auth::RecoveryReassignmentTestFault::TokenPreparation,
+            )?;
+            let home_token =
+                issue_home_launch_token_for_auth_grant(&state.data_dir, HOME_CAPSULE_ID, &grant)?;
+            let system_token = issue_home_launch_token_for_auth_grant(
+                &state.data_dir,
+                super::gateway::SYSTEM_CAPSULE_ID,
+                &grant,
+            )?;
+            let signed_audit_event = crate::auth::sign_audit_event(
+                &state.data_dir,
+                audit_event(AuditEventInput {
+                    event_type: "auth.recovery_kit.reassigned",
+                    principal_id: Some(kit.principal_id.clone()),
+                    proof_binding_id: Some(proof_binding_id.clone()),
+                    session_id: Some(grant.session_id.clone()),
+                    result: "ok",
+                    reason:
+                        "principal root reassigned from verified Recovery Kit and session reissued",
+                    occurred_at: now,
+                    ..AuditEventInput::default()
+                }),
+            )?;
+            let principal = match crate::auth::commit_recovered_root_reassignment(
+                &state.data_dir,
+                crate::auth::RecoveredRootReassignment {
+                    proof_binding_id,
+                    recovered_principal_id: kit.principal_id.clone(),
+                    recovered_localhost_root: kit.localhost_root.clone(),
+                    protection,
+                    kit: kit.clone(),
+                    replacement_grant: grant,
+                    signed_audit_event,
+                    updated_at: now,
+                },
+            ) {
+                Ok(principal) => principal,
+                Err(err) => {
+                    return fail_recovery_kit_request(
+                        state,
+                        &context,
+                        &principal,
+                        "auth.recovery_kit.import.rejected",
+                        format!("recovery root reassignment failed: {err}"),
+                    );
+                }
+            };
+            return Ok(RecoveryKitImportResponse {
+                schema: "elastos.recovery-kit.import.response/v1".to_string(),
+                principal_id: principal.principal_id,
+                localhost_root: principal.localhost_root,
+                status: "reassigned".to_string(),
+                previous_principal_id: Some(previous_principal_id),
+                previous_localhost_root: Some(previous_localhost_root),
+                home_token: Some(home_token),
+                system_token: Some(system_token),
+            });
+        }
+
+        crate::auth::attach_recovery_archive(&state.data_dir, &mut protection, &kit)?;
+        crate::auth::store_principal_root_protection(&state.data_dir, protection)?;
+        crate::auth::append_audit_event(
             &state.data_dir,
             audit_event(AuditEventInput {
-                event_type: "auth.recovery_kit.reassigned",
-                principal_id: Some(kit.principal_id.clone()),
-                proof_binding_id: Some(proof_binding_id.clone()),
-                session_id: Some(grant.session_id.clone()),
+                event_type: "auth.recovery_kit.imported",
+                principal_id: Some(principal.principal_id.clone()),
+                proof_binding_id: Some(principal.proof_binding_id.clone()),
+                session_id: Some(context.session_id.clone()),
                 result: "ok",
-                reason: "principal root reassigned from verified Recovery Kit and session reissued",
+                reason: "principal recovery kit imported and verified",
                 occurred_at: now,
                 ..AuditEventInput::default()
             }),
         )?;
-        let principal = match crate::auth::commit_recovered_root_reassignment(
-            &state.data_dir,
-            crate::auth::RecoveredRootReassignment {
-                proof_binding_id,
-                recovered_principal_id: kit.principal_id.clone(),
-                recovered_localhost_root: kit.localhost_root.clone(),
-                protection,
-                kit: kit.clone(),
-                replacement_grant: grant,
-                signed_audit_event,
-                updated_at: now,
-            },
-        ) {
-            Ok(principal) => principal,
-            Err(err) => {
-                return fail_recovery_kit_request(
-                    state,
-                    &context,
-                    &principal,
-                    "auth.recovery_kit.import.rejected",
-                    format!("recovery root reassignment failed: {err}"),
-                );
-            }
-        };
-        return Ok(RecoveryKitImportResponse {
+        Ok(RecoveryKitImportResponse {
             schema: "elastos.recovery-kit.import.response/v1".to_string(),
             principal_id: principal.principal_id,
             localhost_root: principal.localhost_root,
-            status: "reassigned".to_string(),
-            previous_principal_id: Some(previous_principal_id),
-            previous_localhost_root: Some(previous_localhost_root),
-            home_token: Some(home_token),
-            system_token: Some(system_token),
-        });
-    }
-
-    crate::auth::attach_recovery_archive(&state.data_dir, &mut protection, &kit)?;
-    crate::auth::store_principal_root_protection(&state.data_dir, protection)?;
-    crate::auth::append_audit_event(
-        &state.data_dir,
-        audit_event(AuditEventInput {
-            event_type: "auth.recovery_kit.imported",
-            principal_id: Some(principal.principal_id.clone()),
-            proof_binding_id: Some(principal.proof_binding_id.clone()),
-            session_id: Some(context.session_id.clone()),
-            result: "ok",
-            reason: "principal recovery kit imported and verified",
-            occurred_at: now,
-            ..AuditEventInput::default()
-        }),
-    )?;
-    Ok(RecoveryKitImportResponse {
-        schema: "elastos.recovery-kit.import.response/v1".to_string(),
-        principal_id: principal.principal_id,
-        localhost_root: principal.localhost_root,
-        status: "imported".to_string(),
-        previous_principal_id: None,
-        previous_localhost_root: None,
-        home_token: None,
-        system_token: None,
-    })
+            status: "imported".to_string(),
+            previous_principal_id: None,
+            previous_localhost_root: None,
+            home_token: None,
+            system_token: None,
+        })
+    })()?;
+    super::gateway::retire_inactive_walletconnect_attempts(state).await?;
+    Ok(response)
 }
 
 fn create_recovery_kit_for_principal(
@@ -3604,8 +3908,10 @@ fn require_active_principal_for_context(
         .proof_binding_id
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("missing proof-bound auth session"))?;
-    let principal =
-        crate::auth::load_principal_for_proof_binding(&state.data_dir, proof_binding_id)?;
+    let principal = crate::auth::load_principal_for_proof_binding(
+        &super::gateway::home_launch_auth_data_dir(&state.data_dir),
+        proof_binding_id,
+    )?;
     crate::auth::ensure_proof_binding_not_revoked(&principal)?;
     if principal.principal_id != context.principal_id {
         anyhow::bail!("auth session principal mismatch");
@@ -4937,6 +5243,7 @@ pub(in crate::api) fn auth_error_response(err: anyhow::Error) -> Response {
     }
     if err.is::<RecoveryKitPreparationRefused>()
         || err.is::<crate::auth::LastAdminPasskeyRemovalDenied>()
+        || err.is::<crate::auth::LastAccountMethodRemovalDenied>()
     {
         return (StatusCode::CONFLICT, err.to_string()).into_response();
     }
@@ -10684,6 +10991,35 @@ mod tests {
             .with_state(state)
     }
 
+    fn explicit_account_removal_for_test(
+        data: &std::path::Path,
+        headers: &HeaderMap,
+        target: &str,
+    ) -> (HeaderMap, Value) {
+        let account = crate::auth::load_principal_for_proof_binding(data, target)
+            .unwrap()
+            .principal_id;
+        let token = headers
+            .get("x-elastos-home-token")
+            .unwrap()
+            .to_str()
+            .unwrap();
+        let approval = super::super::gateway::issue_passkey_step_up_token_for_test(
+            data,
+            token,
+            HOME_CAPSULE_ID,
+            "auth.account.remove",
+            &json!({"proof_binding_id":target,"account_id":account,"remove_account":true}),
+        )
+        .unwrap();
+        let mut headers = headers.clone();
+        headers.insert(
+            "x-elastos-step-up-token",
+            HeaderValue::from_str(&approval).unwrap(),
+        );
+        (headers, json!({"remove_account":true,"account_id":account}))
+    }
+
     #[tokio::test]
     async fn last_admin_passkey_http_guest_leaves_and_admin_removes_another_person() {
         for (target_role, self_removal) in [
@@ -10704,11 +11040,16 @@ mod tests {
             let state = test_gateway_state(temp.path());
             let app = passkey_removal_test_router(state.clone());
             let actor = if self_removal { &target } else { &owner };
+            let (approved_headers, removal) = explicit_account_removal_for_test(
+                temp.path(),
+                &actor.host_headers,
+                &target_binding,
+            );
             let (status, headers, body) = passkey_http(
                 &app,
                 &format!("/api/auth/passkeys/{target_binding}/revoke"),
-                &actor.host_headers,
-                json!({}),
+                &approved_headers,
+                removal,
             )
             .await;
             assert_eq!(status, StatusCode::OK, "{body}");
@@ -10889,16 +11230,20 @@ mod tests {
         let first_path = format!("/api/auth/passkeys/{first_binding}/revoke");
         let second_path = format!("/api/auth/passkeys/{second_binding}/revoke");
         let barrier = Arc::new(tokio::sync::Barrier::new(2));
+        let (first_headers, first_body) =
+            explicit_account_removal_for_test(temp.path(), &first.host_headers, &first_binding);
+        let (second_headers, second_body) =
+            explicit_account_removal_for_test(temp.path(), &second.host_headers, &second_binding);
         let attempts = [
-            (first_path, first.host_headers),
-            (second_path, second.host_headers),
+            (first_path, first_headers, first_body),
+            (second_path, second_headers, second_body),
         ]
-        .map(|(path, headers)| {
+        .map(|(path, headers, body)| {
             let app = app.clone();
             let barrier = barrier.clone();
             tokio::spawn(async move {
                 barrier.wait().await;
-                passkey_http(&app, &path, &headers, json!({})).await
+                passkey_http(&app, &path, &headers, body).await
             })
         });
         let [first, second] = attempts;
@@ -10937,11 +11282,13 @@ mod tests {
             .proof_binding_id
             .clone();
         let app = passkey_removal_test_router(test_gateway_state(temp.path()));
+        let (approved_headers, removal) =
+            explicit_account_removal_for_test(temp.path(), &owner.host_headers, &former_binding);
         let (status, _, body) = passkey_http(
             &app,
             &format!("/api/auth/passkeys/{former_binding}/revoke"),
-            &owner.host_headers,
-            json!({}),
+            &approved_headers,
+            removal,
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
@@ -11153,12 +11500,32 @@ mod tests {
             "test passkey grant",
         )
         .unwrap();
-        let headers = home_token_headers(&grant.home_token);
+        let mut headers = home_token_headers(&grant.home_token);
+        let intent = json!({"proof_binding_id":grant.proof_binding_id,"account_id":grant.principal_id,"remove_account":true});
+        let approval = super::super::gateway::issue_passkey_step_up_token_for_test(
+            temp.path(),
+            &grant.home_token,
+            HOME_CAPSULE_ID,
+            "auth.account.remove",
+            &intent,
+        )
+        .unwrap();
+        headers.insert(
+            "x-elastos-step-up-token",
+            HeaderValue::from_str(&approval).unwrap(),
+        );
 
-        let (response, clear_cookie) =
-            passkey_revoke_inner(&state, &headers, grant.proof_binding_id.clone())
-                .await
-                .unwrap();
+        let (response, clear_cookie) = passkey_revoke_scoped_inner(
+            &state,
+            &headers,
+            grant.proof_binding_id.clone(),
+            PasskeyRevokeRequest {
+                remove_account: true,
+                account_id: Some(grant.principal_id.clone()),
+            },
+        )
+        .await
+        .unwrap();
 
         assert_eq!(response.status, "revoked");
         assert_eq!(response.proof_binding_id, grant.proof_binding_id);
@@ -11275,10 +11642,28 @@ mod tests {
         )
         .unwrap();
 
-        let (response, clear_cookie) = passkey_revoke_inner(
+        let intent = json!({"proof_binding_id":guest.proof_binding_id,"account_id":guest.principal_id,"remove_account":true});
+        let approval = super::super::gateway::issue_passkey_step_up_token_for_test(
+            temp.path(),
+            &admin.home_token,
+            HOME_CAPSULE_ID,
+            "auth.account.remove",
+            &intent,
+        )
+        .unwrap();
+        let mut headers = home_token_headers(&admin.home_token);
+        headers.insert(
+            "x-elastos-step-up-token",
+            HeaderValue::from_str(&approval).unwrap(),
+        );
+        let (response, clear_cookie) = passkey_revoke_scoped_inner(
             &state,
-            &home_token_headers(&admin.home_token),
+            &headers,
             guest.proof_binding_id.clone(),
+            PasskeyRevokeRequest {
+                remove_account: true,
+                account_id: Some(guest.principal_id.clone()),
+            },
         )
         .await
         .unwrap();

@@ -192,7 +192,12 @@ impl Fixture {
         let app = gateway_router_with_api_url(state.clone(), format!("http://{addr}"));
         let served = app.clone();
         let gateway = tokio::spawn(async move {
-            axum::serve(listener, served).await.unwrap();
+            axum::serve(
+                listener,
+                served.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .await
+            .unwrap();
         });
         Self {
             data,
@@ -1150,7 +1155,12 @@ async fn walletconnect_reconnects_after_runtime_service_restart_with_saved_princ
     f.app = gateway_router_with_api_url(f.state.clone(), format!("http://{}", f.addr));
     let app = f.app.clone();
     f.gateway = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
     });
     let (_, stored) = f.route(&f.connector, STORAGE, None).await;
     assert_eq!(stored["pairing"]["topic"], "fixture-topic");

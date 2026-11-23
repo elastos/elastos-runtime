@@ -32,7 +32,7 @@ pub(super) async fn system_source_switch_channel(
                     .into_response()
             }
         };
-    if require_admin_principal(&state.data_dir, &launch.context).is_err() {
+    if require_admin_signin_principal(&state.data_dir, &launch.context).is_err() {
         return (
             StatusCode::FORBIDDEN,
             Json(serde_json::json!({
@@ -482,7 +482,7 @@ where
     F: std::future::Future<Output = O> + Send + 'static,
     O: Into<CheckOutcome> + Send + 'static,
 {
-    if require_admin_principal(data_dir, context).is_err() {
+    if require_admin_signin_principal(data_dir, context).is_err() {
         return None;
     }
     let (controller, source, key) = update_inputs(data_dir)?;
@@ -543,7 +543,7 @@ pub(super) fn update_account_view(
     check: Option<&crate::operator_control::OperatorUpdateCheck>,
     checking: bool,
 ) -> Option<serde_json::Value> {
-    if require_admin_principal(data_dir, context).is_err() {
+    if require_admin_signin_principal(data_dir, context).is_err() {
         return None;
     }
     // A refused release can never install; offer again only when a different one appears.
@@ -557,7 +557,7 @@ pub(super) fn update_account_view(
     };
     let available = !refused && check.is_some_and(|check| check.update_available);
     let can_apply = available
-        && require_admin_principal(data_dir, context).is_ok()
+        && require_admin_signin_principal(data_dir, context).is_ok()
         && check.is_some_and(|check| check.head_cid.is_some() && check.release_cid.is_some())
         && controller.host_pid.is_some()
         && crate::update_controller::has_queued_update(data_dir).is_ok_and(|pending| !pending)
@@ -624,7 +624,7 @@ pub(super) async fn system_update_apply(
                     .into_response()
             }
         };
-    if require_admin_principal(&state.data_dir, &launch.context).is_err() {
+    if require_admin_signin_principal(&state.data_dir, &launch.context).is_err() {
         return (
             StatusCode::FORBIDDEN,
             Json(serde_json::json!({"error":"Ask an admin of this Home to install this update."})),

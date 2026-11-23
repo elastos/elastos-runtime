@@ -9,6 +9,9 @@ use serde::{Deserialize, Serialize};
 use sha2::Digest as Sha2Digest;
 use sha3::Keccak256;
 
+pub mod bitcoin;
+pub mod wallet_signin;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PrincipalId(pub String);
 

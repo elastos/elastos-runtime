@@ -408,13 +408,19 @@ pub(super) fn approve(data_dir: &Path, id: &str, proof: &str) -> anyhow::Result<
         .iter_mut()
         .find(|decision| decision.id == id)
         .ok_or_else(|| anyhow::anyhow!("hosted egress request unavailable"))?;
+    let requested_matches = match decision.requested_by_proof.as_deref() {
+        None => true,
+        Some(requested) if requested == proof => true,
+        Some(requested) if requested.starts_with("proof:signin-wallet:") => {
+            crate::auth::load_principal_for_proof_binding(data_dir, requested)
+                .is_ok_and(|requester| requester.principal_id == principal.principal_id)
+        }
+        Some(_) => false,
+    };
     anyhow::ensure!(
         decision.status == DecisionStatus::Pending
             && decision.expires_at_ms > now
-            && decision
-                .requested_by_proof
-                .as_deref()
-                .is_none_or(|requested| requested == proof),
+            && requested_matches,
         "hosted egress request is no longer pending"
     );
     validate_scope(&decision.scope)?;
@@ -433,7 +439,11 @@ pub(super) fn deny(data_dir: &Path, id: &str, proof: &str) -> anyhow::Result<()>
     let principal = crate::auth::load_principal_for_proof_binding(data_dir, proof)?;
     crate::auth::ensure_proof_binding_not_revoked(&principal)?;
     anyhow::ensure!(
-        crate::auth::is_admin(&principal) && principal.proof_binding.passkey.is_some(),
+        crate::auth::is_admin(&principal)
+            && (principal.proof_binding.passkey.is_some()
+                || principal
+                    .proof_binding_id
+                    .starts_with("proof:signin-wallet:")),
         "hosted egress owner unavailable"
     );
     let _guard = lock().lock().unwrap_or_else(|error| error.into_inner());
@@ -456,7 +466,11 @@ pub(super) fn end_decision(data_dir: &Path, id: &str, proof: &str) -> anyhow::Re
     let principal = crate::auth::load_principal_for_proof_binding(data_dir, proof)?;
     crate::auth::ensure_proof_binding_not_revoked(&principal)?;
     anyhow::ensure!(
-        crate::auth::is_admin(&principal) && principal.proof_binding.passkey.is_some(),
+        crate::auth::is_admin(&principal)
+            && (principal.proof_binding.passkey.is_some()
+                || principal
+                    .proof_binding_id
+                    .starts_with("proof:signin-wallet:")),
         "hosted egress owner unavailable"
     );
     let _guard = lock().lock().unwrap_or_else(|error| error.into_inner());
@@ -490,7 +504,11 @@ pub(super) fn endable_decision_offer_id(
     let principal = crate::auth::load_principal_for_proof_binding(data_dir, proof)?;
     crate::auth::ensure_proof_binding_not_revoked(&principal)?;
     anyhow::ensure!(
-        crate::auth::is_admin(&principal) && principal.proof_binding.passkey.is_some(),
+        crate::auth::is_admin(&principal)
+            && (principal.proof_binding.passkey.is_some()
+                || principal
+                    .proof_binding_id
+                    .starts_with("proof:signin-wallet:")),
         "hosted egress owner unavailable"
     );
     let _guard = lock().lock().unwrap_or_else(|error| error.into_inner());

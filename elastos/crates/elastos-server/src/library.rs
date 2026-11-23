@@ -7625,7 +7625,9 @@ fn validate_shared_access_recipient_proof(
         .ok_or_else(|| {
             anyhow!("library shared_access recipient_proof requires proof_binding_id")
         })?;
-    if !proof_binding_id.starts_with("proof:passkey:") {
+    if !proof_binding_id.starts_with("proof:passkey:")
+        && !proof_binding_id.starts_with("proof:signin-wallet:")
+    {
         bail!("library shared_access recipient_proof requires passkey proof binding");
     }
     let claimed = proof
@@ -10733,5 +10735,15 @@ mod publish_tests {
             .call("trash", json!({ "uri": home.uri("Documents/Moved") }))
             .await;
         assert_eq!(trash["status"], "ok", "{trash}");
+    }
+    #[test]
+    fn wallet_signin_library_recipient_proof_preserves_runtime_source_and_recipient() {
+        let mut proof = serde_json::json!({"schema":"elastos.library.recipient-proof/v1","source":"runtime-launch-grant","proof_binding_id":"proof:signin-wallet:fixture","recipient":"person:local:alice","session_id":"auth:wallet:fixture"});
+        assert!(validate_shared_access_recipient_proof("person:local:alice", Some(&proof)).is_ok());
+        assert!(validate_shared_access_recipient_proof("person:local:bob", Some(&proof)).is_err());
+        proof["source"] = serde_json::json!("wallet-input");
+        assert!(
+            validate_shared_access_recipient_proof("person:local:alice", Some(&proof)).is_err()
+        );
     }
 }

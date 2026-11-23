@@ -10,10 +10,18 @@ use tokio::time::Instant;
 
 pub(super) const GRANT: &str = "walletconnect.internet.grant";
 pub(super) const REVOKE: &str = "walletconnect.internet.revoke";
-const CONSENT: &str = "WalletConnect needs internet access to connect your wallet to this Home. The WalletConnect service carries the messages and can see this computer's internet address. Your keys stay in your wallet, where you approve each request. You can turn this off at any time in Inbox.";
+const CONSENT: &str = "WalletConnect needs internet access for payment connections. Its relay service can see this computer's internet address. Your keys stay in your wallet. You can turn payment connections off here. Wallet sign-in uses separate, short connections when Sign in is on for a compatible wallet.";
 const MAX_BYTES: usize = 1024 * 1024;
 const MAX_SOCKETS: usize = 2;
 const RESOURCE: &str = "elastos://walletconnect/internet";
+#[path = "gateway_walletconnect_attempts.rs"]
+mod attempts;
+pub(in crate::api) use attempts::{
+    admit_attempt, attempt_config, attempt_headers_present, attempt_route, install_attempt,
+    install_confirmation, issue_lock, preflight, require_attempt, retire_attempt, AttemptCapacity,
+};
+
+pub(crate) use attempts::retire_inactive_attempts;
 
 #[derive(Debug)]
 struct AdminConsentRequired;
@@ -47,6 +55,8 @@ pub(super) fn consent_conflict_response(error: &anyhow::Error) -> Option<Respons
 }
 
 pub(crate) struct WalletConnectService {
+    issue_lock: Mutex<()>,
+    unadmitted_remote: Arc<tokio::sync::Semaphore>,
     unadmitted: Arc<tokio::sync::Semaphore>,
     inner: Mutex<Inner>,
     #[cfg(test)]
@@ -58,6 +68,8 @@ impl Default for WalletConnectService {
     fn default() -> Self {
         Self {
             unadmitted: Arc::new(tokio::sync::Semaphore::new(16)),
+            issue_lock: Mutex::new(()),
+            unadmitted_remote: Arc::new(tokio::sync::Semaphore::new(15)),
             inner: Mutex::default(),
             #[cfg(test)]
             pongs: std::sync::atomic::AtomicUsize::new(0),
@@ -68,6 +80,10 @@ impl Default for WalletConnectService {
 }
 #[derive(Default)]
 struct Inner {
+    attempts: BTreeMap<String, attempts::AttemptTransport>,
+    confirmation_issues: BTreeMap<String, std::collections::VecDeque<Instant>>,
+    address_issues: BTreeMap<std::net::IpAddr, std::collections::VecDeque<Instant>>,
+    attempt_issues: [std::collections::VecDeque<Instant>; 2],
     sockets: BTreeMap<String, SocketOwner>,
     admissions: BTreeMap<String, (u64, HeaderMap, String)>,
 }
@@ -76,6 +92,24 @@ struct SocketOwner {
     cancel: watch::Sender<bool>,
     done: watch::Receiver<bool>,
 }
+#[cfg(test)]
+pub(in crate::api) async fn watch_attempt_socket_for_test(
+    state: &GatewayState,
+    id: &str,
+) -> watch::Receiver<bool> {
+    let (cancel, receiver) = watch::channel(false);
+    let (_done, done) = watch::channel(true);
+    state.walletconnect.inner.lock().await.sockets.insert(
+        format!("test:{id}"),
+        SocketOwner {
+            principal: attempts::actor(id),
+            cancel,
+            done,
+        },
+    );
+    receiver
+}
+
 struct SocketCompletion(watch::Sender<bool>);
 impl Drop for SocketCompletion {
     fn drop(&mut self) {
@@ -143,7 +177,7 @@ fn request(c: &Consent) -> anyhow::Result<serde_json::Value> {
     }
     Ok(
         json!({"resource":"elastos://walletconnect/internet", "id":c.id, "issued_at":c.at,
-        "text":if c.status == "granted" { "Stop WalletConnect relay access on this computer." } else { CONSENT }}),
+        "text":if c.status == "granted" { "Stop WalletConnect payment connections. Enabled wallet sign-in methods use separate short connections." } else { CONSENT }}),
     )
 }
 fn public(c: Option<&Consent>) -> serde_json::Value {
@@ -239,7 +273,7 @@ pub(super) async fn answer(
                 if c.status != if stopping { "granted" } else { "requested" } {
                     return Err(ConsentConflict.into());
                 }
-                consume_passkey_step_up_token(
+                let approving_passkey = consume_passkey_step_up_token_with_approver(
                     &state.data_dir,
                     token.unwrap_or_default(),
                     launch,
@@ -257,7 +291,7 @@ pub(super) async fn answer(
                 c.status = if stopping { "revoked" } else { "granted" }.into();
                 c.cleanup_pending = stopping;
                 c.principal = Some(launch.context.principal_id.clone());
-                c.proof = launch.context.proof_binding_id.clone();
+                c.proof = Some(approving_passkey);
                 if !stopping {
                     let capability = state.browser_internet.capability_manager()?.grant(
                         &launch.context.principal_id,
@@ -273,8 +307,14 @@ pub(super) async fn answer(
             if stopping {
                 // Registration and Turn Off share this lock. Persist first so a restart
                 // also refuses access, then wait until both network ends are dropped.
-                inner.admissions.clear();
-                for socket in inner.sockets.values() {
+                inner
+                    .admissions
+                    .retain(|_, (_, _, owner)| owner.starts_with("runtime:wallet-attempt:"));
+                for socket in inner
+                    .sockets
+                    .values()
+                    .filter(|s| !s.principal.starts_with("runtime:wallet-attempt:"))
+                {
                     socket.cancel.send_replace(true);
                 }
                 if let Some(encoded) = &c.capability {
@@ -286,18 +326,24 @@ pub(super) async fn answer(
                         .revoke(*capability.id(), "WalletConnect internet stopped")
                         .await?;
                 }
-                for socket in inner.sockets.values_mut() {
+                for socket in inner
+                    .sockets
+                    .values_mut()
+                    .filter(|s| !s.principal.starts_with("runtime:wallet-attempt:"))
+                {
                     tokio::time::timeout(
                         Duration::from_secs(3),
                         socket.done.wait_for(|done| *done),
                     )
                     .await??;
                 }
-                inner.sockets.clear();
+                inner
+                    .sockets
+                    .retain(|_, s| s.principal.starts_with("runtime:wallet-attempt:"));
                 clear_all_storage(&state.data_dir)?;
                 c.cleanup_pending = false;
                 save(&state.data_dir, &c)?;
-                return Ok("Internet access for WalletConnect is off.".into());
+                return Ok("WalletConnect payment connections are off. Enabled wallet sign-in methods use separate short connections.".into());
             }
         }
         _ => anyhow::bail!("Home could not complete this WalletConnect request. Try again."),
@@ -335,11 +381,11 @@ pub(super) fn notification(
         body: if pending {
             CONSENT
         } else if c.status == "granted" {
-            "WalletConnect can use the internet."
+            "WalletConnect payment connections can use the internet. Enabled wallet sign-in methods use separate short connections."
         } else if c.cleanup_pending {
-            "Internet access for WalletConnect is off. Choose Finish disconnecting to remove the saved connection."
+            "WalletConnect payment connections are off. Enabled wallet sign-in methods use separate short connections. Choose Finish disconnecting to remove the saved connection."
         } else {
-            "Internet access for WalletConnect is off."
+            "WalletConnect payment connections are off. Enabled wallet sign-in methods use separate short connections."
         }
         .into(),
         severity: if pending { "attention" } else { "info" }.into(),
@@ -426,7 +472,11 @@ fn ensure_consent_request(
     }) {
         ensure_admin_context(&state.data_dir, context).map_err(|_| AdminConsentRequired)?;
         anyhow::ensure!(
-            inner.sockets.values().all(|s| *s.done.borrow()),
+            inner
+                .sockets
+                .values()
+                .filter(|s| !s.principal.starts_with("runtime:wallet-attempt:"))
+                .all(|s| *s.done.borrow()),
             "Finish stopping WalletConnect first"
         );
         save(
@@ -518,6 +568,9 @@ pub(in crate::api::gateway) async fn admission_pending_for_test(
         .contains_key(ticket)
 }
 pub(super) async fn admission(State(state): State<GatewayState>, headers: HeaderMap) -> Response {
+    if attempt_headers_present(&headers) {
+        return attempts::admission(&state, &headers).await;
+    }
     let result = async {
         let authority = connector_authority(&state, &headers)?;
         verify_sdk(&state).await?;
@@ -580,6 +633,9 @@ pub(super) async fn storage(
     headers: HeaderMap,
     input: Result<Json<StorageWrite>, axum::extract::rejection::JsonRejection>,
 ) -> Response {
+    if attempt_headers_present(&headers) {
+        return attempts::storage(&state, method, &headers, input).await;
+    }
     let result = async {
         let authority = if method == axum::http::Method::DELETE {
             // Cleanup retries keep launch/proof checks but can use the old storage revision.
@@ -681,6 +737,7 @@ struct RelayHello {
 }
 pub(super) async fn relay(
     State(state): State<GatewayState>,
+    peer: Option<axum::extract::ConnectInfo<std::net::SocketAddr>>,
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Response {
@@ -691,6 +748,32 @@ pub(super) async fn relay(
         )
             .into_response();
     }
+    let mut transport_headers = headers.clone();
+    transport_headers.remove("origin");
+    let local = super::super::auth_gateway::local_first_owner_registration(
+        &transport_headers,
+        peer.map(|p| p.0),
+    );
+    let remote_permit = if local {
+        None
+    } else {
+        match state
+            .walletconnect
+            .unadmitted_remote
+            .clone()
+            .try_acquire_owned()
+        {
+            Ok(permit) => Some(permit),
+            Err(_) => {
+                return (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    [("retry-after", "5")],
+                    "WalletConnect admission connections are busy",
+                )
+                    .into_response()
+            }
+        }
+    };
     let Ok(permit) = state.walletconnect.unadmitted.clone().try_acquire_owned() else {
         return (
             StatusCode::TOO_MANY_REQUESTS,
@@ -702,7 +785,7 @@ pub(super) async fn relay(
     ws.max_message_size(64 * 1024)
         .max_frame_size(64 * 1024)
         .on_upgrade(move |mut socket| async move {
-            let _ = relay_connection(&state, &mut socket, permit).await;
+            let _ = relay_connection(&state, &mut socket, permit, remote_permit).await;
             // Error messages can contain upstream auth URLs. Keep them private.
             let _ = socket.close().await;
         })
@@ -711,6 +794,7 @@ async fn relay_connection(
     state: &GatewayState,
     socket: &mut WebSocket,
     permit: tokio::sync::OwnedSemaphorePermit,
+    remote_permit: Option<tokio::sync::OwnedSemaphorePermit>,
 ) -> anyhow::Result<()> {
     let hello = tokio::time::timeout(Duration::from_secs(5), socket.recv())
         .await?
@@ -730,19 +814,25 @@ async fn relay_connection(
         anyhow::ensure!(expiry > now_ts(), "WalletConnect admission expired");
         headers
     };
-    let authority = connector_authority(state, &headers)?;
+    let owner = relay_owner(state, &headers).await?;
     drop(permit);
+    drop(remote_permit);
     let config = load_walletconnect_connector_config(&state.data_dir)?;
     let url = relay_url(&hello.relay, &config.project_id)?;
-    let principal = authority.home_launch_context().principal_id.clone();
+    let principal = owner.principal.clone();
     let id = gateway_home_token::uuid_like_token();
     let (cancel, mut cancelled) = watch::channel(false);
     let (done, finished) = watch::channel(false);
     let completion = SocketCompletion(done);
     {
         let mut inner = state.walletconnect.inner.lock().await;
-        check_owner(state, false).await?;
+        if owner.attempt.is_none() {
+            check_owner(state, false).await?;
+        }
         inner.sockets.retain(|_, s| !*s.done.borrow());
+        if let Some(attempt) = owner.attempt.as_ref() {
+            attempts::admit_socket(&inner, attempt, owner.local)?;
+        }
         anyhow::ensure!(
             inner
                 .sockets
@@ -766,6 +856,7 @@ async fn relay_connection(
     let result = tokio::select! {
         biased;
         _ = cancelled.changed() => Ok(()),
+        _ = tokio::time::sleep_until(owner.deadline), if owner.attempt.is_some() => Ok(()),
         result = transport(state, &headers, socket, url) => result,
     };
     if result.is_err() {
@@ -776,6 +867,34 @@ async fn relay_connection(
     drop(completion);
     state.walletconnect.inner.lock().await.sockets.remove(&id);
     result
+}
+
+struct RelayOwner {
+    principal: String,
+    attempt: Option<String>,
+    local: bool,
+    deadline: Instant,
+}
+async fn relay_owner(state: &GatewayState, headers: &HeaderMap) -> anyhow::Result<RelayOwner> {
+    if attempt_headers_present(headers) {
+        let context = require_attempt(state, headers).await?;
+        let deadline = attempts::deadline(state, &context.ceremony_id).await?;
+        Ok(RelayOwner {
+            principal: attempts::actor(&context.ceremony_id),
+            attempt: Some(context.ceremony_id),
+            local: context.local,
+            deadline,
+        })
+    } else {
+        let authority = connector_authority(state, headers)?;
+        check_owner(state, false).await?;
+        Ok(RelayOwner {
+            principal: authority.home_launch_context().principal_id,
+            attempt: None,
+            local: false,
+            deadline: Instant::now() + Duration::from_secs(300),
+        })
+    }
 }
 
 #[cfg(unix)]
@@ -811,8 +930,7 @@ async fn transport(
         client::IntoClientRequest, protocol::WebSocketConfig, Message as Upstream,
     };
     let host = url.host_str().unwrap();
-    let authority = connector_authority(state, headers)?;
-    let principal = authority.home_launch_context().principal_id;
+    let principal = relay_owner(state, headers).await?.principal;
     let registry = state
         .provider_registry
         .as_ref()
@@ -892,13 +1010,13 @@ async fn transport(
     loop {
         tokio::select! {
             _ = heartbeat.tick() => {
-                connector_authority(state, headers)?;
-                check_owner(state, false).await?;
+                relay_owner(state, headers).await?;
                 check_liveness(pong.elapsed(), activity.elapsed())?;
                 tokio::time::timeout(Duration::from_secs(5), upstream.send(Upstream::Ping(Vec::new()))).await??;
             }
             frame = upstream.next() => match frame.transpose()? {
                 Some(Upstream::Text(text)) => {
+                    relay_owner(state, headers).await?;
                     activity = Instant::now();
                     tokio::time::timeout(Duration::from_secs(5), socket.send(Message::Text(text))).await??;
                 }
@@ -913,8 +1031,7 @@ async fn transport(
             },
             frame = socket.recv() => match frame.transpose()? {
                 Some(Message::Text(text)) => {
-                    connector_authority(state, headers)?;
-                    check_owner(state, false).await?;
+                    relay_owner(state, headers).await?;
                     activity = Instant::now();
                     tokio::time::timeout(Duration::from_secs(5), upstream.send(Upstream::Text(text))).await??;
                 }

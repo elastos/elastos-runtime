@@ -31,6 +31,8 @@ use sha2::{Digest, Sha256};
 
 use crate::host_lock::FileLock;
 
+pub(crate) mod wallet_signin;
+
 const AUTH_STATE_SCHEMA: &str = "elastos.auth.state/v1";
 pub(crate) const AUTH_SESSION_TTL_SECS: u64 = 12 * 60 * 60;
 const AUTH_STATE_ROOT: &str = "ElastOS/System/Auth";
@@ -2088,6 +2090,14 @@ pub(crate) fn complete_passkey_add(
     let record = mutate_auth_state(data_dir, |state| {
         let now = now_ts();
         normalize_principal_records(state);
+        let session = load_active_session_grant(data_dir, client.session_id, now)?;
+        if session.principal_id != client.principal_id
+            || (!session.proof_binding_id.starts_with("proof:signin-wallet:")
+                && session.proof_binding_id != client.proof_binding_id)
+        {
+            return enrollment_denied();
+        }
+
         let signer = state
             .principals
             .iter()
@@ -3250,6 +3260,42 @@ mod owner_recovery_tests {
         assert!(begin(&mut home, &code).is_err());
         assert!(complete(&mut home, &code, &response, &kit).is_err());
         assert_eq!(auth_bytes(&home), before);
+    }
+
+    #[test]
+    fn owner_recovery_kit_clears_wallet_methods_and_sessions_preserving_account_root() {
+        let mut home = home();
+        let actor = load_auth_state(home.root.path())
+            .unwrap()
+            .sessions
+            .into_iter()
+            .find(|s| s.grant.proof_binding_id == home.admin.proof_binding_id)
+            .unwrap()
+            .grant;
+        let wallet = wallet_signin::tests::enabled_session_for_actor(home.root.path(), &actor);
+        assert!(load_active_session_grant(home.root.path(), &wallet.session_id, now_ts()).is_ok());
+        let code = arm(&home);
+        let response = begin(&mut home, &code).unwrap();
+        let kit = home.kit.clone();
+        let recovered = complete(&mut home, &code, &response, &kit).unwrap();
+        assert_eq!(recovered.principal_id, wallet.principal_id);
+        assert_eq!(
+            load_principal_for_proof_binding(home.root.path(), &recovered.proof_binding_id)
+                .unwrap()
+                .localhost_root,
+            home.admin.localhost_root
+        );
+        assert!(wallet_signin::principal(home.root.path(), &wallet.proof_binding_id).is_err());
+        assert!(load_active_session_grant(home.root.path(), &wallet.session_id, now_ts()).is_err());
+        assert!(
+            wallet_signin::list(home.root.path(), &recovered).unwrap()["methods"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            load_active_session_grant(home.root.path(), &recovered.session_id, now_ts()).is_ok()
+        );
     }
 
     #[test]
@@ -4650,6 +4696,15 @@ fn mutate_auth_state<T>(
     ensure_audit_chain_state(data_dir, &mut state)?;
     let value = mutation(&mut state)?;
     save_auth_state(data_dir, &state, Some(&baseline))?;
+    if wallet_signin::observe_auth_commit(
+        data_dir,
+        &state,
+        baseline.links.last().map_or(0, |link| link.sequence),
+    )
+    .is_err()
+    {
+        tracing::warn!("Wallet sign-in storage requires repair; passkey access remains available");
+    }
     for principal in previous_principals {
         if !state.principals.iter().any(|p| p.principal_id == principal)
             && crate::api::gateway::clear_walletconnect_principal_storage(data_dir, &principal)
@@ -4905,7 +4960,11 @@ fn write_secret_bytes_atomic(
 }
 
 pub fn load_auth_state(data_dir: &Path) -> anyhow::Result<AuthState> {
-    load_auth_state_with_identity(data_dir).map(|(state, _)| state)
+    let mut state = load_auth_state_with_identity(data_dir)?.0;
+    if let Ok(sessions) = wallet_signin::sessions(data_dir, &state) {
+        state.sessions.extend(sessions);
+    }
+    Ok(state)
 }
 
 fn load_auth_state_with_identity(
@@ -5365,6 +5424,10 @@ pub fn set_principal_display_name(
 }
 
 pub fn store_session_grant(data_dir: &Path, grant: AuthSessionGrantV1) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !grant.proof_binding_id.starts_with("proof:signin-wallet:"),
+        "Wallet sessions belong to the wallet sign-in store"
+    );
     mutate_auth_state(data_dir, |state| {
         state
             .sessions
@@ -5378,6 +5441,14 @@ pub fn store_session_grant(data_dir: &Path, grant: AuthSessionGrantV1) -> anyhow
 }
 
 pub fn renew_session_grant(data_dir: &Path, grant: AuthSessionGrantV1) -> anyhow::Result<()> {
+    if grant.session_id.starts_with("auth:wallet:") {
+        return wallet_signin::update_session(
+            data_dir,
+            &grant.session_id.clone(),
+            Some(grant),
+            None,
+        );
+    }
     mutate_auth_state(data_dir, |state| renew_session_in_state(state, grant))
 }
 
@@ -5415,6 +5486,10 @@ pub(crate) fn renew_session_grant_with_audit(
     {
         anyhow::bail!("auth session refresh audit binding mismatch");
     }
+    if grant.session_id.starts_with("auth:wallet:") {
+        append_audit_event(data_dir, event)?;
+        return renew_session_grant(data_dir, grant);
+    }
     let event = sign_audit_event(data_dir, event)?;
     mutate_auth_state(data_dir, |state| {
         renew_session_in_state(state, grant)?;
@@ -5433,6 +5508,10 @@ pub fn rotate_session_grant(
     grant: AuthSessionGrantV1,
     revoked_at: u64,
 ) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !grant.proof_binding_id.starts_with("proof:signin-wallet:"),
+        "Wallet sessions belong to the wallet sign-in store"
+    );
     mutate_auth_state(data_dir, |state| {
         if let Some(previous) = state
             .sessions
@@ -5457,12 +5536,31 @@ pub fn revoke_session_grant(
     session_id: &str,
     revoked_at: u64,
 ) -> anyhow::Result<()> {
+    revoke_session_grant_approved(data_dir, session_id, revoked_at, || Ok(()))
+}
+
+pub(crate) fn revoke_session_grant_approved(
+    data_dir: &Path,
+    session_id: &str,
+    revoked_at: u64,
+    approve: impl FnOnce() -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    if session_id.starts_with("auth:wallet:") {
+        return wallet_signin::update_session_approved(
+            data_dir,
+            session_id,
+            None,
+            Some(revoked_at),
+            approve,
+        );
+    }
     mutate_auth_state(data_dir, |state| {
         let stored = state
             .sessions
             .iter_mut()
             .find(|stored| stored.grant.session_id == session_id)
             .ok_or_else(|| anyhow!("auth session not found"))?;
+        approve()?;
         stored.revoked_at = Some(revoked_at);
         Ok(())
     })
@@ -5482,15 +5580,28 @@ pub fn load_active_session_grant(
     if stored.revoked_at.is_some() || stored.grant.expires_at <= now {
         anyhow::bail!("auth session is not active");
     }
+    if stored
+        .grant
+        .proof_binding_id
+        .starts_with("proof:signin-wallet:")
+    {
+        let owner = wallet_signin::principal(data_dir, &stored.grant.proof_binding_id)?;
+        if owner.principal_id != stored.grant.principal_id {
+            anyhow::bail!("wallet session account changed");
+        }
+    }
     Ok(stored.grant.clone())
 }
 
 pub fn is_auth_session_active(data_dir: &Path, session_id: &str, now: u64) -> anyhow::Result<bool> {
     let state = load_auth_state(data_dir)?;
-    Ok(state.sessions.iter().any(|stored| {
-        stored.grant.session_id == session_id
-            && stored.revoked_at.is_none()
-            && stored.grant.expires_at > now
+    Ok(state.sessions.iter().any(|s| {
+        s.grant.session_id == session_id
+            && s.revoked_at.is_none()
+            && s.grant.expires_at > now
+            && (!s.grant.proof_binding_id.starts_with("proof:signin-wallet:")
+                || wallet_signin::principal(data_dir, &s.grant.proof_binding_id)
+                    .is_ok_and(|p| p.principal_id == s.grant.principal_id))
     }))
 }
 
@@ -6587,6 +6698,15 @@ pub fn set_guest_registration_enabled(
     enabled: bool,
     updated_at: u64,
 ) -> anyhow::Result<bool> {
+    set_guest_registration_enabled_approved(data_dir, enabled, updated_at, || Ok(()))
+}
+
+pub(crate) fn set_guest_registration_enabled_approved(
+    data_dir: &Path,
+    enabled: bool,
+    updated_at: u64,
+    approve: impl FnOnce() -> anyhow::Result<()>,
+) -> anyhow::Result<bool> {
     let reason = if enabled {
         "guest passkey registration enabled"
     } else {
@@ -6614,6 +6734,7 @@ pub fn set_guest_registration_enabled(
         },
     )?;
     mutate_auth_state(data_dir, |state| {
+        approve()?;
         state.guest_registration_enabled = enabled;
         push_audit_event(data_dir, state, event)?;
         Ok(enabled)
@@ -6628,6 +6749,9 @@ pub fn load_principal_for_proof_binding(
     data_dir: &Path,
     proof_binding_id: &str,
 ) -> anyhow::Result<PrincipalRecord> {
+    if proof_binding_id.starts_with("proof:signin-wallet:") {
+        return wallet_signin::principal(data_dir, proof_binding_id);
+    }
     let state = load_auth_state(data_dir)?;
     state
         .principals
@@ -6705,11 +6829,23 @@ impl std::fmt::Display for LastAdminPasskeyRemovalDenied {
 
 impl std::error::Error for LastAdminPasskeyRemovalDenied {}
 
-/// Removes one passkey in one auth write. The actor's passkey, the permission
-/// and the last-admin rule are checked under the same lock as the
-/// revocation, so two concurrent removals cannot both pass and leave the Home
-/// without an admin passkey. A passkey already revoked returns its record unchanged,
-/// so a retry can finish removing its credential.
+#[derive(Debug)]
+pub(crate) struct LastAccountMethodRemovalDenied;
+impl std::fmt::Display for LastAccountMethodRemovalDenied {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Keep a passkey on this account, or choose Remove account.")
+    }
+}
+impl std::error::Error for LastAccountMethodRemovalDenied {}
+#[derive(Clone, Copy)]
+pub(crate) struct PasskeyRemovalTarget<'a> {
+    pub proof_binding_id: &'a str,
+    pub account_id: &'a str,
+    pub remove_account: bool,
+}
+
+/// Ordinary method removal preserves a passkey on the account. Account removal
+/// has a distinct, passkey-approved intent and preserves another Home Admin.
 pub fn revoke_passkey_for_actor(
     data_dir: &Path,
     actor_principal_id: &str,
@@ -6717,43 +6853,101 @@ pub fn revoke_passkey_for_actor(
     proof_binding_id: &str,
     revoked_at: u64,
 ) -> anyhow::Result<PrincipalRecord> {
+    let target = load_principal_for_proof_binding(data_dir, proof_binding_id)?;
+    revoke_passkey_for_actor_approved(
+        data_dir,
+        actor_principal_id,
+        actor_proof_binding_id,
+        PasskeyRemovalTarget {
+            proof_binding_id,
+            account_id: &target.principal_id,
+            remove_account: false,
+        },
+        revoked_at,
+        || Ok(()),
+    )
+}
+pub(crate) fn revoke_passkey_for_actor_approved(
+    data_dir: &Path,
+    actor_principal_id: &str,
+    actor_proof_binding_id: &str,
+    request: PasskeyRemovalTarget<'_>,
+    revoked_at: u64,
+    approve: impl FnOnce() -> anyhow::Result<()>,
+) -> anyhow::Result<PrincipalRecord> {
     mutate_auth_state(data_dir, |state| {
         let actor = state
             .principals
             .iter()
-            .find(|principal| {
-                principal.proof_binding_id == actor_proof_binding_id
-                    && principal.principal_id == actor_principal_id
+            .find(|p| {
+                p.proof_binding_id == actor_proof_binding_id && p.principal_id == actor_principal_id
             })
             .ok_or_else(|| anyhow!("auth session principal mismatch"))?;
         ensure_proof_binding_not_revoked(actor)?;
-        if actor_proof_binding_id != proof_binding_id && actor.role != RuntimePrincipalRole::Admin {
-            anyhow::bail!("admin passkey required to remove another passkey");
-        }
         let target = state
             .principals
             .iter()
-            .find(|principal| principal.proof_binding_id == proof_binding_id)
+            .find(|p| p.proof_binding_id == request.proof_binding_id)
+            .cloned()
             .ok_or_else(|| anyhow!("passkey proof binding not found"))?;
-        if target.proof_binding.passkey.is_none() {
-            anyhow::bail!("proof binding is not a passkey");
+        anyhow::ensure!(
+            target.principal_id == request.account_id,
+            "account removal target changed"
+        );
+        anyhow::ensure!(
+            actor.principal_id == target.principal_id || actor.role == RuntimePrincipalRole::Admin,
+            "admin passkey required to remove another account's method"
+        );
+        anyhow::ensure!(
+            target.proof_binding.passkey.is_some(),
+            "proof binding is not a passkey"
+        );
+        if !active_passkey(&target) && !request.remove_account {
+            return Ok(target);
         }
-        if !active_passkey(target) {
-            return Ok(target.clone());
+        let remaining_admin = state.principals.iter().any(|p| {
+            active_passkey(p)
+                && p.role == RuntimePrincipalRole::Admin
+                && if request.remove_account {
+                    p.principal_id != target.principal_id
+                } else {
+                    p.proof_binding_id != request.proof_binding_id
+                }
+        });
+        if target.role == RuntimePrincipalRole::Admin && !remaining_admin {
+            return Err(LastAdminPasskeyRemovalDenied.into());
         }
-        let others = || {
+        if !request.remove_account
+            && !state.principals.iter().any(|p| {
+                p.principal_id == target.principal_id
+                    && p.proof_binding_id != request.proof_binding_id
+                    && active_passkey(p)
+            })
+        {
+            return Err(LastAccountMethodRemovalDenied.into());
+        }
+        approve()?;
+        if request.remove_account {
+            let ids: Vec<_> = state
+                .principals
+                .iter()
+                .filter(|p| {
+                    p.principal_id == target.principal_id && p.proof_binding.passkey.is_some()
+                })
+                .map(|p| p.proof_binding_id.clone())
+                .collect();
+            for id in ids {
+                revoke_binding_in_state(state, &id, revoked_at)?;
+            }
             state
                 .principals
                 .iter()
-                .filter(|principal| principal.proof_binding_id != proof_binding_id)
-                .filter(|principal| active_passkey(principal))
-        };
-        if target.role == RuntimePrincipalRole::Admin
-            && !others().any(|principal| principal.role == RuntimePrincipalRole::Admin)
-        {
-            return Err(LastAdminPasskeyRemovalDenied.into());
+                .find(|p| p.proof_binding_id == request.proof_binding_id)
+                .cloned()
+                .ok_or_else(|| anyhow!("account removal target unavailable"))
+        } else {
+            revoke_binding_in_state(state, request.proof_binding_id, revoked_at)
         }
-        revoke_binding_in_state(state, proof_binding_id, revoked_at)
     })
 }
 
@@ -6794,7 +6988,17 @@ pub fn promote_passkey_to_admin(
     proof_binding_id: &str,
     updated_at: u64,
 ) -> anyhow::Result<PrincipalRecord> {
+    promote_passkey_to_admin_approved(data_dir, proof_binding_id, updated_at, || Ok(()))
+}
+
+pub(crate) fn promote_passkey_to_admin_approved(
+    data_dir: &Path,
+    proof_binding_id: &str,
+    updated_at: u64,
+    approve: impl FnOnce() -> anyhow::Result<()>,
+) -> anyhow::Result<PrincipalRecord> {
     mutate_auth_state(data_dir, |state| {
+        approve()?;
         let index = active_passkey_role_target(state, proof_binding_id)?;
         if state.principals[index].role == RuntimePrincipalRole::Admin {
             anyhow::bail!("passkey is already admin");
@@ -6813,7 +7017,17 @@ pub fn demote_passkey_to_guest(
     proof_binding_id: &str,
     updated_at: u64,
 ) -> anyhow::Result<PrincipalRecord> {
+    demote_passkey_to_guest_approved(data_dir, proof_binding_id, updated_at, || Ok(()))
+}
+
+pub(crate) fn demote_passkey_to_guest_approved(
+    data_dir: &Path,
+    proof_binding_id: &str,
+    updated_at: u64,
+    approve: impl FnOnce() -> anyhow::Result<()>,
+) -> anyhow::Result<PrincipalRecord> {
     mutate_auth_state(data_dir, |state| {
+        approve()?;
         let index = active_passkey_role_target(state, proof_binding_id)?;
         let target = &state.principals[index];
         if target.role != RuntimePrincipalRole::Admin {

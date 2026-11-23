@@ -1244,6 +1244,7 @@ mod remote_model;
 mod room;
 mod site_publication;
 mod wallet;
+mod wallet_signin;
 
 #[path = "../gateway_home_update/tests.rs"]
 mod home_update;

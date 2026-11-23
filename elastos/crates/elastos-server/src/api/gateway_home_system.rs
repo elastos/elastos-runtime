@@ -5581,6 +5581,27 @@ pub(super) fn require_admin_principal(
     require_admin_proof_binding(data_dir, context.proof_binding_id.as_deref())
 }
 
+/// Account role check for actions whose consumer separately requires a fresh passkey.
+pub(super) fn require_admin_signin_principal(
+    data_dir: &std::path::Path,
+    context: &HomeLaunchTokenContext,
+) -> anyhow::Result<()> {
+    let id = context
+        .proof_binding_id
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("admin sign-in required"))?;
+    let p =
+        crate::auth::load_principal_for_proof_binding(&home_launch_auth_data_dir(data_dir), id)?;
+    crate::auth::ensure_proof_binding_not_revoked(&p)?;
+    anyhow::ensure!(
+        p.principal_id == context.principal_id
+            && crate::auth::is_admin(&p)
+            && (p.proof_binding.passkey.is_some() || id.starts_with("proof:signin-wallet:")),
+        "admin sign-in required"
+    );
+    Ok(())
+}
+
 fn require_admin_proof_binding(
     data_dir: &std::path::Path,
     proof_binding_id: Option<&str>,
@@ -5590,7 +5611,7 @@ fn require_admin_proof_binding(
     };
     let principal = crate::auth::load_principal_for_proof_binding(data_dir, proof_binding_id)?;
     crate::auth::ensure_proof_binding_not_revoked(&principal)?;
-    if !crate::auth::is_admin(&principal) {
+    if !crate::auth::is_admin(&principal) || principal.proof_binding.passkey.is_none() {
         anyhow::bail!("admin passkey required");
     }
     Ok(())
@@ -8095,7 +8116,20 @@ pub(super) async fn system_guest_registration_update(
     if !crate::auth::is_admin(&principal) {
         return system_error_response(anyhow::anyhow!("admin passkey required"));
     }
-    match crate::auth::set_guest_registration_enabled(&state.data_dir, req.enabled, now_ts()) {
+    match crate::auth::set_guest_registration_enabled_approved(
+        &state.data_dir,
+        req.enabled,
+        now_ts(),
+        || {
+            super::super::auth_gateway::wallet_session_approval(
+                &state,
+                &headers,
+                &context,
+                "auth.account.guest-registration",
+                &serde_json::json!({"enabled":req.enabled}),
+            )
+        },
+    ) {
         Ok(_) => Json(system_access_summary(&state.data_dir, &context)).into_response(),
         Err(err) => system_error_response(err),
     }
