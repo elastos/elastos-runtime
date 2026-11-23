@@ -1099,6 +1099,9 @@ pub async fn revoke_session(
                     ..AuditEventInput::default()
                 }),
             );
+            if let Err(err) = super::gateway::retire_inactive_walletconnect_attempts(&state).await {
+                return auth_error_response(err);
+            }
             Json(AuthRevokeResponse {
                 status: "revoked".to_string(),
                 session_id,
@@ -1112,7 +1115,12 @@ pub async fn revoke_session(
 pub async fn sign_out_session(State(state): State<GatewayState>, headers: HeaderMap) -> Response {
     let secure = super::gateway::request_uses_tls(&headers);
     let mut http_response = match sign_out_session_inner(&state, &headers) {
-        Ok(response) => Json(response).into_response(),
+        Ok(response) => {
+            match super::gateway::retire_inactive_walletconnect_attempts(&state).await {
+                Ok(()) => Json(response).into_response(),
+                Err(err) => auth_error_response(err),
+            }
+        }
         Err(err) => auth_error_response(err),
     };
     if let Ok(cookie) = super::gateway::home_session_clear_cookie_header(&headers, secure) {

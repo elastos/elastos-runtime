@@ -732,7 +732,19 @@ async fn wallet_session_can_sign_out_but_other_session_revocation_needs_passkey(
     let session = wallet_fixture::signin(&f);
     let (approver, credential) =
         install_real_approver(f.data.path(), "person:local:alice", b"session-approver");
-    let app = gateway_router(test_state(f.data.path()));
+    let state = test_state(f.data.path());
+    let pending = auth::begin(
+        f.data.path(), ORIGIN, "home-test",
+        serde_json::from_value(json!({"action":"add","connector":"walletconnect","address":"","chain_id":0,"browser_secret":BROWSER})).unwrap(),
+        Some(f.actor.clone()),
+    ).unwrap();
+    gateway_walletconnect::install_confirmation(&state, &pending, &f.actor.session_id)
+        .await
+        .unwrap();
+    let relay_cancel =
+        gateway_walletconnect::watch_attempt_socket_for_test(&state, &pending.ceremony_id).await;
+    let app = gateway_router(state);
+
     let home =
         issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &session).unwrap();
     let path = format!("/api/auth/sessions/{}/revoke", f.actor.session_id);
@@ -756,6 +768,11 @@ async fn wallet_session_can_sign_out_but_other_session_revocation_needs_passkey(
     .await;
     let (status, result) = call_approved(&app, &path, &home, &approval, json!({})).await;
     assert_eq!(status, StatusCode::OK, "{result}");
+    assert!(
+        *relay_cancel.borrow(),
+        "revoking the approving passkey session must retire its relay"
+    );
+
     assert!(
         crate::auth::load_active_session_grant(f.data.path(), &f.actor.session_id, now_ts())
             .is_err()
