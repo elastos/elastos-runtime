@@ -1363,11 +1363,13 @@ pub(crate) mod tests {
         let f = fixture();
         let id = enabled(&f);
         let session = signin(&f);
+        let mut req = input("add", "", &f.address);
+        req.chain_id = 8453;
         let b = begin(
             f.data.path(),
             ORIGIN,
             "home-test",
-            input("add", "", "0x0000000000000000000000000000000000000001"),
+            req,
             Some(f.actor.clone()),
         )
         .unwrap();
@@ -1408,6 +1410,7 @@ pub(crate) mod tests {
             log.contains("Deleted disabled trial wallet sign-in methods"),
             "{log}"
         );
+        assert!(log.contains("count=1"), "{log}");
         assert!(
             !log.contains(&f.address),
             "migration logs counts, not wallet identities"
@@ -1463,12 +1466,41 @@ pub(crate) mod tests {
     fn wallet_one_state_removing_final_compatible_method_ends_unselected_pairing() {
         let f = fixture();
         let id = enabled(&f);
+        let mut second = input("add", "", &f.address);
+        second.chain_id = 8453;
+        let b = begin(
+            f.data.path(),
+            ORIGIN,
+            "home-test",
+            second,
+            Some(f.actor.clone()),
+        )
+        .unwrap();
+        let second = complete(
+            f.data.path(),
+            ORIGIN,
+            &completion(&f, &b),
+            Some(&f.actor),
+            |_| Ok(()),
+        )
+        .unwrap();
         let mut req = input("signin", "", "");
         req.connector = "walletconnect".into();
         req.chain_id = 0;
         req.allow_temporary_internet = true;
         let pair = begin(f.data.path(), ORIGIN, "home-test", req, None).unwrap();
         change(&f, "remove", &id);
+        assert!(
+            attempt_context(
+                f.data.path(),
+                pair.attempt_token.as_deref().unwrap(),
+                &pair.instance_id,
+                now_ts()
+            )
+            .is_ok(),
+            "the remaining compatible method keeps pairing live"
+        );
+        change(&f, "remove", second["method_id"].as_str().unwrap());
         assert!(attempt_context(
             f.data.path(),
             pair.attempt_token.as_deref().unwrap(),
@@ -2611,21 +2643,28 @@ pub(crate) mod tests {
     }
     #[test]
     fn wallet_guest_can_remove_own_wallet_but_cannot_add_one() {
-        let f = fixture();
-        let id = enabled(&f);
-        let session = signin(&f);
-        add_account(f.data.path(), "bob", "bob-key");
-        demote_passkey_to_guest(f.data.path(), &f.actor.proof_binding_id, now_ts()).unwrap();
-        change(&f, "remove", &id);
-        assert!(load_active_session_grant(f.data.path(), &session.session_id, now_ts()).is_err());
-        assert!(begin(
-            f.data.path(),
-            ORIGIN,
-            "home-test",
-            input("add", "", &f.address),
-            Some(f.actor.clone())
-        )
-        .is_err());
+        for use_wallet_session in [false, true] {
+            let mut f = fixture();
+            let id = enabled(&f);
+            let session = signin(&f);
+            add_account(f.data.path(), "bob", "bob-key");
+            demote_passkey_to_guest(f.data.path(), &f.actor.proof_binding_id, now_ts()).unwrap();
+            if use_wallet_session {
+                f.actor = session.clone();
+            }
+            assert!(begin(
+                f.data.path(),
+                ORIGIN,
+                "home-test",
+                input("add", "", &f.address),
+                Some(f.actor.clone())
+            )
+            .is_err());
+            change(&f, "remove", &id);
+            assert!(
+                load_active_session_grant(f.data.path(), &session.session_id, now_ts()).is_err()
+            );
+        }
     }
     #[test]
     fn wallet_explicit_account_removals_race_leaves_one_home_admin() {

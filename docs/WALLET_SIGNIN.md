@@ -13,7 +13,7 @@ demotion to Guest. Wallet owns payment links and their separate permissions;
 Runtime adds sign-in authority only through the explicit `add` operation.
 Wallet sessions can use Home; passkeys approve sensitive actions.
 Ordinary passkey removal keeps every account's final active passkey, including
-accounts with wallet sign-in enabled. A separate passkey-approved Remove account
+accounts with wallet sign-in methods. A separate passkey-approved Remove account
 intent revokes that account's passkeys and clears its wallet access. Before
 removing an Admin account, another account must retain an active Admin passkey.
 Removal ends the wallet's sessions and pending sign-in attempts. Concurrent changes are
@@ -263,7 +263,7 @@ A WalletConnect add/sign-in begin sends `allow_temporary_internet: true`
 only after the person continues past a plain notice that the wallet is reached
 over the internet. The field defaults to false and records consent; authentication
 comes from the signed wallet proof and Runtime's current account state.
-Signed-out pairing also requires at least one enabled compatible EVM method on
+Signed-out pairing also requires at least one compatible EVM sign-in method on
 this Home, on chain 20 or 8453, through either MetaMask or WalletConnect.
 `has_relay_method` checks this Home-wide condition; it does not require a prior
 WalletConnect method or the selected address. Runtime checks the condition
@@ -290,7 +290,7 @@ addresses and method IDs remain in the authenticated account list.
 ## Explicit account removal
 
 Ordinary passkey removal preserves every account's final active passkey under
-concurrent requests, even when wallet sign-in remains enabled or another Admin
+concurrent requests, even when wallet sign-in methods remain or another Admin
 exists. It also preserves the Home's final active Admin passkey. The warning for
 an account's final passkey is "Keep a passkey on this account, or choose Remove
 account." If the target is the Home's final Admin passkey, Runtime instead returns

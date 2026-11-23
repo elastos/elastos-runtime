@@ -25,12 +25,6 @@
 .signin-error { color: var(--el-danger); }
 .signin-qr { display: block; width: min(100%, 280px); height: auto; margin: 0 auto 16px; }
 .signin-method-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.signin-switch { display: inline-flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 110px;
-  min-height: 44px; padding: 10px 12px; border: 1px solid var(--el-hairline-strong); border-radius: var(--el-radius-md);
-  color: var(--el-text); background: var(--el-inset); font: inherit; cursor: pointer; }
-.signin-switch::after { content: 'Off'; color: var(--el-muted); }
-.signin-switch[aria-checked=true]::after { content: 'On'; color: var(--el-ok); }
-.signin-switch:disabled { cursor: default; opacity: .65; }
 .signin-method-note { display: block; font-size: 12px; color: var(--el-muted); margin-top: 6px; overflow-wrap: anywhere; }
 .signin-method-list { display: grid; gap: 12px; }
 .signin-method-card { border: 1px solid var(--el-hairline); border-radius: var(--el-radius-md); padding: 16px; overflow-wrap: anywhere; }

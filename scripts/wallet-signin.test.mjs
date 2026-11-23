@@ -302,3 +302,11 @@ test('Cancel and expiry revoke a committed but uncertain sign-in',async()=>{
     } finally {await server.close();}
   }
 });
+
+test('the flow refuses retired method actions before it requests authority',async()=>{
+  const f=fixture();
+  for(const action of ['add_signin','enable','disable']) {
+    await assert.rejects(f.flow.start({action,method}),/invalid/);
+  }
+  assert.deepEqual(f.calls,[]);
+});

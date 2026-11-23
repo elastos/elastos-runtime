@@ -52,7 +52,7 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
         if(connector==='metamask')choice.append(node('small','Compatible browser wallets'));
         if(connector==='walletconnect' && state.walletconnectAvailable!==true) {
           choice.disabled=true;
-          choice.append(node('small',state.walletconnectAvailable===null?'Checking wallet sign-in availability…':'Add a wallet for Elastos Smart Chain or Base and turn Sign in on first.'));
+          choice.append(node('small',state.walletconnectAvailable===null?'Checking wallet sign-in availability…':'Add a wallet for Elastos Smart Chain or Base in System, Accounts.'));
         }
         choices.append(choice);
       }

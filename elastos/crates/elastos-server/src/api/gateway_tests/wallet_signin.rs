@@ -176,10 +176,46 @@ async fn wallet_one_state_http_remove_ends_pairing_and_preserves_payment_permiss
     );
     let id = added["method_id"].as_str().unwrap();
     // Existing payment permissions remain byte-identical across sign-in method removal.
-    let payment = json!({"id":"payment-fixture", "status":"requested", "at":now_ts()});
+    let payment = json!({"id":"payment-fixture", "status":"granted", "at":now_ts()});
     std::fs::create_dir_all(payment_path.parent().unwrap()).unwrap();
-    let payment_bytes = serde_json::to_vec(&payment).unwrap();
-    std::fs::write(&payment_path, &payment_bytes).unwrap();
+    std::fs::write(&payment_path, serde_json::to_vec(&payment).unwrap()).unwrap();
+    let inbox = wallet_app_token(f.data.path(), INBOX_CAPSULE_ID, &f.actor);
+    let mut headers = HeaderMap::new();
+    headers.insert("x-elastos-home-token", inbox.parse().unwrap());
+    let launch =
+        require_home_launch_token_binding(f.data.path(), &headers, &[INBOX_CAPSULE_ID]).unwrap();
+    let request =
+        gateway_walletconnect::step_up_request(&state, &launch, gateway_walletconnect::REVOKE)
+            .await
+            .unwrap();
+    let approval = issue_passkey_step_up_token_for_test(
+        f.data.path(),
+        &inbox,
+        INBOX_CAPSULE_ID,
+        gateway_walletconnect::REVOKE,
+        &request,
+    )
+    .unwrap();
+    let (status, out) = call(
+        &app,
+        "/api/apps/inbox/actions",
+        Some(&inbox),
+        Some(json!({
+            "action_id":"walletconnect-internet-turn-off:payment-fixture", "step_up_token":approval
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{out}");
+    assert_eq!(
+        auth::list(f.data.path(), &f.actor).unwrap()["methods"][0]["method_id"],
+        id,
+        "ending payment permission preserves sign-in authority"
+    );
+    let payment_bytes = std::fs::read(&payment_path).unwrap();
+    assert_eq!(
+        serde_json::from_slice::<Value>(&payment_bytes).unwrap()["status"],
+        "revoked"
+    );
     let pair = auth::begin(
         f.data.path(),
         ORIGIN,
