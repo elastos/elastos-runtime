@@ -10,6 +10,8 @@ const owner = { principal_id: "alex", proof_binding_id: "proof:passkey:alex", di
   last_used_at: Date.UTC(2026, 10, 22, 16, 5) / 1000 };
 const guest = { principal_id: "sam", proof_binding_id: "proof:passkey:sam", display_name: "Sam", role: "guest", current: false };
 
+const guestBackup={...guest,proof_binding_id:'proof:passkey:sam-backup'};
+
 async function fixture(run) {
   let passkeys = [owner], role = "admin", theme = "light", failure = null, afterFailurePasskeys = null;
   let listReads = 0;
@@ -21,6 +23,10 @@ async function fixture(run) {
         const summary = makeSystemSummary(makeAppearanceRecord({ theme }));
         summary.access.role = role;
         jsonResponse(response, summary);
+        return true;
+      }
+      if (url.pathname === "/api/auth/wallet-methods") {
+        jsonResponse(response, { account_id: passkeys.find(key => key.current)?.principal_id || owner.principal_id, methods: [] });
         return true;
       }
       if (url.pathname === "/api/auth/passkeys") {
@@ -97,7 +103,7 @@ test("System protects the last admin with or without guests, in both themes and 
         // A synthetic click on a disabled control also has no effect.
         await remove.dispatchEvent("click");
         assert.equal(writes.length, 0);
-        frame = await open([owner, guest], { theme });
+        frame = await open([owner, guestBackup, guest], { theme });
         assert.equal(await frame.locator(".account-row").first().locator(".passkey-remove").isDisabled(), true);
         assert.equal(await frame.locator(".account-row").last().locator(".passkey-remove").isEnabled(), true);
         // A retained revoked admin cannot enable Remove.
@@ -114,7 +120,7 @@ test("every allowed removal asks first and returns focus after Cancel or Escape"
     for (const theme of ["light", "dark"]) {
       for (const width of [1280, 390]) {
         await page.setViewportSize({ width, height: 900 });
-        const frame = await open([owner, guest], { theme });
+        const frame = await open([owner, guestBackup, guest], { theme });
         const remove = frame.locator(".account-row").last().locator(".passkey-remove");
         const before = writes.length;
         await remove.click();
@@ -143,7 +149,7 @@ test("every allowed removal asks first and returns focus after Cancel or Escape"
         assert.equal(await remove.evaluate(node => node === document.activeElement), true);
         await remove.click();
         await dialog.getByRole("button", { name: "Remove passkey", exact: true }).click();
-        await frame.waitForFunction(() => document.querySelectorAll(".account-row").length === 1);
+        await frame.waitForFunction(() => document.querySelectorAll(".account-row").length === 2);
         assert.deepEqual(writes.at(-1), { path: "/api/auth/passkeys/proof%3Apasskey%3Asam/revoke", method: "POST", token: "system-token" });
         assert.equal(writes.length, before + 1);
       }
@@ -151,7 +157,7 @@ test("every allowed removal asks first and returns focus after Cancel or Escape"
     // The same confirmation protects a guest leaving and an owner replacing a key.
     for (const role of ["guest", "admin"]) {
       const current = { ...owner, role };
-      const keys = role === "guest" ? [current] : [current, { ...owner, proof_binding_id: "proof:passkey:replacement", current: false }];
+      const keys = [current, { ...current, proof_binding_id: "proof:passkey:replacement", current: false }];
       const frame = await open(keys, { role });
       const before = writes.length;
       await frame.locator(".passkey-remove").first().click();
@@ -174,7 +180,7 @@ test("confirmation uses own and unnamed wording for device and hardware passkeys
         for (const state of ["current", "own-other", "unnamed"]) {
           const other = state === "unnamed" ? { ...guest, display_name: "" }
             : { ...owner, proof_binding_id: "proof:passkey:other", current: false };
-          const frame = await open([owner, other], { theme });
+          const frame = await open([owner, ...(state==='unnamed'?[{...guestBackup,display_name:''}]:[]), other], { theme });
           const remove = frame.locator(".passkey-remove").nth(state === "current" ? 0 : 1);
           await remove.click();
           const dialog = frame.getByRole("dialog");
@@ -211,7 +217,7 @@ test("only the removal 409 shows its sentence and refreshes the stale list", asy
     for (const status of [403, 409, 500]) {
       for (const action of ["remove", "promote", "demote"]) {
         const target = { ...guest, role: action === "demote" ? "admin" : "guest" };
-        frame = await open([owner, target], { failure: { status, body: "private-server-detail /private/fixture-state" } });
+        frame = await open([owner, ...(action==='remove'?[guestBackup]:[]), target], { failure: { status, body: "private-server-detail /private/fixture-state" } });
         const readsBefore = listReads();
         const refreshed = status === 409 ? page.waitForResponse(response => response.url().endsWith("/api/auth/passkeys")) : null;
         await frame.locator(`.passkey-${action}`).last().click();
@@ -230,7 +236,7 @@ test("only the removal 409 shows its sentence and refreshes the stale list", asy
 
 test("System opens passkey removal with Cancel focused and no cross-origin autofocus error", async () => {
   await fixture(async ({ page, open, writes, consoleErrors }) => {
-    const frame = await open([owner, guest]);
+    const frame = await open([owner, guestBackup, guest]);
     assert.equal(await frame.evaluate(() => window.origin), "null");
     await frame.locator(".account-row").last().locator(".passkey-remove").click();
     const cancel = frame.getByRole("dialog").getByRole("button", { name: "Cancel", exact: true });

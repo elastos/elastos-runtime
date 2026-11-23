@@ -1,3 +1,5 @@
+import { handleWalletSigninRequest } from "./wallet-signin-host.mjs?v=wallet-signin-1";
+import { walletSigninApi } from "./wallet-signin-view.mjs?v=wallet-signin-1";
 import {
   activeShellRoot,
   activeShellFrame,
@@ -14,6 +16,7 @@ import {
   SYSTEM_APP_ID,
   homeActiveShellName,
   hasHomeAuthorityToken,
+  getHomeAuthorityToken,
   clearHomeAuthorityToken,
   shellState,
   fetchJson,
@@ -29,6 +32,7 @@ import {
   requestPasskeyStepUp,
   profileReadinessActionTarget,
   showHomeUnlock,
+  manageWalletSignin,
   signOutHome,
 } from "./shell-auth.js?v=home-wallpaper-20261030b";
 import {
@@ -540,7 +544,7 @@ async function showHostAuthGate(options = {}) {
   const unlockReady = showHomeUnlock(async (response, flow) => {
     await boot();
     if (flow?.enrollmentPurpose === "recover") return;
-    const profileActionTarget = profileReadinessActionTarget(response);
+    const profileActionTarget = profileReadinessActionTarget(response, flow);
     if (profileActionTarget) {
       await activateDesktopShell();
       const query = { settings: "security" };
@@ -1709,6 +1713,19 @@ window.addEventListener("message", (event) => {
   if (!context) {
     return;
   }
+  if (data.type === "home:wallet-signin-request" && handleWalletSigninRequest(event, context, {
+    authorityToken: getHomeAuthorityToken,
+    api: (path, body, token) => path === "/api/auth/passkeys"
+      ? fetchJson(path, {headers:{"x-elastos-home-token":token}}) : walletSigninApi(path, body, token),
+    manage: manageWalletSignin,
+    current: () => homeMessageContext(event, data)?.homeToken === context.homeToken,
+    changed: () => {
+      void refreshSignedHomeSession();
+      for (const launched of launchedAppContexts.values()) {
+        if ([SYSTEM_APP_ID, "wallet"].includes(launched.targetId)) launched.source?.postMessage({type:"home:wallet-signin-changed"}, OPAQUE_FRAME_TARGET);
+      }
+    },
+  })) return;
   if (data.type === "home:background-image") {
     if (!hasExactMessageKeys(data, ["type", "requestId", "homeToken"])
       || typeof data.requestId !== "string" || !data.requestId || data.requestId.length > 128

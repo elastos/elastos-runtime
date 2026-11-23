@@ -40,8 +40,10 @@ export async function restoreWalletConnectEvm(options) {
     customStoragePrefix: options.contextKey,
     chains: [],
     optionalChains: options.chains,
-    methods: ["personal_sign", "eth_sendTransaction"],
-    optionalMethods: [],
+    methods: options.authenticationOnly ? ["personal_sign"] : ["personal_sign", "eth_sendTransaction"],
+    // With optional chains, the SDK ignores required methods and expands an
+    // empty optional list to its defaults. Authentication supplies its own list.
+    optionalMethods: options.authenticationOnly ? ["personal_sign"] : [],
     disableProviderPing: true,
     events: ["accountsChanged", "chainChanged"],
     showQrModal: false,

@@ -12,6 +12,7 @@
 <link rel="stylesheet" href="./transfer-progress.css">
 <link rel="stylesheet" href="./elastos-ui.css">
 <link rel="stylesheet" href="./style.css?v=download-progress-20261112">
+<link rel="stylesheet" href="/apps/home/wallet-signin.css?v=wallet-signin-1">
 </head>
 <body>
   <section id="system-locked" class="system-locked" hidden>
@@ -80,14 +81,15 @@
               <div class="pc2-group-row">
                 <div class="pc2-card-row">
                   <div>
-                    <div class="pc2-card-label">Passkeys</div>
-                    <div class="pc2-card-sublabel">Local browser credentials for this Home account.</div>
+                    <div class="pc2-card-label">Sign-in methods</div>
+                    <div class="pc2-card-sublabel">Passkeys and wallets for your Home account.</div>
                   </div>
                   <span class="pc2-card-value system-value-muted" data-field="passkey-status" hidden></span>
+                  <button id="wallet-signin-add" class="system-button system-button-secondary" type="button" hidden>Add wallet</button>
                   <button id="passkey-add" class="system-button system-button-secondary" type="button" hidden>Add passkey</button>
                 </div>
                 <p id="passkey-add-help" class="pc2-card-sublabel" hidden>Your browser will offer where to save the passkey, including a phone or tablet.</p>
-                <div id="account-list" class="account-list" aria-live="polite"></div>
+                <div id="account-list" class="account-list" aria-live="polite">Loading sign-in methods…</div>
                 <dl class="system-fields compact-proof">
                   <div><dt>Accounts</dt><dd></dd></div>
                 </dl>
@@ -484,8 +486,9 @@
       <h2 id="passkey-remove-title">Remove passkey?</h2>
       <div id="passkey-remove-details">
         <p data-field="passkey-remove-person"></p>
+        <p data-field="passkey-remove-wallets" hidden></p>
         <p data-field="passkey-remove-current" hidden>You are using this passkey in this window.</p>
-        <p>All windows signed in with this passkey will be signed out.</p>
+        <p data-field="passkey-remove-sessions">All windows signed in with this passkey will be signed out.</p>
         <p data-field="passkey-remove-copy"></p>
       </div>
       <div class="passkey-remove-dialog-actions">

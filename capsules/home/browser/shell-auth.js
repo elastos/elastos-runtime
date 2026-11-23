@@ -1,3 +1,4 @@
+import { createHomeWalletSignin } from "./wallet-signin-view.mjs?v=wallet-signin-1";
 import {
   clearHomeAuthorityToken,
   fetchJson,
@@ -59,6 +60,18 @@ let unlockClockTimer = 0;
 let unlockLeaveTimer = 0;
 let unlockPersonLabel = "";
 
+let walletSigninAvailable = false;
+const walletSignin = createHomeWalletSignin({
+  approve: requestPasskeyStepUp,
+  onPasskey: () => runPasskeySignIn().catch(reportUnlockError),
+  onSignin: async response => {
+    setHomeAuthorityToken(response.app_token, response);
+    try { await unlockComplete(response, {walletSignin:true}); }
+    catch (error) { reportUnlockError(signInFailure("open", error)); }
+  },
+});
+export function manageWalletSignin(options) { return walletSignin.start(options); }
+
 export function isHomeAuthError(error) {
   const status = Number(error && error.status);
   return status === 401 || status === 403;
@@ -77,20 +90,21 @@ export async function showHomeUnlock(onUnlocked, options = {}) {
   unlockPanel.dataset.surface = "neutral";
   delete unlockPanel.dataset.flow;
   unlockPanel.style.removeProperty("--home-unlock-ground");
+  walletSigninAvailable = false;
   renderUnlockChecking();
   unlockPanel.hidden = false;
   unlockPanel.setAttribute("aria-hidden", "false");
   unlockCard?.setAttribute("aria-modal", "true");
 
-  if (!window.PublicKeyCredential) {
-    unlockMode = "unsupported";
-    renderUnlockMode({ registered: true, guestRegistrationEnabled: false });
-    setUnlockStatus("Passkeys are not available in this browser.", "error");
-    return;
-  }
-
   try {
     const status = await fetchJson("/api/auth/passkey/status");
+    walletSigninAvailable = status.wallet_signin_available === true;
+    if (!window.PublicKeyCredential) {
+      unlockMode = "unsupported";
+      renderUnlockMode({ registered: status.registered === true, guestRegistrationEnabled: false });
+      setUnlockStatus("Passkeys are not available in this browser.", "error");
+      return;
+    }
     const registered = status.registered === true;
     const guestRegistrationEnabled = status.guest_registration_enabled === true;
     guestRegistrationAvailable = guestRegistrationEnabled;
@@ -124,6 +138,7 @@ export function hideHomeUnlock() {
   if (!unlockPanel) {
     return;
   }
+  void walletSignin.cancel();
   clearRecoverySelection();
   recoverySession = null;
   recoveryTerminalToken = "";
@@ -154,6 +169,7 @@ export function hideHomeUnlock() {
 export function bindHomeUnlock() {
   recoveryFile?.addEventListener("change", selectRecoveryKit);
   window.addEventListener("pagehide", () => {
+    void walletSignin.cancel();
     clearRecoverySelection();
     recoverySession = null;
     recoveryTerminalToken = "";
@@ -198,6 +214,9 @@ export function bindHomeUnlock() {
     }
     runPasskeySignIn().catch(reportUnlockError);
   };
+  for (const button of document.querySelectorAll("[data-home-wallet-signin]")) {
+    button.addEventListener("click", () => { if (!busy) void walletSignin.start({action:"signin"}); });
+  }
   unlockPrimary?.addEventListener("click", startUnlock);
   unlockPerson?.addEventListener("click", startUnlock);
   // First-visit entry on the lock face: the same guest enrollment the card's
@@ -280,7 +299,7 @@ export async function signOutHome() {
   }
 }
 
-export async function requestPasskeyStepUp(appToken, operation, request) {
+export async function requestPasskeyStepUp(appToken, operation, request, { signal } = {}) {
   if (!window.PublicKeyCredential) {
     throw new Error("Passkey verification is unavailable in this browser.");
   }
@@ -288,6 +307,7 @@ export async function requestPasskeyStepUp(appToken, operation, request) {
   try {
     const begin = await fetchJson("/api/auth/passkey-step-up/begin", {
       method: "POST",
+      signal,
       body: JSON.stringify({
         schema: "elastos.auth.passkey-step-up.begin.request/v1",
         app_token: appToken,
@@ -303,12 +323,13 @@ export async function requestPasskeyStepUp(appToken, operation, request) {
     ) {
       throw new Error("Passkey verification returned an invalid challenge.");
     }
-    const credential = await navigator.credentials.get(toRequestOptions(begin.options));
+    const credential = await navigator.credentials.get({ ...toRequestOptions(begin.options), signal });
     if (!credential) {
       throw new Error("Passkey verification was cancelled.");
     }
     const response = await fetchJson("/api/auth/passkey-step-up/complete", {
       method: "POST",
+      signal,
       body: JSON.stringify({
         schema: "elastos.auth.passkey-step-up.complete.request/v1",
         ceremony_id: ceremonyId,
@@ -415,6 +436,10 @@ function passkeyAddFailure(stage, error) {
 }
 
 function renderUnlockChecking() {
+  for (const button of document.querySelectorAll("[data-home-wallet-signin]")) {
+    button.hidden = true;
+    button.disabled = true;
+  }
   if (unlockTitle) {
     unlockTitle.textContent = "Sign in";
   }
@@ -444,6 +469,10 @@ function renderUnlockChecking() {
 }
 
 function renderUnlockMode({ registered, guestRegistrationEnabled }) {
+  for (const button of document.querySelectorAll("[data-home-wallet-signin]")) {
+    button.hidden = !walletSigninAvailable || !registered || !["signin", "signin_guest_enabled", "unsupported"].includes(unlockMode);
+    button.disabled = busy;
+  }
   const resumingOwner = unlockMode === "resume_owner";
   const resumingRegistration = unlockMode === "resume_registration";
   const recoveringOwner = unlockMode === "recover_owner";
@@ -1036,7 +1065,8 @@ async function unlockComplete(response, flow = null) {
   hideHomeUnlock();
 }
 
-export function profileReadinessActionTarget(response) {
+export function profileReadinessActionTarget(response, flow = null) {
+  if (flow?.walletSignin === true && response?.profile_readiness == null) return "";
   const readiness = response && typeof response.profile_readiness === "object"
     ? response.profile_readiness
     : null;
@@ -1055,6 +1085,7 @@ function reportUnlockError(error) {
 }
 
 function setButtonsDisabled(disabled) {
+  for (const button of document.querySelectorAll("[data-home-wallet-signin]")) button.disabled = disabled;
   if (unlockPerson) {
     unlockPerson.disabled = disabled || unlockMode === "unsupported";
   }

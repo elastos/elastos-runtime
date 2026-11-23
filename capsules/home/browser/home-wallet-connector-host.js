@@ -955,3 +955,15 @@ function replyToConnector(event, requestId, connectorId, result, error = "", wal
   }
   event.source.postMessage(payload, OPAQUE_FRAME_TARGET);
 }
+
+// Sign-in uses the same bounded browser-wallet discovery as payment linking.
+// The caller retains the selected provider for one ceremony only.
+export function signinBrowserWallets() {
+  const entries = discoverWallets();
+  if (entries.length) return entries;
+  const legacy = window.ethereum;
+  if (!legacy || typeof legacy.request !== 'function') return [];
+  // Older extensions expose one selected EIP-1193 provider without names.
+  // EIP-6963 above supplies the explicit choice when several wallets are present.
+  return [{provider:legacy, name:legacy.isMetaMask ? 'MetaMask' : 'Browser wallet', uuid:'legacy'}];
+}

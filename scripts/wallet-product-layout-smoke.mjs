@@ -55,6 +55,7 @@ function contentType(path) {
     ".css": "text/css; charset=utf-8",
     ".html": "text/html; charset=utf-8",
     ".js": "text/javascript; charset=utf-8",
+    ".mjs": "text/javascript; charset=utf-8",
     ".png": "image/png",
     ".svg": "image/svg+xml",
     ".woff2": "font/woff2",
@@ -255,6 +256,12 @@ function fixtureHtml(baseUrl, mode) {
           "${baseUrl}",
         );
         state.clipboardShouldFail = false;
+        return;
+      }
+      if (data.type === "home:wallet-signin-request" && data.action === "list"
+          && event.source === document.getElementById("wallet-frame").contentWindow) {
+        event.source.postMessage({type:"home:wallet-signin-result",requestId:data.requestId,
+          result:{status:"complete",account_id:"principal:wallet-fixture",methods:[],can_manage:false}}, "${baseUrl}");
         return;
       }
       if (data.type === "elastos.home.passkey-step-up.request/v1") {

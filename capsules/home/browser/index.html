@@ -14,7 +14,10 @@
     <link rel="manifest" href="./manifest.webmanifest?v=home-20260805a" />
     <link rel="icon" href="./elastos-home-icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./elastos-home-icon-192.png" />
+    <script src="./elastos-theme.js"></script>
+    <link rel="stylesheet" href="./elastos-ui.css" />
     <link rel="stylesheet" href="./style.css?v=home-20261021a" />
+    <link rel="stylesheet" href="./wallet-signin.css?v=wallet-signin-1" />
   </head>
   <body data-home-status="booting" data-home-shell="resolving" data-home-gui="resolving">
     <div class="home-host-shell">
@@ -81,8 +84,10 @@
                   <span id="home-unlock-monogram" class="home-unlock-avatar-monogram">e</span>
                 </span>
               </button>
+              <p class="home-unlock-passkey-label">Use passkey</p>
               <p id="home-unlock-person-name" class="home-unlock-account-name" hidden></p>
               <p id="home-unlock-face-status" class="home-unlock-face-status" data-tone="muted" role="status" aria-live="polite" hidden></p>
+              <button data-home-wallet-signin class="home-unlock-create" type="button" hidden>Sign in with wallet</button>
               <button id="home-unlock-create" class="home-unlock-create" type="button" hidden>Create account</button>
               <button id="home-recover-owner" class="home-unlock-recover" type="button">Recover this Home with your Recovery Kit</button>
             </div>
@@ -98,6 +103,7 @@
             <label for="home-enrollment-recover"><input id="home-enrollment-recover" type="radio" name="home-enrollment-purpose" value="recover" aria-label="Recover account" /> Recover account</label>
           </fieldset>
           <div id="home-recovery-kit" hidden>
+            <p class="home-unlock-copy">Recovery removes this account’s other passkeys and wallet sign-in methods.</p>
             <label for="home-recovery-file">Recovery Kit</label>
             <input id="home-recovery-file" aria-label="Recovery Kit" class="home-unlock-input" type="file" accept=".json,application/json" />
             <label id="home-recovery-password-label" for="home-recovery-password" hidden>Recovery Kit password</label>
@@ -121,6 +127,7 @@
           <input id="home-owner-recovery-code" class="home-unlock-input" type="password" maxlength="128" autocomplete="off" spellcheck="false" hidden />
           <div class="home-unlock-actions">
             <button id="home-unlock-primary" class="home-unlock-button" type="button">Use passkey</button>
+            <button data-home-wallet-signin class="home-unlock-button home-unlock-button-secondary" type="button" hidden>Sign in with wallet</button>
             <button id="home-unlock-secondary" class="home-unlock-button home-unlock-button-secondary" type="button" hidden>Create guest account</button>
             <button id="home-enrollment-dismiss" class="home-unlock-button home-unlock-button-secondary" type="button" hidden>Dismiss expired or invalid setup</button>
           </div>

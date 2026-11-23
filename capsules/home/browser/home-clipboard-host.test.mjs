@@ -9,6 +9,7 @@ import {
   MAX_HOME_CLIPBOARD_TEXT_UTF8_BYTES,
   createHomeClipboardFrameState,
   createHomeClipboardHost,
+  copyHomeWalletConnectionLink,
   createHomeClipboardPrompt,
 } from "./home-clipboard-host.js";
 
@@ -589,4 +590,18 @@ test("replay memory remains bounded", async () => {
   }
   assert.equal(f.state.replayIds.size, MAX_HOME_CLIPBOARD_REPLAY_IDS);
   assert.equal(f.state.replayIds.has("bounded:0"), false);
+});
+
+
+test("Home sign-in copies only bounded connection links from the top-level page", async () => {
+  const top = {}; top.top = top;
+  const writes = [];
+  const clipboard = { async writeText(text) { writes.push(text); } };
+  const uri = `wc:${"a".repeat(64)}@2?relay-protocol=irn&symKey=${"b".repeat(64)}`;
+  await copyHomeWalletConnectionLink(uri, { windowRef: top, clipboard });
+  for (const text of ["https://example.com", "wc:invalid", uri + " ", uri + "a".repeat(65536)]) {
+    await assert.rejects(copyHomeWalletConnectionLink(text, { windowRef: top, clipboard }));
+  }
+  await assert.rejects(copyHomeWalletConnectionLink(uri, { windowRef: { top }, clipboard }));
+  assert.deepEqual(writes, [uri]);
 });

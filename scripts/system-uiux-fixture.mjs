@@ -13,7 +13,7 @@ export const { chromium } = requireProductSmokePlaywright();
 
 export const CORS_HEADERS = Object.freeze({
   "access-control-allow-origin": "null",
-  "access-control-allow-headers": "content-type,x-elastos-home-token",
+  "access-control-allow-headers": "content-type,x-elastos-home-token,authorization",
   "access-control-allow-methods": "GET,POST,PUT,OPTIONS",
 });
 
@@ -104,6 +104,7 @@ export function makeSystemSummary(
 }
 
 export function inertSystemApiResponse(pathname) {
+  if (pathname === "/api/auth/wallet-methods") return { account_id: "principal:system-fixture", methods: [] };
   if (pathname === "/api/apps/browser/internet") return { status: "off" };
   if (pathname === "/api/apps/home/active-shell") {
     return {
@@ -218,11 +219,7 @@ async function serveStaticAsset(response, url, host, fixtureOptions) {
       pathname === "/apps/system/"
         ? "index.html"
         : pathname.slice("/apps/system/".length);
-  } else if (
-    pathname === "/apps/home/home-background-image.js" ||
-    pathname === "/apps/home/home-clipboard-client.js" ||
-    pathname === "/apps/home/home-clipboard-protocol.js"
-  ) {
+  } else if (pathname.startsWith("/apps/home/")) {
     root = homeRoot;
     relative = pathname.slice("/apps/home/".length);
   } else if (pathname === "/apps/home-gui/wallpaper.webp") {

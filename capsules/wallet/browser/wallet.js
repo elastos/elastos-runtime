@@ -1,3 +1,4 @@
+import { readWalletSigninMethods, requestWalletSigninChange, renderWalletSigninCards, watchWalletSigninMethods, connectedWalletSigninMethods } from "/apps/home/wallet-signin-methods.mjs?v=wallet-signin-1";
 import { createWalletActivity } from "./wallet-activity.js?v=wallet-20261115a";
 import {
   createWalletApi,
@@ -85,6 +86,9 @@ const homeClipboard = createHomeClipboardClient({
 });
 homeClipboard.start();
 let currentAccounts = [];
+let walletSigninListVersion = 0;
+let walletSigninMethods = null;
+let walletSigninLoadStarted = false;
 let currentDefaults = [];
 let currentBalanceRows = [];
 let currentPrices = {};
@@ -103,6 +107,7 @@ const { fetchJson, notifyHomeSummaryChanged, requestPasskeyStepUp, shellHeaders 
   getHomeToken: () => activeHomeToken,
 });
 const { showStatus } = createWalletRender({ statusNode });
+watchWalletSigninMethods(refreshWalletSignin, homeParentOrigin);
 const {
   closeModal,
   flowRow,
@@ -523,6 +528,43 @@ async function refreshWalletState() {
   return refreshWalletStateInFlight;
 }
 
+async function refreshWalletSignin() {
+  const mount = document.querySelector("#wallet-signin-methods");
+  if (!mount || !activeHomeToken) return;
+  walletSigninLoadStarted = true;
+  const version = ++walletSigninListVersion;
+  try {
+    const data = await readWalletSigninMethods(activeHomeToken, {origin:homeParentOrigin});
+    if (version !== walletSigninListVersion) return;
+    walletSigninMethods = data;
+    renderWalletSignin();
+  } catch {
+    if (version !== walletSigninListVersion) return;
+    walletSigninMethods = null;
+    mount.replaceChildren(textNode("p", "Home could not load sign-in methods.", "signin-method-note"));
+    const retry = textNode("button", "Try again", "wallet-button wallet-button-secondary");
+    retry.type = "button";retry.onclick = refreshWalletSignin;mount.append(retry);
+  }
+}
+
+function renderWalletSignin() {
+  const mount = document.querySelector("#wallet-signin-methods");
+  if (!mount || !activeHomeToken) return;
+  if (!walletSigninLoadStarted) { void refreshWalletSignin(); return; }
+  if (!walletSigninMethods) return;
+  const data = walletSigninMethods;
+  renderWalletSigninCards(mount, connectedWalletSigninMethods(currentAccounts, data.methods), {canManage:data.can_manage === true,
+    buttonClass:"wallet-button wallet-button-secondary",
+    onAction:async (action, methodId) => {
+      try {
+        const wallet = action === "add" ? connectedWalletSigninMethods(currentAccounts, data.methods).find(method => method.paymentOnly && method.method_id === methodId) : null;
+        const result = await requestWalletSigninChange({action, methodId:action === "add" ? "" : methodId, wallet, token:activeHomeToken, origin:homeParentOrigin});
+        await refreshWalletSignin();
+        if (["failed", "changed", "busy"].includes(result?.status)) showStatus("Refresh the sign-in methods and try again.", "error");
+      } catch (error) { showStatus(error.message, "error"); }
+    }});
+}
+
 async function loadWalletState() {
   if (!activeHomeToken) {
     currentAccounts = [];
@@ -569,6 +611,7 @@ function renderAll() {
   renderAccounts(allAccounts);
   renderWalletReviewRequests();
   renderMethods(allAccounts, currentApprovalMethods);
+  renderWalletSignin();
   renderActivity(currentRequests);
   renderApprovalsBadge(pending.length);
   updateFlowButtons(allAccounts);

@@ -25,7 +25,7 @@ export async function connectWithView(adapter, options, presentation) {
       presentation.show(data, {
         cancel:() => stop(),
         copy:() => options.copyLink(uri, {signal:lifetime.signal}),
-      });
+      }, uri);
       options.onPhase?.('pairing');
     } catch (error) { if (active) stop(error); }
   };
