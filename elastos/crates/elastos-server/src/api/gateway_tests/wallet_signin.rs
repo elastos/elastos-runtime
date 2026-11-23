@@ -1116,11 +1116,12 @@ async fn walletconnect_live_relay_survives_its_own_storage_writes_but_retires_wi
         gateway_walletconnect::relay_owner_live_for_test(&state, &headers).await,
         "an admitted relay retains authority after its SDK writes storage"
     );
-    assert!(
-        gateway_walletconnect::require_attempt(&state, &headers)
-            .await
-            .is_err(),
-        "stale storage and new admission requests still need the current revision"
+    let stale_admission =
+        gateway_walletconnect::admission(AxumState(state.clone()), headers.clone()).await;
+    assert_eq!(
+        stale_admission.status(),
+        StatusCode::CONFLICT,
+        "new admission requests still need the current revision"
     );
     let mut other_instance = headers.clone();
     other_instance.insert(

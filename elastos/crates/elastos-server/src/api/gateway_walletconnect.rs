@@ -18,7 +18,7 @@ const RESOURCE: &str = "elastos://walletconnect/internet";
 mod attempts;
 pub(in crate::api) use attempts::{
     admit_attempt, attempt_config, attempt_headers_present, attempt_route, install_attempt,
-    install_confirmation, issue_lock, preflight, require_attempt, retire_attempt, AttemptCapacity,
+    install_confirmation, issue_lock, preflight, retire_attempt, AttemptCapacity,
 };
 
 pub(crate) use attempts::retire_inactive_attempts;
