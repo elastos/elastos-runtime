@@ -5,7 +5,7 @@ use ::bitcoin::{
     sighash::{EcdsaSighashType, SighashCache},
     Amount, Network, Witness,
 };
-pub(super) use elastos_auth::bitcoin::*;
+pub(crate) use elastos_auth::bitcoin::*;
 use k256::ecdsa::SigningKey;
 
 pub(crate) fn btc_p2wpkh_address_for_signing_key(
