@@ -180,3 +180,17 @@ test('successful passkey retry replaces its earlier refusal message',async()=>{
   assert.equal(f.states.at(-1).stage,'approval');assert.match(f.states.at(-1).message,/could not confirm/);
   await f.flow.approve();assert.equal(f.states.at(-1).stage,'done');assert.equal(f.states.at(-1).message,'');
 });
+
+test('method refresh preserves control focus and refreshes when the page returns',async()=>{
+  const previousWindow=globalThis.window,previousDocument=globalThis.document;
+  const fakeWindow=new EventTarget(),fakeDocument=new EventTarget();fakeDocument.visibilityState='visible';fakeWindow.top={};
+  globalThis.window=fakeWindow;globalThis.document=fakeDocument;
+  try {
+    const {watchWalletSigninMethods}=await import('../capsules/home/browser/wallet-signin-methods.mjs');let refreshed=0;
+    watchWalletSigninMethods(()=>{refreshed++;},'https://home.example');
+    fakeWindow.dispatchEvent(new Event('focus'));assert.equal(refreshed,0);
+    fakeDocument.dispatchEvent(new Event('visibilitychange'));assert.equal(refreshed,1);
+    fakeDocument.visibilityState='hidden';fakeDocument.dispatchEvent(new Event('visibilitychange'));assert.equal(refreshed,1);
+    fakeWindow.dispatchEvent(Object.assign(new Event('message'),{source:fakeWindow.top,origin:'https://home.example',data:{type:'home:wallet-signin-changed'}}));assert.equal(refreshed,2);
+  } finally {globalThis.window=previousWindow;globalThis.document=previousDocument;}
+});

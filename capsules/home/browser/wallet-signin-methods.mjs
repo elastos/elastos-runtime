@@ -60,7 +60,7 @@ export function renderWalletSigninCards(mount,methods,options) {
 }
 
 export function watchWalletSigninMethods(refresh,origin) {
-  window.addEventListener('focus',refresh);
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')void refresh();});
   window.addEventListener('message',event=>{
     if(event.source===window.top && event.origin===origin && event.data?.type==='home:wallet-signin-changed' && Object.keys(event.data).length===1)void refresh();
   });
