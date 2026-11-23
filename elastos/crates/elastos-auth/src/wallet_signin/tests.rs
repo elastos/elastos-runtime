@@ -988,15 +988,15 @@ fn eip4361_examples_have_independent_known_answer_hashes_and_signatures() {
 #[test]
 fn scripted_phone_signing_primitive_matches_full_home_proof() {
     let fixture = vectors();
-    let vector = &fixture["vectors"][0];
-    let mut legacy = input();
-    legacy.purpose = WalletProofPurpose::CreateAccount;
-    assert_eq!(
-        WalletProofChallenge::new(legacy, &SECRET).err(),
-        Some(WalletProofError::InvalidInput)
-    );
-    let challenge = WalletProofChallenge::new(input(), &SECRET).unwrap();
-    let signature = hex::decode(
+    let vector = fixture["vectors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["name"] == "phone-signin")
+        .unwrap();
+    let c = WalletProofChallenge::new(input(), &SECRET).unwrap();
+    assert_eq!(c.message(), vector["message"].as_str().unwrap());
+    let sig = hex::decode(
         vector["signature"]
             .as_str()
             .unwrap()
@@ -1004,25 +1004,15 @@ fn scripted_phone_signing_primitive_matches_full_home_proof() {
             .unwrap(),
     )
     .unwrap();
-    assert!(matches!(
-        verify(
-            &challenge,
-            vector["message"].as_str().unwrap(),
-            &signature,
-            NOW
-        ),
-        Err(WalletProofError::TextMismatch)
-    ));
     let mut store = Store::default();
-    let result = verify(
-        &challenge,
-        challenge.message(),
-        &sign_with(7, challenge.message()),
-        NOW,
-    )
-    .unwrap()
-    .consume(&mut store)
-    .unwrap();
+    let result = verify(&c, c.message(), &sig, NOW)
+        .unwrap()
+        .consume(&mut store)
+        .unwrap();
+    assert_eq!(
+        format!("0x{}", hex::encode(result.message_hash())),
+        vector["hash"]
+    );
     assert_eq!(
         result.binding().subject,
         normalize_evm_address(vector["signer"].as_str().unwrap())

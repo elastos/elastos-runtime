@@ -5,7 +5,7 @@
     "phone_source": "scripts/lib/walletconnect-phone-wallet.mjs:27",
     "method": "account.signMessage({message:{raw:hexUtf8Message}})",
     "key": "Disposable existing test key: 32 bytes each 0x07; never a Home or production key",
-    "note": "EIP examples retain their published address; their signatures recover the disposable signer, not that address. They test EIP-191 recovery. The phone vector also tests the complete Home proof."
+    "note": "EIP examples retain their published address; their signatures recover the disposable signer, not that address. They test EIP-191 recovery. The original phone vector retains the reserved account-creation purpose. The phone-signin vector tests the complete Home sign-in proof."
   },
   "vectors": [
     {
@@ -34,6 +34,13 @@
       "message": "https://example.com wants you to sign in with your Ethereum account:\n0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2\n\nI accept the ExampleOrg Terms of Service: https://example.com/tos\n\nURI: https://example.com/login\nVersion: 1\nChain ID: 1\nNonce: 32891756\nIssued At: 2021-09-30T16:25:24Z\nResources:\n- ipfs://bafybeiemxf5abjwjbikoz4mc3a3dla6ual3jsgpdr4cjr3oz3evfyavhwq/\n- https://example.com/my-web2-claim.json",
       "signature": "0x47125df776e10b1d7e5b722e345ef4b35d930f47beb860b5ca95038d6b80f0e1726550eabee32370060edd98e8b14a17d1e70bdcac29ed2227116fa2872496571c",
       "hash": "0x350dfcaad4b160adc5119ecb0c4d738be4e0aea9fd4e7a0beee6bd2ccaaacb97",
+      "signer": "0x4a62316623ad457F02cDC5D997deD67a383EC569"
+    },
+    {
+      "name": "phone-signin",
+      "message": "https://home.example wants you to sign in with your Ethereum account:\n0x4a62316623ad457F02cDC5D997deD67a383EC569\n\nSign in for account account-1 on this Home.\n\nURI: https://home.example/login\nVersion: 1\nChain ID: 8453\nNonce: 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b\nIssued At: 2027-01-15T08:00:00Z\nExpiration Time: 2027-01-15T08:05:00Z\nResources:\n- urn:elastos:home:686f6d652d31\n- urn:elastos:ceremony:bac4b8122fed6187e1b493a932761b8f5e720a439bf85730cf31869ea30ced4e",
+      "signature": "0xda593280279885a7d51f262e478fdc81294de0522489c163ce268bffa01616fc5890617d17499ac4085e9b5264c6d48c7bd800f60b7096174f8196e2bee4e7211c",
+      "hash": "0x617732499e56b9422cb2676127ec1e60df06d61545073422be7af330a87056d3",
       "signer": "0x4a62316623ad457F02cDC5D997deD67a383EC569"
     }
   ]
