@@ -1349,10 +1349,35 @@ async fn wallet_guest_lists_its_own_passkeys_without_exposing_other_accounts() {
     let wallet = wallet_fixture::signin(&f);
     let app = gateway_router(test_state(f.data.path()));
     for capsule in [HOME_CAPSULE_ID, SYSTEM_CAPSULE_ID] {
-        let token =
-            issue_home_launch_token_for_auth_grant(f.data.path(), capsule, &wallet).unwrap();
-        let (status, list) = call(&app, "/api/auth/passkeys", Some(&token), None).await;
-        assert_eq!(status, StatusCode::OK, "{list}");
+        let (token, origin) = if capsule == HOME_CAPSULE_ID {
+            (
+                issue_home_launch_token_for_auth_grant(f.data.path(), capsule, &wallet).unwrap(),
+                ORIGIN,
+            )
+        } else {
+            (wallet_app_token(f.data.path(), capsule, &wallet), "null")
+        };
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/auth/passkeys")
+                    .header(HOST, "localhost:61180")
+                    .header("origin", origin)
+                    .header("x-elastos-home-token", token)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let list: Value = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), 1024 * 1024)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(status, StatusCode::OK, "{capsule}: {list}");
         let passkeys = list["passkeys"].as_array().unwrap();
         assert_eq!(
             passkeys.len(),
