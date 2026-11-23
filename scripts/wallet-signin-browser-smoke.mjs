@@ -182,8 +182,8 @@ async function exercise(engine,width) {
     await state('error');await capture('walletconnect-account-changed');await cancel();
     await home();await start('walletconnect');await state('pairing');await cancel();
     assert.equal(await page.locator('iframe[title=WalletConnect]').count(),0,'Cancel removes the temporary SDK document');
-    await home();await start();await state('review');await page.locator('.signin-dialog').getByRole('button',{name:'Sign in with wallet',exact:true}).click();await page.waitForFunction(()=>window.openedPrincipal==='principal:alex');
-    assert.equal(fixture.state.walletSession,true,'System journey starts from a wallet session');
+    await home();await page.getByRole('button',{name:'Use passkey',exact:true}).click();await page.waitForFunction(()=>window.openedPrincipal==='principal:alex');
+    assert.equal(fixture.state.walletSession,false,'method management starts from a passkey session');
     fixture.state.methods=[sampleMethod('metamask',false)];await page.evaluate(()=>window.showFixtureApps());
     const system=page.frameLocator('iframe[title=system]');
     await system.getByRole('button',{name:'Add wallet',exact:true}).waitFor();
@@ -262,6 +262,9 @@ async function exercise(engine,width) {
     await system.locator('[data-wallet-method="wallet:metamask"] [role=switch][aria-checked=false]').waitFor();
     await system.getByRole('button',{name:'Add wallet',exact:true}).click();await state('choice');await page.locator('.signin-dialog').getByRole('button',{name:'MetaMask',exact:false}).click();await state('error');await capture('add-already-added');
     await page.locator('.signin-dialog').getByRole('button',{name:'Refresh',exact:true}).click();await page.locator('.signin-dialog').waitFor({state:'detached'});await system.locator('[data-wallet-method="wallet:metamask"]').waitFor();
+    await home({methods:[sampleMethod('metamask',true)]});await start();await state('review');await page.locator('.signin-dialog').getByRole('button',{name:'Sign in with wallet',exact:true}).click();await page.waitForFunction(()=>window.openedPrincipal==='principal:alex');
+    assert.equal(fixture.state.walletSession,true,'account changes start from a fresh wallet session whose method stays enabled');
+    await page.evaluate(()=>window.showFixtureApps());
     fixture.state.passkeyCount=2;
     await page.evaluate(()=>document.querySelector('iframe[title=system]').contentWindow.postMessage({type:'home:wallet-signin-changed'},'*'));
     const passkeyRemovals=()=>fixture.state.calls.filter(c=>/\/passkeys\/.*\/revoke$/.test(c.path));
