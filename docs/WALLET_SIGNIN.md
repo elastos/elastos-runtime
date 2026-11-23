@@ -66,6 +66,16 @@ Bitcoin ownership is network and address.
 {"action":"add","connector":"metamask","address":"0x…","chain_id":20,"network":"","browser_secret":"<64 hex characters>"}
 ```
 
+For the first WalletConnect Add, use this authenticated management route with
+`action: "add"`, `connector: "walletconnect"`, an empty address, chain_id 0,
+network `""`, browser_secret and `allow_temporary_internet: true`. Show the short
+connection disclosure first. Begin returns the temporary pairing transport.
+After pairing, call `/api/auth/wallet/signin/select` with the same ceremony_id,
+browser_secret, selected address and chain_id to obtain the exact Add message.
+Keep the management launch header on these calls. Then sign and approve Add as
+below. Anonymous sign-in pairing requires an already enabled compatible method;
+authenticated Add creates the first method without that prerequisite.
+
 For `enable`, `disable` and `remove`, send `method_id` instead of connector,
 address, chain_id and network. Begin returns:
 
@@ -272,6 +282,6 @@ The returned approval request also includes connector, address, chain_id and
 network. Home shows those Runtime-bound values and echoes the full returned
 request unchanged when it asks for passkey approval.
 
-System offers explicit Remove account controls and routes sensitive permission
-decisions through Home's passkey approval bridge. Runtime applies the exact
-approved intent when it commits each effect.
+Screens implement explicit Remove account controls and route sensitive permission
+decisions through Home's passkey approval bridge before the combined product is
+accepted. Runtime applies the exact approved intent when it commits each effect.
