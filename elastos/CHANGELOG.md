@@ -25,7 +25,7 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 - A linked account without a name shows Your wallet.
 - Marketplace opens the MetaMask, UniSat and WalletConnect connection windows through Wallet.
 - Model downloads and Library uploads show their progress and use the same units for file sizes.
-- Inbox tells you when an update is available. System > About shows release notes and update download progress, and lets you turn automatic update checks on or off.
+- Home checks for updates in the background by default. Inbox tells you when an update is available. System > About shows release notes and update download progress. To stop background checks, turn off Check for updates automatically there.
 - The Recovery Kit and backup screens say what a kit saves and when to save a new one. Notifications and Inbox entries show their whole text.
 - Wallet, Inbox and System use plainer words for requests, settings and recovery steps.
 - Direct messages reach contacts on other networks while both Homes are on.
@@ -39,7 +39,7 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 - Community posts keep arriving when one connection stalls.
 - To add another account from a linked wallet, choose Add account. Switch account in your wallet, then scan a new QR code.
 - Wallet keeps showing your answer to a request when its request list refreshes.
-- You can dismiss an unfinished wallet payment in Wallet. Home can record a later wallet confirmation for up to 24 hours after the request expires.
+- You can dismiss an unfinished WalletConnect payment in Wallet. Home can record a later WalletConnect confirmation for up to 24 hours after the request expires.
 - Assistant opens from Marketplace and offers to get a model when none is installed.
 - Typing in a new document stays in the document.
 - After you refuse internet access, Browser asks again when you press Return, and returns to full screen when you allow it. Browser keeps your page when its internet access is renewed.
@@ -48,9 +48,8 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 
 ### Security
 
-- Apps get stricter checks on whose data they reach, and Home checks more carefully which programs it starts.
+- Apps open in separate browser sandboxes, need permission to reach private data, and get stricter checks on whose data they reach. Home checks more carefully which programs it starts.
 - Error messages from Home, Library, Inbox and System no longer show where files are stored on this computer.
-- Isolation status: apps open in separate browser sandboxes and need permission to reach private data. Home can still get every app's permissions. Background programs run with your account's rights; only the program that runs models is partly limited. Approvals are not yet shown on a screen only the Runtime controls, importing a Recovery Kit does not yet ask for your passkey again (#403), and on Linux the Browser helper is installed without a hash check (#406). See the isolation plan (#173).
 
 ### Developer detail
 
@@ -78,20 +77,21 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 - A linked account without a name shows Your wallet.
 - Marketplace opens the MetaMask, UniSat and WalletConnect connection windows through Wallet.
 - Model downloads and Library uploads show their progress and use the same units for file sizes.
-- Inbox tells you when an update is available. System > About shows release notes and update download progress, and lets you turn automatic update checks on or off.
+- Home checks for updates in the background by default. Inbox tells you when an update is available. System > About shows release notes and update download progress. To stop background checks, turn off Check for updates automatically there.
 - The Recovery Kit and backup screens say what a kit saves and when to save a new one. Notifications and Inbox entries show their whole text.
 - Wallet, Inbox and System use plainer words for requests, settings and recovery steps.
 - Direct messages reach contacts on other networks while both Homes are on.
 
 ### Fixed
 
+- New passkeys show which Home they belong to in the browser's picker. Existing passkeys keep their saved names.
 - Home and apps can enter full screen in Safari and the desktop app.
 - Apps load in Safari and other WebKit browsers.
 - Home repairs local Community connection failures, keeps trying while it runs, and shows the same reconnecting state in Chat and System.
 - Community posts keep arriving when one connection stalls.
 - To add another account from a linked wallet, choose Add account. Switch account in your wallet, then scan a new QR code.
 - Wallet keeps showing your answer to a request when its request list refreshes.
-- You can dismiss an unfinished wallet payment in Wallet. Home can record a later wallet confirmation for up to 24 hours after the request expires.
+- You can dismiss an unfinished WalletConnect payment in Wallet. Home can record a later WalletConnect confirmation for up to 24 hours after the request expires.
 - Assistant opens from Marketplace and offers to get a model when none is installed.
 - Typing in a new document stays in the document.
 - After you refuse internet access, Browser asks again when you press Return, and returns to full screen when you allow it. Browser keeps your page when its internet access is renewed.
@@ -100,9 +100,8 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 
 ### Security
 
-- Apps get stricter checks on whose data they reach, and Home checks more carefully which programs it starts.
+- Apps open in separate browser sandboxes, need permission to reach private data, and get stricter checks on whose data they reach. Home checks more carefully which programs it starts.
 - Error messages from Home, Library, Inbox and System no longer show where files are stored on this computer.
-- Isolation status: apps open in separate browser sandboxes and need permission to reach private data. Home can still get every app's permissions. Background programs run with your account's rights; only the program that runs models is partly limited. Approvals are not yet shown on a screen only the Runtime controls, importing a Recovery Kit does not yet ask for your passkey again (#403), and on Linux the Browser helper is installed without a hash check (#406). See the isolation plan (#173).
 
 ## [2.0.1] - 2026-11-09
 
