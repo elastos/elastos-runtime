@@ -340,7 +340,7 @@ async fn opaque_capsule_step_up_preflight_keeps_approval_routes_and_origins_boun
         "/api/auth/passkeys/proof:test/promote-admin",
         "/api/auth/passkeys/proof:test/demote-guest",
         "/api/auth/passkeys/proof:test/revoke",
-        "/api/apps/chat/room/requests/test/approve",
+        "/api/apps/chat-room/requests/test/approve",
     ] {
         for (origin, allowed) in [("null", true), ("https://evil.example", false)] {
             let response = app
