@@ -954,14 +954,14 @@ pub(super) async fn chat_room_request_approve(
     if let Err(err) = ensure_admin_context(&state.data_dir, &launch.context) {
         return room_service_error_response(err);
     }
-    if let Err(err) = super::auth_gateway::wallet_action_approval(
+    if let Err(err) = crate::api::auth_gateway::wallet_action_approval(
         &state,
         &launch,
         headers
             .get("x-elastos-step-up-token")
             .and_then(|v| v.to_str().ok()),
         "inbox.approve",
-        &json!({"action_id":format!("room-approve-request:{request_id}")}),
+        &serde_json::json!({"action_id":format!("room-approve-request:{request_id}")}),
     ) {
         return room_service_error_response(err);
     }

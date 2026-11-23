@@ -337,7 +337,7 @@ pub(super) async fn answer(
         .manager
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("Runtime internet authority is unavailable"))?;
-    let proof_binding_id = super::gateway::consume_passkey_step_up_token_with_approver(
+    let proof_binding_id = crate::api::gateway::consume_passkey_step_up_token_with_approver(
         &state.data_dir,
         token.unwrap_or_default(),
         launch,

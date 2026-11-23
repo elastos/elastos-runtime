@@ -380,14 +380,14 @@ pub(super) async fn system_community_presence_update(
         let approval = (|| {
             let launch =
                 require_home_launch_token_binding(&state.data_dir, &headers, &[SYSTEM_CAPSULE_ID])?;
-            super::auth_gateway::wallet_action_approval(
+            crate::api::auth_gateway::wallet_action_approval(
                 &state,
                 &launch,
                 headers
                     .get("x-elastos-step-up-token")
                     .and_then(|v| v.to_str().ok()),
                 "community.presence.grant",
-                &json!({"mode":body.mode}),
+                &serde_json::json!({"mode":body.mode}),
             )
         })();
         if let Err(error) = approval {

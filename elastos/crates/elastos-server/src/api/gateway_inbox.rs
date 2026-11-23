@@ -411,12 +411,12 @@ async fn dispatch_inbox_action(
     .any(|prefix| action_id.starts_with(prefix))
         || action_id == WALLET_PRICE_HTTP_APPROVE_ACTION_ID;
     let _approving_passkey = if positive {
-        super::auth_gateway::wallet_action_approval(
+        crate::api::auth_gateway::wallet_action_approval(
             state,
             launch,
             action.step_up_token.as_deref(),
             "inbox.approve",
-            &json!({"action_id":action_id}),
+            &serde_json::json!({"action_id":action_id}),
         )?
     } else {
         None
