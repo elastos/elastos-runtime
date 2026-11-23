@@ -160,7 +160,7 @@ fn root_key(auth: &AuthState, account: &str) -> Option<String> {
 fn eligible(auth: &AuthState, method: &Method) -> bool {
     let current = witnesses(auth, &method.account_id);
     method.witnesses.iter().any(|id| current.contains(id))
-        && root_key(auth, &method.account_id) == method.root_key
+        && (method.root_key.is_none() || root_key(auth, &method.account_id) == method.root_key)
 }
 fn live_method<'a>(store: &'a Store, auth: &AuthState, id: &str) -> Option<&'a Method> {
     store
@@ -212,7 +212,27 @@ fn reconcile(store: &mut Store, auth: &AuthState) {
     store
         .methods
         .retain(|m| !reset_accounts.contains(&&m.account_id));
-    store.methods.retain(|m| eligible(auth, m));
+    let added: Vec<_> = auth
+        .audit_chain
+        .iter()
+        .filter(|l| l.sequence > store.audit_sequence)
+        .filter_map(|l| auth.audit.iter().find(|e| e.event_id == l.event_id))
+        .filter(|e| e.event_type == "auth.passkey.added" && e.result == "ok")
+        .filter_map(|e| Some((e.principal_id.as_deref()?, e.proof_binding_id.as_deref()?)))
+        .collect();
+    store.methods.retain(|m| {
+        eligible(auth, m)
+            || ((m.root_key.is_none() || root_key(auth, &m.account_id) == m.root_key)
+                && auth.principals.iter().any(|p| {
+                    p.principal_id == m.account_id
+                        && active_passkey(p)
+                        && added.contains(&(p.principal_id.as_str(), p.proof_binding_id.as_str()))
+                }))
+    });
+    for method in &mut store.methods {
+        method.witnesses = witnesses(auth, &method.account_id);
+        method.root_key = root_key(auth, &method.account_id);
+    }
     let live: Vec<_> = store
         .methods
         .iter()
@@ -467,6 +487,8 @@ pub(crate) fn begin(
     let browser = digest(&hex::encode(secret(&input.browser_secret)?));
     if actor.is_none() {
         input.action = "signin".into();
+    } else {
+        require(input.action != "signin")?;
     }
     require(matches!(
         input.action.as_str(),
@@ -562,7 +584,9 @@ pub(crate) fn begin(
         }
         let result = begin_result(
             &pending,
-            (pending.method.connector == "walletconnect").then_some(token),
+            (pending.method.connector == "walletconnect"
+                && matches!(pending.action.as_str(), "signin" | "add" | "enable"))
+            .then_some(token),
         )?;
         store.pending.push(pending);
         Ok(result)
@@ -926,6 +950,7 @@ pub(crate) fn attempt_context(
             bool::from(p.transport_digest.ct_eq(&digest(token)))
                 && p.instance_id == instance
                 && p.method.connector == "walletconnect"
+                && matches!(p.action.as_str(), "signin" | "add" | "enable")
                 && !p.cancelled
                 && p.result.is_none()
                 && p.expires_at > now
@@ -965,6 +990,23 @@ pub(crate) fn expire_attempt(data: &Path, id: &str, instance: &str) -> anyhow::R
         }
         Ok(())
     })
+}
+
+pub(crate) fn inactive_attempts(data: &Path) -> anyhow::Result<Vec<String>> {
+    let (auth, store) = loaded(data)?;
+    Ok(store
+        .pending
+        .iter()
+        .filter(|p| {
+            p.cancelled
+                || p.result.is_some()
+                || p.expires_at <= now_ts()
+                || p.actor
+                    .as_ref()
+                    .is_some_and(|a| require_actor(&auth, &store, a, true).is_err())
+        })
+        .map(|p| p.id.clone())
+        .collect())
 }
 
 #[cfg(test)]
@@ -1483,5 +1525,205 @@ pub(crate) mod tests {
             .sessions
             .iter()
             .all(|s| !s.grant.session_id.starts_with("auth:wallet:")));
+    }
+    #[test]
+    fn wallet_survives_same_account_passkey_rotation() {
+        let f = fixture();
+        let id = enabled(&f);
+        let second = add_account(f.data.path(), "alice", "alice-second");
+        revoke_passkey_for_actor(
+            f.data.path(),
+            &second.principal_id,
+            &second.proof_binding_id,
+            &f.actor.proof_binding_id,
+            now_ts(),
+        )
+        .unwrap();
+        assert_eq!(signin(&f).proof_binding_id, id);
+    }
+    #[test]
+    fn wallet_survives_first_root_protection_and_kit_export() {
+        let f = fixture();
+        let id = enabled(&f);
+        store_test_principal_root_protection(f.data.path(), &f.actor.principal_id);
+        append_audit_event(
+            f.data.path(),
+            RuntimeAuditEventV1 {
+                schema: RuntimeAuditEventV1::SCHEMA.into(),
+                event_id: format!("audit:{}", random_secret_hex()),
+                event_type: "auth.full_recovery_bundle.exported".into(),
+                principal_id: Some(f.actor.principal_id.clone()),
+                proof_binding_id: Some(f.actor.proof_binding_id.clone()),
+                session_id: None,
+                challenge_id: None,
+                capsule_id: None,
+                result: "ok".into(),
+                reason: "ordinary Kit export".into(),
+                occurred_at: now_ts(),
+                signer_did: None,
+                signature: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(signin(&f).proof_binding_id, id);
+    }
+    #[test]
+    fn wallet_undo_coalesced_passkey_rotation_retains_ownership() {
+        let f = fixture();
+        let id = enabled(&f);
+        let original = std::fs::read(path(f.data.path()).unwrap()).unwrap();
+        let second = add_account(f.data.path(), "alice", "alice-second");
+        let mut legacy = load_auth_state_with_identity(f.data.path()).unwrap().0;
+        let event = sign_audit_event(
+            f.data.path(),
+            RuntimeAuditEventV1 {
+                schema: RuntimeAuditEventV1::SCHEMA.into(),
+                event_id: format!("audit:{}", random_secret_hex()),
+                event_type: "auth.passkey.added".into(),
+                principal_id: Some(second.principal_id.clone()),
+                proof_binding_id: Some(second.proof_binding_id.clone()),
+                session_id: None,
+                challenge_id: None,
+                capsule_id: None,
+                result: "ok".into(),
+                reason: "legacy passkey add".into(),
+                occurred_at: now_ts(),
+                signer_did: None,
+                signature: None,
+            },
+        )
+        .unwrap();
+        push_audit_event(f.data.path(), &mut legacy, event).unwrap();
+        revoke_binding_in_state(&mut legacy, &f.actor.proof_binding_id, now_ts()).unwrap();
+        save_auth_state(f.data.path(), &legacy, None).unwrap();
+        write_secret_bytes_atomic(&path(f.data.path()).unwrap(), &original).unwrap();
+        assert_eq!(signin(&f).proof_binding_id, id);
+    }
+    #[test]
+    fn wallet_malformed_sidecar_refuses_wallets_and_preserves_passkey_access() {
+        let f = fixture();
+        let id = enabled(&f);
+        let session = signin(&f);
+        write_secret_bytes_atomic(&path(f.data.path()).unwrap(), b"broken-json").unwrap();
+        assert!(principal(f.data.path(), &id).is_err());
+        assert!(load_active_session_grant(f.data.path(), &session.session_id, now_ts()).is_err());
+        assert!(load_active_session_grant(f.data.path(), &f.actor.session_id, now_ts()).is_ok());
+        assert!(renew_session_grant(f.data.path(), f.actor.clone()).is_ok());
+    }
+    #[test]
+    fn wallet_unisat_fresh_bitcoin_proof_add_enable_and_signin() {
+        let f = fixture();
+        let mut bytes = [0u8; 32];
+        bytes[31] = 1;
+        let key = SigningKey::from_bytes((&bytes).into()).unwrap();
+        let address = "1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH";
+        let make = |b: &BeginResult| {
+            let (sig, id) = key
+                .sign_prehash_recoverable(&bitcoin::bitcoin_signed_message_hash(
+                    b.message.as_bytes(),
+                ))
+                .unwrap();
+            let mut raw = vec![31 + id.to_byte()];
+            raw.extend_from_slice(&sig.to_bytes());
+            Complete {
+                ceremony_id: b.ceremony_id.clone(),
+                browser_secret: BROWSER.into(),
+                signature: base64::engine::general_purpose::STANDARD.encode(raw),
+                signature_type: "bitcoin_signed_message".into(),
+                public_key: hex::encode(key.verifying_key().to_encoded_point(true).as_bytes()),
+                step_up_token: String::new(),
+            }
+        };
+        let input: Begin=serde_json::from_value(serde_json::json!({"action":"add","connector":"unisat","address":address,"network":"bitcoin","browser_secret":BROWSER})).unwrap();
+        let added = begin(
+            f.data.path(),
+            ORIGIN,
+            "home-test",
+            input,
+            Some(f.actor.clone()),
+        )
+        .unwrap();
+        let result = complete(f.data.path(), ORIGIN, &make(&added), Some(&f.actor), |_| {
+            Ok(())
+        })
+        .unwrap();
+        let id = result["method_id"].as_str().unwrap();
+        let enable = begin(
+            f.data.path(),
+            ORIGIN,
+            "home-test",
+            serde_json::from_value(
+                serde_json::json!({"action":"enable","method_id":id,"browser_secret":BROWSER}),
+            )
+            .unwrap(),
+            Some(f.actor.clone()),
+        )
+        .unwrap();
+        assert_ne!(enable.message, added.message);
+        let mut wrong = make(&added);
+        wrong.ceremony_id = enable.ceremony_id.clone();
+        assert!(complete(f.data.path(), ORIGIN, &wrong, Some(&f.actor), |_| Ok(())).is_err());
+        complete(
+            f.data.path(),
+            ORIGIN,
+            &make(&enable),
+            Some(&f.actor),
+            |_| Ok(()),
+        )
+        .unwrap();
+        let signin=begin(f.data.path(),ORIGIN,"home-test",serde_json::from_value(serde_json::json!({"connector":"unisat","address":address,"network":"bitcoin","browser_secret":BROWSER})).unwrap(),None).unwrap();
+        let result = complete(f.data.path(), ORIGIN, &make(&signin), None, |_| {
+            panic!("Bitcoin signs in, never approves")
+        })
+        .unwrap();
+        assert_eq!(result["principal_id"], f.actor.principal_id);
+    }
+    #[test]
+    fn walletconnect_add_pairs_before_address_selection() {
+        let f = fixture();
+        let mut request = input("add", "", "");
+        request.connector = "walletconnect".into();
+        request.chain_id = 0;
+        let pair = begin(
+            f.data.path(),
+            ORIGIN,
+            "home-test",
+            request,
+            Some(f.actor.clone()),
+        )
+        .unwrap();
+        assert!(pair.message.is_empty());
+        assert!(pair.attempt_token.is_some());
+        let selected = select(
+            f.data.path(),
+            &pair.ceremony_id,
+            BROWSER,
+            ORIGIN,
+            f.address.clone(),
+            20,
+        )
+        .unwrap();
+        assert!(!selected.message.is_empty());
+        let result = complete(
+            f.data.path(),
+            ORIGIN,
+            &completion(&f, &selected),
+            Some(&f.actor),
+            |_| Ok(()),
+        )
+        .unwrap();
+        assert_eq!(result["sign_in_enabled"], false);
+        let remove = begin(
+            f.data.path(),
+            ORIGIN,
+            "home-test",
+            input("remove", result["method_id"].as_str().unwrap(), ""),
+            Some(f.actor.clone()),
+        )
+        .unwrap();
+        assert!(
+            remove.attempt_token.is_none(),
+            "removal owns no relay authority"
+        );
     }
 }

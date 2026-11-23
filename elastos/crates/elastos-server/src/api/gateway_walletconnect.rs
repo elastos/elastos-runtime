@@ -996,6 +996,7 @@ async fn transport(
             }
             frame = upstream.next() => match frame.transpose()? {
                 Some(Upstream::Text(text)) => {
+                    relay_owner(state, headers).await?;
                     activity = Instant::now();
                     tokio::time::timeout(Duration::from_secs(5), socket.send(Message::Text(text))).await??;
                 }

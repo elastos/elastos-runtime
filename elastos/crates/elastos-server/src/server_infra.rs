@@ -723,7 +723,7 @@ async fn setup_server_infrastructure_impl(
         tracing::warn!("Failed to register elastos://inspect sub-provider: {}", err);
     }
     let device_key = elastos_identity::load_or_create_device_key(&data_dir)?;
-    let device_key_hex = hex::encode(device_key.as_ref());
+    let device_key_hex = hex::encode(&device_key[..]);
     let protected_content_runtime_issuer = derive_protected_content_runtime_issuer(&device_key)?;
     let mut provider_cid = "sha256:unavailable".to_string();
     let verify_provider_binary = |name: &str, path: &std::path::Path| -> anyhow::Result<()> {

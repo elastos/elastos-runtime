@@ -4588,7 +4588,9 @@ fn mutate_auth_state<T>(
     ensure_audit_chain_state(data_dir, &mut state)?;
     let value = mutation(&mut state)?;
     save_auth_state(data_dir, &state, Some(&baseline))?;
-    wallet_signin::observe_auth_commit(data_dir, &state)?;
+    if wallet_signin::observe_auth_commit(data_dir, &state).is_err() {
+        tracing::warn!("Wallet sign-in storage requires repair; passkey access remains available");
+    }
     for principal in previous_principals {
         if !state.principals.iter().any(|p| p.principal_id == principal)
             && crate::api::gateway::clear_walletconnect_principal_storage(data_dir, &principal)
@@ -4845,9 +4847,9 @@ fn write_secret_bytes_atomic(
 
 pub fn load_auth_state(data_dir: &Path) -> anyhow::Result<AuthState> {
     let mut state = load_auth_state_with_identity(data_dir)?.0;
-    state
-        .sessions
-        .extend(wallet_signin::sessions(data_dir, &state)?);
+    if let Ok(sessions) = wallet_signin::sessions(data_dir, &state) {
+        state.sessions.extend(sessions);
+    }
     Ok(state)
 }
 

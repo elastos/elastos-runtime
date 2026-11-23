@@ -614,6 +614,17 @@ pub(super) fn admit_socket(inner: &Inner, id: &str, local: bool) -> anyhow::Resu
     Ok(())
 }
 
+fn address_budget_key(ip: std::net::IpAddr) -> std::net::IpAddr {
+    match ip.to_canonical() {
+        std::net::IpAddr::V6(v6) => {
+            let mut octets = v6.octets();
+            octets[8..].fill(0);
+            std::net::Ipv6Addr::from(octets).into()
+        }
+        ip => ip,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -754,16 +765,5 @@ mod tests {
             Some("2001:db8:1:3::1".parse().unwrap())
         )
         .is_ok());
-    }
-}
-
-fn address_budget_key(ip: std::net::IpAddr) -> std::net::IpAddr {
-    match ip.to_canonical() {
-        std::net::IpAddr::V6(v6) => {
-            let mut octets = v6.octets();
-            octets[8..].fill(0);
-            std::net::Ipv6Addr::from(octets).into()
-        }
-        ip => ip,
     }
 }

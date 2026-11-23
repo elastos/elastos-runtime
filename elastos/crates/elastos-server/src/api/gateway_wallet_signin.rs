@@ -109,7 +109,9 @@ pub(super) async fn method_complete(
                 )
             },
         )?;
-        gateway_walletconnect::retire_attempt(&state, &input.ceremony_id).await?;
+        for id in auth::inactive_attempts(&state.data_dir)? {
+            gateway_walletconnect::retire_attempt(&state, &id).await?;
+        }
         Ok::<_, anyhow::Error>(result)
     }
     .await;
