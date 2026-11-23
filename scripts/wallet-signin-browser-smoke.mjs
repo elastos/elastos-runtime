@@ -124,7 +124,7 @@ async function exercise(engine,width) {
       await page.locator('[data-home-wallet-signin]:visible').click();await state('choice');
       const choice=page.locator('.signin-dialog').getByRole('button',{name:'WalletConnect',exact:false});
       await page.getByText('Add a wallet for Elastos Smart Chain or Base and turn Sign in on first.',{exact:true}).waitFor();assert(await choice.isDisabled());
-      if(methods.length===0)await capture('walletconnect-needs-enabled-wallet');await cancel();
+      await cancel();
     }
     await home();await page.locator('[data-home-wallet-signin]:visible').click();await state('choice');
     const beforeNotice=fixture.state.calls.filter(c=>c.path.endsWith('/signin/begin')).length;
@@ -134,7 +134,7 @@ async function exercise(engine,width) {
     await home();await page.evaluate(()=>window.walletFixture.openFailed=true);await start();await state('review');await page.locator('.signin-dialog').getByRole('button',{name:'Sign in with wallet',exact:true}).click();
     await page.locator('#home-unlock-face-status').filter({hasText:'Home could not open after sign-in. Reload this page.'}).waitFor();await capture('home-open-failed');
     for(const scenario of ['missing','rejected','changed','busy','offline','refused','unknown','expired','pending','account-choice','disabled','unadded']) {
-      await home({scenario:['busy','offline','refused','unknown','expired'].includes(scenario)?scenario:'normal',...(scenario==='disabled'?{methods:[sampleMethod('metamask',false)]}:scenario==='unadded'?{methods:[]}: {})});
+      await home({scenario:['busy','offline','refused','unknown','expired'].includes(scenario)?scenario:'normal',...(scenario==='disabled'?{methods:[sampleMethod('metamask',false),sampleMethod('unisat',true)]}:scenario==='unadded'?{methods:[sampleMethod('unisat',true)]}: {})});
       if(scenario==='missing')await page.evaluate(()=>window.walletFixture.missing=true);
       if(scenario==='rejected')await page.evaluate(()=>window.walletFixture.mode='rejected');
       if(scenario==='pending')await page.evaluate(()=>window.walletFixture.mode='pending');
@@ -215,8 +215,10 @@ async function exercise(engine,width) {
     await page.locator('#show-wallet').click();await wallet.locator('[data-wallet-method="payment:payment:one"] [role=switch]').waitFor();
     assert(await wallet.locator('[data-wallet-method="payment:payment:one"] [role=switch]').isDisabled());await wallet.locator('#wallet-signin-methods').scrollIntoViewIfNeeded();await capture('wallet-payment-only');
     const methodReads=fixture.state.calls.filter(c=>c.path==='/api/auth/wallet-methods').length;
-    const account=wallet.locator('[data-wallet-account-detail]').first();
+    const account=wallet.locator('[data-wallet-account-detail] .wallet-card-name').first();
+    await wallet.locator('#wallet-signin-methods').evaluate(el=>{window.signinCardsBefore=el.firstChild;});
     await account.click();await account.click();
+    assert(await wallet.locator('#wallet-signin-methods').evaluate(el=>el.firstChild!==window.signinCardsBefore),'account clicks exercise Wallet rendering');
     // A bridge round trip must complete before counting. This request changes no state.
     await wallet.locator('#wallet-signin-methods').evaluate(async()=>{
       const {readWalletSigninMethods}=await import('/apps/home/wallet-signin-methods.mjs?v=wallet-signin-1');
