@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check CI release/cache decisions without builds, Docker, or publication."""
 import base64
+from datetime import date
 import os
 import hashlib
 import io
@@ -492,6 +493,19 @@ def validate_jetson_package_lifecycle(source):
                        "github.ref_type": ref_type, "inputs.ref": override, "matrix.os": runner}
             if evaluate(field(verify, "if"), context) and not evaluate(field(package, "if"), context):
                 raise AssertionError(f"Jetson verification lacks its package on {event} {runner}")
+
+
+def validate_audit_review_dates(source, today):
+    for raw in re.findall(r"\bre-review by\s+(\S+)", source, re.I):
+        deadline = raw.rstrip(".;,")
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", deadline):
+            raise AssertionError(f"invalid audit re-review date: {raw}")
+        try:
+            due = date.fromisoformat(deadline)
+        except ValueError as error:
+            raise AssertionError(f"invalid audit re-review date: {raw}") from error
+        if due < today:
+            raise AssertionError(f"audit exception re-review by {deadline} has passed ({today})")
 
 
 def validate_dependency_audit(source):
@@ -1558,6 +1572,21 @@ class ReleasePolicyTests(unittest.TestCase):
                                   "cargo build --manifest-path elastos/Cargo.toml --workspace", 1)
         with self.assertRaisesRegex(AssertionError, "require --locked"):
             validate_jetson_package_lifecycle(unlocked)
+
+    def test_audit_exception_review_dates_are_current(self):
+        policy = (WORKFLOW.parents[2] / "elastos/.cargo/audit.toml").read_text()
+        validate_audit_review_dates(policy, date.today())
+
+    def test_audit_review_dates_check_every_deadline_and_allow_the_due_day(self):
+        today = date(2026, 11, 23)
+        validate_audit_review_dates("# re-review by 2026-11-23 at the latest.", today)
+        validate_audit_review_dates("# Re-review by 2026-12-23.", today)
+        with self.assertRaisesRegex(AssertionError, "2026-11-22 has passed"):
+            validate_audit_review_dates(
+                "# re-review by 2026-12-23\n# re-review by 2026-11-22", today)
+        for invalid in ("2026-02-30", "2026-11", "20261123"):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(AssertionError, "invalid audit"):
+                validate_audit_review_dates(f"# re-review by {invalid}", today)
 
     def test_every_tracked_lockfile_is_audited_on_every_event(self):
         validate_dependency_audit(SOURCE)
