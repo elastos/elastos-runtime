@@ -62,9 +62,11 @@ let unlockPersonLabel = "";
 
 const walletSignin = createHomeWalletSignin({
   approve: requestPasskeyStepUp,
+  onPasskey: () => runPasskeySignIn().catch(reportUnlockError),
   onSignin: async response => {
     setHomeAuthorityToken(response.app_token, response);
-    await unlockComplete(response, {walletSignin:true});
+    try { await unlockComplete(response, {walletSignin:true}); }
+    catch (error) { reportUnlockError(signInFailure("open", error)); }
   },
 });
 export function manageWalletSignin(options) { return walletSignin.start(options); }
@@ -465,6 +467,7 @@ function renderUnlockChecking() {
 function renderUnlockMode({ registered, guestRegistrationEnabled }) {
   for (const button of document.querySelectorAll("[data-home-wallet-signin]")) {
     button.hidden = !registered || !["signin", "signin_guest_enabled", "unsupported"].includes(unlockMode);
+    button.disabled = busy;
   }
   const resumingOwner = unlockMode === "resume_owner";
   const resumingRegistration = unlockMode === "resume_registration";
@@ -1079,6 +1082,7 @@ function reportUnlockError(error) {
 }
 
 function setButtonsDisabled(disabled) {
+  for (const button of document.querySelectorAll("[data-home-wallet-signin]")) button.disabled = disabled;
   if (unlockPerson) {
     unlockPerson.disabled = disabled || unlockMode === "unsupported";
   }

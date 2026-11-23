@@ -1,7 +1,7 @@
-import {createWalletSigninFlow,connectorName,walletNetwork} from './wallet-signin-flow.mjs';
+import {createWalletSigninFlow,connectorName,walletNetwork,walletSigninOriginAllowed} from './wallet-signin-flow.mjs';
 import {selectSigninWallet} from './wallet-signin-signers.mjs';
 const titles={signin:'Sign in with wallet',add:'Add wallet',enable:'Turn on wallet sign-in',disable:'Turn off wallet sign-in',remove:'Remove wallet'};
-const effects={signin:'This wallet opens your existing Home account. Approvals need your passkey.',add:'Home adds this wallet to your account with Sign in off.',enable:'This wallet will be able to sign in to your Home account.',disable:'This wallet will stop signing in. Home will end its sign-in sessions. Your payment connection stays connected.',remove:'Home will remove this sign-in method and end its sign-in sessions. Your payment connection stays connected.'};
+const effects={signin:'This wallet opens your existing Home account. Approvals need your passkey.',add:'Home will add this wallet to your account with Sign in off.',enable:'This wallet will be able to sign in to your Home account.',disable:'Home will turn off sign-in for this wallet and end its sign-in sessions. Wallet keeps its payment connections.',remove:'Home will remove this sign-in method and end its sign-in sessions. Wallet keeps its payment connections.'};
 function node(tag,text,className) {const el=document.createElement(tag);if(text)el.textContent=text;if(className)el.className=className;return el;}
 export async function walletSigninApi(path,body,token='') {
   const response=await fetch(path,{
@@ -12,7 +12,7 @@ export async function walletSigninApi(path,body,token='') {
   if(!response.ok)throw Object.assign(new Error('Home refused the wallet request'),{status:response.status});
   return response.json();
 }
-export function createHomeWalletSignin({approve,onSignin,onChanged=()=>{}}) {
+export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=>{}}) {
   let dialog,previousFocus,token='',initial={},resolveRequest,ticker;
   let currentState;
   const flow=createWalletSigninFlow({
@@ -84,7 +84,11 @@ export function createHomeWalletSignin({approve,onSignin,onChanged=()=>{}}) {
     }
     const statuses={connecting:state.connector==='walletconnect'?'Connecting to WalletConnect…':'Select an account in your wallet.',signing:'Sign the message in your wallet.',approval:'Confirm this change with your passkey.',passkey:'Confirm with your passkey.',completing:state.action==='signin'?'Checking sign-in…':'Saving change…',done:({add:'Wallet added. Sign in is off.',enable:'Wallet sign-in is on.',disable:'Wallet sign-in is off.',remove:'Wallet removed.'})[state.action]};
     const status=node('p',state.message||statuses[state.stage]||'',state.stage==='error'?'signin-error':'signin-note');status.setAttribute('role','status');dialog.append(status);
-    if(state.stage==='error')dialog.append(button('Try again',()=>flow.start(initial)));
+    if(state.stage==='error') {
+      if(state.refresh)dialog.append(button('Refresh',()=>flow.cancel()));
+      if(state.retryable!==false)dialog.append(button('Try again',()=>flow.start(initial),state.refresh));
+      if(state.action==='signin' && onPasskey && state.allowPasskey!==false)dialog.append(button('Use passkey',()=>{void flow.cancel();onPasskey();},true));
+    }
     if(state.stage==='done')dialog.append(button('Done',close));
     else dialog.append(button('Cancel',()=>flow.cancel(),true));
     const expiry=node('p',null,'signin-expiry');dialog.append(expiry);
@@ -100,8 +104,8 @@ export function createHomeWalletSignin({approve,onSignin,onChanged=()=>{}}) {
     get active(){return Boolean(dialog);},
     async start(options={}) {
       if(dialog)return {status:'busy'};
-      if(location.protocol!=='https:' && !['localhost','127.0.0.1','[::1]'].includes(location.hostname)){
-        token=options.token||'';initial=options;render({stage:'error',action:options.action||'signin',message:'Open this Home with HTTPS to sign in with a wallet.'});return {status:'failed'};
+      if(!walletSigninOriginAllowed(location.href)){
+        token=options.token||'';initial=options;render({stage:'error',action:options.action||'signin',message:'Open this Home with HTTPS to sign in with a wallet.',retryable:false,allowPasskey:false});return {status:'failed'};
       }
       token=options.token||'';initial=options;
       let result;

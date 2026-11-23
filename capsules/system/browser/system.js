@@ -2515,10 +2515,25 @@ async function changeWalletSignin(action, methodId = "") {
   } catch (error) { showError(error.message); }
 }
 
+function showSigninListFailure(message) {
+  const retry = document.createElement("button");
+  retry.type = "button"; retry.className = "system-button system-button-secondary";
+  retry.textContent = "Try again"; retry.onclick = () => refreshAccountList().catch(error => showError(error));
+  const error = document.createElement("p"); error.textContent = message;
+  accountListNode.append(error, retry);
+}
+
 async function refreshAccountList() {
   if (!accountListNode || !hasShellAccess()) return;
   const version = ++walletSigninListVersion;
-  const data = await fetchJson("/api/auth/passkeys", {headers:shellHeaders()});
+  let data;
+  try { data = await fetchJson("/api/auth/passkeys", {headers:shellHeaders()}); }
+  catch {
+    if (version !== walletSigninListVersion) return;
+    accountListNode.replaceChildren();
+    showSigninListFailure("Home could not load sign-in methods.");
+    return;
+  }
   try {
     const methods = await readWalletSigninMethods(apiHomeToken);
     if (version !== walletSigninListVersion) return;
@@ -2528,11 +2543,7 @@ async function refreshAccountList() {
     if (version !== walletSigninListVersion) return;
     walletSigninMethods = {account_id:"", methods:[]};
     renderAccounts(Array.isArray(data.passkeys) ? data.passkeys : []);
-    const retry = document.createElement("button");
-    retry.type = "button"; retry.className = "system-button system-button-secondary";
-    retry.textContent = "Try again"; retry.onclick = () => refreshAccountList().catch(error => showError(error.message));
-    const error = document.createElement("p"); error.textContent = "Home could not load wallet sign-in methods.";
-    accountListNode.append(error, retry);
+    showSigninListFailure("Home could not load wallet sign-in methods.");
   }
 }
 
@@ -2575,6 +2586,7 @@ function renderAccounts(accounts) {
       adminAccountCount,
       currentPrincipalId,
       ownPasskeyCount:activeAccounts.filter(row => row.principal_id === currentPrincipalId).length,
+      accountPasskeyCount:activeAccounts.filter(row => row.principal_id === account.principal_id).length,
     }));
   }
   const ownPasskey = activeAccounts.find(row => row.principal_id === walletSigninMethods.account_id);
@@ -2669,6 +2681,7 @@ function accountRow(passkey, listState = {}) {
   remove.dataset.passkeyRevoke = passkey.proof_binding_id || "";
   remove.dataset.current = passkey.current ? "true" : "false";
   remove.dataset.accountName = readText(passkey.display_name);
+  remove.dataset.lastPasskey = Number(listState.accountPasskeyCount) === 1 ? "true" : "false";
   remove.dataset.ownAccount = passkey.current || ownAccount ? "true" : "false";
   const protectsLastAdmin = readText(passkey.role) === "admin"
     && Number(listState.adminPasskeyCount) <= 1;
@@ -2680,7 +2693,7 @@ function accountRow(passkey, listState = {}) {
     const explanation = document.createElement("p");
     explanation.className = "passkey-removal-note";
     explanation.id = `passkey-removal-${passkey.proof_binding_id}`;
-    explanation.textContent = protectsLastAdmin ? LAST_ADMIN_PASSKEY_REMOVAL_MESSAGE : "Add another sign-in method before removing this one.";
+    explanation.textContent = protectsLastAdmin ? LAST_ADMIN_PASSKEY_REMOVAL_MESSAGE : "Keep at least one sign-in method for this account.";
     nameWrap.append(explanation);
     remove.title = explanation.textContent;
     remove.setAttribute("aria-describedby", explanation.id);
@@ -2783,6 +2796,9 @@ function confirmPasskeyRemoval(button) {
     ownAccount ? "Remove your passkey from this Home?"
       : accountName ? `Remove the passkey for ${accountName} from this Home?`
         : "Remove this passkey from this Home?";
+  const walletNote = passkeyRemoveDialog.querySelector('[data-field="passkey-remove-wallets"]');
+  walletNote.hidden = button.dataset.lastPasskey !== "true";
+  walletNote.textContent = "This is the account's last passkey. Home will also clear its wallet sign-in access.";
   const currentNote = passkeyRemoveDialog.querySelector('[data-field="passkey-remove-current"]');
   currentNote.hidden = button.dataset.current !== "true";
   passkeyRemoveDialog.querySelector('[data-field="passkey-remove-copy"]').textContent =

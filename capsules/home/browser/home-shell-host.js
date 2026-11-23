@@ -1718,7 +1718,7 @@ window.addEventListener("message", (event) => {
     manage: manageWalletSignin,
     current: () => homeMessageContext(event, data)?.homeToken === context.homeToken,
     changed: () => {
-      refreshShellSummary().catch(() => {});
+      void refreshSignedHomeSession();
       for (const launched of launchedAppContexts.values()) {
         if ([SYSTEM_APP_ID, "wallet"].includes(launched.targetId)) launched.source?.postMessage({type:"home:wallet-signin-changed"}, OPAQUE_FRAME_TARGET);
       }

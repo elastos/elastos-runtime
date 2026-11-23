@@ -36,3 +36,7 @@
 .signin-method-card .signin-method-controls { margin-top: 12px; }
 .signin-method-card button { min-height: 44px; }
 @media (max-width: 480px) { .signin-dialog { padding: 20px; } }
+
+.home-unlock .home-unlock-passkey-label { margin: 12px 0 0; font-size: 14px; font-weight: 600; }
+
+.signin-method-controls > button, #wallet-signin-add { min-height: 44px; }
