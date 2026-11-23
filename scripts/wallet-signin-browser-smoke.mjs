@@ -46,7 +46,7 @@ async function exercise(engine,width,theme) {
     await home();await capture('01-sign-in');
     assert.equal(await page.getByRole('button',{name:'Sign in',exact:true}).count(),1);
     assert.equal(await page.getByRole('button',{name:'Sign in with wallet',exact:true}).count(),0);
-    await page.getByRole('button',{name:'Sign in',exact:true}).click();await page.waitForFunction(()=>window.openedPrincipal==='principal:alex');
+    await page.locator('#home-unlock-person .home-unlock-passkey-label').click();await page.waitForFunction(()=>window.openedPrincipal==='principal:alex');
     assert.equal(fixture.state.calls.filter(c=>c.path==='/api/auth/passkey/authenticate/complete').length,1,'passkey-only browser goes straight to its passkey');
     await home();await page.getByRole('button',{name:'Sign in',exact:true}).click();await state('options');await capture('02-sign-in-options');
     assert.equal(await dialog().locator('.connection-option').count(),4);
