@@ -51,8 +51,9 @@ async fn begin(
     f: &wallet_fixture::Fixture,
     action: &str,
     id: &str,
+    connector: &str,
 ) -> auth::BeginResult {
-    let (status,out)=call(app,"/api/auth/wallet-methods/begin",Some(token),Some(json!({"action":action,"method_id":id,"connector":"metamask","address":f.address,"chain_id":20,"browser_secret":BROWSER}))).await;
+    let (status,out)=call(app,"/api/auth/wallet-methods/begin",Some(token),Some(json!({"action":action,"method_id":id,"connector":connector,"address":f.address,"chain_id":20,"browser_secret":BROWSER,"allow_temporary_internet":connector=="walletconnect"}))).await;
     assert_eq!(status, StatusCode::OK, "{out}");
     serde_json::from_value(out).unwrap()
 }
@@ -62,8 +63,9 @@ async fn change(
     f: &wallet_fixture::Fixture,
     action: &str,
     id: &str,
+    connector: &str,
 ) -> Value {
-    let b = begin(app, token, f, action, id).await;
+    let b = begin(app, token, f, action, id, connector).await;
     let intent = b.approval.as_ref().unwrap();
     let approval = issue_passkey_step_up_token_for_test(
         f.data.path(),
@@ -85,7 +87,7 @@ async fn wallet_signin_http_add_signin_remove_journey() {
     let token =
         issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &f.actor).unwrap();
     let app = gateway_router(state);
-    let method = change(&app, &token, &f, "add", "").await;
+    let method = change(&app, &token, &f, "add", "", "metamask").await;
     assert_eq!(method["sign_in_enabled"], true);
     let id = method["method_id"].as_str().unwrap();
     let (status,b)=call(&app,"/api/auth/wallet/signin/begin",None,Some(json!({"connector":"metamask","address":f.address,"chain_id":20,"browser_secret":BROWSER}))).await;
@@ -106,7 +108,7 @@ async fn wallet_signin_http_add_signin_remove_journey() {
     let (status, list) = call(&app, "/api/auth/wallet-methods", Some(wallet_token), None).await;
     assert_eq!(status, StatusCode::OK, "{list}");
     assert_eq!(list["methods"][0]["sign_in_enabled"], true);
-    let b = begin(&app, wallet_token, &f, "remove", id).await;
+    let b = begin(&app, wallet_token, &f, "remove", id, "metamask").await;
     let c = wallet_fixture::completion(&f, &b);
     let (status, _) = call(
         &app,
@@ -122,7 +124,7 @@ async fn wallet_signin_http_add_signin_remove_journey() {
     );
     // Same wallet session can obtain a token issued only after its account's
     // passkey ceremony. The test issuer models that completed WebAuthn proof.
-    change(&app, wallet_token, &f, "remove", id).await;
+    change(&app, wallet_token, &f, "remove", id, "metamask").await;
     assert_eq!(
         call(&app, "/api/auth/wallet-methods", Some(wallet_token), None)
             .await
@@ -168,7 +170,7 @@ async fn wallet_one_state_http_remove_ends_pairing_and_preserves_payment_permiss
         .path()
         .join("ElastOS/SystemServices/WalletConnect/internet.json");
     assert!(!payment_path.exists());
-    let added = change(&app, &token, &f, "add", "").await;
+    let added = change(&app, &token, &f, "add", "", "walletconnect").await;
     assert_eq!(added["sign_in_enabled"], true);
     assert!(
         !payment_path.exists(),
@@ -180,13 +182,13 @@ async fn wallet_one_state_http_remove_ends_pairing_and_preserves_payment_permiss
     std::fs::create_dir_all(payment_path.parent().unwrap()).unwrap();
     std::fs::write(&payment_path, serde_json::to_vec(&payment).unwrap()).unwrap();
     let granted_bytes = std::fs::read(&payment_path).unwrap();
-    change(&app, &token, &f, "remove", id).await;
+    change(&app, &token, &f, "remove", id, "walletconnect").await;
     assert_eq!(
         std::fs::read(&payment_path).unwrap(),
         granted_bytes,
         "method removal preserves a granted payment permission"
     );
-    let replacement = change(&app, &token, &f, "add", "").await;
+    let replacement = change(&app, &token, &f, "add", "", "walletconnect").await;
     let id = replacement["method_id"].as_str().unwrap();
     let inbox = wallet_app_token(f.data.path(), INBOX_CAPSULE_ID, &f.actor);
     let mut headers = HeaderMap::new();
@@ -245,7 +247,7 @@ async fn wallet_one_state_http_remove_ends_pairing_and_preserves_payment_permiss
     let cancel =
         gateway_walletconnect::watch_attempt_socket_for_test(&state, &pair.ceremony_id).await;
     assert!(!*cancel.borrow());
-    change(&app, &token, &f, "remove", id).await;
+    change(&app, &token, &f, "remove", id, "walletconnect").await;
     assert!(
         *cancel.borrow(),
         "the removal response follows anonymous relay retirement"
@@ -417,7 +419,7 @@ async fn wallet_step_up_defaults_to_the_accounts_matching_relying_party() {
     let token =
         issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &session).unwrap();
     let app = gateway_router(test_state(f.data.path()));
-    let b = begin(&app, &token, &f, "remove", &id).await;
+    let b = begin(&app, &token, &f, "remove", &id, "metamask").await;
     let request = &b.approval.as_ref().unwrap()["request"];
     let (status, result) = call(
         &app,
@@ -461,7 +463,7 @@ async fn wallet_session_real_webauthn_approves_only_same_account_and_exact_metho
     let token =
         issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &session).unwrap();
     let app = gateway_router(test_state(f.data.path()));
-    let b = begin(&app, &token, &f, "remove", &id).await;
+    let b = begin(&app, &token, &f, "remove", &id, "metamask").await;
     let request = &b.approval.as_ref().unwrap()["request"];
     let (status,_)=call(&app,"/api/auth/passkey-step-up/begin",Some(&token),Some(json!({"schema":"elastos.auth.passkey-step-up.begin.request/v1","app_token":token,"operation":auth::OPERATION,"request":request,"approving_passkey_id":other}))).await;
     assert!(matches!(
