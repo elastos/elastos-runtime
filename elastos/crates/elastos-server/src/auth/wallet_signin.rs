@@ -1369,6 +1369,88 @@ pub(crate) mod tests {
         id
     }
     #[test]
+    fn wallet_one_state_add_is_live_and_retired_actions_are_refused() {
+        let f = fixture();
+        let id = change(&f, "add", "");
+        assert!(principal(f.data.path(), &id).is_ok());
+        assert_eq!(signin(&f).proof_binding_id, id);
+        for action in ["add_signin", "enable", "disable"] {
+            assert!(begin(
+                f.data.path(),
+                ORIGIN,
+                "home-test",
+                input(action, &id, &f.address),
+                Some(f.actor.clone())
+            )
+            .is_err());
+        }
+    }
+    #[test]
+    fn wallet_one_state_load_deletes_disabled_trial_methods_and_invalidates_ceremonies() {
+        let f = fixture();
+        let id = enabled(&f);
+        let session = signin(&f);
+        let b = begin(
+            f.data.path(),
+            ORIGIN,
+            "home-test",
+            input("add", "", "0x0000000000000000000000000000000000000001"),
+            Some(f.actor.clone()),
+        )
+        .unwrap();
+        let proof = completion(&f, &b);
+        let file = path(f.data.path()).unwrap();
+        let mut saved: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+        saved["methods"][0]["sign_in_enabled"] = false.into();
+        for pending in saved["pending"].as_array_mut().unwrap() {
+            pending.as_object_mut().unwrap().remove("contract_version");
+        }
+        write_secret_bytes_atomic(&file, &serde_json::to_vec(&saved).unwrap()).unwrap();
+        assert!(list(f.data.path(), &f.actor).unwrap()["methods"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert!(read(f.data.path()).unwrap().methods.is_empty());
+        assert!(principal(f.data.path(), &id).is_err());
+        assert!(load_active_session_grant(f.data.path(), &session.session_id, now_ts()).is_err());
+        assert!(
+            complete(f.data.path(), ORIGIN, &proof, Some(&f.actor), |_| panic!(
+                "old ceremony cannot consume approval"
+            ))
+            .is_err()
+        );
+    }
+    #[test]
+    fn wallet_one_state_removing_final_compatible_method_ends_unselected_pairing() {
+        let f = fixture();
+        let id = enabled(&f);
+        let mut req = input("signin", "", "");
+        req.connector = "walletconnect".into();
+        req.chain_id = 0;
+        req.allow_temporary_internet = true;
+        let pair = begin(f.data.path(), ORIGIN, "home-test", req, None).unwrap();
+        change(&f, "remove", &id);
+        assert!(attempt_context(
+            f.data.path(),
+            pair.attempt_token.as_deref().unwrap(),
+            &pair.instance_id,
+            now_ts()
+        )
+        .is_err());
+        assert!(select(
+            f.data.path(),
+            &pair.ceremony_id,
+            BROWSER,
+            ORIGIN,
+            f.address.clone(),
+            20
+        )
+        .is_err());
+        assert!(inactive_attempts(f.data.path())
+            .unwrap()
+            .contains(&pair.ceremony_id));
+    }
+    #[test]
     fn wallet_add_signin_completes_enabled_atomically() {
         let f = fixture();
         let b = begin(
