@@ -582,6 +582,7 @@ pub(crate) fn begin(
             || store
                 .pending
                 .iter()
+                .filter(|p| actor.is_none() || (p.result.is_none() && !p.cancelled))
                 .filter(|p| match (&p.actor, &actor) {
                     (None, None) => true,
                     (Some(a), Some(b)) => a.session_id == b.session_id,
@@ -1468,6 +1469,32 @@ pub(crate) mod tests {
             .and_then(|b| complete(f.data.path(), ORIGIN, &completion(&f, &b), None, |_| Ok(())))
             .is_err());
         }
+    }
+    #[test]
+    fn wallet_completed_changes_leave_live_approval_capacity_available() {
+        let f = fixture();
+        let id = enabled(&f);
+        for _ in 0..4 {
+            change(&f, "enable", &id);
+        }
+        for _ in 0..4 {
+            begin(
+                f.data.path(),
+                ORIGIN,
+                "home-test",
+                input("disable", &id, ""),
+                Some(f.actor.clone()),
+            )
+            .unwrap();
+        }
+        let refused = begin(
+            f.data.path(),
+            ORIGIN,
+            "home-test",
+            input("disable", &id, ""),
+            Some(f.actor.clone()),
+        );
+        assert!(matches!(refused, Err(err) if err.is::<Capacity>()));
     }
     #[test]
     fn wallet_added_off_then_signs_into_same_account_with_same_root_and_metadata() {

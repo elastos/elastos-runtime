@@ -270,7 +270,6 @@ The returned approval request also includes connector, address, chain_id and
 network. Home shows those Runtime-bound values and echoes the full returned
 request unchanged when it asks for passkey approval.
 
-This Runtime lane changes the method API and keeps new wallet controls with the
-screens lane. The combined candidate must include System's explicit Remove
-account state and the permission approval bridge before installation. Runtime
-API tests exercise those intents directly; the lane alone is not a product release.
+System offers explicit Remove account controls and routes sensitive permission
+decisions through Home's passkey approval bridge. Runtime applies the exact
+approved intent when it commits each effect.
