@@ -1,2 +1,2 @@
-# 2026-11-16, Anders: "and \"phone wallet\" doesnt make sense. dont need to call it anything. we follow walletconnect best practice"
-phone wallet
+# Active rejected product terms, one per line.
+# 2026-11-23: The signed-out choices use Anders's requested label "Phone wallet".

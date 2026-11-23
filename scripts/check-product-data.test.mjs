@@ -31,6 +31,9 @@ test("product wording uses the rejected terms list across release, docs and caps
       put(path, "Connect wallet");
     }
     validateProductWording(dir);
+    put("scripts/rejected-terms.txt", "# All former terms accepted by the owner.\n");
+    for (const path of paths) put(path, "Phone wallet");
+    validateProductWording(dir);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

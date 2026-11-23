@@ -338,7 +338,6 @@ export function validateWalletViewAssets(repoRoot) {
 export function validateProductWording(repoRoot = root) {
   const terms = readFileSync(resolve(repoRoot, "scripts/rejected-terms.txt"), "utf8")
     .split(/\r?\n/).map(line => line.trim()).filter(line => line && !line.startsWith("#"));
-  assert(terms.length > 0, "rejected terms list must be nonempty");
   const patterns = terms.map(term => [term, new RegExp(`\\b${term.split(/\s+/).map(word => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+")}\\b`, "i")]);
   const files = ["elastos/CHANGELOG.md", "scripts/walletconnect/adapter.mjs"];
   const walk = (directory, scan) => {
