@@ -259,14 +259,9 @@ pub(super) fn managed_key_scope(chain_namespace: &str) -> Result<&'static str, S
     }
 }
 
-pub(super) fn chain_namespaces_compatible(
-    account_chain_namespace: &str,
-    requested_chain_namespace: &str,
-) -> bool {
-    account_chain_namespace == requested_chain_namespace
-        || (account_chain_namespace.starts_with("eip155:")
-            && requested_chain_namespace.starts_with("eip155:"))
-}
+pub(super) use elastos_wallet_contract::{
+    account_serves_chain_namespace, chain_namespaces_compatible,
+};
 
 pub(super) fn validate_label(value: &str) -> Result<(), String> {
     if value.len() > 80 || value.chars().any(char::is_control) {
