@@ -51,9 +51,9 @@ addEventListener('message',async event=>{
     else if(operation==='sign' && typeof message==='string' && message.length<=32768) {
       await check();
       const data='0x'+[...new TextEncoder().encode(message)].map(b=>b.toString(16).padStart(2,'0')).join('');
-      // The SDK requires its standard 300-second request expiry. Runtime and
+      // The SDK accepts request expiry from 300 seconds; use that minimum. Runtime and
       // the Home flow enforce the shorter ceremony deadline and retire this frame.
-      const signature=await provider.request({method:'personal_sign',params:[data,identity.address]});
+      const signature=await provider.request({method:'personal_sign',params:[data,identity.address]},300);
       await check();if(typeof signature!=='string'||signature.length>16384)throw fault('invalid');
       result={signature,signature_type:'personal_sign',public_key:''};
     } else throw fault('invalid');
