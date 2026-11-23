@@ -45,7 +45,9 @@ async function exercise(engine,width) {
       const style=await page.locator('.signin-dialog').evaluate(node=>{const s=getComputedStyle(node);return {background:s.backgroundColor,font:s.getPropertyValue('--el-font').trim()};});
       assert.notEqual(style.background,'rgba(0, 0, 0, 0)',`${name}: dialog has its shared surface color`);assert(style.font,`${name}: shared type tokens loaded`);
     }
-    const path=join(output,`${engine}-${width}-${name}.png`);await page.screenshot({path,fullPage:true});
+    const path=join(output,`${engine}-${width}-${name}.png`);
+    assert(!pictures.some(p=>p.file===path),'Each screenshot state has a unique saved path');
+    await page.screenshot({path,fullPage:true});
     pictures.push({engine,width,height:width===390?844:900,state:name,file:path,sha256:createHash('sha256').update(await readFile(path)).digest('hex')});
   }
   async function home({scenario='normal',methods}={}) {
@@ -199,7 +201,7 @@ async function exercise(engine,width) {
       await page.locator('.signin-dialog').getByRole('button',{name:'Use passkey',exact:true}).click();await state('done');await capture(`${connector}-enable-done`);await page.locator('.signin-dialog').getByRole('button',{name:'Done',exact:true}).click();
     }
     fixture.state.scenario='unknown';
-    await system.locator('[data-wallet-method="wallet:metamask"]').getByRole('button',{name:'Remove',exact:true}).click();await state('review');await page.locator('.signin-dialog').getByRole('button',{name:'Use passkey',exact:true}).click();await state('unknown');await capture('remove-unknown');
+    await system.locator('[data-wallet-method="wallet:metamask"]').getByRole('button',{name:'Remove',exact:true}).click();await state('review');await page.locator('.signin-dialog').getByRole('button',{name:'Use passkey',exact:true}).click();await state('unknown');await capture('remove-result-retry');
     await page.locator('.signin-dialog').getByRole('button',{name:'Check again',exact:true}).click();await state('done');await page.locator('.signin-dialog').getByRole('button',{name:'Done',exact:true}).click();fixture.state.scenario='normal';
     checks.push(`${engine}/${width}: add all three connectors, enable, disable, remove, passkey cancel/retry, one record across System and Wallet`);
     for(const action of ['add','enable','disable','remove'])for(const outcome of ['busy','refused','unknown']) {
