@@ -31,6 +31,7 @@ class FakeElement {
   focus() {}
 }
 
+const walletButtons = [new FakeElement(), new FakeElement()];
 const elements = new Map();
 const element = (selector) => {
   if (!elements.has(selector)) elements.set(selector, new FakeElement());
@@ -39,7 +40,7 @@ const element = (selector) => {
 globalThis.document = {
   body: { dataset: {} },
   querySelector: element,
-  querySelectorAll: () => [],
+  querySelectorAll: selector => selector === "[data-home-wallet-signin]" ? walletButtons : [],
   getElementById: (id) => element(`#${id}`),
 };
 globalThis.location = new URL("http://localhost:61180/home/");
@@ -230,4 +231,32 @@ test("wallet sign-in opens the account when the contract result has no enrollmen
   assert.equal(profileReadinessActionTarget({}), "system", "passkey enrollment keeps its Profile check");
   assert.equal(profileReadinessActionTarget({...response, profile_readiness:{schema:"elastos.profile.readiness/v1",status:"setup_required"}}, {walletSignin:true}), "system", "explicit Runtime readiness still owns setup");
   assert.equal(profileReadinessActionTarget({...response, profile_readiness:{schema:"elastos.profile.readiness/v1",status:"ready"}}, {walletSignin:true}), "");
+});
+
+test("Home shows wallet sign-in only after Runtime confirms availability", async () => {
+  const supported = window.PublicKeyCredential;
+  try {
+    for (const passkeysAvailable of [true, false]) {
+      window.PublicKeyCredential = passkeysAvailable ? supported : undefined;
+      for (const available of [true, false, undefined]) {
+        routes["/api/auth/passkey/status"] = () => ({body:{registered:true,wallet_signin_available:available}});
+        await showHomeUnlock(() => {});
+        assert(walletButtons.every(button => button.hidden === (available !== true)));
+      }
+    }
+    window.PublicKeyCredential = supported;
+    routes["/api/auth/passkey/status"] = () => ({body:{registered:false,wallet_signin_available:true}});
+    await showHomeUnlock(() => {});assert(walletButtons.every(button => button.hidden));
+    let release;
+    routes["/api/auth/passkey/status"] = () => new Promise(resolve => {release=resolve;});
+    const checking = showHomeUnlock(() => {});
+    assert(walletButtons.every(button => button.hidden && button.disabled));
+    release({body:{registered:true,wallet_signin_available:true}});await checking;
+    assert(walletButtons.every(button => !button.hidden));
+    routes["/api/auth/passkey/status"] = () => {throw new TypeError("Home unavailable");};
+    await showHomeUnlock(() => {});assert(walletButtons.every(button => button.hidden));
+  } finally {
+    window.PublicKeyCredential = supported;
+    routes["/api/auth/passkey/status"] = () => ({body:{registered:true}});
+  }
 });

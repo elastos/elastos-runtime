@@ -11,7 +11,7 @@ export async function readWalletSigninMethods(token,{origin}={}) {
   if(typeof result.account_id!=='string'||!Array.isArray(result.methods)||result.methods.length>256)throw new Error('Home could not load sign-in methods.');
   return result;
 }
-export function requestWalletSigninChange({action,methodId='',token,origin}) {
+export function requestWalletSigninChange({action,methodId='',wallet,token,origin}) {
   if(window.top===window || !token || !origin)return Promise.reject(new Error('Open this app from Home to change wallet sign-in.'));
   const requestId=crypto.randomUUID();
   return new Promise((resolve,reject)=>{
@@ -21,7 +21,7 @@ export function requestWalletSigninChange({action,methodId='',token,origin}) {
       clearTimeout(timeout);window.removeEventListener('message',receive);resolve(event.data.result);
     };
     window.addEventListener('message',receive);
-    window.top.postMessage({type:'home:wallet-signin-request',requestId,homeToken:token,action,methodId},origin);
+    window.top.postMessage({type:'home:wallet-signin-request',requestId,homeToken:token,action,methodId,...(wallet?{wallet:{connector:wallet.connector,address:wallet.address,chain_id:wallet.chain_id,network:wallet.network}}:{})},origin);
   });
 }
 function text(tag,value,className) {const el=document.createElement(tag);el.textContent=value;if(className)el.className=className;return el;}
@@ -30,14 +30,14 @@ export function walletSigninControls(method,{canManage,onAction,buttonClass=''})
   const controls=text('div','','signin-method-controls');
   const toggle=text('button','Sign in','signin-switch');toggle.type='button';toggle.setAttribute('role','switch');toggle.setAttribute('aria-checked',String(method.sign_in_enabled===true));
   toggle.setAttribute('aria-label',`Sign in with ${connectorName(method.connector)} ${shortWalletAddress(method.address)} on ${walletNetwork(method)}`);
-  toggle.disabled=!canManage || method.paymentOnly;toggle.onclick=()=>onAction(method.sign_in_enabled?'disable':'enable',method.method_id);controls.append(toggle);
+  toggle.disabled=method.paymentOnly || !method.sign_in_enabled && !canManage;toggle.onclick=()=>onAction(method.sign_in_enabled?'disable':'enable',method.method_id);controls.append(toggle);
   if(method.paymentOnly) {
-    const add=text('button','Add wallet',buttonClass);add.type='button';add.disabled=!canManage;add.onclick=()=>onAction('add','');controls.append(add);
+    const add=text('button','Add wallet',buttonClass);add.type='button';add.disabled=!canManage;add.onclick=()=>onAction('add',method.method_id);controls.append(add);
     controls.append(text('small','Add this wallet to your account before turning on Sign in.','signin-method-note'));
   } else {
-    const remove=text('button','Remove',buttonClass);remove.type='button';remove.disabled=!canManage;remove.onclick=()=>onAction('remove',method.method_id);controls.append(remove);
+    const remove=text('button','Remove',buttonClass);remove.type='button';remove.onclick=()=>onAction('remove',method.method_id);controls.append(remove);
   }
-  if(!canManage)controls.append(text('small','An Admin manages his own wallet sign-in methods.','signin-method-note'));
+  if(!canManage)controls.append(text('small','Only an Admin can turn sign-in on.','signin-method-note'));
   return controls;
 }
 export function walletSigninTableRow(method,options) {

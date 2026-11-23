@@ -30,7 +30,8 @@ test('enable reviews before signature, then requests exact passkey approval',asy
   assert.equal(f.calls.find(c=>c.sign).sign,'exact Home message');
   assert.deepEqual(f.calls.find(c=>c.approve).approve,{operation:'auth.wallet.method',request:{ceremony_id:'ceremony',action:'enable',account_id:'principal:alex',method_id:method.method_id}});
   assert.equal(f.calls.find(c=>c.path?.endsWith('/complete')).body.step_up_token,'step-up');
-  assert(f.calls.some(c=>c.path?.endsWith('/cancel')&&c.body.ceremony_id==='ceremony'),'confirmed completion clears its temporary transport');
+  assert(!f.calls.some(c=>c.path?.endsWith('/cancel')),'confirmed completion preserves its result');
+  await f.flow.cancel();assert(!f.calls.some(c=>c.path?.endsWith('/cancel')),'closing a confirmed result preserves it');
 });
 test('uncertain completion retries identical proof without signing or approving again',async()=>{
   const f=fixture({lost:true});await f.flow.start({action:'enable',method});await f.flow.confirm();await f.flow.approve();
@@ -221,4 +222,84 @@ test('a late WalletConnect availability reply keeps an active browser-wallet rev
   await flow.choose('metamask');assert.equal(states.at(-1).stage,'review');
   releaseStatus({walletconnect_signin_available:true});await starting;
   assert.equal(flow.state.stage,'review');assert.equal(states.at(-1).stage,'review');
+});
+
+import {signinFixture,sampleMethod} from './lib/wallet-signin-fixture.mjs';
+test('confirmed sign-in keeps the session usable after closing and starting another flow',async()=>{
+  const server=await signinFixture();
+  try {
+    const api=async(path,body)=>{
+      const response=await fetch(server.origin+path,{method:body?'POST':'GET',headers:{'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
+      assert.equal(response.status,200);return response.json();
+    };
+    const flow=createWalletSigninFlow({api,select:async()=>({...sampleMethod('metamask',true),check:async()=>{},sign:async()=>({signature:'fixture-signature'}),close(){}}),approve(){},render(){}});
+    await flow.start();await flow.choose('metamask');await flow.confirm();assert.equal(flow.state.stage,'done');
+    await flow.cancel();await flow.start();await flow.cancel();
+    const response=await fetch(server.origin+'/api/auth/sessions/refresh');
+    assert.equal(response.status,200,'the completed session remains usable');
+    assert(!server.state.calls.some(c=>c.path==='/api/auth/wallet/cancel'));
+  } finally {await server.close();}
+});
+test('fixture cancel revokes a completed sign-in session, matching Runtime',async()=>{
+  const server=await signinFixture();
+  try {
+    const post=async(path,body)=>(await fetch(server.origin+path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)})).json();
+    const browser_secret='a'.repeat(64),wallet=sampleMethod('metamask',true);
+    const begin=await post('/api/auth/wallet/signin/begin',{...wallet,browser_secret});
+    await post('/api/auth/wallet/signin/complete',{ceremony_id:begin.ceremony_id,browser_secret,signature:'fixture-signature'});
+    assert.equal((await fetch(server.origin+'/api/auth/sessions/refresh')).status,200);
+    await post('/api/auth/wallet/cancel',{ceremony_id:begin.ceremony_id,browser_secret});
+    assert.equal((await fetch(server.origin+'/api/auth/sessions/refresh')).status,403);
+  } finally {await server.close();}
+});
+
+import {walletSigninControls} from '../capsules/home/browser/wallet-signin-methods.mjs';
+test('Guests retain Disable and Remove while only Admins can Add or Enable',()=>{
+  const previous=globalThis.document;
+  globalThis.document={createElement:tag=>({tag,children:[],setAttribute(){},append(...nodes){this.children.push(...nodes);}})};
+  try {
+    for(const canManage of [true,false])for(const enabled of [true,false]) {
+      const actions=[],controls=walletSigninControls({...method,sign_in_enabled:enabled},{canManage,onAction:(...args)=>actions.push(args)});
+      const [toggle,remove]=controls.children;
+      assert.equal(Boolean(toggle.disabled),!enabled&&!canManage);assert.equal(Boolean(remove.disabled),false);
+      toggle.onclick();remove.onclick();assert.deepEqual(actions,[[enabled?'disable':'enable',method.method_id],['remove',method.method_id]]);
+      if(!canManage)assert.equal(controls.children.at(-1).textContent,'Only an Admin can turn sign-in on.');
+      const payment=walletSigninControls({...method,paymentOnly:true},{canManage,onAction:(...args)=>actions.push(args)});
+      assert.equal(Boolean(payment.children[0].disabled),true);assert.equal(Boolean(payment.children[1].disabled),!canManage);
+      payment.children[1].onclick();assert.deepEqual(actions.at(-1),['add',method.method_id]);
+    }
+  } finally {globalThis.document=previous;}
+});
+test('payment Add starts with the selected wallet and validates the bound frame intent',async()=>{
+  for(const invalid of ['', 'network', 'source', 'extra', 'action']) {
+    const replies=[],managed=[],source={postMessage:message=>replies.push(message)},context={kind:'app-frame',targetId:invalid==='source'?'system':'wallet',source,homeToken:'wallet-launch'};
+    const wallet={connector:'metamask',address:method.address,chain_id:20,network:''};
+    if(invalid==='network')wallet.network='bitcoin';if(invalid==='extra')wallet.authority='untrusted';
+    handleWalletSigninRequest({source,data:{type:'home:wallet-signin-request',requestId:'add',homeToken:'wallet-launch',action:invalid==='action'?'enable':'add',methodId:'',wallet}},context,{
+      authorityToken:()=> 'home',current:()=>true,changed(){},api:async path=>path.endsWith('/passkeys')?{passkeys:[]}:{account_id:'principal:alex',methods:[]},
+      manage:async input=>{managed.push(input);return {status:'complete'};},
+    });
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(managed.length,invalid?0:1);
+    if(!invalid){assert.deepEqual(managed[0].method,wallet);assert.equal(managed[0].action,'add');assert.equal(replies[0].result.status,'complete');}
+  }
+});
+test('Cancel and expiry revoke a committed but uncertain sign-in',async()=>{
+  for(const action of ['cancel','expire']) {
+    const server=await signinFixture();let clock=Date.now()/1000,cancelled;
+    try {
+      const api=async(path,body)=>{
+        const request=fetch(server.origin+path,{method:body?'POST':'GET',headers:{'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
+        if(path.endsWith('/cancel'))cancelled=request;
+        const response=await request;const result=await response.json();
+        if(path.endsWith('/complete'))throw new TypeError('lost confirmation');return result;
+      };
+      const flow=createWalletSigninFlow({now:()=>clock,api,select:async()=>({...sampleMethod('metamask',true),check:async()=>{},sign:async()=>({signature:'fixture-signature'}),close(){}}),approve(){},render(){}});
+      await flow.start();await flow.choose('metamask');await flow.confirm();assert.equal(flow.state.stage,'unknown');
+      assert.equal((await fetch(server.origin+'/api/auth/sessions/refresh')).status,200,'the lost reply still committed');
+      if(action==='cancel')await flow.cancel();else {clock+=181;await flow.retry();assert.equal(flow.state.stage,'error');}
+      await cancelled;
+      assert.equal((await fetch(server.origin+'/api/auth/sessions/refresh')).status,403,action+' revokes the uncertain result');
+    } finally {await server.close();}
+  }
 });

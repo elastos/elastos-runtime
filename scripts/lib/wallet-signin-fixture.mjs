@@ -33,8 +33,14 @@ export async function signinFixture() {
           if(state.scenario==='load-failed')return json({},503);
           return json({account_id:'principal:alex',methods:state.methods});
         }
-        if(path==='/api/auth/wallet/cancel'){const c=state.ceremonies.get(body.ceremony_id);if(c)c.cancelled=true;return json({status:'cancelled'});}
+        if(path==='/api/auth/wallet/cancel') {
+          const c=state.ceremonies.get(body.ceremony_id);
+          if(!c||c.secret!==body.browser_secret)return json({},403);
+          if(c.result?.session_id&&c.result.session_id===state.activeSession){state.signed=false;state.activeSession=null;}
+          c.cancelled=true;return json({status:'cancelled'});
+        }
         if(['/api/auth/wallet-methods/begin','/api/auth/wallet/signin/begin'].includes(path)) {
+          if(body.action&&['add','enable'].includes(body.action)&&state.role!=='admin')return json({},403);
           if(state.scenario==='busy')return json({},429);
           if(state.scenario==='offline')return json({},503);
           if(state.scenario==='conflict')return json({},409);
@@ -77,7 +83,7 @@ export async function signinFixture() {
           if(!c.result){
             if(c.action==='signin') {
               const signedMethod=state.methods.find(m=>m.sign_in_enabled&&m.address.toLowerCase()===c.method.address.toLowerCase()&&m.chain_id===c.method.chain_id&&m.network===c.method.network);signedMethod.last_used_at=Math.floor(now);
-              state.signed=true;state.walletSession=true;c.result={session_id:'fixture-session',principal_id:'principal:alex',proof_binding_id:signedMethod.method_id,expires_at:now+3600,app_token:'fixture-home'};
+              state.signed=true;state.walletSession=true;state.activeSession=`fixture-session:${c.ceremony_id}`;c.result={session_id:state.activeSession,principal_id:'principal:alex',proof_binding_id:signedMethod.method_id,expires_at:now+3600,app_token:'fixture-home'};
             } else {
               const id=c.method.method_id||`wallet:${c.method.connector}`;
               if(c.action==='add')state.methods.push({...sampleMethod(c.method.connector),created_at:Math.floor(now),last_used_at:null,method_id:id,address:c.method.address,chain_id:c.method.chain_id,network:c.method.network});

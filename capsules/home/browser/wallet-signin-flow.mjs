@@ -126,8 +126,7 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
         : result?.status!==(state.action==='remove'?'removed':'complete') || result?.method_id!==current.ceremony.approval.request.method_id
           || state.action!=='remove' && result.sign_in_enabled!==(state.action==='enable')) throw fault('invalid');
       clearTimeout(timer);run=null;stopLocal(current);
-      // Runtime keeps the completed method/session; cancel ends temporary transport.
-      void clear(current);
+      // Runtime retires the transport. Cancel would revoke the confirmed session.
       show('done',{result});await onComplete(result,state.action);
     } catch(error) {
       if(!live(current))return;
@@ -149,7 +148,7 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
         if(state.stage==='choice')show('choice');
       }
       if(method && live(current)) {
-        if(method.connector==='walletconnect'&&action==='enable')show('internet-notice',{connector:method.connector});
+        if(method.connector==='walletconnect'&&['add','enable'].includes(action))show('internet-notice',{connector:method.connector});
         else await prepare(current,method.connector);
       }
     },

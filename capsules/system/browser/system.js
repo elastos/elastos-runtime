@@ -2637,10 +2637,6 @@ function accountRow(passkey, listState = {}) {
 
   const methodCell = accountCell("Sign-in", "account-method");
   methodCell.textContent = "Passkey";
-  const enabled = document.createElement("span");
-  enabled.className = "signin-method-note";
-  enabled.textContent = "Sign in on";
-  methodCell.append(enabled);
 
   const usedCell = accountCell("Last used", "account-used");
   usedCell.textContent = passkey.last_used_at ? formatTimestamp(passkey.last_used_at) : "Not used yet";

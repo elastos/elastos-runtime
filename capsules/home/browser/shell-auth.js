@@ -60,6 +60,7 @@ let unlockClockTimer = 0;
 let unlockLeaveTimer = 0;
 let unlockPersonLabel = "";
 
+let walletSigninAvailable = false;
 const walletSignin = createHomeWalletSignin({
   approve: requestPasskeyStepUp,
   onPasskey: () => runPasskeySignIn().catch(reportUnlockError),
@@ -89,20 +90,21 @@ export async function showHomeUnlock(onUnlocked, options = {}) {
   unlockPanel.dataset.surface = "neutral";
   delete unlockPanel.dataset.flow;
   unlockPanel.style.removeProperty("--home-unlock-ground");
+  walletSigninAvailable = false;
   renderUnlockChecking();
   unlockPanel.hidden = false;
   unlockPanel.setAttribute("aria-hidden", "false");
   unlockCard?.setAttribute("aria-modal", "true");
 
-  if (!window.PublicKeyCredential) {
-    unlockMode = "unsupported";
-    renderUnlockMode({ registered: true, guestRegistrationEnabled: false });
-    setUnlockStatus("Passkeys are not available in this browser.", "error");
-    return;
-  }
-
   try {
     const status = await fetchJson("/api/auth/passkey/status");
+    walletSigninAvailable = status.wallet_signin_available === true;
+    if (!window.PublicKeyCredential) {
+      unlockMode = "unsupported";
+      renderUnlockMode({ registered: status.registered === true, guestRegistrationEnabled: false });
+      setUnlockStatus("Passkeys are not available in this browser.", "error");
+      return;
+    }
     const registered = status.registered === true;
     const guestRegistrationEnabled = status.guest_registration_enabled === true;
     guestRegistrationAvailable = guestRegistrationEnabled;
@@ -436,6 +438,10 @@ function passkeyAddFailure(stage, error) {
 }
 
 function renderUnlockChecking() {
+  for (const button of document.querySelectorAll("[data-home-wallet-signin]")) {
+    button.hidden = true;
+    button.disabled = true;
+  }
   if (unlockTitle) {
     unlockTitle.textContent = "Sign in";
   }
@@ -466,7 +472,7 @@ function renderUnlockChecking() {
 
 function renderUnlockMode({ registered, guestRegistrationEnabled }) {
   for (const button of document.querySelectorAll("[data-home-wallet-signin]")) {
-    button.hidden = !registered || !["signin", "signin_guest_enabled", "unsupported"].includes(unlockMode);
+    button.hidden = !walletSigninAvailable || !registered || !["signin", "signin_guest_enabled", "unsupported"].includes(unlockMode);
     button.disabled = busy;
   }
   const resumingOwner = unlockMode === "resume_owner";
