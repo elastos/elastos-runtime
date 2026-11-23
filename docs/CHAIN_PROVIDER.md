@@ -6,9 +6,12 @@ runtime/provider plane:
 
 `capsule -> runtime capability -> elastos://chain/* -> chain-provider -> backend`
 
-Capsules do not receive raw RPC URLs, node ports, wallet SDK objects, or private
-keys. The provider owns protocol details; the runtime owns capabilities,
-sessions, registration, and audit.
+Ordinary app capsules receive typed results through this contract, without raw
+RPC URLs, node ports, wallet SDK objects, or private keys. The provider owns
+protocol details; the runtime owns capabilities, sessions, registration, and
+audit. Wallet connector paths keep browser wallet objects and SDK handles inside
+the separate
+[Wallet trust boundary](WALLET_PROVIDER.md).
 
 ## Current Networks
 

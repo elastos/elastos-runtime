@@ -6,6 +6,13 @@ import { dirname, resolve, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { validHostedReceipt, validIsolationClaims } from "./website-claims.mjs";
+import {
+  checkKitMustNotClaimExternalWalletLinkRestore,
+  checkKitMustNotClaimUserFileRestore,
+  checkRejectsListedKitCombinedUserRootEveryKeyWordings,
+  checkRecoveryStolenDeviceStatements,
+  checkUninstallScopeHonest,
+} from "./storage-documentation.test.mjs";
 const HOME_PATH = "/home/";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -104,12 +111,25 @@ check("the paused demo has no Home launch action", () => {
 check("isolation copy states the current boundary and proof scope", () => {
   for (const phrase of ["opaque sandboxed frames", "Home can currently obtain every app's capability",
     "operating-system processes", "Only the model provider is partly confined",
-    "Keys are stored next to the data", "Full backups contain all keys", "seed operator can read",
-    "stolen device or profile key requires a new identity", "integrated and tested together",
+    "Keys are stored next to the data", "A complete data-folder copy contains the keys needed to read the protected data", "seed operator can read",
+    "The Recovery Kit restores the same Profile signing seed and the same built-in Wallet private keys that were in the export",
+    "A new passkey does not replace them", "integrated and tested together",
     "Accepted installed proof binds the exact Runtime", "WASM Components", "Runtime user's rights",
     "Passkeys control sign-in", "while Home is locked", "Use hosted accounts only for public demos",
     "other software or OS users while a self-hosted Home is locked"]) assert.ok(html.includes(phrase), phrase);
+  assert.ok(!/stolen device or profile key requires a new identity/i.test(html),
+    "stolen-device recovery must not require a new identity");
   assert.ok(!/zero ambient authority|every app runs as a sandboxed capsule|fully isolated providers/i.test(html));
+});
+
+check("public website matches storage recovery statements", () => {
+  const readTracked = (path) => readFileSync(resolve(repo, path), "utf8");
+  const website = ["website/elastos/index.html"];
+  checkRecoveryStolenDeviceStatements(website, readTracked);
+  checkRejectsListedKitCombinedUserRootEveryKeyWordings(website, readTracked);
+  checkKitMustNotClaimUserFileRestore(website, readTracked);
+  checkKitMustNotClaimExternalWalletLinkRestore(website, readTracked);
+  checkUninstallScopeHonest(website, readTracked);
 });
 
 check("copy and claims describe evidence honestly", () => {

@@ -117,7 +117,8 @@ adds one line ending in `# Added by the ElastOS installer` to your login profile
 on Ubuntu, or `~/.bash_profile` if you have one). It does this only when the
 install folder is not already on PATH and the line is not there yet, and it
 prints the file it changed. Set `ELASTOS_NO_MODIFY_PATH=1` to skip it. To undo,
-delete that line; `--uninstall` removes it too.
+delete that line yourself. Uninstall does not edit your profile; it prints the
+same line for you to delete.
 
 For automated provisioning, use `--install-only`:
 
@@ -552,8 +553,8 @@ The installer stops this installation's Runtime the same way an install does:
 it stops only processes whose ownership records and command match this
 installation, and removes nothing if another process holds them. It then
 removes the binary, the components (including the release scripts and the
-Browser image), the trusted sources, the verified release and the PATH line the
-installer added to your login profile. Your data
+Browser image), the trusted sources, and the verified release, then prints the
+PATH line the installer added so you can delete it from your login profile. Your data
 directory stays, including Browser profiles, so installing again continues with
 the same identity. Pass the same `--install-dir` you installed with. An install
 or update that is running or was interrupted stops the removal; finish it first.
@@ -571,15 +572,21 @@ To delete your data as well, add `--remove-data`:
 curl -fsSL https://elastos.elacitylabs.com/install.sh | bash -s -- --uninstall --remove-data
 ```
 
-This deletes your identity, wallets and recovery material on this computer.
-Keep your Recovery Kit first: it is the only way to restore that identity.
+This deletes the ElastOS data directory, including the identity, wallets, and
+recovery material stored there. A Recovery Kit file saved outside that directory
+remains. Delete that file yourself if you want it gone. Keep your Recovery Kit
+and separate data backups first; check the
+[storage table](../SECURITY.md#stored-keys-and-recovery) for coverage.
 
 ## Data, keys and backups
 
-Runtime stores keys next to the data they protect in its data home. A full
-backup of that home contains all keys, including wallet keys. Protect the backup
-with the same care as the running Home. A Recovery Kit is sensitive recovery
-material; keep it under your own control.
+Runtime stores keys next to the data they protect in its data home. A complete
+data-folder copy contains the keys needed to read the protected data. Protect
+the backup with the same care as the running Home. System's **Download Recovery Kit**
+saves one recovery file. Keep it under your own control, with its optional
+password.
+The [storage table](../SECURITY.md#stored-keys-and-recovery) lists its contents
+and the data that needs separate backups.
 
 Use hosted accounts only for public demos. Keep wallets, private data and
 recovery material on your own device until
@@ -592,10 +599,14 @@ Passkeys control sign-in. Locking Home stops UI use; the Runtime account and roo
 retain access to stored data and keys. The protection target covers hosted
 operators and root, and other software or OS users while a self-hosted Home is
 locked. An unlocked self-hosted Home trusts its owner and their host software.
-A stolen device or profile key requires a new identity.
+The Recovery Kit restores the same Profile signing seed and the same built-in
+Wallet private keys that were in the export. A new passkey controls sign-in
+only; it does not replace those keys. If your device or a Recovery Kit copy was
+stolen, move funds to new wallet keys and create a new Profile before you treat
+the old identity as closed.
 
-Lost every passkey? Your Recovery Kit brings your account back on the same
-Home, even when guest accounts are off:
+If you lose every passkey, use your Recovery Kit on the same Home, even when guest
+accounts are off:
 
 1. On the computer that runs Home, as the user who installed it, run
    the command shown on the sign-in screen, for example

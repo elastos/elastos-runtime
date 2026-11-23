@@ -68,12 +68,13 @@ identifier in its trusted top-level browser profile. It uses browser
 `crypto.getRandomValues`; there is no weak or opaque-frame fallback. After the
 active `home-gui` frame sends `home:shell-ready`, Home checks the exact source
 WindowProxy, opaque origin, active target, and launch token before handing that
-identifier to the frame. The identifier only correlates an encrypted
-principal-scoped GUI session with the same browser profile. It is not a
+identifier to the frame. The identifier only correlates a principal-scoped GUI
+session with the same browser profile. It is not a
 capability, proof, launch fact, routing input, or authorization decision, and it
-is not added as a Runtime Home summary fact. The existing browser-state session
-payload remains presentation state in the single encrypted principal file. The
-GUI neither reads nor writes browser storage and will not restore or persist a
+is not added as a Runtime Home summary fact. The browser-state session payload
+stays in the principal’s browser-state.json file; Runtime encrypts writes after
+principal-root protection exists, and earlier writes can contain plain JSON.
+The GUI neither reads nor writes browser storage and will not restore or persist a
 window session until this checked handoff succeeds.
 
 Runtime-generated browser routes carry a scoped launch token in the URL
