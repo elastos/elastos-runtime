@@ -34,8 +34,9 @@ pub(crate) struct Method {
 struct Pending {
     id: String,
     action: String,
-    #[serde(default)]
-    creates_method: bool,
+    // Read saved ceremonies from the older contract without granting authority.
+    #[serde(default, rename = "creates_method", skip_serializing)]
+    _legacy_creates_method: bool,
     method: Method,
     origin: String,
     home: String,
@@ -317,7 +318,6 @@ fn reconcile_through(store: &mut Store, auth: &AuthState, revocations_through: u
         if p.result.is_none()
             && p.action != "add"
             && p.action != "signin"
-            && !p.creates_method
             && !live
                 .iter()
                 .any(|(id, g, _)| *id == p.method.method_id && *g == p.method.generation)
@@ -619,11 +619,7 @@ pub(crate) fn begin(
         {
             return Err(Capacity.into());
         }
-        let enable_by_identity = input.action == "enable" && input.method_id.is_empty();
-        let mut creates_method = input.action == "add" || enable_by_identity;
-        let mut method = if !enable_by_identity
-            && matches!(input.action.as_str(), "enable" | "disable" | "remove")
-        {
+        let mut method = if matches!(input.action.as_str(), "enable" | "disable" | "remove") {
             store
                 .methods
                 .iter()
@@ -672,17 +668,7 @@ pub(crate) fn begin(
                 method.connector = input.connector.clone();
             }
         }
-        if enable_by_identity {
-            if let Some(existing) = store.methods.iter().find(|m| same_wallet(m, &method)) {
-                if existing.account_id != method.account_id {
-                    return Err(Conflict.into());
-                }
-                method = existing.clone();
-                method.connector = input.connector.clone();
-                creates_method = false;
-            }
-        }
-        if creates_method {
+        if input.action == "add" {
             if store.methods.len() >= MAX_METHODS {
                 return Err(Capacity.into());
             }
@@ -701,7 +687,7 @@ pub(crate) fn begin(
         let mut pending = Pending {
             id: format!("wallet:{}", random_secret_hex()),
             action: input.action,
-            creates_method,
+            _legacy_creates_method: false,
             method,
             origin: origin.into(),
             home: home.into(),
@@ -913,7 +899,7 @@ pub(crate) fn complete(
         } else {
             // Consume passkey approval only after proof/ownership validation. A
             // failed write leaves authority unchanged; retry needs new approval.
-            let creates_method = p.action == "add" || p.creates_method;
+            let creates_method = p.action == "add";
             if creates_method {
                 if store.methods.len() >= MAX_METHODS {
                     return Err(Capacity.into());
@@ -933,7 +919,7 @@ pub(crate) fn complete(
                 let mut method = p.method.clone();
                 method.witnesses = witnesses(auth, &method.account_id);
                 method.root_key = root_key(auth, &method.account_id);
-                method.sign_in_enabled = p.action == "enable";
+                method.sign_in_enabled = false;
                 store.methods.push(method);
             } else if p.action == "remove" {
                 store.methods.retain(|m| m.method_id != p.method.method_id);

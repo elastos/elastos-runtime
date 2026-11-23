@@ -12,10 +12,11 @@ Turning Sign in on requires a fresh signature from that wallet and fresh passkey
 approval for the exact action. Turning it off or removing it requires fresh
 passkey approval. Payment links acquire sign-in authority only through this
 explicit operation. Wallet sessions can use Home; passkeys approve sensitive actions.
-Ordinary method removal keeps each account's final passkey. A separate explicit
-Remove account intent can remove that account and clears its wallet access. The
-Home's final Admin passkey remains protected. Removal and switch
-off end the wallet's sessions and pending sign-in attempts. Concurrent changes are
+Ordinary passkey removal keeps every account's final active passkey, including
+accounts with wallet sign-in enabled. A separate passkey-approved Remove account
+intent revokes that account's passkeys and clears its wallet access. Another
+Admin account must retain an active passkey before account removal can proceed.
+Removal and switch off end the wallet's sessions and pending sign-in attempts. Concurrent changes are
 serialized. Recovery Kit recovery keeps the passkey recovery flow and clears the
 recovered account's wallets.
 
@@ -76,15 +77,21 @@ Keep the management launch header on these calls. Then sign and approve Add as
 below. Anonymous sign-in pairing requires an already enabled compatible method;
 authenticated Add creates the first method without that prerequisite.
 
-For `enable`, `disable` and `remove`, send `method_id` instead of connector,
-address, chain_id and network. Begin returns:
+For `enable`, `disable` and `remove`, send the owned `method_id` returned by Add
+instead of connector, address, chain_id and network. A payment wallet first uses
+Add, which leaves Sign in off, then Enable with that method ID. Enable requires
+an existing method; wallet identity fields alone cannot create or enable one.
+Begin returns:
 
 ```json
-{"ceremony_id":"wallet:…","message":"Home-built message, empty for disable/remove","expires_at":1800000180,"approval":{"operation":"auth.wallet.method","request":{"ceremony_id":"wallet:…","account_id":"principal:…","action":"add","method_id":"wallet:…"}}}
+{"ceremony_id":"wallet:…","message":"Home-built message, empty for disable/remove","expires_at":1800000180,"approval":{"operation":"auth.wallet.method","request":{"ceremony_id":"wallet:…","account_id":"principal:…","action":"add","method_id":"wallet:…","connector":"metamask","address":"0x…","chain_id":20,"network":"","authorizes_short_public_walletconnect":false},"notice":"Confirm this wallet sign-in method change with your passkey."}}
 ```
 
-Show the account, full wallet address, network and effect before requesting the
-signature or passkey. For add/enable sign the exact `message` using personal_sign
+Show the account, Home origin, full wallet address, network, exact message and
+effect before requesting the signature or passkey. Enable also shows Runtime's
+`approval.notice` before passkey approval. Home echoes the full Runtime-bound
+approval request unchanged when it asks for passkey approval.
+For add/enable sign the exact `message` using personal_sign
 (EVM) or UniSat signMessage (Bitcoin). Then use existing
 `POST /api/auth/passkey-step-up/begin` with its existing schema, app_token and the
 returned approval operation/request. Complete WebAuthn through
@@ -115,12 +122,13 @@ and chain_id after pairing to obtain the message. Selection is bound once.
 signature, signature_type and public_key. Runtime verifies the Home-built proof,
 current switch and ownership, then issues the existing Home authentication result
 (session_id, principal_id, proof_binding_id, expires_at, app_token) and session
-cookie. Home opens the same account directly. A proof for payment linking,
-adding a method, another Home or another browser cannot sign in.
-A wallet signature proves control of the wallet, not that the signer is at this
-browser; the browser secret binds the requester, and the screen tells the person
-which Home and wallet will sign in and asks him to continue only if he started
-sign-in in this browser.
+cookie. Home opens the same account directly. Runtime binds the proof to the
+sign-in purpose, Home origin and ceremony; the browser secret binds completion
+to the requester. A wallet signature proves control of the wallet, not that the
+signer is at this browser. The review shows the Home origin, full address,
+network and exact message, with this line: "Continue only if you started this
+sign-in in this browser." The review uses these details without a separate
+comparison code.
 
 `POST /api/auth/wallet/cancel` accepts ceremony_id and browser_secret and returns
 `{"status":"cancelled"}`. It clears the ceremony's temporary transport authority.
@@ -171,14 +179,24 @@ the original wallet session/grant separately from this approving passkey. Runtim
 checks both at effect commit. Passkey sessions retain their existing selection.
 The existing step-up request/result schema names remain unchanged.
 
-For wallet sessions, these existing POST routes take `x-elastos-step-up-token`
-with a fresh passkey approval. The intent is `{"proof_binding_id":"<target>"}`:
+The removal and role routes keep their names. Ordinary passkey removal and role
+changes from a wallet session require `x-elastos-step-up-token` with a fresh
+same-account passkey approval. Their exact approval request is
+`{"proof_binding_id":"<target>"}`, where `<target>` is a passkey proof binding ID:
 
 | Route | Approval operation |
 |---|---|
 | `/api/auth/passkeys/<target>/revoke` | `auth.passkey.remove` |
 | `/api/auth/passkeys/<target>/promote-admin` | `auth.account.promote` |
 | `/api/auth/passkeys/<target>/demote-guest` | `auth.account.demote` |
+
+These role routes use the target in the path and the approval in the header;
+they take no role-change JSON body. An Admin changes another account's role.
+Promotion makes every passkey of the target account Admin. Demotion makes every
+passkey of that account Guest, requires another account with an active Admin
+passkey, and refuses the caller's own account. Passkey sessions keep their
+direct ordinary removal and role requests. Explicit Remove account requires
+the distinct approved request below from either session type.
 
 Existing add-passkey and full Recovery Kit export contracts retain their step-up
 token fields. Wallet sessions use their account's passkey for those approvals.
@@ -206,18 +224,22 @@ file refuses wallet access while passkey access remains available.
 
 The Sign in ON review displays `approval.notice` before passkey approval. Its
 `approval.request.authorizes_short_public_walletconnect` field is true for an
-ordinary EVM wallet on Elastos Smart Chain or Base. This permission lets visitors
-start bounded sign-in relay connections. The relay service can see the Home
+ordinary EVM wallet on Elastos Smart Chain (20) or Base (8453), whether it was
+added through MetaMask or WalletConnect. This permission lets visitors start
+bounded sign-in relay connections. The relay service can see the Home
 computer's internet address. Runtime binds this effect to the fresh approval.
 Payment connections keep their separate Inbox permission.
 
 A WalletConnect add/enable/sign-in begin sends `allow_temporary_internet: true`
-after the screen shows the short-connection disclosure. The field defaults to
-false. It records the request's consent choice; Runtime treats it as a request,
-not as proof of a physical button press. Signed-out requests also require a
-currently enabled compatible method. Runtime checks that condition during relay
-admission and use. Switching off the final compatible method also ends pairing
-attempts that have yet to select an address.
+only after the person continues past a plain notice that the wallet is reached
+over the internet. The field defaults to false and records consent; authentication
+comes from the signed wallet proof and Runtime's current account state.
+Signed-out pairing also requires at least one enabled compatible EVM method on
+this Home, on chain 20 or 8453, through either MetaMask or WalletConnect.
+`has_relay_method` checks this Home-wide condition; it does not require a prior
+WalletConnect method or the selected address. Runtime checks the condition
+during relay admission and use. Switching off the final compatible method also
+ends pairing attempts that have yet to select an address.
 
 For wallet sessions, `/api/apps/system/access/guest-registration` requires a
 fresh passkey token in `x-elastos-step-up-token`, operation
@@ -238,15 +260,26 @@ addresses and method IDs remain in the authenticated account list.
 
 ## Explicit account removal
 
-Ordinary passkey removal preserves the account's final passkey under concurrent
-requests. A screen that offers Remove account shows the affected account and
-explains that all its passkeys, wallet sign-in methods and sessions will end.
-It calls `/api/auth/passkeys/<target>/revoke` with
-`{"remove_account":true,"account_id":"<exact account>"}` and a fresh passkey token
+Ordinary passkey removal preserves every account's final active passkey under
+concurrent requests, even when wallet sign-in remains enabled or another Admin
+exists. It also preserves the Home's final active Admin passkey. The warning for
+an account's final passkey is "Keep a passkey on this account, or choose Remove
+account." If the target is the Home's final Admin passkey, Runtime instead returns
+"Add another admin passkey before removing this one."
+
+A screen that offers Remove account shows the affected account and explains
+that all its passkeys, wallet sign-in methods and sessions will end. The caller
+can remove his own account; an Admin can remove another account.
+It sends JSON with `Content-Type: application/json` to
+`POST /api/auth/passkeys/<target>/revoke`:
+`{"remove_account":true,"account_id":"<exact account>"}`, with a fresh passkey token
 in `x-elastos-step-up-token`. The operation is `auth.account.remove` and its exact
 request is `{"proof_binding_id":"<target>","account_id":"<exact account>","remove_account":true}`.
-This approval is required for both passkey and wallet sessions. The Home keeps
-its final Admin account. An omitted body means ordinary method removal.
+This approval is required for both passkey and wallet sessions. Runtime requires
+another account with an active Admin passkey before removing an Admin account,
+even when the target account has several passkeys. An omitted body or `{}` means
+ordinary passkey removal. `remove_account: true` requires the explicit matching
+`account_id`; Runtime checks the account and exact approval when it commits removal.
 
 ## Permission decisions from a wallet session
 
@@ -270,21 +303,6 @@ for the Chat launch token.
 `auth.session.revoke`, request `{"session_id":"<target>"}`, and the approval header
 when the target is another session. Signing out the current session stays direct.
 Runtime rechecks current account authority while it commits the revocation.
-
-## Enable a wallet already used for payments
-
-For an existing payment wallet with no Runtime method ID, begin `action: "enable"`
-with connector, full address, chain_id, network and browser_secret, omitting
-method_id. Runtime assigns its method ID before the fresh wallet signature and
-passkey approval. Completion creates the ON method atomically. If this account
-already owns its method, Runtime binds that exact method and generation. Another
-account's ownership is refused. Payment data supplies the selected identity; the
-new proofs supply authority. A removal or switch off cancels pending activation
-for that wallet identity, including an activation begun before its method existed.
-
-The returned approval request also includes connector, address, chain_id and
-network. Home shows those Runtime-bound values and echoes the full returned
-request unchanged when it asks for passkey approval.
 
 Screens implement explicit Remove account controls and route sensitive permission
 decisions through Home's passkey approval bridge before the combined product is
