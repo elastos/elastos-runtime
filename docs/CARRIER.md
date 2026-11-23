@@ -477,8 +477,9 @@ Peer discovery, gossip messaging, and peer-to-peer content transfer. Built into 
   mDNS for local IP discovery
 - `tunnel-provider` capsule using **cloudflared** (HTTP tunnel to public internet)
 
-**Transport:** Carrier chooses direct Iroh QUIC when it works and the release's
-meeting point otherwise. A release carries one HTTPS origin and SHA-256 hashes
+**Transport:** Carrier starts through the release's meeting point and moves to a
+direct Iroh QUIC route when holepunching works. A release carries one HTTPS
+origin and SHA-256 hashes
 of its primary and optional backup DER SubjectPublicKeyInfo (SPKI) inside the Runtime binary. The signed
 release binds that binary's checksum. Both long-lived and temporary endpoints
 use this pair; explicit dials, memory, mDNS and gossip accept that origin only.
@@ -501,17 +502,22 @@ its network is unreachable. Warnings are limited to one per minute per Home.
 
 #### Meeting point operator
 
-The seed operator installs the reviewed Runtime at its stable installed path,
-keeps its existing data and identity, and makes the following additions to its
-existing `config.toml`. Certificate and key paths belong to the operator and
-have access restricted to the service account. The meeting point terminates TLS
-directly; its socket peer address owns source accounting.
+The seed operator runs the meeting point as a separate, least-privilege sidecar
+service, `elastos-meeting-point.service`, under its own service account. The
+reviewed Runtime is installed at `/opt/elastos-meeting-point/elastos`. The
+sidecar owns its data and identity under `/var/lib/elastos-meeting-point`; the
+public Home keeps its own service, data, identity and certificate lineage.
+
+The sidecar gateway listens on `127.0.0.1:8091`. Its systemd unit restricts
+writes to its data directory, drops Linux capabilities, and sets process,
+memory and CPU limits. The sidecar's own `config.toml` contains:
 
 ```toml
 gateway_public_publisher_bootstrap = true
+carrier_bind_addr = "127.0.0.1:4435"
 carrier_relay_bind_addr = "0.0.0.0:4433"
-carrier_relay_tls_cert = "/etc/elastos/meeting-point.crt"
-carrier_relay_tls_key = "/etc/elastos/meeting-point.key"
+carrier_relay_tls_cert = "/etc/elastos-meeting-point/meeting-point.crt"
+carrier_relay_tls_key = "/etc/elastos-meeting-point/meeting-point.key"
 carrier_relay_discovery_bind_addr = "0.0.0.0:7842"
 carrier_relay_connections = 4096
 carrier_relay_pending = 512
@@ -525,14 +531,35 @@ carrier_relay_network_bytes_per_second = 16384
 carrier_relay_network_burst_bytes = 32768
 ```
 
-The operator selects a free TLS listener before signing its origin. This example
-uses TCP 4433 so the public Home can retain TCP 443. A dedicated public address
-can instead give the meeting point TCP 443. The firewall admits the selected TCP
-port and UDP 7842 directly to this process. Existing Home gateway routes retain
-their listener and origin. Discovery uses the protocol's fixed UDP port. Clear HTTP is
-available only in unit tests. Installed fixtures use HTTPS with a disposable
-certificate pin; the release builder uses default features. TLS mode keeps
-its captive-portal helper on an ephemeral loopback port.
+The deployed origin is `https://elastos.elacitylabs.com:4433/`. The sidecar
+terminates TLS on TCP 4433 and runs discovery on UDP 7842. The firewall admits
+both ports directly to the sidecar. Its socket peer address owns source
+accounting. The public Home retains TCP 443 and its gateway origin. TLS mode
+keeps the captive-portal helper on an ephemeral loopback port. Unit tests can
+use clear HTTP; installed fixtures use HTTPS with disposable certificate pins.
+
+The operator kit owns installation and recovery. From the verified kit, run
+`python3 -I preflight.py` and `bash install-sidecar.sh --approved-seed-change`
+as root after operator approval. The installer records the
+installed artifact receipt and the exact resources it creates. To undo this
+installation, run `undo-sidecar.py --approved-seed-undo --destroy-sidecar-state`
+from the kit after operator approval. The undo checks recorded filesystem
+identities and removes the sidecar's resources and isolated identity. The
+public Home remains under its existing service's ownership.
+
+The sidecar has a dedicated Certbot lineage, `elastos-meeting-point`, and its
+own key. Certificate and key copies under `/etc/elastos-meeting-point` are
+root-owned, group-readable by the sidecar account, with mode `0640`. Certbot
+keeps the primary key during renewal. The kit's `renew-sidecar.sh` deploy hook
+acts only on this lineage, checks the primary SPKI and certificate/key match,
+installs the renewed copies under a lock, and restarts an active sidecar with
+`systemctl try-restart`.
+
+The kit's `check-certificate-expiry.sh` runs daily at 06:17 UTC. It checks for
+at least 14 days of certificate validity and reports a failure through stderr
+and the system log when the certificate is unreadable, expired or near expiry.
+The operator connects this check to a monitored alert channel and verifies
+alert delivery before accepting alerting.
 
 Ingress keeps total and pending capacity for at least 64 source allocations;
 IPv4 uses the actual address and IPv6 uses /48. Each allocation can start at
@@ -560,12 +587,13 @@ the first data line and an optional backup pin on the second. Pass only the
 approved HTTPS origin as `carrier_relay_url` to the release-package workflow.
 Native builders read the pins from this repository file. A build with a meeting
 point address and an empty pin file fails. Source release builds use
-`ELASTOS_RELEASE_RELAY_URL` and the same file. The release signer compares the
-`carrier_relay` origin and `spki_sha256` list in each `platform-input.json` and
-the seed's `seed-input.json`, then signs the artifact checksums through the
-existing release ceremony. The seed uses the same approved keys as released
-Homes. Its listener owns incoming connections and source accounting. The
-operator restarts the approved seed service to load its certificate.
+`ELASTOS_RELEASE_RELAY_URL` and the same file. Before signing, the release
+operator compares the `carrier_relay` origin and `spki_sha256` list in each
+`platform-input.json` and the seed's `seed-input.json` with the approved pair.
+The release signer verifies attested platform artifact checksums through the
+existing release ceremony; the operator owns the relay-pair comparison. The
+sidecar presents a key approved by released Homes. Its listener owns incoming
+connections and source accounting.
 
 From a different network, check `https://<approved-origin>/healthz` with a TLS
 client configured to trust that certificate and compare its SPKI digest with an
@@ -591,10 +619,11 @@ signed update. After Homes accept that update, the operator can switch the seed
 to that key. A later release can promote it to primary and replace the backup.
 Irzhy approves the identity and rotation before enablement.
 
-To stop the service, remove its relay bind, discovery and TLS settings together,
-then restart the seed's existing Home service. Ship a signed release with both
-build inputs absent to return Homes to direct-only behavior. The seed operator
-and release signer own these operations.
+To stop the meeting point, the operator stops `elastos-meeting-point.service`.
+Use the kit's approved undo procedure when retiring the installation. To return
+Homes to direct-only behavior, ship a signed release with the meeting point
+origin build input absent. The seed operator and release signer own these
+operations.
 
 Availability, TLS ingress, capacity, signed identity, test-only HTTP, system DNS
 and direct-only ticket compatibility are independent policies. Capacity changes
