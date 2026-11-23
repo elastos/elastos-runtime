@@ -1158,13 +1158,8 @@ input[type="file"].visually-hidden {
 }
 
 .account-block .signin-method-controls {
-  display: grid;
-  grid-template-columns: auto auto;
-}
-
-.account-block .signin-method-note {
-  grid-column: 1 / -1;
-  white-space: normal;
+  display: flex;
+  justify-content: flex-end;
 }
 
 .recovery-pending-actions .pc2-btn {

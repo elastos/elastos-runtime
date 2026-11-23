@@ -330,6 +330,10 @@ test("Accounts groups methods beneath their owner with equal add controls in bot
           assert.equal(await walletRow.getByRole("button").count(), 1);
           assert.equal(await walletRow.getByRole("switch").count(), 0);
           assert.equal(await walletRow.getByRole("button", { name: "Remove", exact: true }).count(), 1);
+          const walletSize = await walletRow.getByRole("button", { name: "Remove", exact: true }).boundingBox();
+          const passkeySize = await block.locator(".passkey-remove").first().boundingBox();
+          assert(Math.abs(walletSize.width - passkeySize.width) <= 1, "wallet and passkey Remove use the same width");
+          assert(Math.abs(walletSize.height - passkeySize.height) <= 1, "wallet and passkey Remove use the same height");
           assert.equal(await block.getByRole("button", { name: "Remove account", exact: true }).count(), 0);
           assert.equal(new Set(await block.locator(".passkey-name").allTextContents()).size, 2);
           const remove = block.locator(".passkey-remove").first();
