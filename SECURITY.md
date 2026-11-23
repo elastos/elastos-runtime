@@ -195,7 +195,10 @@ release a purchase grants. A pin is only local storage: files received in
 Chat, models and withdrawn publications stay pinned, and pinned alone is never
 served to peers. Unpublish withdraws the record, which stops new transfers of
 that file at once, unless another file still shared on this Home (yours or
-another person's) has the same contents. The pin stays until a later cleanup.
+another person's) has the same contents. After an ordinary Library Unpublish,
+the readable copy stays pinned in Home's IPFS repository (`ipfs-repo`). Home
+has no cleanup that removes it, and no user control or documented command yet
+to remove an individual retained copy.
 A Home answers a peer's read in one message and checks again just before
 sending it, so a read under way when the publication is withdrawn is refused
 on the same terms. Bytes already sent can't be recalled.

@@ -30,6 +30,34 @@ const PRINCIPAL_ROOT_ENCRYPTION_LEAD =
 const UPLOAD_STAGING_WARNING =
   "An interrupted upload over 512 KiB can leave a readable copy in Home's `Runtime/ObjectUploadSessions/<id>/payload.bin`. Library cannot resume that upload, and uploading the file again leaves the old copy. Home deletes it only when a later chunked upload starts more than 24 hours after the interrupted one last received data. To remove it sooner, stop Home and delete that `<id>` folder.";
 
+const UNPUBLISH_RETENTION_WARNING =
+  "After an ordinary Library Unpublish, the readable copy stays pinned in Home's IPFS repository (`ipfs-repo`). Home has no cleanup that removes it, and no user control or documented command yet to remove an individual retained copy.";
+
+// Exact wording checks only; these do not exercise IPFS pin retention.
+function checkUnpublishRetentionWarning(document) {
+  assert.ok(document.replace(/\s+/g, " ").includes(UNPUBLISH_RETENTION_WARNING),
+    "ordinary Library Unpublish advice must include the retained readable-copy warning");
+}
+
+test("both documents include the exact ordinary Library Unpublish retention warning", () => {
+  for (const path of ["SECURITY.md", "docs/CONTENT_AVAILABILITY.md"]) {
+    checkUnpublishRetentionWarning(read(path));
+  }
+});
+
+test("the retention wording check rejects both round-eleven cleanup claims", () => {
+  for (const wording of [
+    "The pin stays until a later cleanup.",
+    "the pin stays until a later cleanup removes pins nothing needs.",
+  ]) {
+    assert.throws(() => checkUnpublishRetentionWarning(wording), /retained readable-copy warning/);
+    for (const path of trackedDocumentationPaths()) {
+      assert.ok(!read(path).replace(/\s+/g, " ").includes(wording),
+        `${path}: rejects the listed round-eleven pin-cleanup wording`);
+    }
+  }
+});
+
 // Exact wording check only; this does not exercise upload cleanup or encryption.
 function checkUploadStagingWarning(document) {
   assert.ok(document.replace(/\s+/g, " ").includes(UPLOAD_STAGING_WARNING),

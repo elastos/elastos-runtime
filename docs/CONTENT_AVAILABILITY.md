@@ -618,7 +618,10 @@ person who published it; a protected listing's sealed payload is served to
 any peer, since opening it needs a purchase's key release. Unpublish withdraws
 the record, and new transfers of that file stop at once, unless another file
 still shared on this Home (by the same or another person) has the same
-contents; the pin stays until a later cleanup removes pins nothing needs.
+contents. After an ordinary Library Unpublish, the readable copy stays pinned
+in Home's IPFS repository (`ipfs-repo`). Home has no cleanup that removes it,
+and no user control or documented command yet to remove an individual retained
+copy.
 Library Publish and its Repair pin on this Home only (`local_pin`), with no
 availability wait; Publish pins first and records second, so an interrupted
 publish leaves a pinned CID that is not served. The answer goes out in one
