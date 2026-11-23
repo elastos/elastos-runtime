@@ -10,6 +10,7 @@ const MAX_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_PENDING: usize = 64;
 const MAX_METHODS: usize = 128;
 pub(crate) const OPERATION: &str = "auth.wallet.method";
+const RELAY_NOTICE: &str = "Turning Sign in on lets visitors start short WalletConnect sign-in connections to this Home. The relay service can see this Home computer's internet address. Payment connections keep their separate Inbox permission.";
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -82,6 +83,36 @@ impl std::fmt::Display for Refused {
     }
 }
 impl std::error::Error for Refused {}
+#[derive(Debug)]
+pub(crate) struct Capacity;
+impl std::fmt::Display for Capacity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("wallet_attempts_busy")
+    }
+}
+impl std::error::Error for Capacity {}
+#[derive(Debug)]
+pub(crate) struct Conflict;
+impl std::fmt::Display for Conflict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("wallet_method_conflict")
+    }
+}
+impl std::error::Error for Conflict {}
+fn same_grant(a: &AuthSessionGrantV1, b: &AuthSessionGrantV1) -> bool {
+    a.session_id == b.session_id
+        && a.grant_id == b.grant_id
+        && a.principal_id == b.principal_id
+        && a.proof_binding_id == b.proof_binding_id
+}
+fn same_actor(a: Option<&AuthSessionGrantV1>, b: Option<&AuthSessionGrantV1>) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(a), Some(b)) => same_grant(a, b),
+        _ => false,
+    }
+}
+
 fn require(value: bool) -> anyhow::Result<()> {
     if value {
         Ok(())
@@ -238,7 +269,11 @@ fn reconcile(store: &mut Store, auth: &AuthState) {
         .iter()
         .map(|m| (m.method_id.clone(), m.generation.clone(), m.sign_in_enabled))
         .collect();
+    let relay_enabled = has_relay_method(store);
     for p in &mut store.pending {
+        if p.action == "signin" && p.method.connector == "walletconnect" && !relay_enabled {
+            p.cancelled = true;
+        }
         if p.result.is_none()
             && p.action != "add"
             && p.action != "signin"
@@ -345,7 +380,7 @@ fn require_actor(
     admin: bool,
 ) -> anyhow::Result<()> {
     let matches = |s: &StoredAuthSession| {
-        s.revoked_at.is_none() && s.grant == *actor && s.grant.expires_at > now_ts()
+        s.revoked_at.is_none() && same_grant(&s.grant, actor) && s.grant.expires_at > now_ts()
     };
     require(
         auth.sessions.iter().any(matches)
@@ -374,6 +409,8 @@ pub(crate) struct Begin {
     #[serde(default)]
     pub network: String,
     pub browser_secret: String,
+    #[serde(default)]
+    pub allow_temporary_internet: bool,
 }
 #[derive(Serialize, Deserialize)]
 pub(crate) struct BeginResult {
@@ -417,11 +454,20 @@ fn normalize(input: &Begin) -> anyhow::Result<(String, String)> {
         ))
     }
 }
+fn compatible_relay_method(m: &Method) -> bool {
+    m.connector != "unisat" && matches!(m.chain_id, 20 | 8453)
+}
+fn has_relay_method(store: &Store) -> bool {
+    store
+        .methods
+        .iter()
+        .any(|m| m.sign_in_enabled && compatible_relay_method(m))
+}
 fn same_wallet(a: &Method, b: &Method) -> bool {
     a.address == b.address && a.chain_id == b.chain_id && a.network == b.network
 }
 fn approval(p: &Pending) -> Value {
-    serde_json::json!({"ceremony_id":p.id,"account_id":p.method.account_id,"action":p.action,"method_id":p.method.method_id})
+    serde_json::json!({"ceremony_id":p.id,"account_id":p.method.account_id,"action":p.action,"method_id":p.method.method_id,"authorizes_short_public_walletconnect":p.action == "enable" && compatible_relay_method(&p.method)})
 }
 fn purpose(p: &Pending) -> WalletProofPurpose {
     if p.action == "signin" {
@@ -471,7 +517,7 @@ fn begin_result(p: &Pending, token: Option<String>) -> anyhow::Result<BeginResul
         approval: p
             .actor
             .as_ref()
-            .map(|_| serde_json::json!({"operation":OPERATION,"request":approval(p)})),
+            .map(|_| serde_json::json!({"operation":OPERATION,"request":approval(p),"notice":if p.action == "enable" && compatible_relay_method(&p.method) {RELAY_NOTICE} else {"Confirm this wallet sign-in method change with your passkey."}})),
         attempt_token: token,
         instance_id: p.instance_id.clone(),
         storage_revision: 0,
@@ -501,7 +547,20 @@ pub(crate) fn begin(
         } else {
             require(auth.principals.iter().any(active_passkey))?;
         }
-        require(store.pending.len() < MAX_PENDING)?;
+        if store.pending.len() >= MAX_PENDING
+            || store
+                .pending
+                .iter()
+                .filter(|p| match (&p.actor, &actor) {
+                    (None, None) => true,
+                    (Some(a), Some(b)) => a.session_id == b.session_id,
+                    _ => false,
+                })
+                .count()
+                >= if actor.is_none() { 32 } else { 4 }
+        {
+            return Err(Capacity.into());
+        }
         let mut method = if matches!(input.action.as_str(), "enable" | "disable" | "remove") {
             store
                 .methods
@@ -552,9 +611,19 @@ pub(crate) fn begin(
             }
         }
         if input.action == "add" {
-            require(store.methods.len() < MAX_METHODS)?;
+            if store.methods.len() >= MAX_METHODS {
+                return Err(Capacity.into());
+            }
             method.witnesses = witnesses(auth, &method.account_id);
             method.root_key = root_key(auth, &method.account_id);
+        }
+        if method.connector == "walletconnect"
+            && matches!(input.action.as_str(), "signin" | "add" | "enable")
+        {
+            require(input.allow_temporary_internet)?;
+            if actor.is_none() {
+                require(has_relay_method(store))?;
+            }
         }
         let token = random_secret_hex();
         let mut pending = Pending {
@@ -618,7 +687,7 @@ pub(crate) fn intent(
     mutate(data, |auth, store| {
         require_actor(auth, store, actor, true)?;
         let p = pending(store, id, browser, origin)?;
-        require(p.actor.as_ref() == Some(actor))?;
+        require(same_actor(p.actor.as_ref(), Some(actor)))?;
         Ok(approval(p))
     })
 }
@@ -704,7 +773,7 @@ pub(crate) fn complete(
 ) -> anyhow::Result<Value> {
     mutate(data, |auth, store| {
         let p = pending(store, &input.ceremony_id, &input.browser_secret, origin)?.clone();
-        require(p.actor.as_ref() == actor)?;
+        require(same_actor(p.actor.as_ref(), actor))?;
         if let Some(actor) = actor {
             require_actor(auth, store, actor, true)?;
         }
@@ -740,7 +809,9 @@ pub(crate) fn complete(
             let m = &mut store.methods[index];
             m.last_used_at = Some(now_ts());
             let now = now_ts();
-            require(store.sessions.len() < 1024)?;
+            if store.sessions.len() >= 1024 {
+                return Err(Capacity.into());
+            }
             let grant = AuthSessionGrantV1 {
                 schema: AuthSessionGrantV1::SCHEMA.into(),
                 session_id: format!("auth:wallet:{}", random_secret_hex()),
@@ -760,7 +831,9 @@ pub(crate) fn complete(
             // Consume passkey approval only after proof/ownership validation. A
             // failed write leaves authority unchanged; retry needs new approval.
             if p.action == "add" {
-                require(!store.methods.iter().any(|m| same_wallet(m, &p.method)))?;
+                if store.methods.iter().any(|m| same_wallet(m, &p.method)) {
+                    return Err(Conflict.into());
+                }
             } else {
                 require(store.methods.iter().any(|m| {
                     m.method_id == p.method.method_id
@@ -855,6 +928,7 @@ pub(crate) fn select(
             chain_id,
             network: String::new(),
             browser_secret: String::new(),
+            allow_temporary_internet: false,
         };
         let (address, _) = normalize(&input)?;
         p.method.address = address;
@@ -922,7 +996,7 @@ pub(crate) fn approval_intent(
             .iter()
             .find(|p| p.id == id && !p.cancelled && p.expires_at > now_ts() && p.result.is_none())
             .ok_or(Refused)?;
-        require(p.actor.as_ref() == Some(actor))?;
+        require(same_actor(p.actor.as_ref(), Some(actor)))?;
         Ok(approval(p))
     })
 }
@@ -1346,6 +1420,7 @@ pub(crate) mod tests {
         enabled(&f);
         let mut request = input("signin", "", "");
         request.connector = "walletconnect".into();
+        request.allow_temporary_internet = true;
         request.chain_id = 0;
         let b = begin(f.data.path(), ORIGIN, "home-test", request, None).unwrap();
         assert!(attempt_context(
@@ -1683,6 +1758,7 @@ pub(crate) mod tests {
         let f = fixture();
         let mut request = input("add", "", "");
         request.connector = "walletconnect".into();
+        request.allow_temporary_internet = true;
         request.chain_id = 0;
         let pair = begin(
             f.data.path(),

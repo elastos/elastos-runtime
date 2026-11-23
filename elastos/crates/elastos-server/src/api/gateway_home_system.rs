@@ -5590,7 +5590,7 @@ fn require_admin_proof_binding(
     };
     let principal = crate::auth::load_principal_for_proof_binding(data_dir, proof_binding_id)?;
     crate::auth::ensure_proof_binding_not_revoked(&principal)?;
-    if !crate::auth::is_admin(&principal) {
+    if !crate::auth::is_admin(&principal) || principal.proof_binding.passkey.is_none() {
         anyhow::bail!("admin passkey required");
     }
     Ok(())
@@ -8095,7 +8095,20 @@ pub(super) async fn system_guest_registration_update(
     if !crate::auth::is_admin(&principal) {
         return system_error_response(anyhow::anyhow!("admin passkey required"));
     }
-    match crate::auth::set_guest_registration_enabled(&state.data_dir, req.enabled, now_ts()) {
+    match crate::auth::set_guest_registration_enabled_approved(
+        &state.data_dir,
+        req.enabled,
+        now_ts(),
+        || {
+            super::super::auth_gateway::wallet_session_approval(
+                &state,
+                &headers,
+                &context,
+                "auth.account.guest-registration",
+                &serde_json::json!({"enabled":req.enabled}),
+            )
+        },
+    ) {
         Ok(_) => Json(system_access_summary(&state.data_dir, &context)).into_response(),
         Err(err) => system_error_response(err),
     }

@@ -6560,6 +6560,15 @@ pub fn set_guest_registration_enabled(
     enabled: bool,
     updated_at: u64,
 ) -> anyhow::Result<bool> {
+    set_guest_registration_enabled_approved(data_dir, enabled, updated_at, || Ok(()))
+}
+
+pub(crate) fn set_guest_registration_enabled_approved(
+    data_dir: &Path,
+    enabled: bool,
+    updated_at: u64,
+    approve: impl FnOnce() -> anyhow::Result<()>,
+) -> anyhow::Result<bool> {
     let reason = if enabled {
         "guest passkey registration enabled"
     } else {
@@ -6587,6 +6596,7 @@ pub fn set_guest_registration_enabled(
         },
     )?;
     mutate_auth_state(data_dir, |state| {
+        approve()?;
         state.guest_registration_enabled = enabled;
         push_audit_event(data_dir, state, event)?;
         Ok(enabled)

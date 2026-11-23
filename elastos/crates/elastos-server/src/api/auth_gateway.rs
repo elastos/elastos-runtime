@@ -1147,7 +1147,7 @@ async fn passkey_list_inner(
     })
 }
 
-fn wallet_session_approval(
+pub(in crate::api) fn wallet_session_approval(
     state: &GatewayState,
     headers: &HeaderMap,
     context: &super::gateway::HomeLaunchTokenContext,

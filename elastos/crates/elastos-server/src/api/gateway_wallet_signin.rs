@@ -41,6 +41,29 @@ pub(super) fn approval_for_launch(
 fn response<T: Serialize>(result: anyhow::Result<T>) -> Response {
     let mut response = match result {
         Ok(value) => Json(value).into_response(),
+        Err(error) if error.is::<gateway_walletconnect::AttemptCapacity>() => {
+            let seconds = error
+                .downcast_ref::<gateway_walletconnect::AttemptCapacity>()
+                .expect("capacity")
+                .retry_after_secs;
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                [("retry-after", seconds.to_string())],
+                Json(json!({"error":"wallet_attempts_busy"})),
+            )
+                .into_response()
+        }
+        Err(error) if error.is::<auth::Capacity>() => (
+            StatusCode::TOO_MANY_REQUESTS,
+            [("retry-after", "180")],
+            Json(json!({"error":"wallet_attempts_busy"})),
+        )
+            .into_response(),
+        Err(error) if error.is::<auth::Conflict>() => (
+            StatusCode::CONFLICT,
+            Json(json!({"error":"wallet_method_conflict"})),
+        )
+            .into_response(),
         Err(_) => (
             StatusCode::FORBIDDEN,
             Json(json!({"error":"wallet_signin_refused"})),

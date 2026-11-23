@@ -10,7 +10,7 @@ use tokio::time::Instant;
 
 pub(super) const GRANT: &str = "walletconnect.internet.grant";
 pub(super) const REVOKE: &str = "walletconnect.internet.revoke";
-const CONSENT: &str = "WalletConnect needs internet access to connect your wallet to this Home. The WalletConnect service carries the messages and can see this computer's internet address. Your keys stay in your wallet, where you approve each request. You can turn this off at any time in Inbox.";
+const CONSENT: &str = "WalletConnect needs internet access for payment connections. Its relay service can see this computer's internet address. Your keys stay in your wallet. You can turn payment connections off here. Wallet sign-in uses separate, short connections when Sign in is on for a compatible wallet.";
 const MAX_BYTES: usize = 1024 * 1024;
 const MAX_SOCKETS: usize = 2;
 const RESOURCE: &str = "elastos://walletconnect/internet";
@@ -18,7 +18,7 @@ const RESOURCE: &str = "elastos://walletconnect/internet";
 mod attempts;
 pub(in crate::api) use attempts::{
     admit_attempt, attempt_config, attempt_headers_present, attempt_route, install_attempt,
-    install_confirmation, issue_lock, preflight, require_attempt, retire_attempt,
+    install_confirmation, issue_lock, preflight, require_attempt, retire_attempt, AttemptCapacity,
 };
 
 #[derive(Debug)]
@@ -157,7 +157,7 @@ fn request(c: &Consent) -> anyhow::Result<serde_json::Value> {
     }
     Ok(
         json!({"resource":"elastos://walletconnect/internet", "id":c.id, "issued_at":c.at,
-        "text":if c.status == "granted" { "Stop WalletConnect relay access on this computer." } else { CONSENT }}),
+        "text":if c.status == "granted" { "Stop WalletConnect payment connections. Enabled wallet sign-in methods use separate short connections." } else { CONSENT }}),
     )
 }
 fn public(c: Option<&Consent>) -> serde_json::Value {
@@ -323,7 +323,7 @@ pub(super) async fn answer(
                 clear_all_storage(&state.data_dir)?;
                 c.cleanup_pending = false;
                 save(&state.data_dir, &c)?;
-                return Ok("Internet access for WalletConnect is off.".into());
+                return Ok("WalletConnect payment connections are off. Enabled wallet sign-in methods use separate short connections.".into());
             }
         }
         _ => anyhow::bail!("Home could not complete this WalletConnect request. Try again."),
@@ -361,11 +361,11 @@ pub(super) fn notification(
         body: if pending {
             CONSENT
         } else if c.status == "granted" {
-            "WalletConnect can use the internet."
+            "WalletConnect payment connections can use the internet. Enabled wallet sign-in methods use separate short connections."
         } else if c.cleanup_pending {
-            "Internet access for WalletConnect is off. Choose Finish disconnecting to remove the saved connection."
+            "WalletConnect payment connections are off. Enabled wallet sign-in methods use separate short connections. Choose Finish disconnecting to remove the saved connection."
         } else {
-            "Internet access for WalletConnect is off."
+            "WalletConnect payment connections are off. Enabled wallet sign-in methods use separate short connections."
         }
         .into(),
         severity: if pending { "attention" } else { "info" }.into(),

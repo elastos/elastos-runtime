@@ -7625,7 +7625,9 @@ fn validate_shared_access_recipient_proof(
         .ok_or_else(|| {
             anyhow!("library shared_access recipient_proof requires proof_binding_id")
         })?;
-    if !proof_binding_id.starts_with("proof:passkey:") {
+    if !proof_binding_id.starts_with("proof:passkey:")
+        && !proof_binding_id.starts_with("proof:signin-wallet:")
+    {
         bail!("library shared_access recipient_proof requires passkey proof binding");
     }
     let claimed = proof

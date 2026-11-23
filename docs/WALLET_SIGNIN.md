@@ -27,14 +27,14 @@ at both begin and completion routes.
 
 JSON POST bodies have a 96 KiB limit. Fields shown are required unless marked
 optional. Signed-in requests carry the existing Home/System launch token in the
-Authorization header. Runtime checks the live session, account and method again
+`x-elastos-home-token` header. Runtime checks the live session, account and method again
 at completion. Public requests use the configured passkey origin policy (HTTPS
 outside loopback). A ceremony lasts at most 180 seconds. IDs are opaque.
 A caller generates a random 32-byte hex `browser_secret` per ceremony, keeps it
 in tab memory, and sends it on begin and complete. Runtime stores its digest.
 Secrets and signatures stay out of URLs, logs and durable browser storage.
 
-Errors use HTTP 400 for invalid input, 403 for refused authority/proof, 409 for
+Errors use HTTP 400/422 for invalid input, 403 for refused authority/proof, 409 for
 changed state or conflicting ownership, 429 for capacity and 503 for unavailable
 transport. JSON is `{"error":"wallet_signin_refused"}` for unknown wallet, wrong
 browser, expired/replayed proof and disabled method. Signed-out responses disclose
@@ -142,3 +142,66 @@ approval → on. Disable/remove: review effect → passkey approval → complete
 Sign-in: signer choice → pair/select → review → sign → Home. Every pending state
 has Cancel and an expiry path. An uncertain response is retried with the same
 ceremony; a refused or expired ceremony starts from signer choice.
+
+## Account actions from a wallet session
+
+The existing passkey step-up begin accepts optional `approving_passkey_id`. For a
+wallet session it selects an active passkey from the same account; omission selects
+the first available account passkey. The pending proof and signed approval retain
+the original wallet session/grant separately from this approving passkey. Runtime
+checks both at effect commit. Passkey sessions retain their existing selection.
+The existing step-up request/result schema names remain unchanged.
+
+For wallet sessions, these existing POST routes take `x-elastos-step-up-token`
+with a fresh passkey approval. The intent is `{"proof_binding_id":"<target>"}`:
+
+| Route | Approval operation |
+|---|---|
+| `/api/auth/passkeys/<target>/revoke` | `auth.passkey.remove` |
+| `/api/auth/passkeys/<target>/promote-admin` | `auth.account.promote` |
+| `/api/auth/passkeys/<target>/demote-guest` | `auth.account.demote` |
+
+Existing add-passkey and full Recovery Kit export contracts retain their step-up
+token fields. Wallet sessions use their account's passkey for those approvals.
+Kit recovery continues through the passkey recovery path.
+
+WalletConnect add may begin with an empty address and chain_id 0, then call the
+same `/api/auth/wallet/signin/select` route with the management ceremony and its
+browser secret. Runtime retains the account and action across selection. Removal
+and switch off grant zero temporary relay authority. Wallet responses include
+`home_token` and `system_token`; `app_token` is an alias for `home_token`.
+
+Method changes and response retries require a live original session. Revocation
+wins over a cached success. Session renewal keeps the ceremony's session/grant
+identity and its original deadline. A browser with an uncertain disabled-method
+response can sign in with its passkey and read the current list.
+
+The additive record stores current passkey witnesses and a checkpoint in the
+legacy signed audit history. Passkey rotation preserves wallets when continuity
+is proven. After Undo, a missing or pruned audit continuation requires adding the
+wallet again with a fresh signature and passkey approval. This conservative
+refusal also covers recovery performed by the older binary. A malformed wallet
+file refuses wallet access while passkey access remains available.
+
+## Short WalletConnect sign-in permission
+
+The Sign in ON review displays `approval.notice` before passkey approval. Its
+`approval.request.authorizes_short_public_walletconnect` field is true for an
+ordinary EVM wallet on Elastos Smart Chain or Base. This permission lets visitors
+start bounded sign-in relay connections. The relay service can see the Home
+computer's internet address. Runtime binds this effect to the fresh approval.
+Payment connections keep their separate Inbox permission.
+
+A WalletConnect add/enable/sign-in begin sends `allow_temporary_internet: true`
+after the screen shows the short-connection disclosure. The field defaults to
+false. It records the request's consent choice; Runtime treats it as a request,
+not as proof of a physical button press. Signed-out requests also require a
+currently enabled compatible method. Runtime checks that condition during relay
+admission and use. Switching off the final compatible method also ends pairing
+attempts that have yet to select an address.
+
+For wallet sessions, `/api/apps/system/access/guest-registration` requires a
+fresh passkey token in `x-elastos-step-up-token`, operation
+`auth.account.guest-registration`, request `{"enabled":true}` or false as sent.
+Host controls, including the host terminal, require a passkey session. Profile
+and Library account access accept the Runtime-verified wallet account binding.

@@ -442,7 +442,9 @@ pub(crate) fn require_profile_authority_passkey_binding(
 ) -> anyhow::Result<()> {
     let proof_binding_id =
         proof_binding_id.ok_or_else(|| anyhow!("proof-bound passkey session required"))?;
-    if !proof_binding_id.starts_with("proof:passkey:") {
+    if !proof_binding_id.starts_with("proof:passkey:")
+        && !proof_binding_id.starts_with("proof:signin-wallet:")
+    {
         anyhow::bail!("proof-bound passkey session required");
     }
     let principal = crate::auth::load_principal_for_proof_binding(data_dir, proof_binding_id)?;
