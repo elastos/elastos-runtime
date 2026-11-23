@@ -3,6 +3,7 @@ import { createHomeWalletSignin } from "./wallet-signin-view.mjs?v=wallet-signin
 import {
   clearHomeAuthorityToken,
   fetchJson,
+  getHomeAuthorityToken,
   setHomeAuthorityToken,
 } from "./shell-core.js?v=home-wallpaper-20261030b";
 import { ownerRecoveryCommand } from "./owner-recovery-command.js?v=home-update-20261003a";
@@ -992,6 +993,17 @@ async function runOwnerRecovery() {
   }
 }
 
+// Wallet display hints are optional. Late reads belong to this session and list.
+async function refreshSigninOptionsAfterUnlock(token) {
+  const previous=JSON.stringify(readSigninOptions());
+  const current=()=>getHomeAuthorityToken()===token&&JSON.stringify(readSigninOptions())===previous;
+  try {
+    if(!token||!current())return;
+    const result=await fetchJson("/api/auth/wallet-methods",{headers:{"x-elastos-home-token":token},signal:AbortSignal.timeout(15000)});
+    if(current())saveSigninOptions(result.methods);
+  }catch{if(current())saveSigninOptions([]);}
+}
+
 async function runPasskeySignIn() {
   if (busy || !window.PublicKeyCredential) {
     return;
@@ -1017,9 +1029,9 @@ async function runPasskeySignIn() {
       }),
     });
     setHomeAuthorityToken(response?.home_token, response);
-    try {const methods=await fetchJson("/api/auth/wallet-methods",{headers:{"x-elastos-home-token":response.home_token}});saveSigninOptions(methods.methods);}catch{saveSigninOptions([]);}
     stage = "open";
     await unlockComplete(response);
+    void refreshSigninOptionsAfterUnlock(response.home_token);
   } catch (error) {
     throw signInFailure(stage, error);
   } finally {

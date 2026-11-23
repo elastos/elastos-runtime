@@ -32,6 +32,7 @@ function fixture({ guest = false, purpose = "create", terminalLoss = false, owne
   const values = new Map();
   const requests = [];
   const writes = [];
+  let authorityToken = "";
   let verified = false, acknowledged = false, creates = 0, gets = 0, now = 1000000;
   let writeFailure = false, readFailure = false, removeFailure = false;
   let beforeBegin = () => {}, afterBegin = () => {}, afterCreate = () => {};
@@ -91,7 +92,7 @@ function fixture({ guest = false, purpose = "create", terminalLoss = false, owne
             signature: new Uint8Array([4]).buffer, userHandle: null } };
       } } },
       Date: class extends Date { static now() { return now; } }, Uint8Array, ArrayBuffer, TextEncoder, AbortController, AbortSignal, atob, btoa,
-      setHomeAuthorityToken() {}, clearHomeAuthorityToken() {},
+      setHomeAuthorityToken(value) {authorityToken=value||"";}, getHomeAuthorityToken() {return authorityToken;}, clearHomeAuthorityToken() {authorityToken="";},
       async fetchJson(path, options = {}) {
         requests.push({ path, options });
         if (path.startsWith("/api/auth/owner-recovery/")) {
