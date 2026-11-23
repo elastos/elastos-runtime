@@ -61,7 +61,6 @@ const MAX_EFFECTFUL_LIFECYCLE_HISTORY: usize = 512;
 const MANAGED_EVM_PROOF_TYPE: &str = "managed_evm";
 const MANAGED_BTC_P2WPKH_PROOF_TYPE: &str = "managed_btc_p2wpkh";
 const WALLET_KEY_FILE: &str = "wallet-key.hex";
-const BITCOIN_MAINNET_BIP122: &str = "000000000019d6689c085ae165831e93";
 const BITCOIN_MAINNET_CHAIN_NAMESPACE: &str = "bip122:000000000019d6689c085ae165831e93";
 const BITCOIN_CHALLENGE_SCHEMA: &str = "elastos.wallet.bitcoin_challenge/v1";
 
