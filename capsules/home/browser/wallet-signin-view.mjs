@@ -42,7 +42,7 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
   }
   function option(label,detail,kind,action) {
     const el=button('',action);el.className='connection-option';
-    if(kind==='passkey'){const icon=node('span','⚿','signin-passkey-icon');icon.setAttribute('aria-hidden','true');el.append(icon);}else if(kind){const icon=node('img');icon.alt='';icon.src=`./connection-${kind}.png`;el.append(icon);}
+    if(kind==='passkey'){const icon=document.createElementNS('http://www.w3.org/2000/svg','svg');icon.setAttribute('viewBox','0 0 24 24');icon.setAttribute('class','signin-passkey-icon');icon.setAttribute('aria-hidden','true');icon.innerHTML='<circle cx="8" cy="8" r="5"/><path d="m11.5 11.5 8 8m-3-3 3-3m-6 0 3-3"/>';el.append(icon);}else if(kind){const icon=node('img');icon.alt='';icon.src=`./connection-${kind}.png`;el.append(icon);}
     const copy=node('span');copy.append(node('span',label,'connection-option-label'));if(detail)copy.append(node('span',detail,'connection-note'));el.append(copy,node('span','›'));return el;
   }
   async function chooseSignin(method) {

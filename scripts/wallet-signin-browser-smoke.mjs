@@ -81,7 +81,7 @@ async function exercise(engine,width,theme) {
     assert(fixture.state.calls.filter(c=>c.path==='/api/fixture-sdk'&&c.body.method==='personal_sign').length>0);
     checks.push(`${engine}/${width}/${theme}: signed-out WalletConnect uses the shared QR, explicit relay consent, personal_sign and temporary transport`);
 
-    await home();await page.evaluate(()=>{localStorage.removeItem('elastos.signin.options.v1');localStorage.removeItem('elastos.signin.choice.v1');window.walletFixture.missing=true;window.unisat=undefined;});
+    await page.goto(fixture.origin+'/home/?desktop-app',{waitUntil:'domcontentloaded'});await page.waitForFunction(()=>window.fixtureReady);await page.evaluate(()=>{localStorage.removeItem('elastos.signin.options.v1');localStorage.removeItem('elastos.signin.choice.v1');});
     await page.getByRole('button',{name:'Sign in',exact:true}).click();await state('options');
     assert.equal(await dialog().locator('.connection-option').count(),2,'desktop without local hints offers Passkey and configured WalletConnect');
     assert.equal(await option('MetaMask').count(),0);assert.equal(await option('UniSat').count(),0);await capture('21-desktop-options');

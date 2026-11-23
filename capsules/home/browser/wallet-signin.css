@@ -26,4 +26,4 @@
 .account-row[data-wallet-method] .account-name-wrap .signin-method-note { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
 @media (max-width: 480px) { .signin-dialog { padding: 20px; } }
 
-.signin-passkey-icon { display: grid; place-items: center; width: 28px; height: 28px; font-size: 28px; line-height: 1; }
+.signin-passkey-icon { flex: 0 0 28px; width: 28px; height: 28px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }

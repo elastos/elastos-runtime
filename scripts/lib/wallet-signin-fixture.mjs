@@ -228,7 +228,7 @@ export function installSigninProviders({evmAddress,bitcoinAddress,theme='light'}
   if(new URLSearchParams(location.search).has('no-passkeys'))window.PublicKeyCredential=undefined;
   else window.PublicKeyCredential ||= function PublicKeyCredential(){};
   const listeners=new Map();
-  window.walletFixture={mode:'normal',chain:20,address:evmAddress,network:'livenet',calls:[],pending:[],missing:false,multiple:false,passkeyMode:'normal'};
+  window.walletFixture={mode:'normal',chain:20,address:evmAddress,network:'livenet',calls:[],pending:[],missing:new URLSearchParams(location.search).has('desktop-app'),multiple:false,passkeyMode:'normal'};
   const f=window.walletFixture;
   function ask(method,result){
     f.calls.push({method});
@@ -242,6 +242,7 @@ export function installSigninProviders({evmAddress,bitcoinAddress,theme='light'}
     for(const [uuid,rdns,name]of f.multiple?[['rabby','io.rabby','Rabby Wallet'],['brave','com.brave.wallet','Brave Wallet']]:[['metamask','io.metamask','MetaMask']])window.dispatchEvent(new CustomEvent('eip6963:announceProvider',{detail:{provider:f.multiple?{...provider,request:args=>provider.request(args)}:provider,info:{uuid,rdns,name}}}));
   });
   window.unisat={...provider,requestAccounts:()=>ask('requestAccounts',[bitcoinAddress]),getAccounts:()=>Promise.resolve([bitcoinAddress]),getNetwork:()=>Promise.resolve(f.network),getPublicKey:()=>Promise.resolve('fixture-public-key'),signMessage:()=>ask('signMessage','fixture-signature')};
+  if(new URLSearchParams(location.search).has('desktop-app'))window.unisat=undefined;
   window.emitSigninWallet=name=>{for(const listener of listeners.get(name)||[])listener();};
   Object.defineProperty(navigator,'credentials',{value:{get:async({signal})=>{
     f.calls.push({method:'passkey'});
