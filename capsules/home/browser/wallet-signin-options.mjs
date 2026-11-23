@@ -31,3 +31,12 @@ export function readSigninChoice(storage) {
 export function saveSigninChoice(value,storage) {
   try{storage ||= globalThis.localStorage;if(value)storage.setItem(choiceKey,value);else storage.removeItem(choiceKey);}catch{}
 }
+
+// Host capabilities are inputs so desktop and browser cases share one rule.
+export function availableSigninOptions(methods,{providers=[],unisatAvailable=false,walletconnectAvailable=false}={}) {
+  const options=methods.filter(method=>method.connector==='walletconnect'?walletconnectAvailable:
+    method.connector==='unisat'?unisatAvailable:
+    providers.some(provider=>!method.providerId||provider.rdns===method.providerId));
+  if(walletconnectAvailable&&!options.some(method=>method.connector==='walletconnect'))options.push({connector:'walletconnect',chooseConnector:true});
+  return options;
+}

@@ -267,9 +267,12 @@ addresses and method IDs remain in the authenticated account list.
 Home's Sign in control lists Passkey and enabled wallet identities previously read
 by this browser through that authenticated list. Home stores only connector,
 address, network, chain and Wallet-supplied provider name and ID as browser-local
-display hints. Runtime checks the
-current method and wallet proof on every sign-in. A fresh browser first uses a
-passkey to load its account's options. The Remember my choice checkbox stores
+display hints. Runtime checks the current method and wallet proof on every sign-in.
+Home offers an extension wallet only when its extension is present. WalletConnect
+is offered when Runtime reports a compatible sign-in method, including in the
+desktop app and a fresh browser with no local hints. That option opens the shared
+QR screen; Runtime checks the selected wallet after pairing. A fresh browser
+uses a passkey to learn named extension-wallet options. The Remember my choice checkbox stores
 only the selected option on this browser. Other options opens the list again.
 
 Accounts reads connected wallets through its own System launch authority.

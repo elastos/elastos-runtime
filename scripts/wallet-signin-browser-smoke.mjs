@@ -48,8 +48,8 @@ async function exercise(engine,width,theme) {
     await home();await capture('01-sign-in');
     assert.equal(await page.getByRole('button',{name:'Sign in',exact:true}).count(),1);
     assert.equal(await page.getByRole('button',{name:'Sign in with wallet',exact:true}).count(),0);
-    await page.locator('#home-unlock-person .home-unlock-passkey-label').click();await page.waitForFunction(()=>window.openedPrincipal==='principal:alex');
-    assert.equal(fixture.state.calls.filter(c=>c.path==='/api/auth/passkey/authenticate/complete').length,1,'passkey-only browser goes straight to its passkey');
+    await page.locator('#home-unlock-person .home-unlock-passkey-label').click();await state('options');assert.equal(await dialog().locator('.connection-option').count(),2);await option('Passkey').click();await page.waitForFunction(()=>window.openedPrincipal==='principal:alex');
+    assert.equal(fixture.state.calls.filter(c=>c.path==='/api/auth/passkey/authenticate/complete').length,1,'fresh browser offers its configured WalletConnect and passkey');
     await home();await page.getByRole('button',{name:'Sign in',exact:true}).click();await state('options');await capture('02-sign-in-options');
     assert.equal(await dialog().locator('.connection-option').count(),4);
     await dialog().getByLabel('Remember my choice').check();
@@ -78,7 +78,15 @@ async function exercise(engine,width,theme) {
     assert(fixture.state.calls.filter(c=>c.path==='/api/fixture-sdk'&&c.body.method==='personal_sign').length>0);
     checks.push(`${engine}/${width}/${theme}: signed-out WalletConnect uses the shared QR, explicit relay consent, personal_sign and temporary transport`);
 
-    fixture.state.methods=[];fixture.state.signed=true;await home();let system=await apps();
+    await home();await page.evaluate(()=>{localStorage.removeItem('elastos.signin.options.v1');localStorage.removeItem('elastos.signin.choice.v1');window.walletFixture.missing=true;window.unisat=undefined;});
+    await page.getByRole('button',{name:'Sign in',exact:true}).click();await state('options');
+    assert.equal(await dialog().locator('.connection-option').count(),2,'desktop without local hints offers Passkey and configured WalletConnect');
+    assert.equal(await option('MetaMask').count(),0);assert.equal(await option('UniSat').count(),0);await capture('21-desktop-options');
+    await option('WalletConnect').click();await state('internet-notice');await dialog().getByRole('button',{name:'Continue',exact:true}).click();await state('pairing');
+    await page.locator('iframe[title=WalletConnect]').evaluate(f=>f.contentWindow.postMessage('fixture-pair','*'));await page.waitForFunction(()=>window.openedPrincipal==='principal:alex');
+    checks.push(`${engine}/${width}/${theme}: fresh desktop hides extension wallets and signs in through configured WalletConnect without browser-local hints`);
+
+    fixture.state.methods=[];fixture.state.signed=true;await home();await page.getByRole('button',{name:'Sign in',exact:true}).click();await page.waitForFunction(()=>window.openedPrincipal==='principal:alex');assert.equal(await dialog().count(),0,'passkey-only Home goes straight to its passkey');let system=await apps();
     await system.getByRole('button',{name:'Add wallet',exact:true}).click();await state('options');await capture('08-connected-wallets');
     assert.equal(await dialog().locator('.connection-option').count(),2,'connected wallet plus New wallet');
     await page.evaluate(()=>{window.walletFixture.signaturePending=true;window.walletFixture.passkeyMode='pending';});

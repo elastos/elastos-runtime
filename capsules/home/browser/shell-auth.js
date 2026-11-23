@@ -62,6 +62,7 @@ let unlockLeaveTimer = 0;
 let unlockPersonLabel = "";
 
 let walletSigninAvailable = false;
+let signinAvailability = {passkey:true,walletconnect:false};
 const walletSignin = createHomeWalletSignin({
   approve: requestPasskeyStepUp,
   onPasskey: () => runPasskeySignIn().catch(reportUnlockError),
@@ -92,6 +93,7 @@ export async function showHomeUnlock(onUnlocked, options = {}) {
   delete unlockPanel.dataset.flow;
   unlockPanel.style.removeProperty("--home-unlock-ground");
   walletSigninAvailable = false;
+  signinAvailability = {passkey:true,walletconnect:false};
   renderUnlockChecking();
   unlockPanel.hidden = false;
   unlockPanel.setAttribute("aria-hidden", "false");
@@ -100,6 +102,7 @@ export async function showHomeUnlock(onUnlocked, options = {}) {
   try {
     const status = await fetchJson("/api/auth/passkey/status");
     walletSigninAvailable = status.wallet_signin_available === true;
+    signinAvailability = {passkey:status.registered === true,walletconnect:status.walletconnect_signin_available === true};
     if(!walletSigninAvailable)saveSigninOptions([]);
     if (!window.PublicKeyCredential) {
       unlockMode = "unsupported";
@@ -214,11 +217,11 @@ export function bindHomeUnlock() {
       runPasskeyCreate().catch(reportUnlockError);
       return;
     }
-    if(readSigninOptions().length)void walletSignin.start({action:"signin"});
+    if(readSigninOptions().length||signinAvailability.walletconnect)void walletSignin.start({action:"signin",availability:signinAvailability});
     else runPasskeySignIn().catch(reportUnlockError);
   };
   for (const button of document.querySelectorAll("[data-home-signin-options]")) {
-    button.addEventListener("click", () => { if (!busy) void walletSignin.start({action:"signin",otherOptions:true}); });
+    button.addEventListener("click", () => { if (!busy) void walletSignin.start({action:"signin",otherOptions:true,availability:signinAvailability}); });
   }
   unlockPrimary?.addEventListener("click", startUnlock);
   unlockPerson?.addEventListener("click", startUnlock);
@@ -473,7 +476,7 @@ function renderUnlockChecking() {
 
 function renderUnlockMode({ registered, guestRegistrationEnabled }) {
   for (const button of document.querySelectorAll("[data-home-signin-options]")) {
-    button.hidden = !walletSigninAvailable || !readSigninOptions().length || !readSigninChoice() || !registered || !["signin", "signin_guest_enabled", "unsupported"].includes(unlockMode);
+    button.hidden = !walletSigninAvailable || !(readSigninOptions().length||signinAvailability.walletconnect) || !readSigninChoice() || !registered || !["signin", "signin_guest_enabled", "unsupported"].includes(unlockMode);
     button.disabled = busy;
   }
   const resumingOwner = unlockMode === "resume_owner";
@@ -503,7 +506,7 @@ function renderUnlockMode({ registered, guestRegistrationEnabled }) {
     unlockPrimary.textContent = resumingOwner ? "Resume Home setup" : creatingGuest
       ? "Create guest passkey"
       : (registered ? "Sign in" : "Create admin passkey");
-    unlockPrimary.disabled = unlockMode === "unsupported" && !readSigninOptions().length;
+    unlockPrimary.disabled = unlockMode === "unsupported" && !(readSigninOptions().length||signinAvailability.walletconnect);
   }
   if (unlockSecondary) {
     unlockSecondary.hidden = !registered || !guestRegistrationEnabled && !resumingRegistration && !recoveringOwner;
@@ -538,7 +541,7 @@ function renderUnlockMode({ registered, guestRegistrationEnabled }) {
     unlockMonogram.textContent = [...unlockPersonLabel.trim()][0]?.toUpperCase() || "e";
   }
   if (unlockPerson) {
-    unlockPerson.disabled = unlockMode === "unsupported" && !readSigninOptions().length;
+    unlockPerson.disabled = unlockMode === "unsupported" && !(readSigninOptions().length||signinAvailability.walletconnect);
     const personLabel = unlockPersonLabel
       ? `Sign in as ${unlockPersonLabel}`
       : "Sign in";
@@ -1091,10 +1094,10 @@ function reportUnlockError(error) {
 function setButtonsDisabled(disabled) {
   for (const button of document.querySelectorAll("[data-home-signin-options]")) button.disabled = disabled;
   if (unlockPerson) {
-    unlockPerson.disabled = disabled || unlockMode === "unsupported" && !readSigninOptions().length;
+    unlockPerson.disabled = disabled || unlockMode === "unsupported" && !(readSigninOptions().length||signinAvailability.walletconnect);
   }
   if (unlockPrimary) {
-    unlockPrimary.disabled = disabled || unlockMode === "unsupported" && !readSigninOptions().length;
+    unlockPrimary.disabled = disabled || unlockMode === "unsupported" && !(readSigninOptions().length||signinAvailability.walletconnect);
   }
   if (unlockSecondary) {
     unlockSecondary.disabled = disabled;

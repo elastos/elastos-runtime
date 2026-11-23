@@ -1,6 +1,6 @@
 import test,{afterEach} from 'node:test';
 import assert from 'node:assert/strict';
-import {signinOptions,saveSigninOptions,readSigninOptions,saveSigninChoice,readSigninChoice} from '../capsules/home/browser/wallet-signin-options.mjs';
+import {signinOptions,saveSigninOptions,readSigninOptions,saveSigninChoice,readSigninChoice,availableSigninOptions} from '../capsules/home/browser/wallet-signin-options.mjs';
 import {handleWalletSigninRequest} from '../capsules/home/browser/wallet-signin-host.mjs';
 import {createWalletConnectClient} from '../capsules/wallet-walletconnect/browser/walletconnect-client.mjs';
 const {createWalletSigninFlow}=await import(process.env.SIGNIN_FLOW_MODULE||'../capsules/home/browser/wallet-signin-flow.mjs');
@@ -135,4 +135,13 @@ test('closing the admitted phone window ends a pending signature without waiting
   const pending=selected.sign('Runtime message');const ended=assert.rejects(pending,{code:'disconnected'});
   source.closed=true;t.mock.timers.tick(250);await ended;
   assert.equal(sent.filter(data=>data.operation==='sign').length,1);controller.abort();
+});
+
+test('sign-in options follow explicit desktop and browser capabilities',()=>{
+  const methods=[{...wallet,sign_in_enabled:true,providerId:'io.metamask'},{connector:'unisat',address:'bc1q'+'a'.repeat(38),chain_id:0,network:'bitcoin',sign_in_enabled:true}];
+  assert.deepEqual(availableSigninOptions(methods,{walletconnectAvailable:true}),[{connector:'walletconnect',chooseConnector:true}]);
+  assert.deepEqual(availableSigninOptions(methods,{providers:[{rdns:'io.metamask'}],unisatAvailable:true}),methods);
+  assert.deepEqual(availableSigninOptions(methods,{providers:[{rdns:'io.rabby'}]}),[]);
+  assert.deepEqual(availableSigninOptions([],{walletconnectAvailable:true}),[{connector:'walletconnect',chooseConnector:true}]);
+  assert.deepEqual(availableSigninOptions([],{walletconnectAvailable:false}),[]);
 });
