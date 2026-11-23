@@ -27,6 +27,15 @@ const browser = read("elastos/crates/elastos-server/src/api/gateway_browser.rs")
 const PRINCIPAL_ROOT_ENCRYPTION_LEAD =
   "After protection exists, Home encrypts a write only when the write goes through\nprincipal-root protection.";
 
+const UPLOAD_STAGING_WARNING =
+  "An interrupted upload over 512 KiB can leave a readable copy in Home's `Runtime/ObjectUploadSessions/<id>/payload.bin`; finish or restart it, and the next chunked upload after 24 hours of inactivity attempts cleanup.";
+
+// Exact wording check only; this does not exercise upload cleanup or encryption.
+function checkUploadStagingWarning(document) {
+  assert.ok(document.replace(/\s+/g, " ").includes(UPLOAD_STAGING_WARNING),
+    "Library re-upload advice must include the qualified upload staging warning");
+}
+
 const STORAGE_TABLE_ROWS = [
   {
     name: "Home recovery authority",
@@ -316,6 +325,25 @@ test("the storage check rejects false Browser path, encryption, and recovery cla
 test("Security storage table locks every encrypted and recovery cell exactly", () => {
   checkStorageTableCells(security);
   checkPrincipalRootEncryptionLead(security);
+});
+
+test("Library re-upload advice includes the exact upload staging warning in both documents", () => {
+  for (const path of ["SECURITY.md", "docs/PROTECTED_CONTENT.md"]) {
+    checkUploadStagingWarning(read(path));
+  }
+});
+
+test("the upload warning wording check rejects missing and overstated cleanup advice", () => {
+  for (const warning of [
+    "",
+    UPLOAD_STAGING_WARNING.replace("over 512 KiB", "of any size"),
+    UPLOAD_STAGING_WARNING.replace("finish or restart it, and ", ""),
+    UPLOAD_STAGING_WARNING.replace("next chunked upload", "next upload"),
+    UPLOAD_STAGING_WARNING.replace("after 24 hours of inactivity", "immediately"),
+    UPLOAD_STAGING_WARNING.replace("attempts cleanup", "always removes it"),
+  ]) {
+    assert.throws(() => checkUploadStagingWarning(warning), /upload staging warning/);
+  }
 });
 
 test("the storage table check rejects false encrypted and recovery cells", () => {

@@ -227,7 +227,11 @@ File contents are checked when a file is opened: Home runs the full AES-GCM
 check over the whole file and uses none of it unless the check passes. A file
 that looks encrypted but does not carry a correct label is damaged. This
 includes a file of your own that only looks like an encrypted file; it stays
-unencrypted until you upload it again in Library. A damaged file is named in
+unencrypted until you upload it again in Library. An interrupted upload over
+512 KiB can leave a readable copy in Home's
+`Runtime/ObjectUploadSessions/<id>/payload.bin`; finish or restart it, and the
+next chunked upload after 24 hours of inactivity attempts cleanup.
+A damaged file is named in
 the start log and in Recovery status, shows as Blocked in Library, and is never
 encrypted again. Home never changes or deletes it by itself; a Library save
 over it, Empty Trash, or a new or reset background image in System →
