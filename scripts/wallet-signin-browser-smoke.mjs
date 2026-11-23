@@ -123,7 +123,7 @@ async function exercise(engine,width) {
       }
       await page.locator('[data-home-wallet-signin]:visible').click();await state('choice');
       const choice=page.locator('.signin-dialog').getByRole('button',{name:'WalletConnect',exact:false});
-      await page.getByText('Add a wallet for Elastos Smart Chain or Base and turn Sign in on first.',{exact:true}).waitFor();assert(await choice.isDisabled());
+      await page.getByText('Add a wallet for Elastos Smart Chain or Base in System, Accounts.',{exact:true}).waitFor();assert(await choice.isDisabled());
       await cancel();
     }
     await home();await page.locator('[data-home-wallet-signin]:visible').click();await state('choice');
@@ -321,7 +321,7 @@ async function exercise(engine,width) {
     const guestSystem=page.frameLocator('iframe[title=system]');await guestSystem.locator('[data-wallet-method]').waitFor();
     assert.equal(await guestSystem.getByRole('button',{name:'Add wallet',exact:true}).count(),0);
     assert(!(await guestSystem.locator('[data-wallet-method]').getByRole('button',{name:'Remove',exact:true}).isDisabled()),'Guest can remove own method');
-    assert.equal(await guestSystem.getByText('Only an Admin can turn sign-in on.',{exact:true}).count(),0);
+    assert.equal(await guestSystem.getByRole('switch').count(),0,'method controls offer removal directly');
     assert(await guestSystem.locator('[data-passkey-revoke="passkey:0"]').isDisabled(),'an enabled wallet keeps the final-passkey protection');
     await guestSystem.getByText('Keep one passkey, or remove the account.',{exact:true}).waitFor();
     await guestSystem.locator('[data-wallet-method]').scrollIntoViewIfNeeded();await capture('system-guest-last-method');
