@@ -8,10 +8,14 @@ import { importProductSmokePlaywright, productSmokeLaunchOptions } from "./produ
 
 // Import the new dependency itself; the existing passkey VM exercises the full auth file.
 const previousDocument = globalThis.document;
+const previousWindow = globalThis.window;
+globalThis.window = { addEventListener() {} };
 globalThis.document = { querySelector: () => null };
 const { createHomeWalletSignin } = await import("../capsules/home/browser/wallet-signin-view.mjs");
 if (previousDocument === undefined) delete globalThis.document;
 else globalThis.document = previousDocument;
+if (previousWindow === undefined) delete globalThis.window;
+else globalThis.window = previousWindow;
 
 const source = readFileSync(new URL("../capsules/home/browser/shell-auth.js", import.meta.url), "utf8")
   .replace(/^import\s*\{[\s\S]*?\}\s*from\s*"[^"]+";\n/gm, "")
