@@ -421,7 +421,7 @@ function onHomeConnectCommand(event) {
   if (event.source !== window.top || event.origin !== homeParentOrigin) return;
   const message = event.data;
   if (message?.type === "elastos.wallet.connect-entry/v1" && Object.keys(message).length === 1) {
-    focusSignersSection();
+    void refreshWalletState().then(focusSignersSection, error => showStatus(error.message, "error"));
     return;
   }
   if (message?.type !== "elastos.wallet.connect/v1"

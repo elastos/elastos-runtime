@@ -139,7 +139,7 @@ export async function signinFixture() {
         if(path==='/api/apps/wallet-walletconnect/storage')return json({});
         if(path==='/api/apps/wallet-walletconnect/relay-admission')return json({token:'fixture-relay'});
         if(path==='/api/apps/system/summary' || path==='/api/apps/system/update')return json({wallet_accounts:{accounts:state.connected},identity:{profile:{schema:'elastos.profile-summary/v1',display_name:'Alex'}},access:{role:state.role},authority:{proof_binding_id:state.walletSession?'proof:signin-wallet:fixture':'proof:passkey:fixture'},runtime:{},source:{},appearance:{schema:'elastos.home.appearance/v1',revision:0,theme:state.theme,accent:'blue',accent_custom:'#4f7fff',dock_auto_hide:false,sounds:false,focus_mode:false,background_image_url:null,background_overlay_enabled:true,background_overlay_opacity:0.55}});
-        if(path==='/api/apps/wallet/wallet/summary')return json({wallet_accounts:{accounts:state.connected},wallet_approvals:{approval_requests:[]},approval_methods:{}});
+        if(path==='/api/apps/wallet/wallet/summary')return json({wallet_accounts:{accounts:state.connected},wallet_approvals:{approval_requests:[]},approval_methods:{walletconnect:{available:true}}});
         if(path==='/api/auth/sessions/refresh')return state.signed?json({home_token:'fixture-home',session_id:'fixture-session',principal_id:'principal:alex',proof_binding_id:'wallet:metamask'}):json({},403);
         if(path==='/api/apps/home/summary')return json({authority:{signed_in:state.signed},signed_in:state.signed,active_shell:{},targets:[]});
         return json({});
