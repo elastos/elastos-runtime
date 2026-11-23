@@ -624,7 +624,7 @@ if (process.argv.includes("--browser")) {
     const statusRequests = [];
     page.on("pageerror", error => errors.push(error.message));
     const assets = new Map([
-      ["index.html", "text/html"], ["style.css", "text/css"], ["wallet-signin.css", "text/css"],
+      ["index.html", "text/html"], ["style.css", "text/css"], ["wallet-signin.css", "text/css"], ["elastos-ui.css", "text/css"],
       ["shell-auth.js", "text/javascript"], ["shell-core.js", "text/javascript"],
       ["home-boot-hint.js", "text/javascript"], ["manifest.webmanifest", "application/manifest+json"],
       ["elastos-logo.svg", "image/svg+xml"], ["elastos-home-icon.svg", "image/svg+xml"],
