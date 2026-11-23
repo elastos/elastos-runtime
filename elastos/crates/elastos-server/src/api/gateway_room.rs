@@ -951,6 +951,9 @@ pub(super) async fn chat_room_request_approve(
             Ok(launch) => launch,
             Err(err) => return room_service_error_response(err),
         };
+    if let Err(err) = ensure_admin_context(&state.data_dir, &launch.context) {
+        return room_service_error_response(err);
+    }
     if let Err(err) = super::auth_gateway::wallet_action_approval(
         &state,
         &launch,
@@ -964,6 +967,7 @@ pub(super) async fn chat_room_request_approve(
     }
     let data_dir = state.data_dir.clone();
     match tokio::task::spawn_blocking(move || {
+        ensure_admin_context(&data_dir, &launch.context)?;
         let outcome = crate::room_service::approve_request(&data_dir, &request_id)?;
         let summary = crate::room_service::load_summary(&data_dir).unwrap_or_default();
         let _ = crate::notifications::sync_room_notifications(&data_dir, &summary);

@@ -736,3 +736,42 @@ async fn wallet_explicit_account_removal_requires_exact_passkey_intent() {
         StatusCode::FORBIDDEN
     );
 }
+
+#[tokio::test]
+async fn wallet_guest_room_approval_stays_refused_with_a_valid_passkey() {
+    let f = wallet_fixture::fixture();
+    wallet_fixture::enabled(&f);
+    let session = wallet_fixture::signin(&f);
+    install_real_approver(f.data.path(), "person:local:bob", b"room-admin");
+    let (approver, credential) =
+        install_real_approver(f.data.path(), "person:local:alice", b"room-guest");
+    crate::auth::demote_passkey_to_guest(f.data.path(), &approver, now_ts()).unwrap();
+    let app = gateway_router(test_state(f.data.path()));
+    let home =
+        issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &session).unwrap();
+    let chat =
+        issue_home_launch_token_for_auth_grant(f.data.path(), CHAT_ROOM_CAPSULE_ID, &session)
+            .unwrap();
+    let request = json!({"action_id":"room-approve-request:missing"});
+    let approval = real_step_up_for_launch(
+        &app,
+        &home,
+        &chat,
+        "inbox.approve",
+        &request,
+        &approver,
+        &credential,
+        1,
+    )
+    .await;
+    let (status, result) = call_approved(
+        &app,
+        "/api/apps/chat-room/requests/missing/approve",
+        &chat,
+        &approval,
+        json!({}),
+    )
+    .await;
+    assert!(!status.is_success());
+    assert!(result.to_string().contains("admin"), "{result}");
+}
