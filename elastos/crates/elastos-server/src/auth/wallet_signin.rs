@@ -355,7 +355,7 @@ pub(crate) struct Begin {
     pub network: String,
     pub browser_secret: String,
 }
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub(crate) struct BeginResult {
     pub ceremony_id: String,
     pub message: String,
@@ -968,7 +968,7 @@ pub(crate) fn expire_attempt(data: &Path, id: &str, instance: &str) -> anyhow::R
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use k256::ecdsa::SigningKey;
     const ORIGIN: &str = "http://localhost:4100";
@@ -977,7 +977,7 @@ mod tests {
         pub data: tempfile::TempDir,
         pub actor: AuthSessionGrantV1,
         key: SigningKey,
-        address: String,
+        pub(crate) address: String,
     }
     pub(crate) fn fixture() -> Fixture {
         let data = tempfile::tempdir().unwrap();
@@ -1040,7 +1040,7 @@ mod tests {
         bytes.push(id.to_byte() + 27);
         format!("0x{}", hex::encode(bytes))
     }
-    fn completion(f: &Fixture, b: &BeginResult) -> Complete {
+    pub(crate) fn completion(f: &Fixture, b: &BeginResult) -> Complete {
         Complete {
             ceremony_id: b.ceremony_id.clone(),
             browser_secret: BROWSER.into(),

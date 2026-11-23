@@ -376,6 +376,23 @@ async fn response<T: Serialize>(
 ) -> Response {
     match result {
         Ok(value) => private_response(Ok(value)),
+        Err(error) if error.is::<AttemptCapacity>() => {
+            let seconds = error
+                .downcast_ref::<AttemptCapacity>()
+                .expect("capacity")
+                .retry_after_secs;
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                [("retry-after", seconds.to_string())],
+                error.to_string(),
+            )
+                .into_response()
+        }
+        Err(error) if error.is::<AttemptConfiguration>() => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"error":"wallet_transport_unavailable"})),
+        )
+            .into_response(),
         Err(error) if error.is::<StaleRevision>() => {
             private_response::<serde_json::Value>(Err(error))
         }
@@ -598,25 +615,6 @@ pub(super) fn admit_socket(inner: &Inner, id: &str, local: bool) -> anyhow::Resu
 }
 
 #[cfg(test)]
-pub(in crate::api) async fn residue(state: &GatewayState, id: &str) -> (usize, usize, usize) {
-    let inner = state.walletconnect.inner.lock().await;
-    let actor = actor(id);
-    (
-        inner.attempts.get(id).map_or(0, |a| a.values.len()),
-        inner
-            .admissions
-            .values()
-            .filter(|(_, _, p)| p == &actor)
-            .count(),
-        inner
-            .sockets
-            .values()
-            .filter(|s| s.principal == actor)
-            .count(),
-    )
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -651,13 +649,7 @@ mod tests {
             Some("203.0.113.3".parse().unwrap()),
         )
         .unwrap_err();
-        let response = crate::api::auth_gateway::wallet_failure_response(
-            Instant::now(),
-            "test",
-            "capacity",
-            &error,
-        )
-        .await;
+        let response = response::<serde_json::Value>(Err(error), "test", "capacity").await;
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
         assert_eq!(response.headers()["retry-after"], "240");
         let body = axum::body::to_bytes(response.into_body(), 1024)

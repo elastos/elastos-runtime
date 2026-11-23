@@ -2023,6 +2023,14 @@ pub(crate) fn complete_passkey_add(
     let record = mutate_auth_state(data_dir, |state| {
         let now = now_ts();
         normalize_principal_records(state);
+        let session = load_active_session_grant(data_dir, client.session_id, now)?;
+        if session.principal_id != client.principal_id
+            || (!session.proof_binding_id.starts_with("proof:signin-wallet:")
+                && session.proof_binding_id != client.proof_binding_id)
+        {
+            return enrollment_denied();
+        }
+
         let signer = state
             .principals
             .iter()
@@ -5432,15 +5440,28 @@ pub fn load_active_session_grant(
     if stored.revoked_at.is_some() || stored.grant.expires_at <= now {
         anyhow::bail!("auth session is not active");
     }
+    if stored
+        .grant
+        .proof_binding_id
+        .starts_with("proof:signin-wallet:")
+    {
+        let owner = wallet_signin::principal(data_dir, &stored.grant.proof_binding_id)?;
+        if owner.principal_id != stored.grant.principal_id {
+            anyhow::bail!("wallet session account changed");
+        }
+    }
     Ok(stored.grant.clone())
 }
 
 pub fn is_auth_session_active(data_dir: &Path, session_id: &str, now: u64) -> anyhow::Result<bool> {
     let state = load_auth_state(data_dir)?;
-    Ok(state.sessions.iter().any(|stored| {
-        stored.grant.session_id == session_id
-            && stored.revoked_at.is_none()
-            && stored.grant.expires_at > now
+    Ok(state.sessions.iter().any(|s| {
+        s.grant.session_id == session_id
+            && s.revoked_at.is_none()
+            && s.grant.expires_at > now
+            && (!s.grant.proof_binding_id.starts_with("proof:signin-wallet:")
+                || wallet_signin::principal(data_dir, &s.grant.proof_binding_id)
+                    .is_ok_and(|p| p.principal_id == s.grant.principal_id))
     }))
 }
 
@@ -6670,7 +6691,26 @@ pub fn revoke_passkey_for_actor(
     proof_binding_id: &str,
     revoked_at: u64,
 ) -> anyhow::Result<PrincipalRecord> {
+    revoke_passkey_for_actor_approved(
+        data_dir,
+        actor_principal_id,
+        actor_proof_binding_id,
+        proof_binding_id,
+        revoked_at,
+        || Ok(()),
+    )
+}
+
+pub(crate) fn revoke_passkey_for_actor_approved(
+    data_dir: &Path,
+    actor_principal_id: &str,
+    actor_proof_binding_id: &str,
+    proof_binding_id: &str,
+    revoked_at: u64,
+    approve: impl FnOnce() -> anyhow::Result<()>,
+) -> anyhow::Result<PrincipalRecord> {
     mutate_auth_state(data_dir, |state| {
+        approve()?;
         let actor = state
             .principals
             .iter()
@@ -6747,7 +6787,17 @@ pub fn promote_passkey_to_admin(
     proof_binding_id: &str,
     updated_at: u64,
 ) -> anyhow::Result<PrincipalRecord> {
+    promote_passkey_to_admin_approved(data_dir, proof_binding_id, updated_at, || Ok(()))
+}
+
+pub(crate) fn promote_passkey_to_admin_approved(
+    data_dir: &Path,
+    proof_binding_id: &str,
+    updated_at: u64,
+    approve: impl FnOnce() -> anyhow::Result<()>,
+) -> anyhow::Result<PrincipalRecord> {
     mutate_auth_state(data_dir, |state| {
+        approve()?;
         let index = active_passkey_role_target(state, proof_binding_id)?;
         if state.principals[index].role == RuntimePrincipalRole::Admin {
             anyhow::bail!("passkey is already admin");
@@ -6766,7 +6816,17 @@ pub fn demote_passkey_to_guest(
     proof_binding_id: &str,
     updated_at: u64,
 ) -> anyhow::Result<PrincipalRecord> {
+    demote_passkey_to_guest_approved(data_dir, proof_binding_id, updated_at, || Ok(()))
+}
+
+pub(crate) fn demote_passkey_to_guest_approved(
+    data_dir: &Path,
+    proof_binding_id: &str,
+    updated_at: u64,
+    approve: impl FnOnce() -> anyhow::Result<()>,
+) -> anyhow::Result<PrincipalRecord> {
     mutate_auth_state(data_dir, |state| {
+        approve()?;
         let index = active_passkey_role_target(state, proof_binding_id)?;
         let target = &state.principals[index];
         if target.role != RuntimePrincipalRole::Admin {

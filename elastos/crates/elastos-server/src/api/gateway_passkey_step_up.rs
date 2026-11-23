@@ -691,8 +691,17 @@ pub(crate) fn issue_passkey_step_up_token_at_for_test(
             launch_context: launch.launch_context,
             principal_id: launch.context.principal_id,
             session_id: launch.context.session_id,
-            proof_binding_id: passkey_proof_binding_id(&passkey),
-            approving_passkey_id: None,
+            proof_binding_id: launch
+                .context
+                .proof_binding_id
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("missing session proof"))?,
+            approving_passkey_id: (!launch
+                .context
+                .proof_binding_id
+                .as_deref()
+                .is_some_and(|id| id.starts_with("proof:passkey:")))
+            .then(|| passkey_proof_binding_id(&passkey)),
             grant_id: launch.context.grant_id,
             credential_id: passkey.credential_id,
             credential_public_key_sha256: hex::encode(Sha256::digest(

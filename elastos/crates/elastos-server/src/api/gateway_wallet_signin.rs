@@ -2,6 +2,7 @@
 use super::*;
 use crate::auth::wallet_signin::{self as auth, Begin, Complete};
 use elastos_runtime::auth::AuthSessionGrantV1;
+use serde_json::json;
 
 fn origin(headers: &HeaderMap) -> anyhow::Result<String> {
     Ok(crate::api::handlers::identity::derive_rp(headers)?.origin)
@@ -154,6 +155,7 @@ pub(super) async fn signin_complete(
         })?;
         let grant: AuthSessionGrantV1 = serde_json::from_value(value)?;
         gateway_walletconnect::retire_attempt(&state, &input.ceremony_id).await?;
+        crate::auth::load_active_session_grant(&state.data_dir, &grant.session_id, now_ts())?;
         // Revocation may have won while the relay closed; token issuance checks
         // the live grant once more through the common Home launch path.
         let home_token =
