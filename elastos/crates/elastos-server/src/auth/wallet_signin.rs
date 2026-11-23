@@ -2332,3 +2332,46 @@ pub(crate) mod tests {
         .is_ok());
     }
 }
+
+#[cfg(test)]
+mod review_probe {
+    use super::tests::*;
+    use super::*;
+    const ORIGIN: &str = "http://localhost:4100";
+    const BROWSER: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+    fn wc_selected_is_live(f: &Fixture, address: &str) -> bool {
+        let b = begin(
+            f.data.path(),
+            ORIGIN,
+            "home-test",
+            serde_json::from_value(serde_json::json!({"connector":"walletconnect","address":"","chain_id":0,"browser_secret":BROWSER,"allow_temporary_internet":true})).unwrap(),
+            None,
+        )
+        .unwrap();
+        select(f.data.path(), &b.ceremony_id, BROWSER, ORIGIN, address.into(), 20).unwrap();
+        attempt_context(f.data.path(), b.attempt_token.as_deref().unwrap(), &b.instance_id, now_ts()).is_ok()
+    }
+    fn metamask_pending_cancelled(f: &Fixture, address: &str) -> bool {
+        let b = begin(
+            f.data.path(),
+            ORIGIN,
+            "home-test",
+            serde_json::from_value(serde_json::json!({"connector":"metamask","address":address,"chain_id":20,"browser_secret":BROWSER})).unwrap(),
+            None,
+        )
+        .unwrap();
+        let (_, store) = loaded(f.data.path()).unwrap();
+        store.pending.iter().find(|p| p.id == b.ceremony_id).unwrap().cancelled
+    }
+    #[test]
+    fn review_probe_signed_out_wallet_oracle() {
+        let f = fixture();
+        enabled(&f);
+        let unknown = "0x000000000000000000000000000000000000dead";
+        let wc_known = wc_selected_is_live(&f, &f.address);
+        let wc_unknown = wc_selected_is_live(&f, unknown);
+        let mm_known = metamask_pending_cancelled(&f, &f.address);
+        let mm_unknown = metamask_pending_cancelled(&f, unknown);
+        println!("PROBE wc_transport_live known={wc_known} unknown={wc_unknown}; metamask_pending_cancelled known={mm_known} unknown={mm_unknown}");
+    }
+}
