@@ -2,8 +2,9 @@ use std::env;
 
 fn main() {
     println!("cargo:rerun-if-env-changed=ELASTOS_RELEASE_RELAY_URL");
-    let pin_file = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../carrier-relay-spki-sha256.txt");
+    let manifest_dir = env::var_os("CARGO_MANIFEST_DIR").expect("Cargo manifest directory");
+    let pin_file =
+        std::path::Path::new(&manifest_dir).join("../../../carrier-relay-spki-sha256.txt");
     println!("cargo:rerun-if-changed={}", pin_file.display());
     let pins = std::fs::read_to_string(pin_file).expect("repository meeting point pins");
     let pins: Vec<_> = pins
