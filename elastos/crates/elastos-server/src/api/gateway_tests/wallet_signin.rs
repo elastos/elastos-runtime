@@ -1076,6 +1076,68 @@ async fn walletconnect_review_note_storage_post_advances_etag_and_fences_stale_w
 }
 
 #[tokio::test]
+async fn walletconnect_live_relay_survives_its_own_storage_writes_but_retires_with_attempt() {
+    let f = wallet_fixture::fixture();
+    let state = test_state(f.data.path());
+    let pending = auth::begin(
+        f.data.path(), ORIGIN, "home-test",
+        serde_json::from_value(json!({"action":"add","connector":"walletconnect","address":"","chain_id":20,"browser_secret":BROWSER,"allow_temporary_internet":true})).unwrap(),
+        Some(f.actor.clone()),
+    ).unwrap();
+    gateway_walletconnect::install_confirmation(&state, &pending, &f.actor.session_id)
+        .await
+        .unwrap();
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        "x-elastos-wallet-attempt",
+        pending.attempt_token.as_ref().unwrap().parse().unwrap(),
+    );
+    headers.insert(
+        "x-elastos-wallet-instance",
+        pending.instance_id.parse().unwrap(),
+    );
+    headers.insert(
+        "if-match",
+        format!("\"{}\"", pending.storage_revision).parse().unwrap(),
+    );
+    assert!(gateway_walletconnect::relay_owner_live_for_test(&state, &headers).await);
+    let write = Ok(AxumJson(
+        serde_json::from_value(json!({"key":"sdk-state","value":1})).unwrap(),
+    ));
+    let response = gateway_walletconnect::storage(
+        AxumState(state.clone()),
+        axum::http::Method::POST,
+        headers.clone(),
+        write,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        gateway_walletconnect::relay_owner_live_for_test(&state, &headers).await,
+        "an admitted relay retains authority after its SDK writes storage"
+    );
+    assert!(
+        gateway_walletconnect::require_attempt(&state, &headers)
+            .await
+            .is_err(),
+        "stale storage and new admission requests still need the current revision"
+    );
+    let mut other_instance = headers.clone();
+    other_instance.insert(
+        "x-elastos-wallet-instance",
+        "different-instance".parse().unwrap(),
+    );
+    assert!(!gateway_walletconnect::relay_owner_live_for_test(&state, &other_instance).await);
+    gateway_walletconnect::retire_attempt(&state, &pending.ceremony_id)
+        .await
+        .unwrap();
+    assert!(
+        !gateway_walletconnect::relay_owner_live_for_test(&state, &headers).await,
+        "retirement still ends relay authority"
+    );
+}
+
+#[tokio::test]
 async fn walletconnect_passkey_session_end_retires_confirmation_relay() {
     for sign_out in [false, true] {
         let f = wallet_fixture::fixture();

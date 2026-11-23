@@ -877,7 +877,7 @@ struct RelayOwner {
 }
 async fn relay_owner(state: &GatewayState, headers: &HeaderMap) -> anyhow::Result<RelayOwner> {
     if attempt_headers_present(headers) {
-        let context = require_attempt(state, headers).await?;
+        let context = attempts::admit_attempt(state, headers).await?;
         let deadline = attempts::deadline(state, &context.ceremony_id).await?;
         Ok(RelayOwner {
             principal: attempts::actor(&context.ceremony_id),
@@ -1199,6 +1199,12 @@ fn bump_storage_revision(data: &FsPath, name: &std::ffi::OsStr) -> anyhow::Resul
         .checked_add(1)
         .ok_or_else(|| anyhow::anyhow!("WalletConnect revision overflow"))?;
     crate::auth::atomic_write(&path, &serde_json::to_vec(&next)?)
+}
+
+// A live relay retains attempt authority while the SDK updates its storage.
+#[cfg(test)]
+pub(super) async fn relay_owner_live_for_test(state: &GatewayState, headers: &HeaderMap) -> bool {
+    relay_owner(state, headers).await.is_ok()
 }
 
 // Keep the production lock private. Route tests hold it to exercise the

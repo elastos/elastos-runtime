@@ -138,6 +138,9 @@ WalletConnect begin also returns `attempt_token`, `instance_id` and
 `storage_revision`. Reuse Runtime's temporary connector transport: config,
 storage and relay-admission under `/api/apps/wallet-walletconnect/`, with
 `x-elastos-wallet-attempt`, `x-elastos-wallet-instance` and storage `If-Match`.
+Storage writes and new relay admissions require the current revision. A redeemed
+relay keeps its live ceremony and instance binding across SDK storage writes;
+retirement and expiry end its authority.
 The permission reaches only WalletConnect setup and relay endpoints, ends at the
 ceremony deadline, and grants neither payment nor capsule launch authority.
 MetaMask and UniSat use the selected extension to sign; they receive no Runtime
