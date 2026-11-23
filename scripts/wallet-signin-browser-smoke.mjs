@@ -71,6 +71,8 @@ async function exercise(engine,width) {
     await page.locator('[data-home-wallet-signin]:visible').click();await state('error');await page.getByText('Open this Home with HTTPS to sign in with a wallet.',{exact:true}).waitFor();await capture('https-required');
     assert.equal(await page.locator('.signin-dialog').getByRole('button',{name:'Try again',exact:true}).count(),0);await cancel();await page.unroute('http://home.example/**');
     await home();await page.locator('.home-unlock-passkey-label:visible').waitFor();await capture('home');
+    await page.locator('#home-recover-owner').click();await page.getByText('Recovery removes this account’s other passkeys and wallet sign-in methods.',{exact:true}).waitFor();await capture('recovery-wallet-warning');
+    checks.push(`${engine}/${width}: recovery explains wallet sign-in removal before recovery`);await home();
     assert.equal(await page.getByRole('button',{name:'Use passkey',exact:true}).count(),1);
     await page.locator('[data-home-wallet-signin]:visible').click();await state('choice');await capture('signer-choice');await cancel();
     await home({scenario:'first-run'});assert.equal(await page.locator('[data-home-wallet-signin]:visible').count(),0);await capture('first-run');
