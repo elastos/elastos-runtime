@@ -119,7 +119,7 @@ async function exercise(engine,width) {
       await capture(`signin-${scenario}`);
       if(scenario==='unknown') {
         const before=fixture.state.calls.filter(c=>c.path.endsWith('/signin/complete'));
-        await page.evaluate(()=>window.emitSigninWallet('accountsChanged'));await state('unknown');
+        await page.evaluate(()=>{window.walletFixture.address='0x'+'34'.repeat(20);window.emitSigninWallet('accountsChanged');});await state('unknown');
         await page.locator('.signin-dialog').getByRole('button',{name:'Check again',exact:true}).click();await page.waitForFunction(()=>window.openedPrincipal==='principal:alex');
         const after=fixture.state.calls.filter(c=>c.path.endsWith('/signin/complete'));assert.deepEqual(after.at(-1).body,before.at(-1).body);
       } else if(scenario==='unadded') {
