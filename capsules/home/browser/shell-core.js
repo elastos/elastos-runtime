@@ -101,6 +101,9 @@ export async function fetchJson(url, init) {
     },
   });
   if (!response.ok) {
+    if ([401,403].includes(response.status) && url !== "/api/auth/sessions/refresh") {
+      window.dispatchEvent(new Event("home:session-check"));
+    }
     const detail = await response.text().catch(() => "");
     const error = new Error(
       `request failed: ${response.status} ${response.statusText}${detail ? ` ${detail}` : ""}`,

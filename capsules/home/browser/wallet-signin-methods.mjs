@@ -10,13 +10,20 @@ export async function readWalletSigninMethods(token,{origin}={}) {
   if(typeof result.account_id!=='string'||!Array.isArray(result.methods)||result.methods.length>256)throw new Error('Home could not load sign-in methods.');
   return result;
 }
-export function requestWalletSigninChange({action,methodId='',token,origin}) {
+export function requestWalletSigninChange({action,methodId='',token,origin,loadConnected}) {
   if(window.top===window || !token || !origin)return Promise.reject(new Error('Open this app from Home to change wallet sign-in.'));
   const requestId=crypto.randomUUID();
   return new Promise((resolve,reject)=>{
     const timeout=setTimeout(()=>{window.removeEventListener('message',receive);reject(new Error('Home stopped waiting. Refresh the sign-in methods before trying again.'));},200000);
     const receive=event=>{
-      if(event.source!==window.top||event.origin!==origin||event.data?.type!=='home:wallet-signin-result'||event.data.requestId!==requestId)return;
+      if(event.source!==window.top||event.origin!==origin||event.data?.requestId!==requestId)return;
+      if(event.data.type==='home:wallet-signin-accounts-request' && action==='add' && typeof loadConnected==='function'
+        && Object.keys(event.data).length===2 && event.ports?.length===1) {
+        const port=event.ports[0];
+        Promise.resolve().then(loadConnected).then(accounts=>port.postMessage({accounts}),()=>port.postMessage({failed:true})).finally(()=>port.close());
+        return;
+      }
+      if(event.data?.type!=='home:wallet-signin-result')return;
       clearTimeout(timeout);window.removeEventListener('message',receive);resolve(event.data.result);
     };
     window.addEventListener('message',receive);
@@ -51,4 +58,19 @@ export function connectedWalletSigninMethods(accounts,methods) {
     result.push({connector,address:account.address,chain_id,network,...(displayName?{displayName}:{}),...(providerId?{providerId}:{}),sign_in_enabled:false,method_id:`payment:${account.account_id}`,paymentOnly:true,last_used_at:null});
   }
   return result;
+}
+
+// System reads its own accounts. Home receives data through a request-bound port.
+export function requestConnectedSigninWallets(source,requestId,{timeoutMs=15000}={}) {
+  return new Promise((resolve,reject)=>{
+    const channel=new MessageChannel();
+    const finish=(error,accounts)=>{clearTimeout(timeout);channel.port1.close();channel.port2.close();error?reject(error):resolve(accounts);};
+    const timeout=setTimeout(()=>finish(new Error('System could not load your wallets.')),timeoutMs);
+    channel.port1.onmessage=event=>{
+      const accounts=event.data?.accounts;
+      if(!Array.isArray(accounts)||accounts.length>256)return finish(new Error('System could not load your wallets.'));
+      finish(null,accounts);
+    };
+    source.postMessage({type:'home:wallet-signin-accounts-request',requestId},'*',[channel.port2]);
+  });
 }

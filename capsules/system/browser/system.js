@@ -428,6 +428,9 @@ async function refreshSystemSummary() {
 async function fetchJson(url, init) {
   const response = await fetch(url, init);
   if (!response.ok) {
+    if ([401,403].includes(response.status) && apiHomeToken && homeParentOrigin) {
+      window.top.postMessage({type:"home:session-check",homeToken:apiHomeToken},homeParentOrigin);
+    }
     const detail = await response.text().catch(() => "");
     const suffix = detail.trim() ? ` ${detail.trim()}` : ` ${response.statusText}`;
     const error = new Error(`request failed: ${response.status}${suffix}`);
@@ -2518,7 +2521,11 @@ function joinWords(values) {
 
 async function changeWalletSignin(action, methodId = "") {
   try {
-    const result = await requestWalletSigninChange({action, methodId, token:apiHomeToken, origin:homeParentOrigin});
+    const result = await requestWalletSigninChange({action, methodId, token:apiHomeToken, origin:homeParentOrigin,loadConnected:async()=>{
+      const summary=await fetchJson('/api/apps/system/summary',{headers:shellHeaders()});
+      if(!Array.isArray(summary.wallet_accounts?.accounts))throw new Error('Wallet accounts unavailable');
+      return summary.wallet_accounts.accounts;
+    }});
     await refreshAccountList();
     if (["failed", "changed", "busy"].includes(result?.status)) throw new Error("Refresh the sign-in methods and try again.");
   } catch (error) { showError(error.message); }

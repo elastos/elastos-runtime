@@ -75,7 +75,7 @@ const HOME_EVENTS_MAX_RETRY_MS = 30_000;
 const HOME_EVENTS_RECONNECT_TIMEOUT_MS = 10_000;
 const HOME_EVENTS_POLL_TIMEOUT_MS = HOME_EVENTS_WAIT_MS + HOME_EVENTS_RECONNECT_TIMEOUT_MS;
 const HOME_EVENTS_STREAM_URL = "/api/apps/home/events/stream";
-const SESSION_REFRESH_MS = 10 * 60 * 1000;
+const SESSION_REFRESH_MS = 10_000;
 const ACTIVE_SHELL_HINT_KEY = "elastos.home.active-shell-hint";
 const ACTIVE_SHELL_READY_TIMEOUT_MS = 5_000;
 const HOME_CLI_SHELL_ID = "home-cli";
@@ -1740,6 +1740,10 @@ window.addEventListener("message", (event) => {
   if (!context) {
     return;
   }
+  if (data.type === "home:session-check" && hasExactMessageKeys(data,["type","homeToken"])) {
+    void refreshSignedHomeSession();
+    return;
+  }
   if (data.type === "home:wallet-signin-request" && handleWalletSigninRequest(event, context, {
     authorityToken: getHomeAuthorityToken,
     api: (path, body, token) => path === "/api/auth/passkeys"
@@ -2681,6 +2685,7 @@ function startShellTimers() {
   if (!shellState.frameRenewalTimer) {
     shellState.frameRenewalTimer = window.setInterval(renewExpiringFrames, 30_000);
     window.addEventListener("online", () => refreshSignedHomeSession());
+    window.addEventListener("home:session-check", () => refreshSignedHomeSession());
   }
   if (!shellState.sessionRefreshTimer) {
     shellState.sessionRefreshTimer = window.setInterval(() => {
@@ -2755,7 +2760,7 @@ function renewExpiringFrames() {
 }
 
 function refreshSignedHomeSession() {
-  if (!homeSummaryHasProofBoundSession(shellState.currentSummary)) {
+  if (document.body.dataset.homeAuthority !== "signed" || !homeSummaryHasProofBoundSession(shellState.currentSummary)) {
     return Promise.resolve(null);
   }
   return refreshHomeSession()

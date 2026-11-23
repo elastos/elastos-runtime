@@ -1,4 +1,4 @@
-import {connectedWalletSigninMethods} from './wallet-signin-methods.mjs';
+import {connectedWalletSigninMethods,requestConnectedSigninWallets} from './wallet-signin-methods.mjs';
 // The shell supplies a source/token-bound context from its launch registry.
 export function handleWalletSigninRequest(event,context,{api,manage,current,changed,authorityToken,openConnector,selectWalletConnect,focusCaller=()=>{}}) {
   const data=event.data;
@@ -23,12 +23,11 @@ export function handleWalletSigninRequest(event,context,{api,manage,current,chan
       if(data.action==='list')return reply({status:'complete',...wallets,can_manage:passkey?.role==='admin'});
       if(data.action!=='add' && !method)return reply({status:'changed'});
       const result=await manage({action:data.action,method,token,account:passkey?.display_name||'Your account',accountId:wallets.account_id,isCurrent:active,openConnector,selectWalletConnect,loadConnected:async()=>{
-        const summary=await api('/api/apps/system/summary',undefined,context.homeToken);
-        if(!Array.isArray(summary.wallet_accounts?.accounts))throw new Error('Wallet accounts unavailable');
+        const accounts=await requestConnectedSigninWallets(event.source,data.requestId);
         if(!active())throw new Error('Home session changed');
         const latest=await api('/api/auth/wallet-methods',undefined,token);
         if(!active())throw new Error('Home session changed');
-        return connectedWalletSigninMethods(summary.wallet_accounts.accounts,[]).map(row=>{
+        return connectedWalletSigninMethods(accounts,[]).map(row=>{
           const existing=latest.methods.find(m=>(row.connector==='unisat'?m.address===row.address:m.address.toLowerCase()===row.address.toLowerCase())&&m.chain_id===row.chain_id&&m.network===row.network);
           return existing?{...row,...existing,connector:row.connector,paymentOnly:false}:row;
         }).filter(row=>!row.sign_in_enabled);

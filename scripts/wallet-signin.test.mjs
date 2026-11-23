@@ -353,16 +353,16 @@ test('connected WalletConnect reuses its admitted window and existing permission
 
 
 test('Home reads connected wallets through the requesting System launch, then checks methods with Home authority',async()=>{
-  let options;const calls=[],source={postMessage(){}},context={kind:'app-frame',targetId:'system',source,homeToken:'system-token'};
+  let options;const calls=[],source={postMessage(data,_origin,ports){if(data.type==='home:wallet-signin-accounts-request'){ports[0].postMessage({accounts:[{account_id:'connected',connector_id:'wallet-metamask',address:wallet.address,chain_namespace:'eip155:20'}]});ports[0].close();}}},context={kind:'app-frame',targetId:'system',source,homeToken:'system-token'};
   const data={type:'home:wallet-signin-request',requestId:'one',homeToken:'system-token',action:'add',methodId:''};
   handleWalletSigninRequest({source,data},context,{authorityToken:()=> 'home-token',current:()=>true,changed(){},manage:async value=>{options=value;return {status:'cancelled'};},api:async(path,body,token)=>{
     calls.push({path,token});
     if(path.endsWith('/passkeys'))return {passkeys:[{principal_id:'alex',role:'admin'}]};
-    if(path.endsWith('/system/summary'))return {wallet_accounts:{accounts:[{account_id:'connected',connector_id:'wallet-metamask',address:wallet.address,chain_namespace:'eip155:20'}]}};
+    if(path.endsWith('/system/summary'))throw new Error('Home cannot read System authority');
     return {account_id:'alex',methods:[]};
   }});
   await new Promise(resolve=>setImmediate(resolve));const connected=await options.loadConnected();assert.equal(connected[0].address,wallet.address);
-  assert(calls.some(c=>c.path.endsWith('/system/summary')&&c.token==='system-token'));
+  assert(!calls.some(c=>c.path.endsWith('/system/summary')));
   assert(calls.filter(c=>c.path.includes('/auth/')).every(c=>c.token==='home-token'));
 });
 test('WalletConnect signs in through its restored session and keeps payments connected',async()=>{
