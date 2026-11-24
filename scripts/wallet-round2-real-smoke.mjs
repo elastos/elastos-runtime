@@ -24,11 +24,12 @@ async function shot(page,name,caption){
 const extensionIds={metamask:'fahggfellgfmaipmbahaikhklihepmdg',unisat:'ojipfahngkjpkiggjokmcladcfhfefnp'};
 const metamaskPopup=JSON.parse(await readFile(join(extensions,'metamask','manifest.json'),'utf8')).action.default_popup;
 async function prompt(context,kind){
-  const until=Date.now()+25000;
+  const until=Date.now()+25000;let openedToolbar=false;
   while(Date.now()<until){
     const pages=context.pages().filter(p=>!p.isClosed()&&p.url().includes(extensionIds[kind]));
     const page=pages.findLast(p=>p.url().includes('notification'))||pages.findLast(p=>p.url().includes('popup'))||pages.findLast(p=>p.url().includes('home.html'));
     if(page)return page;
+    if(kind==='metamask'&&!openedToolbar&&Date.now()>until-23000){openedToolbar=true;const popup=await context.newPage();await popup.goto('chrome-extension://'+extensionIds.metamask+'/'+metamaskPopup);continue;}
     await new Promise(resolve=>setTimeout(resolve,100));
   }
   throw Error(kind+' did not open a test prompt');
