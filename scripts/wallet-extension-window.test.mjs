@@ -356,7 +356,7 @@ test('live-window regression oracle rejects deliberate breaks', { timeout: 50000
       ['overdue event before timer', s => s.replace('function isRequestExpired() {', 'function isRequestExpired() { return false;'), async f => {
         await secondRequest(f); assert.equal(await overdueEvent(f, 'accountsChanged', [B]), 'request-expired');
       }],
-      ['outcome focus lost', s => s.replace("root.querySelector('.connection-actions')?.append(close);", "root.querySelector('.connection-actions')?.append(close); close.focus();"), async f => {
+      ['outcome focus lost', s => s.replace("const root = presentation.root;", "const root = presentation.root; root.querySelector('[data-action=close-window]')?.focus();"), async f => {
         await f.action('send-request').click(); await f.state('request-done');
         assert.equal(await f.frame.evaluate(() => document.activeElement?.dataset.focus), 'outcome');
         await peerEvent(f, 'accountsChanged', [B]);
