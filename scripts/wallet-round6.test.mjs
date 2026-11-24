@@ -47,6 +47,7 @@ for(const engine of ['chromium','webkit'])for(const width of [1280,390])test(`ro
    args[1].summary.reason=window==='unisat'?'':stage.startsWith('transaction')?'Browser asks you to send a payment on Elastos Smart Chain.':'Browser asks you to sign a message.';
    args[0].supportedActions=['stop-waiting','close-window','open-wallet'];
    await f.page.evaluate(async args=>{const m=await import('/capsules/_shared/wallet-connection-view.mjs');window.testMount?.dispose();window.testMount=m.mountConnection(document.querySelector('#mount'),m.reduceConnection(...args));},args);
+   assert(await f.page.locator('button:enabled').count(),`${window}/${stage} keeps a working local control`);
    const text=(await f.page.locator('.connection-detail,.connection-status,.connection-notice').allTextContents()).join(' ');
    assert((text.match(/[.!?](?:\s|$)/g)||[]).length<=2,text);await shot(f.page,`${window}-${stage}-${engine}-${width}`);
   }
@@ -75,7 +76,7 @@ for(const engine of ['chromium','webkit'])test(`round6 MetaMask adds then select
  const f=await extensionFixture(browser,'metamask',{saved:true,requests:'transaction',hostSource});
  try{await f.state('transaction-waiting');await f.top.evaluate(()=>{testState.addSelectsChain=false;testState.transactionValue='0x0';});await f.action('send-request').click();await f.state('transaction-done');
   const calls=await f.top.evaluate(()=>testState.calls);assert.deepEqual(calls.filter(c=>['wallet_switchEthereumChain','wallet_addEthereumChain','eth_sendTransaction'].includes(c.method)).map(c=>c.method),['wallet_switchEthereumChain','wallet_addEthereumChain','wallet_switchEthereumChain','eth_sendTransaction']);assert.equal(await f.top.evaluate(()=>testState.receipts.length),1);
-  const send=calls.find(c=>c.method==='eth_sendTransaction');assert.equal(send.chain,'0x14');assert.equal(send.params[0].value,'0x0');await shot(f.top,`metamask-payment-network-${engine}-1280`);
+  const send=calls.find(c=>c.method==='eth_sendTransaction');assert.equal(send.chain,'0x14');assert.equal(send.params[0].value,'0x0');for(const width of [1280,390]){await f.top.setViewportSize({width,height:900});await f.top.locator('iframe').evaluate((frame,width)=>frame.style.width=Math.min(width,480)+'px',width);await shot(f.top,`metamask-payment-network-${engine}-${width}`);}
  }finally{await f.close();await browser.close();}
 });
 

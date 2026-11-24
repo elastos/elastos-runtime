@@ -277,7 +277,7 @@ export function connectionView(input) {
     if(window==='unisat'&&stage==='request-network-testnet'&&removed.some(a=>['check-access','check-status'].includes(a.id)))notice='Select Bitcoin mainnet in UniSat.';
     if(requestId&&removed.some(a=>['open-wallet','open-wallet-activity'].includes(a.id))&&!notice.includes('Open Wallet from Home'))notice+=window==='metamask'&&stage==='transaction-done'?' Open Wallet from Home and check Activity for this transaction.':' Open Wallet from Home to review this request.';
     if(removed.some(a=>a.id==='open-request-app')&&stage!=='request-unavailable'&&!notice.includes('{{app}}'))notice+=' Return to {{app}}.';
-    if(!signinScreen&&!actions.some(a=>a.primary)&&!screen.qr&&!screen.walletPicker){const next=actions.find(a=>a.id==='close-window');if(next){next.primary=true;next.quiet=false;}}
+    if(!signinScreen&&!actions.some(a=>a.primary)&&!screen.qr&&!screen.walletPicker){let next=actions.find(a=>a.id==='close-window');if(!next&&!actions.length&&supported.includes('close-window')){next={id:'close-window',label:parts('Close window'),primary:true,quiet:false};actions.push(next);}if(next){next.primary=true;next.quiet=false;}}
   }
   // A dispatched payment keeps its warning and a working route to resolution.
   if(window==='walletconnect'&&summary?.transaction&&!knownNotSent&&!answered&&input.localSafety===true){
