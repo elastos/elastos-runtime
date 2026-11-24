@@ -476,26 +476,3 @@ test('Home-managed EVM and Bitcoin accounts are excluded even with an external c
     assert.deepEqual(connectedWalletSigninMethods([{account_id:'managed',connector_id,address:method.address,chain_namespace:'eip155:20',proof_type}],[]),[]);
   }
 });
-
-const {selectConnectedExtension}=await import('../capsules/home/browser/wallet-signin-connector.mjs');
-test('extension sign-in waits for its bound connector review and then signs the Runtime message once',async()=>{
-  const listen=new EventTarget(),controller=new AbortController(),sent=[],signed=[];let reply,stops=0,changed=0;
-  const emit=(data,source,origin='null')=>listen.dispatchEvent(Object.assign(new Event('message'),{data,source,origin}));
-  const source={postMessage(data){sent.push(data);if(data.operation==='review')reply=()=>emit({type:'home:wallet-signin-effect-result',homeToken:'connector',requestId:data.requestId,result:{approved:true}},source);else if(data.operation==='finish')queueMicrotask(()=>emit({type:'home:wallet-signin-effect-result',homeToken:'connector',requestId:data.requestId,result:{}},source));}};
-  const signer=await selectConnectedExtension('metamask',{signal:controller.signal,changed(){changed++;}},{listen,open:async()=>({homeToken:'connector',source}),current:()=>true,select:async()=>({...method,name:'MetaMask',check:async()=>{},sign:async message=>{signed.push(message);return {signature:'proof'};},close(){stops++;}})});
-  try {
-    const pending=signer.sign('Runtime exact message');await Promise.resolve();assert.deepEqual(signed,[]);
-    const data={type:'home:wallet-signin-effect-result',homeToken:'connector',requestId:sent[0].requestId,result:{approved:true}};
-    emit(data,{});emit(data,source,'https://foreign.example');emit({...data,homeToken:'other'},source);emit({...data,requestId:'other'},source);await Promise.resolve();assert.deepEqual(signed,[]);
-    reply();assert.deepEqual(await pending,{signature:'proof'});assert.deepEqual(signed,['Runtime exact message']);
-    emit({...data,error:true},source);assert.equal(changed,0,'a second answer to a consumed review has no authority');assert.equal(stops,0);
-    assert.deepEqual(sent.map(x=>x.operation),['review','finish']);assert(!sent.some(x=>'browser_secret' in x||'step_up_token' in x));
-  }finally{controller.abort();assert.equal(stops,1);}
-});
-
-test('closing the extension connector rejects its pending review before any provider signature',async t=>{
-  t.mock.timers.enable({apis:['setInterval']});
-  const controller=new AbortController(),listen=new EventTarget();let active=true,signed=0,changed=0;
-  const signer=await selectConnectedExtension('unisat',{signal:controller.signal,changed(){changed++;}},{listen,open:async()=>({homeToken:'connector',source:{postMessage(){}}}),current:()=>active,select:async()=>({...method,check:async()=>{},sign:async()=>{signed++;},close(){}})});
-  const pending=assert.rejects(signer.sign('Runtime message'),{code:'disconnected'});active=false;t.mock.timers.tick(250);await pending;assert.equal(signed,0);assert.equal(changed,1);controller.abort();
-});

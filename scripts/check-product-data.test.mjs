@@ -386,8 +386,8 @@ test('Home, System and connector text stays visible', () => validateConnectionDi
 test('connection disclosure guard rejects markup, generated elements and custom toggles', () => {
   const dir = mkdtempSync(join(tmpdir(),'connection-text-'));
   try {
-    for (const name of ['home','system','wallet-metamask','wallet-unisat','wallet-walletconnect']) mkdirSync(join(dir,'capsules',name,'browser'),{recursive:true});
-    for (const name of ['home','system','wallet-metamask','wallet-unisat','wallet-walletconnect']) {
+    for (const name of ['home','system','wallet','wallet-metamask','wallet-unisat','wallet-walletconnect']) mkdirSync(join(dir,'capsules',name,'browser'),{recursive:true});
+    for (const name of ['home','system','wallet','wallet-metamask','wallet-unisat','wallet-walletconnect']) {
       const folder=join(dir,'capsules',name,'browser');mkdirSync(folder,{recursive:true});
       const path=join(folder,'view.mjs');
       for (const source of ['<details>','<summary>','document.createElement("details")',"node('summary')",'Message details','<button aria-expanded="false">Show details</button>','<button data-toggle="details">More</button>']) {

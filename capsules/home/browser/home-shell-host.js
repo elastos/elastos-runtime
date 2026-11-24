@@ -1,6 +1,5 @@
-import {selectSigninWallet} from './wallet-signin-signers.mjs';
 import {openWalletSigninEntry} from './wallet-signin-window.mjs';
-import {selectConnectedWalletConnect,selectConnectedExtension,openWalletSigninChooser} from './wallet-signin-connector.mjs';
+import {selectConnectedWalletConnect,openWalletSigninChooser} from './wallet-signin-connector.mjs';
 import { handleWalletSigninRequest } from "./wallet-signin-host.mjs?v=wallet-signin-1";
 import { walletSigninApi } from "./wallet-signin-view.mjs?v=wallet-signin-1";
 import {
@@ -244,7 +243,7 @@ async function openSigninConnector(target) {
   if(prior) {
     const [homeToken,context]=prior;
     const focus=()=>postToActiveShell({type:'home:gui-command',command:'focus-window',homeToken});focus();
-    return {homeToken,source:context.source,isOpen:()=>currentSigninConnector({homeToken,source:context.source}),focus};
+    return {homeToken,source:context.source,isOpen:()=>currentSigninConnector({homeToken,source:context.source}),focus,close:()=>closeHomeGuiWindow(homeToken)};
   }
   const launched = await launchHomeTarget(target);
   const descriptor = walletConnectorAttachmentDescriptor(target, launched);
@@ -256,7 +255,7 @@ async function openSigninConnector(target) {
   })) {
     throw new Error("Home GUI did not accept the Wallet connector attachment");
   }
-  const token=homeLaunchTokenFromRoute(launched.route);return {isOpen:()=>launchedAppContexts.has(token),focus:()=>postToActiveShell({type:'home:gui-command',command:'focus-window',homeToken:token})};
+  const token=homeLaunchTokenFromRoute(launched.route);return {close:()=>closeHomeGuiWindow(token),isOpen:()=>launchedAppContexts.has(token),focus:()=>postToActiveShell({type:'home:gui-command',command:'focus-window',homeToken:token})};
 }
 
 async function signinConnectorWindow(connector='walletconnect') {
@@ -1760,13 +1759,13 @@ window.addEventListener("message", (event) => {
   if (data.type === "home:wallet-signin-request" && handleWalletSigninRequest(event, context, {
     authorityToken: getHomeAuthorityToken,
     authorityCurrent: createHomeAuthorityCheck,
+    sessionMethodId:()=>shellState.currentSummary?.authority?.proof_binding_id||'',
     api: (path, body, token) => path === "/api/auth/passkeys"
       ? fetchJson(path, {headers:{"x-elastos-home-token":token}}) : walletSigninApi(path, body, token),
     manage: manageWalletSignin,
     openConnector: openSigninConnector,
     openChooser: onAction=>openWalletSigninChooser({open:openSigninConnector,current:currentSigninConnector,focus:homeToken=>postToActiveShell({type:"home:gui-command",command:"focus-window",homeToken}),setStage:(homeToken,stage)=>postToActiveShell({type:"home:gui-command",command:"wallet-signin-state",homeToken,stage}),onAction}),
     focusCaller: ()=>postToActiveShell({type:"home:gui-command",command:"focus-window",homeToken:context.homeToken}),
-    selectExtension: (connector,options)=>selectConnectedExtension(connector,options,{open:signinConnectorWindow,current:currentSigninConnector,select:selectSigninWallet}),
     selectWalletConnect: options=>selectConnectedWalletConnect(options,{open:()=>signinConnectorWindow(),current:currentSigninConnector}),
     current: () => homeMessageContext(event, data)?.homeToken === context.homeToken,
     changed: () => {
@@ -2222,6 +2221,14 @@ window.addEventListener("message", (event) => {
       .catch((error) => {
         console.error("home open-target-with-payload failed", error);
       });
+    return;
+  }
+  if (data.type === "home:wallet-content-size") {
+    if (context.kind !== "app-frame" || !WALLET_CONNECTOR_TARGETS.has(context.targetId)
+      || !hasExactMessageKeys(data,["type","homeToken","width","height"])
+      || !Number.isSafeInteger(data.width) || !Number.isSafeInteger(data.height)
+      || data.width < 280 || data.width > 2000 || data.height < 100 || data.height > 4000) return;
+    postToActiveShell({type:"home:gui-command",command:"fit-wallet-window",homeToken:context.homeToken,width:data.width,height:data.height});
     return;
   }
   if (data.type === "home:close-self") {

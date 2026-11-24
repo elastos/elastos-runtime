@@ -56,7 +56,7 @@ runs the factory in the rendering realm. It owns mounting and effects.
 
 `browser_typed_data_sign` summaries use “Sign typed data”. The Runtime catalog supplies app names; an unnamed app uses “Requesting app” as its label and “the app” in instructions. Request
 content appears once in the request card. The exact ASCII origin wraps in full
-under “Site reported by Browser”. The approval unit stays in normal card flow; long cards scroll from their start. Wait/outcome recovery retains its own visible exit. The contract-only `request-unavailable`
+under “Site in Browser”. The approval unit stays in normal card flow; long cards scroll from their start. Wait/outcome recovery retains its own visible exit. The contract-only `request-unavailable`
 stage in each connector retains request identity and provides return to the app.
 The window lanes must produce this stage from a stale request selection as well
 as every window-local stage listed above; the enabling lane supplies render data.
@@ -102,7 +102,7 @@ The window lanes produce `wallet-loading`, `wallet-unavailable`, `home-wallet-re
 
 The request picker keeps every supplied summary (up to 100 other requests plus the selected one); other designed cards keep their short preview and View requests intent. Account cards accept up to 100 supplied rows and scroll; greater input is refused, not truncated. This is a bounded presentation batch, not a claim about Runtime's maximum account count. A producer needing a larger list needs paging and an agreed source bound. The pure summary reducer preserves Runtime's expired status and known request-kind titles; an unknown intent is Review request. Runtime rejected records with an approval time reduce to dismissed; explicit dismissed input remains compatible with legacy callers.
 
-The default site label element is exactly Site reported by Browser. Its following colon and space are separate fixed punctuation. “Requesting app” is a standalone fallback label; instructions use “the app”. WalletConnect recovery says “This request is unavailable here. To try again, go back to {app} and start a new request.”
+The default site label element is exactly Site in Browser. Its following colon and space are separate fixed punctuation. “Requesting app” is a standalone fallback label; instructions use “the app”. WalletConnect recovery says “This request is unavailable here. To try again, go back to {app} and start a new request.”
 
 
 `transport-reconnecting` is an additional connectionNotice value: Phone wallet is reconnecting. The window adds/removes it from its existing SDK transport events in idle, wait or result states. A latent request summary never substitutes an account address or request identity on a non-request screen; an expired latent summary does not turn a link screen into an expired request.

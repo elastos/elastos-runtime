@@ -39,6 +39,7 @@ export function createWalletPreferences({
   const settingsOpenButton = document.querySelector("#wallet-settings-open");
   const methodsNode = document.querySelector("#wallet-methods");
 
+  let signinRowsKey;
   let privacyMode = readStoredBoolean("wallet.privacy");
   let displayCurrency = readStoredValue(DISPLAY_CURRENCY_STORAGE_KEY, "btc", ["btc", "usd", "ela"]);
   let activeDrawer = "";
@@ -78,6 +79,11 @@ export function createWalletPreferences({
     }
     const signin = getSigninChooser();
     if (signin) {
+      const key=JSON.stringify([signin.requestId,signin.stage,signin.methods]);
+      // A focus refresh can finish between pointer-down and pointer-up.
+      // Preserve the controls while their state is unchanged so click completes.
+      if(signinRowsKey===key)return;
+      signinRowsKey=key;
       methodsNode.replaceChildren();
       for (const [connector,label,mark] of [['metamask','MetaMask','metamask'],['unisat','UniSat','btc'],['walletconnect','Phone wallet','wc']]) {
         const method=signin.methods?.find(m=>m.connector===connector);
@@ -93,6 +99,7 @@ export function createWalletPreferences({
       }
       return;
     }
+    signinRowsKey=undefined;
     methodsNode.replaceChildren();
     const walletConnectConnected = namesForMethod(accounts, "wc");
     const walletConnectAvailable = approvalMethods.walletconnect?.available === true;

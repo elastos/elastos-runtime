@@ -49,40 +49,6 @@ export async function selectConnectedWalletConnect({signal,method,opened,action=
 }
 
 
-// Extension providers live in Home; their admitted connector owns request review.
-export async function selectConnectedExtension(connector, options, {open,current,select,listen=window}) {
-  const context=await open(connector);options.signal.throwIfAborted();options.opened?.(context.focus);
-  const signer=await select(connector,options);
-  let closed=false,monitor;const pending=new Map(),prefix=crypto.randomUUID();let sequence=0,reviewRequestId;
-  const valid=()=>!closed&&!options.signal.aborted&&current(context);
-  const send=(operation,body={})=>new Promise((resolve,reject)=>{
-    if(!valid())return reject(Object.assign(new Error('Wallet window changed'),{code:'disconnected'}));
-    const requestId=`${prefix}:${++sequence}`;if(operation==='review')reviewRequestId=requestId;pending.set(requestId,{resolve,reject});
-    context.source.postMessage({type:'home:wallet-signin-effect',homeToken:context.homeToken,requestId,operation,...body},'*');
-  });
-  const receive=event=>{
-    const data=event.data;
-    if(!valid()||event.source!==context.source||event.origin!=='null'||data?.type!=='home:wallet-signin-effect-result'||data.homeToken!==context.homeToken)return;
-    const job=pending.get(data.requestId);if(!job)return;pending.delete(data.requestId);
-    data.error?job.reject(Object.assign(new Error('Wallet request stopped'),{code:data.code||'disconnected'})):job.resolve(data.result);
-  };
-  const close=()=>{
-    if(closed)return;closed=true;clearInterval(monitor);signer.close();listen.removeEventListener('message',receive);options.signal.removeEventListener('abort',close);
-    if(current(context))context.source.postMessage({type:'home:wallet-signin-effect',homeToken:context.homeToken,requestId:`${prefix}:stop`,operation:'stop'},'*');
-    for(const job of pending.values())job.reject(Object.assign(new Error('Wallet request ended'),{code:'disconnected'}));pending.clear();
-  };
-  listen.addEventListener('message',receive);options.signal.addEventListener('abort',close,{once:true});
-  monitor=setInterval(()=>{if(!current(context)||context.source.closed){close();options.changed('disconnected');}},250);
-  if(options.signal.aborted){close();options.signal.throwIfAborted();}
-  return {...signer,focus:context.focus,close,complete:()=>completeReview(send,reviewRequestId),async sign(message){
-    const result=await send('review',{address:signer.address,chain_id:signer.chain_id,network:signer.network,name:signer.name||'',message,action:options.action||'signin'});
-    if(result?.approved!==true)throw Object.assign(new Error('Wallet did not approve the request'),{code:4001});
-    await signer.check();
-    try {const proof=await signer.sign(message);await send('finish');return proof;}
-    catch(error){await send('stop').catch(()=>{});throw error;}
-  }};
-}
-
 // The admitted Wallet owns the chooser; Home owns its ceremony and proof.
 export async function openWalletSigninChooser({open,current,focus,listen=window,onAction,setStage=()=>{}}) {
   const context=await open('wallet'),requestId=crypto.randomUUID();

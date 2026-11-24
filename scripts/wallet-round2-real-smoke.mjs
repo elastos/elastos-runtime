@@ -11,7 +11,7 @@ process.env.PW_TEST_SCREENSHOT_NO_FONTS_READY='1';
 const pictures=process.env.WALLET_ROUND2_PICTURES,source=process.env.WALLET_TEST_PROFILE;
 const extensions=process.env.WALLET_TEST_EXTENSIONS,passwordFile=process.env.WALLET_TEST_PASSWORD_FILE;
 assert(pictures&&source&&extensions&&passwordFile,'supply isolated test profile, extension, password-file and picture paths');
-let password=await readFile(passwordFile,'utf8');
+let password=(await readFile(passwordFile,'utf8')).trim();
 const scratch=temporaryDirectory('wallet-round2-real-');await chmod(scratch.path,0o700);
 await mkdir(pictures,{recursive:true});
 const records=[];
@@ -25,8 +25,9 @@ const extensionIds={metamask:'fahggfellgfmaipmbahaikhklihepmdg',unisat:'ojipfahn
 async function prompt(context,kind){
   const until=Date.now()+25000;
   while(Date.now()<until){
-    const page=context.pages().findLast(p=>p.url().includes(extensionIds[kind])&&p.url().includes('notification'));
-    if(page&&!page.isClosed())return page;
+    const pages=context.pages().filter(p=>!p.isClosed()&&p.url().includes(extensionIds[kind]));
+    const page=pages.findLast(p=>p.url().includes('notification'))||pages.findLast(p=>p.url().includes('home.html'));
+    if(page)return page;
     await new Promise(resolve=>setTimeout(resolve,100));
   }
   throw Error(kind+' did not open a test prompt');
@@ -36,7 +37,7 @@ async function answer(context,kind,name,{reject=false}={}){
   while(Date.now()<end){
     const page=await prompt(context,kind);await page.bringToFront();
     const unlock=kind==='metamask'?page.getByRole('button',{name:'Unlock',exact:true}):page.getByText('Unlock',{exact:true});
-    if(await unlock.isVisible().catch(()=>false)){await shot(page,name+'-unlock',kind+' asks to unlock the disposable test wallet.');await page.locator('input[type=password]').fill(password);await unlock.click();await page.locator('input[type=password]').waitFor({state:'hidden',timeout:5000});await new Promise(resolve=>setTimeout(resolve,150));continue;}
+    if(await unlock.isVisible().catch(()=>false)){await shot(page,name+'-unlock',kind+' asks to unlock the disposable test wallet.');await page.locator('input[type=password]').fill(password);await unlock.click();await page.locator('input[type=password]').waitFor({state:'hidden',timeout:5000}).catch(error=>{if(!page.isClosed())throw error;});await new Promise(resolve=>setTimeout(resolve,150));continue;}
     const connect=page.getByText('Connect',{exact:true});
     if(await connect.isVisible().catch(()=>false)){if(!await shot(page,name+'-connect',kind+' asks to share the disposable test address.'))continue;await connect.click().catch(error=>{if(!page.isClosed())throw error;});continue;}
     const accept=kind==='metamask'?page.getByRole('button',{name:'Confirm',exact:true}):page.getByText('Sign',{exact:true});
@@ -94,22 +95,22 @@ try{
       await f.state('request-done');await shot(f.top,'real-'+kind+'-signed',kind+' completed the app signature.');
       await request('ordinary-refusal');await f.action('send-request').click();
       await answer(context,kind,'real-'+kind+'-refusal',{reject:true});
-      await f.state('request-wallet-error');await shot(f.top,'real-'+kind+'-declined',kind+' refusal reaches the current Home uncertainty response.');
+      await f.state('request-declined');await shot(f.top,'real-'+kind+'-declined',kind+' refusal is shown as a declined request.');
       await request('ordinary-cancel');await f.action('send-request').click();
       const waiting=await prompt(context,kind);await f.state('request-extension');
       await shot(f.top,'real-'+kind+'-waiting',kind+' waits for a signature with Stop waiting.');
       await f.action('stop-waiting').click();await f.state('request-cancelled');
       await shot(f.top,'real-'+kind+'-stopped',kind+' stopped waiting and keeps the uncertain request visible.');
       await answer(context,kind,'real-'+kind+'-cancel-prompt',{reject:true});
-      await f.state('request-wallet-error');
+      await f.state('request-declined');
       await request('ordinary-close');await f.action('send-request').click();
-      await (await prompt(context,kind)).close();await f.state('request-wallet-error');
-      await shot(f.top,'real-'+kind+'-closed-prompt',kind+' closed extension prompt reaches the current Home uncertainty response.');
+      await (await prompt(context,kind)).close();await f.state('request-declined');
+      await shot(f.top,'real-'+kind+'-closed-prompt',kind+' closed extension prompt is shown as a declined request.');
       await request('ordinary-expiry');
       await f.top.evaluate(()=>testState.requests[0].expires_at=Math.floor(Date.now()/1000)-1);await f.frame.evaluate(()=>window.dispatchEvent(new Event('focus')));await f.state('request-expired');
       await shot(f.top,'real-'+kind+'-expired',kind+' expired request keeps a clear exit.');
-      results.push({kind,result:'PASS',remaining:'Home currently flattens refusal and closed-prompt errors to an unknown result; W1 must preserve the refusal outcome.',extensionDiagnostics:f.extensionDiagnostics,boundary:'Real extension, scripted Runtime receipts, harmless messages; no payment broadcast'});
-      console.log(kind+': ordinary connect, signature, refusal recovery, stop, prompt close and expiry walked; refusal classification requires W1');
+      results.push({kind,result:'PASS',remaining:'Installed Runtime and Home acceptance stays with the release walk.',extensionDiagnostics:f.extensionDiagnostics,boundary:'Real extension, scripted Runtime receipts, harmless messages; no payment broadcast'});
+      console.log(kind+': ordinary connect, signature, refusal recovery, stop, prompt close and expiry walked; refusals are classified');
     }catch(error){console.error((kind+': '+error.stack).replaceAll(password,'[test secret]'));console.error(JSON.stringify({pages:context.pages().map(p=>{const u=new URL(p.url());return u.protocol+'//'+u.host+u.pathname;}),stage:await f?.frame.locator('main').getAttribute('data-state').catch(()=>null)}));throw error;}finally{if(f)await f.close();else await context.close();}
   }
 }finally{

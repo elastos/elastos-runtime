@@ -88,7 +88,7 @@ test('a connection retried after its first expiry still continues the same Add w
     await system.getByRole('button',{name:'Add wallet',exact:true}).click();await wallet.locator('#wallet-signers[data-signin=options]').waitFor();
     await wallet.locator('.wallet-method-head').filter({hasText:'MetaMask'}).getByRole('button',{name:'Choose',exact:true}).click();
     const connector=page.frameLocator('iframe[title=wallet-metamask]');await connector.getByRole('button',{name:'Connect wallet',exact:true}).waitFor();
-    await page.clock.fastForward(180001);fixture.state.clockOffsetMs=180001;await connector.getByRole('button',{name:'Connect wallet',exact:true}).click();await system.locator('[data-wallet-method]').waitFor();assert.equal(fixture.state.methods.length,1);
+    await page.clock.fastForward(180001);fixture.state.clockOffsetMs=180001;await connector.getByRole('button',{name:'Connect wallet',exact:true}).click();await system.locator('[data-wallet-method]').waitFor();assert.equal(fixture.state.methods.length,1);assert.equal(await page.locator('iframe[title=wallet-metamask]').count(),0,'first-use connection closes before sign-in authority finishes');
   }finally{await context.close();await browser.close();await fixture.close();}
 });
 

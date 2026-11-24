@@ -32,7 +32,7 @@ export function ruleFailures(view, {row,shared,expected,facts}={}) {
   if(f.notSent&&/result unknown|still waiting|has not answered/i.test(text))failures.push('known-result');
   if(f.capability&&ids.includes('use-walletconnect'))failures.push('capability');
   if(ids.includes('check-access')&&text.includes('has not answered')&&view.actions.some(a=>a.primary&&a.id==='start-over')&&!text.includes('new QR code'))failures.push('sentence');
-  if(!['linked','linked-multiple'].includes(view.stage)&&view.actions.some(a=>a.primary&&a.id==='close-window')&&!/close (this )?window/i.test(text))failures.push('sentence');
+  if(view.actions.some(a=>a.id==='close-window')&&/Close this window with Home['’]s window controls/.test(text))failures.push('sentence');
   if(f.answered&&(!view.request?.id||!view.request?.app||!view.status.length||view.wait!==null||ids.includes('send-request')||view.focus!=='outcome'))failures.push('answered');
   if(/home:|fixture-carried-token|wallet-connector-effect|invalid_request|0xdeadbeef|\bN[1-7]\b/.test(text))failures.push('internal');
   if([...view.status,...view.notice,...view.afterNote].some(p=>!['copy','wallet','app','site','home','network'].includes(p.kind)))failures.push('isolation');

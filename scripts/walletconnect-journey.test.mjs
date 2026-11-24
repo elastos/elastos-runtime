@@ -7,17 +7,17 @@ import {extname,resolve,relative} from 'node:path';
 import {importProductSmokePlaywright,productSmokeLaunchOptions} from './product-smoke-browser.mjs';
 import {walletConnectRelayFixture} from './lib/walletconnect-relay-fixture.mjs';
 import {walletConnectMessages as messages} from '../capsules/wallet-walletconnect/browser/walletconnect-client.mjs';
-const permissionText = 'Allow WalletConnect to use the internet?';
-const turnedOff = 'Internet access for WalletConnect is off.';
+const permissionText = 'Allow Phone wallet to use the internet?';
+const turnedOff = 'Internet access for Phone wallet is off.';
 // API and passkey responses are fixtures. All app markup, scripts, CSS and SDK are real.
 test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{timeout:240000},async t=>{
   let permissionPosts=0,holdApprovalList=false,releaseApprovalList,approvalListHeld,holdConnectionStatus=false,releaseConnectionStatus,connectionStatusHeld;
   let status='off',requestId=0,issuedAt=Math.floor(Date.now()/1000),passkeys=0,failSummary=false,keys={},verified=0,completions=0,approvalRequests=[];
   const consent=()=>({status,request:['requested','granted'].includes(status)?{id:String(requestId),issued_at:issuedAt,text:'Fixture consent'}:null});
   const actions=[];
-  const notification=()=>({id:'walletconnect-internet:permission',source_app:'wallet-walletconnect',kind:status==='requested'?'walletconnect_internet_request':'walletconnect_internet_decision',title:'WalletConnect internet access',body:status==='requested'
+  const notification=()=>({id:'walletconnect-internet:permission',source_app:'wallet-walletconnect',kind:status==='requested'?'walletconnect_internet_request':'walletconnect_internet_decision',title:'Phone wallet internet access',body:status==='requested'
     ? readFileSync('elastos/crates/elastos-server/src/api/gateway_walletconnect.rs','utf8').match(/const CONSENT: &str = "([^"]+)"/)[1]
-    : status==='granted'?'WalletConnect can use the internet.':'Internet access for WalletConnect is off.',read:status!=='requested',created_at:Math.floor(Date.now()/1000),severity:status==='requested'?'attention':'info',action_ref:['requested','granted'].includes(status)?{action_id:`walletconnect-internet-${status==='requested'?'allow':'turn-off'}:${requestId}`} : null});
+    : status==='granted'?'WalletConnect can use the internet.':'Internet access for Phone wallet is off.',read:status!=='requested',created_at:Math.floor(Date.now()/1000),severity:status==='requested'?'attention':'info',action_ref:['requested','granted'].includes(status)?{action_id:`walletconnect-internet-${status==='requested'?'allow':'turn-off'}:${requestId}`} : null});
   const server=http.createServer(async(req,res)=>{
     const url=new URL(req.url,'http://localhost');const path=url.pathname;
     const json=(value,code=200)=>{res.writeHead(code,{'content-type':'application/json'});res.end(JSON.stringify(value));};
@@ -292,7 +292,7 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
       const linking=['proposal','ownership'].includes(scope);
       const key=scope==='proposal'?'proposalFailure':'phoneFailure';
       const phoneError=scope==='proposal'&&ending==='timeout'?{message:'The QR code expired. Select Connect wallet for a new one.'}:error;
-      const message=scope==='proposal' ? ending==='timeout'?'QR code expired.':ending==='decline'?'Connection declined.':'Could not connect.' : scope==='ownership' ? ending==='decline'?'Your wallet declined to sign the message.':ending==='timeout'?'Time to connect ran out.':'Could not connect.' : scope==='signature' ? ending==='decline'?'your wallet did not approve this message.':ending==='timeout'?'Time to answer ran out.':/go back to the app and start a new request\./ : ending==='decline'?'your wallet did not approve this transaction.':'Home could not confirm the transaction result.';
+      const message=scope==='proposal' ? ending==='timeout'?'QR code expired.':ending==='decline'?'Connection declined.':'Could not connect.' : scope==='ownership' ? ending==='decline'?'Your wallet declined to sign the message.':ending==='timeout'?'Time to connect ran out.':'Could not connect.' : scope==='signature' ? ending==='decline'?'Your wallet declined this request.':ending==='timeout'?'Time to answer ran out.':/go back to the app and start a new request\./ : ending==='decline'?'your wallet did not approve this transaction.':'Home could not confirm the transaction result.';
       approvalRequests=linking?[]:[freshRequest(scope==='transaction'?'transaction_intent':'browser_personal_sign')];
       await reload();
       await walletFrame.evaluate(({key,error,sdkError})=>{window[key]=sdkError?Object.assign(new Error(error.message),error.code===undefined?{}:{code:error.code}):error;},{key,error:phoneError,sdkError});
@@ -513,7 +513,7 @@ for (const journey of ['A','B']) test(`round18 ${journey}: the open window recov
       await connectVisible();
       await wallet.locator('[data-focus=outcome]').filter({hasText:permissionText}).waitFor();
       status='refused';await nextPoll();
-      await t.test('refusal gives a true sentence and a working next step',async()=>assert.equal(await text(),'Internet access for WalletConnect is off.'));
+      await t.test('refusal gives a true sentence and a working next step',async()=>assert.equal(await text(),'Internet access for Phone wallet is off.'));
     } else {
       status='revoked';revision++;keys={};await wallet.locator('[data-focus=outcome]').filter({hasText:turnedOff}).waitFor({timeout:10000});
       assert.equal(await wallet.locator('[role=dialog]').count(),0,'Turn Off removes the QR');

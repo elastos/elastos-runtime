@@ -24,6 +24,7 @@ async function fixture(run) {
       if (url.pathname === "/api/apps/system/summary") {
         const summary = makeSystemSummary(makeAppearanceRecord({ theme }));
         summary.access.role = role;
+        summary.authority.proof_binding_id = passkeys.find(key => key.current)?.proof_binding_id || owner.proof_binding_id;
         jsonResponse(response, summary);
         return true;
       }
@@ -139,16 +140,16 @@ test("every allowed removal asks first and returns focus after Cancel or Escape"
         await page.keyboard.press("Enter");
         await dialog.waitFor({ state: "hidden" });
         assert.equal(writes.length, before, "Enter takes the default Cancel action");
-        assert.equal(await remove.evaluate(node => node === document.activeElement), true);
+        await frame.waitForFunction(node => node === document.activeElement, await remove.elementHandle());
         await remove.click();
         await page.keyboard.press("Escape");
         await dialog.waitFor({ state: "hidden" });
         assert.equal(writes.length, before);
-        assert.equal(await remove.evaluate(node => node === document.activeElement), true);
+        await frame.waitForFunction(node => node === document.activeElement, await remove.elementHandle());
         await remove.click();
         await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
         assert.equal(writes.length, before);
-        assert.equal(await remove.evaluate(node => node === document.activeElement), true);
+        await frame.waitForFunction(node => node === document.activeElement, await remove.elementHandle());
         await remove.click();
         await dialog.getByRole("button", { name: "Remove passkey", exact: true }).click();
         await frame.waitForFunction(() => document.querySelectorAll(".account-row").length === 2);
@@ -195,7 +196,7 @@ test("confirmation uses own and unnamed wording for device and hardware passkeys
           assert.doesNotMatch(await dialog.textContent(), /for Account|that person/);
           if (state !== "own-other") await screenshot(page, `confirmation-${state}-${theme}-${width}`);
           await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
-          assert.equal(await remove.evaluate(node => node === document.activeElement), true);
+          await frame.waitForFunction(node => node === document.activeElement, await remove.elementHandle());
         }
       }
     }
@@ -345,7 +346,8 @@ test("Accounts groups methods beneath their owner with equal add controls in bot
           assert.equal(await block.getByRole("button", { name: "Remove account", exact: true }).count(), 0);
           assert.equal(new Set(await block.locator(".passkey-name").allTextContents()).size, 2);
           const remove = block.locator(".passkey-remove").first();
-          await remove.focus();
+          await remove.press("Tab");
+          await page.keyboard.press("Shift+Tab");
           const focus = await remove.evaluate(node => { const style = getComputedStyle(node); return { width: style.outlineWidth, style: style.outlineStyle }; });
           assert.notEqual(focus.style, "none");
           assert.ok(parseFloat(focus.width) >= 2);

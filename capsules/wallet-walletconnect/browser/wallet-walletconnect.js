@@ -218,7 +218,7 @@ async function checkConnection() {
     connectionState=current;
     if (previousPermission !== permissionStatus && !activeRequest) outcome=undefined;
     if (previousPermission !== permissionStatus && permissionStatus === 'granted' && activeRequest?.request_id !== dispatchedRequestId && !hostEffectInFlight) {outcome=undefined;activeRequest=undefined;}
-    draw();
+    if(!hostEffectInFlight)await refreshWalletState();draw();
     if (current.permissionFresh !== false && permissionStatus === 'granted' && pendingEffect && pendingEffect === saved && !hostEffectInFlight) {
       const resume=pendingEffect.run;pendingEffect=undefined;resume();return;
     }
@@ -315,7 +315,7 @@ async function requestCapsuleWalletEffect(action) {
       if (consent.status !== 'granted') {
         pendingEffect={requestId:consent.request?.id,expiresAt:(consent.request?.issued_at+1800)*1000,action,run:action.kind === 'link' ? ()=>onConnect({fresh:action.fresh !== false}) : ()=>onRequestClick(action.approvalRequestId)};
         watchConnection();showInternetRequest();
-        throw Object.assign(new Error('WalletConnect needs internet access. An admin of this Home can allow it in Inbox. Then continue here.'),{tone:'muted'});
+        throw Object.assign(new Error('Phone wallet needs internet access. An admin of this Home can allow it in Inbox. Then continue here.'),{tone:'muted'});
       }
     }
     const result=await connector.effect(action);
@@ -356,10 +356,10 @@ async function fetchJson(url,init) {
     try {code=JSON.parse(detail).code;} catch {}
     if (code === 'walletconnect_admin_required') {
       ownerConsentNeeded=true;permissionStatus='off';pendingEffect=undefined;draw();watchConnection();
-      throw Object.assign(new Error('An admin of this Home can allow WalletConnect internet access in Inbox.'),{tone:'muted'});
+      throw Object.assign(new Error('An admin of this Home can allow Phone wallet internet access in Inbox.'),{tone:'muted'});
     }
     if (response.status === 403) {launchExpired=true;draw();watchConnection();}
-    throw new Error(response.status === 403 ? 'This wallet window expired. Close it and open WalletConnect again.' : detail.trim() || 'ElastOS could not complete this request. Try again.');
+    throw new Error(response.status === 403 ? 'This wallet window expired. Close it and open Phone wallet again.' : detail.trim() || 'ElastOS could not complete this request. Try again.');
   }
   return response.json();
 }
@@ -394,7 +394,8 @@ addEventListener('message',async event=>{
     if(signinResult?.stage!=='request-done'||data.reviewRequestId!==signinResult.request.request_id)return reply({error:true});
     signinResult.complete=true;draw();reply({result:{}});return;
   }
-  if(signinBusy||hostEffectInFlight||unresolvedPayment())return reply({error:true});
+  if(unresolvedPayment())return reply({error:true,code:'payment-pending'});
+  if(signinBusy||hostEffectInFlight)return reply({error:true,code:'busy'});
   signinBusy=true;let ownedRequest;
   try {
     let result;

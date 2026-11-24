@@ -80,5 +80,9 @@ export function contractCopy(expected, row, view) {
   if(row.stage==='request-next')result.status='Message signed.';
   if(row.stage==='disconnecting')result.notice='Disconnecting continues after you close this window.';
   for(const key of Object.keys(result))result[key]=result[key].replaceAll('wallet app','phone wallet').replaceAll('Account saved in Wallet.','Address saved in Wallet.').replaceAll('Your account stays in Wallet.','Your address stays in Wallet.').replaceAll('choose WalletConnect in Wallet.','choose Phone wallet in Wallet.').replaceAll('open WalletConnect, choose','open Phone wallet, choose');
+  if(row.stage==='request-declined')result.status=`${name==='your wallet'?'Your wallet':name} declined this request.`;
+  if(view.actions.some(a=>a.id==='close-window'))for(const key of Object.keys(result)){
+    result[key]=result[key].replace(/Close this window(?: with Home['’]s window controls)?(?:, then|\. Then|\.)?\s*/g,'').replace(/^[a-z]/,letter=>letter.toUpperCase());
+  }
   return result;
 }

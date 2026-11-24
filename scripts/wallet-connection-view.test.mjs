@@ -8,7 +8,7 @@ import { contractCopy } from './lib/wallet-connection-picture-oracle.mjs';
 
 test('closed view covers the three connector tables and Wallet connect panel', () => {
   assert.deepEqual(Object.fromEntries(Object.entries(stageNames).map(([key, rows]) => [key, rows.length])),
-    { walletconnect: 86, metamask: 66, unisat: 53, panel: 11 });
+    { walletconnect: 86, metamask: 66, unisat: 54, panel: 11 });
   assert.throws(() => connectionView({ window: 'metamask', stage: 'raw-wallet-error' }));
 });
 
@@ -48,7 +48,7 @@ test('rule oracles reject deliberate broken states, one mutation per rule', () =
     ['payment', {...busy, paymentRisk:true, notice:[{kind:'copy',text:'Reload Home.'}]}],
     ['known-result', {...busy,walletResult:{disposition:'refused',receipt:'recording_failed'},status:[{kind:'copy',text:'Result unknown.'}]}],
     ['capability', {...busy, window:'unisat',actions:[action('use-walletconnect'),action('close-window')]}],
-    ['sentence', {...busy,notice:[{kind:'copy',text:'Then check again.'}]}],
+    ['sentence', {...busy,notice:[{kind:'copy',text:"Close this window with Home's window controls."}]}],
     ['answered', {...answered,wait:'Time left: 1:00'}],
     ['internal', {...busy,notice:[{kind:'copy',text:'home:wallet-connector-effect N2 invalid_request'}]}],
     ['isolation', {...busy,notice:[{kind:'html',text:'wallet'}]}],

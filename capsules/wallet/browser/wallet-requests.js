@@ -145,10 +145,9 @@ export function createWalletRequests({
     if (!review || typeof review !== "object" || readText(review.kind) !== "account_access") {
       return null;
     }
-    const details = document.createElement("details");
+    const details = document.createElement("section");
     details.className = "wallet-request-review";
-    details.open = true;
-    details.append(textNode("summary", "Review exact account access"));
+    details.append(textNode("h3", "Account access"));
     const fields = document.createElement("dl");
     const appendField = (label, value) => {
       const text = Array.isArray(value)
@@ -179,7 +178,7 @@ export function createWalletRequests({
     value.dir = "auto";
     // Assignment remains compatible with the lightweight DOM used by unit tests.
     value.setAttribute?.("dir", "auto");
-    row.append(textNode("small", "Site reported by Browser"), value);
+    row.append(textNode("small", "Site in Browser"), value);
     return row;
   }
 

@@ -14,7 +14,7 @@ const breaks = {
   B1:s=>s.replace("[wallet[0].toUpperCase()+wallet.slice(1), ` was using a different ${refusal.cause}. This request needed ${refusal.cause} `, {value:needed}, '.']", "['This request is unavailable.']"),
   X1:s=>s.replace("root.dataset.extensionFeedback = 'consumed';", "root.dataset.extensionFeedback = 'consumed'; root.querySelector('.connection-actions').append(renderConnection(document, connectionView({window:kind,stage:'request-waiting',summary:selected,account:accountView(),waitSeconds:remaining(),supportedActions:['send-request']})).querySelector('button'));"),
   X2:s=>s.replace("if (!next) { draw(); return; }", "if (!next) { refusal = null; stage = 'request-unavailable'; draw(); return; }"),
-  X3:s=>s.replace("'Switch to the linked account before approving.', ", ""),
+  X3:s=>s.replace("'Switch to the connected account before approving.', ", ""),
   'stop-copy':s=>s.replaceAll('Closing this window does not cancel it.', 'Home will ignore a later answer.'),
   saved:s=>s.replace('const rows = address ? row ? [row] : [] : candidates;', 'const rows = address ? row ? [row] : [] : [];'),
   read:s=>s.replace("else { if (['request-unsendable','link-error'].includes(preflightFailure)) preflightFailure = null; void refresh(); }", "else { void perform({kind:'link'}); }"),

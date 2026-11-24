@@ -27,7 +27,7 @@ function busyGuard(api=product){for(const window of ['metamask','unisat','wallet
 test('R5 F-B: every unknown busy notice survives every supported-action subset',()=>busyGuard());
 test('R5: later capability adaptation preserves link-error and unsafe-retry recovery once',()=>{
  for(const window of ['metamask','unisat','walletconnect'])for(const stage of ['link-error','account-changed','account-unavailable-unknown'])for(const supportedActions of [[],['close-window'],['check-access']]){
-  const v=product.connectionView({window,stage,localSafety:null,supportedActions});const text=words(v);assert.match(text,/Activity in Wallet|open Wallet from Home and check Activity/i);assert.equal((text.match(/Close this window/g)||[]).length,1);assert.doesNotMatch(text,/Open .* to check its account and connection/);
+  const v=product.connectionView({window,stage,localSafety:null,supportedActions});const text=words(v);assert.match(text,/Activity in Wallet|open Wallet from Home and check Activity/i);assert.equal((text.match(/Close this window/g)||[]).length,supportedActions.includes('close-window')?0:1);assert.doesNotMatch(text,/Open .* to check its account and connection/);
  }
 });
 function rejectedGuard(api=product){for(const window of ['walletconnect','metamask','unisat'])for(const transaction of [false,true]){
@@ -65,7 +65,7 @@ async function variant(engine,mutate,run){const f=await browserFixture(engine,{w
  if(mutate){const source=readFileSync(new URL('../capsules/_shared/wallet-connection-view.mjs',import.meta.url),'utf8'),changed=mutate(source);assert.notEqual(changed,source,'browser source break applies');await f.context.route('**/wallet-connection-view.mjs',route=>route.fulfill({contentType:'text/javascript',body:changed}));}
  return await run(f);
  }finally{await f.close();}}
-async function labelGuard(f){const args=fixtureArguments(states.find(r=>r.designState==='metamask/request-waiting'),{compact:true});await f.page.evaluate(async args=>{const m=await import('/capsules/_shared/wallet-connection-view.mjs');m.mountConnection(document.querySelector('#mount'),m.reduceConnection(...args));},args);assert.equal(await f.page.locator('.connection-site-row > span').textContent(),'Site reported by Browser');}
+async function labelGuard(f){const args=fixtureArguments(states.find(r=>r.designState==='metamask/request-waiting'),{compact:true});await f.page.evaluate(async args=>{const m=await import('/capsules/_shared/wallet-connection-view.mjs');m.mountConnection(document.querySelector('#mount'),m.reduceConnection(...args));},args);assert.equal(await f.page.locator('.connection-site-row > span').textContent(),'Site in Browser');}
 async function focusGuard(f,engine,capture=false){const args=approvalArguments(approvalCatalog.stages.find(r=>r.window==='metamask'&&r.stage==='request-waiting'));args[1].summary={...args[1].summary,expires_at:null,reason:'A long app reason. '.repeat(30)};
  const mount=args=>f.page.evaluate(async args=>{const m=await import('/capsules/_shared/wallet-connection-view.mjs');window.m=m.mountConnection(document.querySelector('#mount'),m.reduceConnection(...args),window.m);return{focus:document.activeElement.dataset.focus||document.activeElement.dataset.action||document.activeElement.tagName,top:window.m.root.scrollTop};},args);
  await mount(args);
@@ -83,7 +83,7 @@ async function focusGuard(f,engine,capture=false){const args=approvalArguments(a
 }
 for(const engine of ['chromium','webkit']){const skip=windowTestOptions(engine).skip;
  test('R5 K14: exact site label excludes its punctuation in '+engine,{skip},async()=>{
- await variant(engine,null,labelGuard);await assert.rejects(()=>variant(engine,s=>s.replace("el('span','Site reported by Browser')","el('span','Site reported by Browser:')"),labelGuard),assert.AssertionError);receipts.push({engine,case:'K14',result:'PASS / product colon break CAUGHT'});
+ await variant(engine,null,labelGuard);await assert.rejects(()=>variant(engine,s=>s.replace("el('span','Site in Browser')","el('span','Site in Browser:')"),labelGuard),assert.AssertionError);receipts.push({engine,case:'K14',result:'PASS / product colon break CAUGHT'});
  });
  test('R5 P1: an approved same-card request keeps scroll and focuses its outcome in '+engine,{skip},async()=>{
  const got=await variant(engine,null,f=>focusGuard(f,engine,true));

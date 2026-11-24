@@ -795,7 +795,7 @@
       try { if (new URL(origin).origin !== origin) return null; } catch (_) { return null; }
       const row = document.createElement("p");
       const label = document.createElement("small");
-      label.textContent = "Site reported by Browser";
+      label.textContent = "Site in Browser";
       const value = document.createElement("span");
       value.textContent = origin;
       value.dir = "auto";

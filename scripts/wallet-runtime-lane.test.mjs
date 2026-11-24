@@ -111,7 +111,7 @@ test("n7_browser_site_projection_all_surfaces: Inbox and Wallet consumers", asyn
       kind: "wallet_approval_request", title, body: `${request.capsule_id} requests wallet approval for ${request.reason}.`, severity: "attention", read: true,
       requesting_origin: request.requesting_origin, action_ref: { action_id: `wallet-review-request:${request.request_id}` } };
     const r = await runtimeView(t, app, { approvals: [request], entries: [entry] });
-    await r.frame.getByText("Site reported by Browser", { exact: true }).waitFor();
+    await r.frame.getByText("Site in Browser", { exact: true }).waitFor();
     const origin = r.frame.getByText(request.requesting_origin, { exact: true });
     assert.equal(await origin.count(), 1);
     assert.equal(await origin.evaluate(el => el.tagName), "SPAN");

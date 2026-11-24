@@ -598,7 +598,7 @@ async fn n5_guest_request_creates_no_question() {
         .route(&token, INTERNET, Some(json!({"action":"request"})))
         .await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-    assert_eq!(plain["text"], "Ask an admin of this Home to open WalletConnect, choose Connect wallet, then allow internet access in Inbox.");
+    assert_eq!(plain["text"], "Ask an admin of this Home to open Phone wallet, choose Connect wallet, then allow internet access in Inbox.");
     let response = f
         .app
         .clone()

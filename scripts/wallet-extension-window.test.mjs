@@ -439,7 +439,7 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
   } finally { await browser.close(); }
 });
 
-for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'unisat']) test(`${engine} ${kind}: another linked account cannot satisfy the selected request or hide its expiry`, { timeout: 50000, skip: engineSkip(engine) }, async () => {
+for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'unisat']) test(`${engine} ${kind}: another connected account cannot satisfy the selected request or hide its expiry`, { timeout: 50000, skip: engineSkip(engine) }, async () => {
   const browser = await playwright[engine].launch({ headless: true });
   try {
     for (const mode of ['recover', 'timer', 'event']) {

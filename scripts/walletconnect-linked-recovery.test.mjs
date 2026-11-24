@@ -20,7 +20,7 @@ for(const engine of ['chromium','webkit']){
   const r=await linkedWindow(t,engine,{sourceRef:process.env.WALLETCONNECT_LINKED_BEFORE==='access'?'40af50bac2d0047500185205c0a50cea3744677c':undefined});await r.link();
   await r.peer.emptyAccounts();await r.state('account-unavailable-unknown');await r.capture('linked-account-not-shown');
   assert.match(await r.frame.locator('main').innerText(),/Choose an account in your wallet, then return here/);
-  await r.peer.changeAccount(0);await r.state('linked');assert.equal(r.fixture.state.verified,1,'choosing the linked account restores it without a new connection or signature');await r.capture('linked-account-shown-again');
+  await r.peer.changeAccount(0);await r.state('linked');assert.equal(r.fixture.state.verified,1,'choosing the connected account restores it without a new connection or signature');await r.capture('linked-account-shown-again');
  });
  test(`disconnecting gives an instruction owned by the connector frame in ${engine}`,windowTestOptions(engine,60000),async t=>{
   const r=await linkedWindow(t,engine,{sourceRef:process.env.WALLETCONNECT_LINKED_BEFORE==='access'?'40af50bac2d0047500185205c0a50cea3744677c':undefined});await r.link();
@@ -44,7 +44,7 @@ for(const engine of ['chromium','webkit']){
   const r=await linkedWindow(t,engine,{sourceRef:process.env.WALLETCONNECT_LINKED_BEFORE==='access'?'40af50bac2d0047500185205c0a50cea3744677c':undefined});
   await r.link();await r.idle();r.fixture.setPermission('revoked');await r.refresh();await r.state('internet-refused');await r.capture('linked-access-turned-off');
   assert.equal(await r.frame.locator('[data-action=inbox],[data-action=back-to-connection]').count(),0,'a decided request cannot be answered again in Inbox');
-  assert.equal(await r.wallet.locator('#wallet-account-state').innerText(),'1 account','turning off access keeps the linked Wallet account');
+  assert.equal(await r.wallet.locator('#wallet-account-state').innerText(),'1 address','turning off access keeps the linked Wallet account');
   await r.click('connect');await r.state('internet-pending');await r.capture('linked-access-requested-again');
   assert.equal(r.fixture.state.permission,'requested');assert.equal(await r.frame.locator('[data-action=inbox]').count(),1);
   const clearing=r.holdApi('/api/apps/wallet-walletconnect/storage','DELETE');await r.click('cancel');await clearing.entered;await r.state('disconnecting');
@@ -63,9 +63,9 @@ for(const engine of ['chromium','webkit']){
   await r.idle();
   r.fixture.state.expiredLaunch=true;await r.refresh();await r.state('window-expired');await r.capture('linked-window-expired');
   const text=(await r.frame.locator('main').innerText()).replace(/\s+/g,' ');
-  assert.equal(text.match(/Close this window/g)?.length,1,'Home close advice replaces the old instruction');
-  assert.match(text,/Close this window with Home['’]s window controls, then choose WalletConnect in Wallet/);
-  assert.equal(await r.frame.locator('button').count(),0);
+  assert.doesNotMatch(text,/Close this window/,'the Close button owns this action');
+  assert.match(text,/Choose Phone wallet in Wallet/);
+  assert.equal(await r.frame.getByRole('button',{name:'Close window',exact:true}).count(),1);
  });
  test(`reopened linked window names the data it could not read in ${engine}`,windowTestOptions(engine,60000),async t=>{
   const r=await linkedWindow(t,engine,{sourceRef});await r.link();

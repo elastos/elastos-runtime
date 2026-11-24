@@ -31,7 +31,7 @@ export async function signinFixture() {
         if(path==='/api/auth/wallet-methods' && req.method==='GET') {
           if(state.holdList)await new Promise(resolve=>state.releaseList=resolve);
           if(state.scenario==='load-failed')return json({},503);
-          return json({account_id:'principal:alex',methods:state.methods});
+          return json({account_id:'principal:alex',methods:state.methods,open_changes:[...state.ceremonies.values()].filter(c=>c.actor&&['add','remove'].includes(c.action)&&!c.cancelled&&!c.result&&c.expires_at>now).map(c=>c.ceremony_id)});
         }
         if(path==='/api/auth/wallet/cancel') {
           const c=state.ceremonies.get(body.ceremony_id);
@@ -149,8 +149,7 @@ export async function signinFixture() {
 import {bindHomeUnlock,showHomeUnlock,hideHomeUnlock,manageWalletSignin,requestPasskeyStepUp} from '/apps/home/shell-auth.js?v=wallet-signin-fixture';
 import {handleWalletSigninRequest} from '/apps/home/wallet-signin-host.mjs';
 import {walletSigninApi} from '/apps/home/wallet-signin-view.mjs';
-import {selectConnectedWalletConnect,selectConnectedExtension,openWalletSigninChooser} from '/apps/home/wallet-signin-connector.mjs';
-import {selectSigninWallet} from '/apps/home/wallet-signin-signers.mjs';
+import {selectConnectedWalletConnect,openWalletSigninChooser} from '/apps/home/wallet-signin-connector.mjs';
 import {openWalletSigninEntry} from '/apps/home/wallet-signin-window.mjs';
 import {homeGuiReply} from '/apps/home-gui/home-gui-authority.js';
 import {handleHomeWalletConnectorEffect} from '/apps/home/home-wallet-connector-host.js?v=home-wallpaper-20261030b';
@@ -158,7 +157,7 @@ const contexts=new WeakMap();
 async function openFixtureConnector(target) {
   let frame=document.querySelector('iframe[data-target='+target+']');
   if(!frame){frame=document.createElement('iframe');frame.dataset.target=target;frame.title=target;frame.style.cssText='position:fixed;inset:0;width:100%;height:100vh;border:0;z-index:20;background:var(--el-surface)';frame.setAttribute('sandbox','allow-scripts allow-forms');frame.src='/apps/'+target+'/?home_origin='+encodeURIComponent(location.origin)+'#home_token=fixture-'+target;document.querySelector('#fixture-desktop').append(frame);await new Promise(resolve=>frame.onload=resolve);}
-  document.querySelectorAll('#fixture-desktop iframe').forEach(f=>f.hidden=f!==frame);frame.hidden=false;if(target==='wallet')frame.contentWindow.postMessage({type:'elastos.wallet.connect-entry/v1'},'*');return {isOpen:()=>frame.isConnected,homeToken:'fixture-'+target,source:frame.contentWindow,focus:()=>{document.querySelectorAll('#fixture-desktop iframe').forEach(f=>f.hidden=f!==frame);}};
+  document.querySelectorAll('#fixture-desktop iframe').forEach(f=>f.hidden=f!==frame);frame.hidden=false;if(target==='wallet')frame.contentWindow.postMessage({type:'elastos.wallet.connect-entry/v1'},'*');return {close:()=>frame.remove(),isOpen:()=>frame.isConnected,homeToken:'fixture-'+target,source:frame.contentWindow,focus:()=>{document.querySelectorAll('#fixture-desktop iframe').forEach(f=>f.hidden=f!==frame);}};
 }
 async function openConnector(target) {
  if(target!=='wallet')return openFixtureConnector(target);
@@ -174,7 +173,6 @@ async function openConnector(target) {
   });return true;
  }});
 }
-const selectExtension=(connector,options)=>selectConnectedExtension(connector,options,{open:kind=>openConnector('wallet-'+kind),current:context=>[...document.querySelectorAll('#fixture-desktop iframe')].some(f=>f.isConnected&&f.contentWindow===context.source),select:selectSigninWallet});
 const selectWalletConnect=options=>selectConnectedWalletConnect(options,{open:()=>openConnector('wallet-walletconnect'),current:context=>[...document.querySelectorAll('#fixture-desktop iframe')].some(f=>f.isConnected&&f.contentWindow===context.source)});
 window.openedPrincipal='';
 bindHomeUnlock();
@@ -201,7 +199,7 @@ addEventListener('message',event=>{
  if(event.data?.type==='home:open-target'&&frame.dataset.target==='wallet'&&event.data.homeToken==='fixture-wallet'&&['wallet-metamask','wallet-unisat','wallet-walletconnect'].includes(event.data.target)){void openConnector(event.data.target);return;}
  const context=contexts.get(frame)||{kind:'app-frame',targetId:frame.dataset.target,source:event.source,homeToken:'fixture-'+frame.dataset.target,walletEffectState:{inFlight:false,requestIds:new Set()}};contexts.set(frame,context);
  if(handleHomeWalletConnectorEffect(event,context,event.data))return;
- handleWalletSigninRequest(event,context,{authorityToken:()=> 'fixture-home',api:(path,body,token)=>walletSigninApi(path,body,token),manage:manageWalletSignin,openChooser:onAction=>openWalletSigninChooser({open:openConnector,current:c=>[...document.querySelectorAll("#fixture-desktop iframe")].some(f=>f.isConnected&&f.contentWindow===c.source),focus:token=>{for(const f of document.querySelectorAll("#fixture-desktop iframe"))f.hidden=token!=="fixture-"+f.dataset.target;},onAction}),openConnector,selectWalletConnect,selectExtension,focusCaller:()=>{for(const f of document.querySelectorAll('#fixture-desktop iframe'))f.hidden=f.dataset.target!==frame.dataset.target;},current:()=>frame.isConnected,changed:()=>{for(const f of document.querySelectorAll('#fixture-desktop iframe'))f.contentWindow.postMessage({type:'home:wallet-signin-changed'},'*');}});
+ handleWalletSigninRequest(event,context,{authorityToken:()=> 'fixture-home',api:(path,body,token)=>walletSigninApi(path,body,token),manage:manageWalletSignin,openChooser:onAction=>openWalletSigninChooser({open:openConnector,current:c=>[...document.querySelectorAll("#fixture-desktop iframe")].some(f=>f.isConnected&&f.contentWindow===c.source),focus:token=>{for(const f of document.querySelectorAll("#fixture-desktop iframe"))f.hidden=token!=="fixture-"+f.dataset.target;},onAction}),openConnector,selectWalletConnect,focusCaller:()=>{for(const f of document.querySelectorAll('#fixture-desktop iframe'))f.hidden=f.dataset.target!==frame.dataset.target;},current:()=>frame.isConnected,changed:()=>{for(const f of document.querySelectorAll('#fixture-desktop iframe'))f.contentWindow.postMessage({type:'home:wallet-signin-changed'},'*');}});
 });
 window.fixtureReady=true;
 `);return;

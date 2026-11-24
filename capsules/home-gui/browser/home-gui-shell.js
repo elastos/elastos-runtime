@@ -5,6 +5,7 @@ import {
   closeHomeGuiWindowForToken,
   focusHomeGuiWindowForToken,
   setHomeGuiWalletSigninStage,
+  fitHomeGuiWalletWindow,
   openHomeGuiTarget,
   relaunchHomeGuiWindowForToken,
   renewHomeGuiBrowserWindowAuthority,
@@ -197,6 +198,10 @@ function handleGuiCommand(message) {
   if (command === "wallet-signin-state") {
     if (!hasExactKeys(message, ["type", "command", "homeToken", "stage"]) || typeof message.homeToken !== "string" || message.homeToken.length > 4096 || typeof message.stage !== "string" || message.stage.length > 64) return false;
     return setHomeGuiWalletSigninStage(message.homeToken, message.stage);
+  }
+  if(command === "fit-wallet-window") {
+    if(!hasExactKeys(message,["type","command","homeToken","width","height"])||typeof message.homeToken!=="string"||message.homeToken.length>4096)return false;
+    return fitHomeGuiWalletWindow(message.homeToken,message.width,message.height);
   }
   if (command === "close-window") {
     return closeHomeGuiWindowForToken(message.homeToken);

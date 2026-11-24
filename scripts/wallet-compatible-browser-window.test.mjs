@@ -83,7 +83,7 @@ test('V2-3 MetaMask plus another wallet connects to MetaMask without a question'
   assert.equal(await f.frame.locator('h1').textContent(),'MetaMask');
 }));
 
-test('V2-4 approval finds the linked account before handoff and keeps an unmatched request pending',async()=>{
+test('V2-4 approval finds the connected account before handoff and keeps an unmatched request pending',async()=>{
   await windowCase({wallets:[{...rabby,accounts:[A]}]},async f=>{
     await click(f,'connect','linked');
     await f.top.evaluate(mm=>{
@@ -103,7 +103,7 @@ test('V2-4 approval finds the linked account before handoff and keeps an unmatch
     assert.deepEqual(await f.top.evaluate(()=>testState.requests.map(r=>r.status)),['pending']);
     assert.equal(await f.top.evaluate(()=>testState.runtimeCalls?.filter(c=>c.url.endsWith('/handoff')).length||0),0);
     assert((await namedCalls(f)).every(c=>c.method==='eth_accounts'));
-    assert.equal(await f.frame.locator('img').count(),0);
+    assert.equal(await f.frame.locator('img:not([src$="connection-wallet.png"])').count(),0);
     await f.top.evaluate(A=>testState.wallets[0].accounts=[A],A);
     await click(f,'refresh-status','request-waiting');await click(f,'send-request','request-done');
   });
@@ -128,9 +128,9 @@ test('V2-6 saved cards have no mark; only a wallet linked in this window supplie
   assert.equal(await f.frame.locator('.connection-account-name').innerText(),'Rabby Wallet');
   assert.equal(await f.frame.locator('.connection-account-header img').getAttribute('src'),icon);
   const url=new URL(f.frame.url());url.searchParams.set('fresh','1');await f.frame.goto(url.href);await f.state('linked');
-  assert.equal(await f.frame.locator('img').count(),0);
+  assert.equal(await f.frame.locator('img:not([src$="connection-wallet.png"])').count(),0);
   assert.equal(await f.frame.locator('.connection-account-name').innerText(),'Your wallet');
-  assert.equal(await f.frame.locator('.connection-status').innerText(),'Account saved in Wallet.');
+  assert.equal(await f.frame.locator('.connection-status').innerText(),'Address saved in Wallet.');
 }));
 
 test('V2-7 UniSat window has no Ethereum discovery or calls',async()=>windowCase({wallets:[rabby]},async f=>{
@@ -252,7 +252,7 @@ test('R4-5 Check again after a wallet vanishes returns to review before Send',as
   await f.frame.waitForFunction(()=>!['link-error','request-extension'].includes(document.querySelector('main').dataset.state));
   await f.frame.waitForFunction(()=>document.querySelector('[data-action=send-request]')?.disabled===false);
   assert.equal(await f.frame.locator('main').getAttribute('data-state'),'request-waiting');
-  assert.equal(await f.frame.locator('img').count(),0,'silent access checks supply no signing identity');
+  assert.equal(await f.frame.locator('img:not([src$="connection-wallet.png"])').count(),0,'silent access checks supply no wallet brand');
   assert.equal(await f.top.evaluate(()=>testState.effects.length),2,'Check again asks Home for a fresh silent selection');
   assert.equal(await f.top.evaluate(()=>testState.effects.at(-1).action.kind),'check-access');
   assert.equal(await f.top.evaluate(()=>testState.requests[0].status),'pending');

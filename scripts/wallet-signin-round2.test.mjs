@@ -42,6 +42,11 @@ for(const width of [1280,390])test(`connected Add and uncertain save keep their 
     await wallet.locator('body').press('Escape');
     assert.equal(await wallet.locator('#wallet-signers').getAttribute('data-signin'),'unknown','Escape preserves unknown');
     await capture('unknown');
+    // A second Add brings the existing uncertain action forward with its recovery control.
+    await page.locator('#show-system').evaluate(el=>el.click());
+    await system.getByRole('button',{name:'Add wallet',exact:true}).click();
+    await wallet.getByRole('button',{name:'Check again',exact:true}).waitFor();
+    await capture('unknown-refocused');
     const completeCount=fixture.state.calls.filter(c=>c.path.endsWith('/wallet-methods/complete')).length;
     assert.equal(completeCount,1);assert(fixture.state.methods.some(m=>m.connector==='metamask'));
     // Check again reads the authority list and never resends the proof.

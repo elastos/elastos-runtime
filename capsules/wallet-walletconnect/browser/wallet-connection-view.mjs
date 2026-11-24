@@ -68,7 +68,7 @@ export function reduceSummary(summary, { connector, audience = connector } = {})
   return {
     id: summary.request_id, app, actor: summary.capsule_id,
     title: Object.hasOwn(requestTitles,summary.intent)?requestTitles[summary.intent]:'Review request', transaction,
-    detail: bounded(summary.reason, 2048) ? summary.reason : '',
+    detail: summary.capsule_id==='browser'&&/^Browser page requests (?:personal_sign|eth_signTypedData(?:_v4)?|eth_sendTransaction)(?: on [a-z0-9-]+)?$/.test(summary.reason)?'':bounded(summary.reason, 2048) ? summary.reason : '',
     site: summary.capsule_id === 'browser' ? displayOrigin(summary.requesting_origin) : null,
     address: bounded(summary.address, 128) ? summary.address : null,
     status: summary.status==='rejected'&&Number.isSafeInteger(summary.approved_at)&&summary.approved_at>=0?'dismissed':['pending', 'approved', 'rejected', 'dismissed', 'completed','expired'].includes(summary.status) ? summary.status : 'unavailable',
@@ -167,7 +167,7 @@ export function connectionView(input) {
   requireValue(plain(input) && Object.keys(input).every(key => allowed.includes(key)), 'closed view input');
   const { window, stage } = input;
   requireValue(Object.hasOwn(screens, window) && Object.hasOwn(screens[window], stage), 'closed window/stage');
-  requireValue(input.purpose===undefined||input.purpose==='home-signin'&&['metamask','unisat','walletconnect'].includes(window)&&['request-waiting','request-extension','request-phone','checking-response','request-done','request-cancelled'].includes(stage),'closed connection purpose');
+  requireValue(input.purpose===undefined||input.purpose==='home-signin'&&window==='walletconnect'&&['request-waiting','request-extension','request-phone','checking-response','request-done','request-cancelled'].includes(stage),'closed connection purpose');
   requireValue(input.signinAction===undefined||input.purpose==='home-signin'&&['add','signin'].includes(input.signinAction),'closed sign-in action');
   requireValue(input.signinComplete===undefined||input.purpose==='home-signin'&&stage==='request-done'&&typeof input.signinComplete==='boolean','sign-in completion');
   const baseScreen=screens[window][stage];
@@ -215,9 +215,9 @@ export function connectionView(input) {
   const values = { wallet: name, network: input.targetNetwork || account?.accounts[0].networks[0] || 'the requested network', alternative: providerCopy[provider?.alternatives[0]] || 'another wallet', app: !summary && !context || (summary?.app || context?.app) === 'Requesting app' ? 'the app' : summary?.app || context?.app || 'the app', site: summary?.site || context?.site || 'the requesting site', home: home ? new URL(home).host : 'this Home' };
   const manualClose = supported !== null && !supported.includes('close-window');
   const close = manualClose ? windowManualClose(window) : 'Close this window.';
-  values.close = close;
-  values.closeThen = manualClose && window === 'metamask' ? close + ' Then' : close.slice(0, -1) + ', then';
-  const parts = text => (text || '').split(/(\{\{(?:wallet|alternative|app|site|home|network|close|closeThen)\}\})/).filter(Boolean).map((value,index) => {
+  values.close = manualClose ? close : '';
+  values.closeThen = manualClose ? close.slice(0,-1)+', then' : '';
+  const parts = text => (text || '').replace(/\{\{close\}\}\s*/g,match=>manualClose?match:'').replace(/\{\{closeThen\}\}\s*([a-z])/g,(match,letter)=>manualClose?match:letter.toUpperCase()).split(/(\{\{(?:wallet|alternative|app|site|home|network|close|closeThen)\}\})/).filter(Boolean).map((value,index) => {
     const key = value.match(/^\{\{(.+)\}\}$/)?.[1];
     return key ? { kind: ['close','closeThen'].includes(key) ? 'copy' : key === 'alternative' ? 'wallet' : key, text: key==='wallet'&&index===0&&values[key]==='your wallet'?'Your wallet':values[key] } : { kind: 'copy', text: value };
   });
@@ -407,7 +407,7 @@ export function renderConnection(document, view) {
     return card;
   }
   function siteIdentity(origin) {
-    const row=el('div',null,'connection-site-row');row.append(el('span','Site reported by Browser'),document.createTextNode(': '));
+    const row=el('div',null,'connection-site-row');row.append(el('span','Site in Browser'),document.createTextNode(': '));
     const site=el('bdi',null,'connection-isolated connection-site');site.dir='auto';
     const authority=origin.indexOf('://')+3, labels=origin.slice(authority).split('.'), tail=labels.splice(Math.max(0,labels.length-3));
     site.append(document.createTextNode(origin.slice(0,authority)));
@@ -456,14 +456,14 @@ export function renderConnection(document, view) {
     if(view.copyFeedback.length){const p=el('p',view.copyFeedback,'connection-note connection-copy-feedback');p.setAttribute('role','status');p.setAttribute('aria-live','polite');destination.append(p);}
     if(view.queueCount){const queue=el('div',null,'connection-queue');if(view.queuePendingCount)queue.append(el('h2',`${view.queuePendingCount} ${view.queueOthers?'other ':''}request${view.queuePendingCount===1?'':'s'} waiting`));if(view.queueRecoveryCount)queue.append(el('p',`${view.queueRecoveryCount} transaction${view.queueRecoveryCount===1?'':'s'} to review`));if(view.queueRejectedCount)queue.append(el('p',`${view.queueRejectedCount} rejected request${view.queueRejectedCount===1?'':'s'}`));if(view.queueDismissedCount)queue.append(el('p',`${view.queueDismissedCount} dismissed request${view.queueDismissedCount===1?'':'s'}`));if(view.queueOtherCount)queue.append(el('p',`${view.queueOtherCount} request${view.queueOtherCount===1?'':'s'} to review`));if(!view.picker&&supports('view-requests'))queue.append(button({id:'view-requests',label:isolated('View requests','copy'),quiet:true}));content.prepend(queue);}
     if(approvalSite){
-      if(view.status.length)destination.prepend(status);
+      if(view.status.length)destination.append(status);
       if(wait)destination.append(wait);if(notice)destination.append(notice);
       const unit=el('section',null,'connection-approval-unit');unit.append(siteIdentity(view.request?.site||view.context.site));
       const decisions=el('div',null,'connection-actions connection-approve-actions');
       for(const a of [...view.actions].sort((a,b)=>Number(b.primary)-Number(a.primary)))decisions.append(button(a));
       if(!supports('close-window')){const manual=el('p',windowManualClose(view.window),'connection-note');manual.dataset.focus='dismissal';manual.tabIndex=-1;decisions.append(manual);}
       unit.append(decisions);destination.append(unit);
-    }else if(!view.compact){if(view.status.length&&!status.parentNode){if(view.request)destination.prepend(status);else root.append(status);}if(wait)destination.append(wait);if(notice)destination.append(notice);destination.append(controls);}
+    }else if(!view.compact){if(view.status.length&&!status.parentNode){if(view.request)destination.append(status);else root.append(status);}if(wait)destination.append(wait);if(notice)destination.append(notice);destination.append(controls);}
     else{if(notice)destination.append(notice);if(view.status.length)feedback.append(status);if(wait)feedback.append(wait);feedback.append(controls);}
     for(const request of view.choices){const card=el('article',null,'connection-card connection-request connection-request-choice');const text=el('div');requestIdentity(request,text);card.append(text);if(supports('select-request'))card.append(button({id:'select-request',label:isolated('View request','copy'),quiet:true,key:`select-request:${request.id}`}));if(approvalSite)content.insertBefore(card,destination);else content.append(card);}
     for (const choice of view.walletChoices || []) {

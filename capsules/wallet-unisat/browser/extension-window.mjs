@@ -26,8 +26,6 @@ export function startExtensionWindow(kind, homeClipboard) {
   let walletEventAddress = null;
   const requestNetworks = new Map();
   let presentation = null;
-  // Review has exactly one reply. Approved and Stopped have no reply left.
-  let signin = {state:'Idle'}, signinResult;
   const mount = document.querySelector('#connection-root');
 
   function validAddress(value) {
@@ -153,13 +151,6 @@ export function startExtensionWindow(kind, homeClipboard) {
 
   function draw() {
     if (disposed) return;
-    const signinRequest=signin.request || signinResult?.request;
-    if(signinRequest){
-      const summary=reduceSummary({connector_id:CONNECTOR_ID,request_id:signinRequest.requestId,capsule_id:'home',intent:'auth_challenge',address:signinRequest.address,status:'pending',reason:'',expires_at:Math.floor(Date.now()/1000)+180},{connector:CONNECTOR_ID});
-      const signinStage=signinResult?'request-done':signin.state==='Stopped'?'request-cancelled':signin.state==='Approved'?'request-extension':'request-waiting';
-      presentation=mountConnection(mount,connectionView({window:kind,stage:signinStage,purpose:'home-signin',signinAction:signinRequest.action,signinComplete:signinResult?.complete,summary,account:{name:signinRequest.name||(kind==='unisat'?'UniSat':'MetaMask'),mark:kind,accounts:[{address:signinRequest.address,networks:[kind==='unisat'?'Bitcoin':networkName(`eip155:${signinRequest.chain_id}`)]}]},homeOrigin,supportedActions:['send-request','stop-waiting','close-window']}),presentation);
-      return;
-    }
     const changedDuringRequest = selected && (disconnected || accountEvent && !sameAccount(accountEvent[0], selected.address));
     const provider = buildProviderSnapshot();
     const walletChoices = stage === 'extension-choose-wallet' ? walletChoicesFromHome : [];
@@ -308,7 +299,7 @@ export function startExtensionWindow(kind, homeClipboard) {
       }
       // These are Home's existing pre-sign checks. No wallet signing call ran,
       // but the one-use Runtime handoff may already have consumed the request.
-      if (['Switch to the linked account before approving.', 'Switch to the linked Bitcoin account before signing.', 'Wallet account changed before signing.', 'UniSat account changed before signing.'].includes(message)) {
+      if (['Switch to the connected account before approving.', 'Switch to the connected Bitcoin account before signing.', 'Wallet account changed before signing.', 'UniSat account changed before signing.'].includes(message)) {
         preflightFailure = selected ? 'request-unsendable' : 'account-unavailable';
       } else if (message === 'Switch UniSat to Bitcoin mainnet.') {
         preflightFailure = selected ? 'request-network-testnet' : 'network-changed';
@@ -338,6 +329,8 @@ export function startExtensionWindow(kind, homeClipboard) {
         operation = null;
       }
       else if (/could not find a browser wallet|was not found in this browser profile/.test(message)) { operationWallet = null; linkObserved = false; providerAvailability = 'absent'; stage = 'extension-missing'; }
+      else if (message === 'Your wallet declined the request.') stage = action.kind==='link'?'link-declined':`${prefix}-declined`;
+      else if (message === 'Unlock UniSat, then select Try again.') {preflightFailure='wallet-locked';stage=preflightFailure;}
       else if (action.kind === 'link') stage = 'link-error';
       else stage = `${prefix}-wallet-error`;
       draw();
@@ -354,16 +347,6 @@ export function startExtensionWindow(kind, homeClipboard) {
     const button = event.target.closest('[data-action]');
     if (!button || button.disabled) return;
     const action = button.dataset.action;
-    if(signin.request || signinResult){
-      if(action==='send-request'&&signin.state==='Review'){
-        const reply=signin.reply;signin={state:'Approved',request:signin.request};
-        reply({result:{approved:true}});draw();
-      } else if(action==='stop-waiting'&&signin.state==='Review'){
-        const reply=signin.reply;signin={state:'Stopped',request:signin.request};
-        reply({error:true});draw();
-      } else if(action==='close-window')window.top.postMessage({type:'home:close-self',homeToken:frameHomeToken},homeOrigin);
-      return;
-    }
     if (action === 'close-window') window.top.postMessage({ type: 'home:close-self', homeToken: frameHomeToken }, homeOrigin);
     else if (action === 'stop-waiting' && operation) {
       stage = operation.action.kind === 'link' ? 'extension-cancelled' : selected?.transaction ? 'transaction-cancelled' : 'request-cancelled';
@@ -399,33 +382,6 @@ export function startExtensionWindow(kind, homeClipboard) {
     }
   }
 
-  function onHomeSignin(event) {
-    const data=event.data;
-    if(event.source!==window.top||event.origin!==homeOrigin||data?.type!=='home:wallet-signin-effect'||data.homeToken!==frameHomeToken)return;
-    if(typeof data.requestId!=='string'||!data.requestId||data.requestId.length>128||!['review','finish','complete','stop'].includes(data.operation))return;
-    const keys=['type','homeToken','requestId','operation',...(data.operation==='review'?['address','chain_id','network','name','message',...(Object.hasOwn(data,'action')?['action']:[])]:data.operation==='complete'?['reviewRequestId']:[])];
-    if(!hasExactKeys(data,keys))return;
-    if(data.action!==undefined&&!['add','signin'].includes(data.action))return;
-    const reply=result=>window.top.postMessage({type:'home:wallet-signin-effect-result',homeToken:frameHomeToken,requestId:data.requestId,...result},homeOrigin);
-    if(data.operation!=='review'){
-      if(data.operation==='stop'){
-        if(signinResult){signinResult=undefined;signin={state:'Idle'};window.top.postMessage({type:'home:close-self',homeToken:frameHomeToken},homeOrigin);}
-        else if(['Review','Approved'].includes(signin.state)){
-          const owned=signin;signin={state:'Stopped',request:owned.request};
-          if(owned.state==='Review')owned.reply({error:true});
-        }
-      } else if(data.operation==='finish'&&signin.state==='Approved'){
-        signinResult={request:signin.request,complete:false};signin={state:'Idle'};
-      } else if(data.operation==='complete'){
-        if(!signinResult||data.reviewRequestId!==signinResult.request.requestId)return reply({error:true});
-        signinResult.complete=true;
-      }
-      draw();reply({result:{}});return;
-    }
-    if(operation||['Review','Approved'].includes(signin.state)||!validAddress(data.address)||!Number.isSafeInteger(data.chain_id)||typeof data.message!=='string'||!data.message||data.message.length>32768||typeof data.name!=='string'||data.name.length>80||data.network!==(kind==='unisat'?'bitcoin':''))return reply({error:true});
-    signinResult=undefined;signin={state:'Review',request:data,reply};draw();
-  }
-  window.addEventListener('message',onHomeSignin);
 
   function onWalletEvent(event) {
     const data = event.data;
@@ -465,7 +421,6 @@ export function startExtensionWindow(kind, homeClipboard) {
   }, 1000);
   window.addEventListener('pagehide', () => {
     disposed = true; presentation?.dispose(); window.clearInterval(tick); homeClipboard.teardown();
-    if(signin.state==='Review')signin.reply({error:true});signin={state:'Stopped'};window.removeEventListener('message',onHomeSignin);
     window.removeEventListener('message', onWalletEvent); window.removeEventListener('focus', refresh);
   }, { once: true });
   draw(); void refresh();

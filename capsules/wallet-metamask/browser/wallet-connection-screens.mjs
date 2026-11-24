@@ -358,7 +358,7 @@ const definitions = {
       ]
     },
     "request-declined": {
-      "status": "{{wallet}} did not approve this message.",
+      "status": "{{wallet}} declined this request.",
       "notice": "To try again, go back to {{app}} and start a new request.",
       "account": true,
       "request": true,
@@ -1658,7 +1658,7 @@ const definitions = {
       ]
     },
     "request-declined": {
-      "status": "{{wallet}} did not approve this message.",
+      "status": "{{wallet}} declined this request.",
       "notice": "To try again, go back to {{app}} and start a new request.",
       "account": true,
       "request": true,
@@ -2552,7 +2552,7 @@ const definitions = {
       ]
     },
     "request-declined": {
-      "status": "{{wallet}} did not approve this message.",
+      "status": "{{wallet}} declined this request.",
       "notice": "To try again, go back to {{app}} and start a new request.",
       "account": true,
       "request": true,
@@ -2651,6 +2651,13 @@ const definitions = {
         "quiet": false
       },
       "focus": "close-window"
+    },
+    "wallet-locked": {
+      "status": "UniSat is locked.",
+      "notice": "Unlock UniSat, then select Try again.",
+      "primary": {"id":"connect","label":"Try again","quiet":false},
+      "secondary": [{"id":"close-window","label":"Cancel","quiet":true}],
+      "focus":"connect"
     },
     "link-error": {
       "status": "Could not connect.",

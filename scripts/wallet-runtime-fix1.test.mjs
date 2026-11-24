@@ -115,7 +115,7 @@ test("fix1 removal dialog names its row and uses the shared removal sentence",as
   assert.equal(await identity.textContent(),"Trust Wallet");
   assert.equal(await identity.evaluate(el=>el.dir),"auto");
   assert.equal(await identity.evaluate(el=>getComputedStyle(el).unicodeBidi),"isolate");
-  assert.equal(await r.frame.getByText("Remove this account from your Home. Your funds stay unchanged. This does not cancel a transaction in your wallet. Removing the last account connected through WalletConnect also clears Home's saved connection. Confirm with your passkey to remove the account.",{exact:true}).count(),1);
+  assert.equal(await r.frame.getByText("Remove this address from Wallet. Your funds stay unchanged. This does not cancel a transaction in your wallet. Removing the last address connected through your phone wallet also clears Home's saved connection. Confirm with your passkey to remove the address.",{exact:true}).count(),1);
   await r.capture("wallet-external-account-removal-light-window.png");
 });
 

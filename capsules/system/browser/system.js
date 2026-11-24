@@ -2568,6 +2568,8 @@ function renderAccounts(accounts) {
   if (!accountListNode) {
     return;
   }
+  const focusedPasskey = accountListNode.contains(document.activeElement)
+    ? document.activeElement.dataset.passkeyRevoke : "";
   accountListNode.replaceChildren();
   const activeAccounts = accounts.filter((account) => !account.revoked_at);
   if (activeAccounts.length === 0) {
@@ -2631,6 +2633,8 @@ function renderAccounts(accounts) {
     block.append(header, table);
     accountListNode.append(block);
   }
+  if (focusedPasskey) [...accountListNode.querySelectorAll('[data-passkey-revoke]')]
+    .find(control => control.dataset.passkeyRevoke === focusedPasskey)?.focus({preventScroll:true});
 }
 
 function accountRow(passkey, listState = {}) {
@@ -2802,7 +2806,10 @@ async function onAccountListClick(event) {
   const revokingCurrent = button.dataset.current === "true" || removeAccount && button.dataset.ownAccount === "true";
   try {
     if (!promote && !demote && !await confirmPasskeyRemoval(button)) {
-      button.focus();
+      // A summary refresh can replace the opener while its dialog is open.
+      const key = removeAccount ? "passkeyAccountRemove" : "passkeyRevoke";
+      [...accountListNode.querySelectorAll("button")]
+        .find(control => control.dataset[key] === proofBindingId)?.focus({preventScroll:true});
       return;
     }
     button.disabled = true;

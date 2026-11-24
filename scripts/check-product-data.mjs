@@ -382,7 +382,7 @@ export function validateConnectionDisclosures(repoRoot = root) {
       }
     }
   }
-  for (const name of ['home','system','wallet-metamask','wallet-unisat','wallet-walletconnect']) walk(`capsules/${name}`);
+  for (const name of ['home','system','wallet','wallet-metamask','wallet-unisat','wallet-walletconnect']) walk(`capsules/${name}`);
   assert.equal(findings.length,0,findings.join('\n'));
 }
 

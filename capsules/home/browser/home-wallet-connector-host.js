@@ -143,7 +143,7 @@ export function handleHomeWalletConnectorEffect(event, context, data) {
         requestId,
         connectorId,
         null,
-        error instanceof Error ? error.message : "Wallet request failed.",
+        Number(error?.code) === 4001 ? "Your wallet declined the request." : error instanceof Error ? error.message : "Wallet request failed.",
         error instanceof WalletChoiceRequired ? error.walletChoices : undefined,
       );
     })
@@ -370,7 +370,7 @@ async function completeApproval(connectorId, connectorToken, approvalRequestId, 
 
 async function completeEvmApproval(provider, connectorToken, handoff, evmChains, selected = null) {
   const signer = requireEvmAddress(await currentEvmAccount(provider));
-  ensureSameAddress(signer, handoff.signer, "Switch to the linked account before approving.");
+  ensureSameAddress(signer, handoff.signer, "Switch to the connected account before approving.");
   const path = `/api/apps/home/wallet-connector/approvals/${encodeURIComponent(handoff.request_id)}/complete`;
   if (handoff.intent === "transaction_intent") {
     await ensureProviderChain(provider, handoff.transaction.chainId, evmChains);
@@ -378,7 +378,7 @@ async function completeEvmApproval(provider, connectorToken, handoff, evmChains,
     ensureSameAddress(
       currentSigner,
       handoff.signer,
-      "Switch to the linked account before approving.",
+      "Switch to the connected account before approving.",
     );
     const transactionHash = requireProviderResult(await provider.request({
       method: "eth_sendTransaction",
@@ -418,7 +418,7 @@ async function completeBitcoinApproval(provider, connectorToken, handoff) {
   ensureSameAddress(
     account.address,
     handoff.signer,
-    "Switch to the linked Bitcoin account before signing.",
+    "Switch to the connected Bitcoin account before signing.",
   );
   const proof = await signBitcoinMessage(
     provider,
@@ -674,7 +674,13 @@ function requireUniSatProvider() {
 }
 
 async function requestUniSatAccount(provider) {
-  const account = accountFromProvider(await provider.requestAccounts());
+  let accounts;
+  try { accounts=await provider.requestAccounts(); }
+  catch(error) {
+    if(/locked|unlock/i.test(String(error?.message||error)))throw new Error("Unlock UniSat, then select Try again.");
+    throw error;
+  }
+  const account = accountFromProvider(accounts);
   await requireUniSatMainnet(provider);
   return account;
 }

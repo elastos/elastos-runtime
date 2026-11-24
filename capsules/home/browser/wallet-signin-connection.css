@@ -247,4 +247,9 @@ h2 { font-size: var(--el-text-lg); font-weight: 600; }
 .connection-compact .connection-approve-actions .el-button { flex:0 1 auto; min-width:0; }
 
 .connection-compact .connection-approve-actions:has([data-focus="dismissal"]) { flex-wrap:wrap; }
+
+/* Status text takes screen-reader focus; interactive controls show the ring. */
+.connection-status:focus-visible { outline:none !important; }
+
+.connection-window:has([data-connection-loading-cancel]) { align-items:center; gap:16px; text-align:center; }
 }

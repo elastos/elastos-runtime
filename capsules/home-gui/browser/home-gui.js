@@ -1,3 +1,4 @@
+import {fitWindowBounds} from './shell-window-geometry.js?v=home-20261101d';
 import {
   desktop,
   desktopBackdrop,
@@ -644,6 +645,20 @@ export function focusHomeGuiWindowForToken(homeToken) {
   const entry=homeGuiWindowEntryForToken(homeToken);
   if(!entry)return false;
   focusWindow(entry.id);
+  return true;
+}
+
+export function fitHomeGuiWalletWindow(homeToken, width, height) {
+  const entry=homeGuiWindowEntryForToken(homeToken);
+  if(!entry || !['wallet-metamask','wallet-unisat','wallet-walletconnect'].includes(entry.targetId)
+    || !Number.isSafeInteger(width) || !Number.isSafeInteger(height)
+    || width<280 || width>2000 || height<100 || height>4000)return false;
+  const node=entry.node;
+  if(node.dataset.maximized==='true'||node.dataset.snap)return false;
+  const body=node.querySelector('.window-body');
+  const chrome=Math.max(32,node.offsetHeight-(body?.getBoundingClientRect().height||node.offsetHeight));
+  const bounds=fitWindowBounds({x:parseFloat(node.style.left)||48,y:parseFloat(node.style.top)||60,width:Math.max(360,Math.min(640,width)),height:Math.max(240,height+chrome)});
+  Object.assign(node.style,{left:bounds.x+'px',top:bounds.y+'px',width:bounds.width+'px',height:bounds.height+'px'});
   return true;
 }
 

@@ -1,7 +1,7 @@
 import test from 'node:test';
+import {windowTestOptions} from './lib/walletconnect-window-resources.mjs';
 import assert from 'node:assert/strict';
 import {windowPresentation, walletConnectView} from '../capsules/wallet-walletconnect/browser/walletconnect-window-state.mjs';
-import {fixture} from './lib/wallet-extension-window-fixture.mjs';
 import {requireProductSmokePlaywright} from './product-smoke-browser.mjs';
 import {browserFixture} from './lib/wallet-connection-browser-fixture.mjs';
 import {observeApproval,assertApprovalGeometry,assertApprovalPaint} from './lib/wallet-connection-approval-oracle.mjs';
@@ -52,10 +52,10 @@ test('W2 payment precedence also covers a reloaded approved request and a dispat
   }
 });
 
-for(const engine of ['chromium','webkit'])test(`W2 ${engine} action titles, one identity line and one action row at desktop and phone widths`,{timeout:60000},async()=>{
+for(const engine of ['chromium','webkit'])test(`W2 ${engine} action titles, one identity line and one action row at desktop and phone widths`,windowTestOptions(engine,60000),async()=>{
   const f=await browserFixture(engine);
   try{
-    for(const width of [480,390])for(const window of ['metamask','unisat','walletconnect'])for(const [action,stage,complete] of [['add',window==='walletconnect'?'request-phone':'request-waiting',false],['signin',window==='walletconnect'?'request-phone':'request-extension',false],['add','request-done',true]]){
+    for(const width of [480,390])for(const window of ['walletconnect'])for(const [action,stage,complete] of [['add','request-phone',false],['signin','request-phone',false],['add','request-done',true]]){
       await f.page.setViewportSize({width,height:522});
       await f.page.evaluate(async({window,action,stage,complete,address})=>{
         const {connectionView,reduceSummary,mountConnection}=await import('/capsules/_shared/wallet-connection-view.mjs');
@@ -69,10 +69,6 @@ for(const engine of ['chromium','webkit'])test(`W2 ${engine} action titles, one 
       assert.doesNotMatch(text,/From app:|Review sign-in request|Account saved in Wallet|Runtime supplies|Time left:|\nHome\n/);
       assert.equal(await f.page.locator('details').count(),0);
       if(stage==='request-done')assert.match(text,new RegExp(name+' can now sign in to this Home\\.'));
-      if(stage==='request-waiting'){
-        assert.equal(await f.page.getByRole('button',{name:'Continue in '+name,exact:true}).count(),1);
-        assert.equal(await f.page.locator('.el-button-primary').count(),1);
-      }
       const size=await f.page.locator('.connection-request-account').boundingBox();assert(size.height<=32,'wallet identity stays on one line');
       assert.equal(await f.page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
       await capture(f.page,`${engine}-${window}-${action}-${stage}-${width}`,`${name} ${stage==='request-done'?'can sign in':action==='add'?'add request':'sign-in request'} at ${width} pixels.`);
@@ -80,7 +76,7 @@ for(const engine of ['chromium','webkit'])test(`W2 ${engine} action titles, one 
   }finally{await f.close();}
 });
 
-for(const engine of ['chromium','webkit'])test(`W2 ${engine} ordinary signature keeps every origin character and the final line beside Continue`,{timeout:60000},async()=>{
+for(const engine of ['chromium','webkit'])test(`W2 ${engine} ordinary signature keeps every origin character and the final line beside Continue`,windowTestOptions(engine,60000),async()=>{
   const f=await browserFixture(engine);
   try{
     for(const width of [480,390])for(const origin of ['https://shop.example.com','https://'+'account-check.'.repeat(20)+'attacker-domain.net']){
@@ -103,7 +99,7 @@ for(const engine of ['chromium','webkit'])test(`W2 ${engine} ordinary signature 
   }finally{await f.close();}
 });
 
-for(const engine of ['chromium','webkit'])test(`W2 ${engine} boot wait has a working Cancel before the connector module loads`,{timeout:30000},async()=>{
+for(const engine of ['chromium','webkit'])test(`W2 ${engine} boot wait has a working Cancel before the connector module loads`,windowTestOptions(engine,30000),async()=>{
   const f=await browserFixture(engine);
   try{
     for(const kind of ['metamask','unisat','walletconnect']){
@@ -123,44 +119,6 @@ for(const engine of ['chromium','webkit'])test(`W2 ${engine} boot wait has a wor
       await f.page.evaluate(()=>removeEventListener('message',receiveLoading));
     }
   }finally{await f.close();}
-});
-
-for(const kind of ['metamask','unisat'])test(`W2 ${kind} completion belongs to its reviewed action and ordinary Wallet keeps its receipt`,{timeout:30000},async()=>{
-  const browser=await requireProductSmokePlaywright().chromium.launch({headless:true});
-  const f=await fixture(browser,kind,{saved:true,pictures:false});
-  const send=async(operation,fields={})=>f.top.evaluate(({operation,fields,kind})=>document.querySelector('iframe').contentWindow.postMessage({type:'home:wallet-signin-effect',homeToken:'fixture-token',requestId:operation==='review'?'review-action':operation,operation,...(operation==='review'?{address:kind==='metamask'?'0x'+'1'.repeat(40):'bc1q'+'a'.repeat(38),chain_id:kind==='metamask'?1:0,network:kind==='metamask'?'':'bitcoin',name:kind==='metamask'?'MetaMask':'UniSat',message:'Runtime fixed sentence.',action:'add'}:{}),...fields},'*'),{operation,fields,kind});
-  try{
-    await f.state('linked');assert.match(await f.frame.locator('main').textContent(),kind==='metamask'?/Address saved in Wallet/:/Connected\./);
-    await send('review');await f.action('send-request').click();await send('finish');
-    await f.state('request-done');assert.doesNotMatch(await f.frame.locator('main').textContent(),/Account saved in Wallet|can now sign in/);
-    await send('complete',{reviewRequestId:'old-action'});
-    assert.doesNotMatch(await f.frame.locator('main').textContent(),/can now sign in/);
-    await send('complete',{reviewRequestId:'review-action'});
-    await f.frame.getByText(/can now sign in to this Home\./).waitFor();
-    await capture(f.top,`live-${kind}-signin-complete`,`${kind} completed the add-for-sign-in action.`);
-  }finally{await f.close();await browser.close();}
-});
-
-for(const kind of ['metamask','unisat'])test(`W2 ${kind} review approval has one answer through Stop and page close`,async()=>{
-  const browser=await requireProductSmokePlaywright().chromium.launch({headless:true});
-  const f=await fixture(browser,kind,{saved:true,pictures:false});
-  try {
-    await f.top.evaluate(kind=>{
-      window.reviewAnswers=[];
-      addEventListener('message',e=>{if(e.data?.type==='home:wallet-signin-effect-result')reviewAnswers.push(e.data);});
-      document.querySelector('iframe').contentWindow.postMessage({type:'home:wallet-signin-effect',homeToken:'fixture-token',requestId:'review-1',operation:'review',address:kind==='metamask'?'0x'+'1'.repeat(40):'bc1q'+'a'.repeat(38),chain_id:kind==='metamask'?1:0,network:kind==='metamask'?'':'bitcoin',name:kind==='metamask'?'MetaMask':'UniSat',message:'Runtime owns this exact message.'},'*');
-    },kind);
-    await f.frame.locator('[data-action=send-request]').click();
-    await f.top.waitForFunction(()=>reviewAnswers.length===1);
-    assert.deepEqual(await f.top.evaluate(()=>reviewAnswers.map(a=>a.result)),[{approved:true}]);
-    // Stop from Approved has no reply left, even when a stale click is queued.
-    await f.frame.evaluate(()=>{const stale=document.createElement('button');stale.dataset.action='stop-waiting';document.querySelector('main').append(stale);stale.click();});
-    await f.top.evaluate(()=>document.querySelector('iframe').contentWindow.postMessage({type:'home:wallet-signin-effect',homeToken:'fixture-token',requestId:'stop-after-approved',operation:'stop'},'*'));
-    await f.top.evaluate(()=>new Promise(resolve=>setTimeout(resolve,50)));
-    await f.frame.evaluate(()=>window.dispatchEvent(new Event('pagehide')));
-    await f.top.evaluate(()=>new Promise(resolve=>setTimeout(resolve,50)));
-    assert.deepEqual(await f.top.evaluate(()=>reviewAnswers.filter(a=>a.requestId==='review-1').map(a=>({result:a.result,error:a.error}))),[{result:{approved:true},error:undefined}]);
-  }finally{await f.close();await browser.close();}
 });
 
 // Purpose is an explicit presentation field. Translated or changed headings
