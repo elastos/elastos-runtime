@@ -69,13 +69,13 @@ for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'
  }finally{await f.close();await browser.close();}
 });
 
-for(const engine of ['chromium','webkit'])test(`round6 MetaMask adds then selects a network before one payment in ${engine}`,windowTestOptions(engine,20000),async()=>{
+for(const engine of ['chromium','webkit'])test(`round6 MetaMask adds then selects a network before one zero-value payment in ${engine}`,windowTestOptions(engine,20000),async()=>{
  const browser=await playwright[engine].launch({headless:true});
  const hostSource=process.env.WALLET_ROUND6_BASELINE?execFileSync('git',['show','72af9c4ff:capsules/home/browser/home-wallet-connector-host.js'],{encoding:'utf8'}):undefined;
  const f=await extensionFixture(browser,'metamask',{saved:true,requests:'transaction',hostSource});
- try{await f.state('transaction-waiting');await f.top.evaluate(()=>testState.addSelectsChain=false);await f.action('send-request').click();await f.state('transaction-done');
+ try{await f.state('transaction-waiting');await f.top.evaluate(()=>{testState.addSelectsChain=false;testState.transactionValue='0x0';});await f.action('send-request').click();await f.state('transaction-done');
   const calls=await f.top.evaluate(()=>testState.calls);assert.deepEqual(calls.filter(c=>['wallet_switchEthereumChain','wallet_addEthereumChain','eth_sendTransaction'].includes(c.method)).map(c=>c.method),['wallet_switchEthereumChain','wallet_addEthereumChain','wallet_switchEthereumChain','eth_sendTransaction']);assert.equal(await f.top.evaluate(()=>testState.receipts.length),1);
-  const send=calls.find(c=>c.method==='eth_sendTransaction');assert.equal(send.chain,'0x14');await shot(f.top,`metamask-payment-network-${engine}-1280`);
+  const send=calls.find(c=>c.method==='eth_sendTransaction');assert.equal(send.chain,'0x14');assert.equal(send.params[0].value,'0x0');await shot(f.top,`metamask-payment-network-${engine}-1280`);
  }finally{await f.close();await browser.close();}
 });
 
