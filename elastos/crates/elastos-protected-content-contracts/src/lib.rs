@@ -5,6 +5,7 @@
 //! content keys, or expose capsule workflows.
 
 mod canonical;
+mod creator_mint_wire;
 mod custody_envelope;
 mod custody_epoch;
 mod custody_pool;
@@ -14,8 +15,12 @@ mod node_contribution;
 mod node_decision;
 mod node_set;
 mod policy;
+mod pool;
+mod pool_mint;
+mod pool_rollover;
 mod recipient_authorization;
 mod release_request;
+mod remote_seal;
 mod replay;
 mod rights;
 mod rights_receipt;
@@ -25,9 +30,26 @@ mod terminal_receipt;
 #[cfg(test)]
 mod authority_tests;
 #[cfg(test)]
+mod policy_v2_tests;
+#[cfg(test)]
+mod pool_mint_tests;
+#[cfg(test)]
+mod pool_tests;
+#[cfg(test)]
+mod rights_v2_tests;
+/// Plan B V2 fixtures for tests in other crates (feature `test-fixtures`).
+#[cfg(any(test, feature = "test-fixtures"))]
+pub mod test_fixtures;
+#[cfg(test)]
 mod test_support;
 
 pub use canonical::{CanonicalContract, ContractError};
+pub use creator_mint_wire::{
+    ProtectedContentCreatorMintSourceV1, ProtectedContentCreatorMintV1,
+    ProtectedContentMintReceiptV1, ProtectedContentPayTokenV1,
+    PROTECTED_CONTENT_CREATOR_MINT_SCHEMA_V1, PROTECTED_CONTENT_CREATOR_MINT_SOURCE_SCHEMA_V1,
+    PROTECTED_CONTENT_MINT_RECEIPT_SCHEMA_V1,
+};
 pub use custody_envelope::{
     CustodyEnvelopeManifestV1, CustodyEnvelopeV1, CustodyNodeIdentityV1, NodeCustodyPublicKeyV1,
     PqHybridSealedShareV1, ShareCoordinateV1, CONTENT_KEY_COMMITMENT_DOMAIN_V1,
@@ -41,11 +63,12 @@ pub use custody_epoch::{
     CustodyEpochStatementV1, SignedCustodyEpochV1, VerifiedCustodyEpochV1,
 };
 pub use custody_pool::{
-    validate_custody_epoch_against_pool_at, CustodyCommitteeAuthorizationIdentityV1,
-    CustodyCommitteeAuthorizationStatementV1, CustodyPoolError, CustodyPoolFailureDomainIdV1,
-    CustodyPoolIdentityV1, CustodyPoolMemberStateV1, CustodyPoolMemberV1, CustodyPoolOperatorIdV1,
-    CustodyPoolStatementV1, SignedCustodyCommitteeAuthorizationV1, SignedCustodyPoolV1,
-    ValidatedCustodyCommitteeV1, VerifiedCustodyCommitteeAuthorizationV1, VerifiedCustodyPoolV1,
+    validate_custody_epoch_against_pool_at, validate_custody_epoch_for_release_at,
+    CustodyCommitteeAuthorizationIdentityV1, CustodyCommitteeAuthorizationStatementV1,
+    CustodyPoolError, CustodyPoolFailureDomainIdV1, CustodyPoolIdentityV1,
+    CustodyPoolMemberStateV1, CustodyPoolMemberV1, CustodyPoolOperatorIdV1, CustodyPoolStatementV1,
+    SignedCustodyCommitteeAuthorizationV1, SignedCustodyPoolV1, ValidatedCustodyCommitteeV1,
+    VerifiedCustodyCommitteeAuthorizationV1, VerifiedCustodyPoolV1,
 };
 pub use custody_provisioning::{
     AuthenticatedRuntimeCustodyProvisioningV1, CustodyNodeProvisioningRecordIdentityV1,
@@ -72,8 +95,31 @@ pub use node_decision::{
 pub use node_set::{NodePublicKey, NodeSetV1};
 pub use policy::{
     ContentAccessIdV1, EvmContractAddressV1, EvmFunctionSelectorV1, EvmRightsMethodAbiV1,
-    RightsEvaluationEvidenceRequestV1, RightsEvaluationEvidenceV1, RightsObservationFinalityV1,
-    RightsPolicyBodyV1, RightsSubjectSourceV1, MAX_RIGHTS_EVIDENCE_LIFETIME_SECS,
+    RightsEvaluationEvidenceRequestV1, RightsEvaluationEvidenceV1, RightsExpectedItemV1,
+    RightsObservationFinalityV1, RightsPolicyBodyV1, RightsSubjectSourceV1,
+    MAX_RIGHTS_EVIDENCE_LIFETIME_SECS,
+};
+pub use pool::{
+    DeliveryKeyIdentityV1, DeliveryPublicKeyBytesV1, MintPolicyV1, PoolAddressAnyV1, PoolAddressV1,
+    PoolAddressV2, PoolContractError, PoolDescriptorStatementV1, PoolDescriptorStatementV2,
+    PoolDescriptorStatementV3, PoolDidV1, PoolEpochBundleV1, PoolMemberRolesV1, PoolMemberRouteV1,
+    PoolMemberRouteV2, PoolMemberV1, PoolMemberV2, PoolMemberV3,
+    PoolRecipientAttestationStatementV1, PoolRecipientAttestationStatementV2,
+    PoolSessionContentKindV1, PoolTrustModeV1, PoolTrustV1, ServePolicyV1, SessionBoundsV1,
+    SignedPoolDescriptorAnyV1, SignedPoolDescriptorV1, SignedPoolDescriptorV2,
+    SignedPoolDescriptorV3, SignedPoolRecipientAttestationAnyV1, SignedPoolRecipientAttestationV1,
+    SignedPoolRecipientAttestationV2, VerifiedPoolDescriptorV1, VerifiedPoolRecipientAttestationV1,
+    ViewerPartAadV1, ViewerPartIndexV1, DEFAULT_MAX_SEALS_PER_SEALER_V1, MAX_ADMITTED_MINTERS_V1,
+    MAX_POOL_DESCRIPTOR_EPOCHS_V1, MAX_POOL_DESCRIPTOR_LIFETIME_SECS, MAX_POOL_MEMBERS_V1,
+    MAX_POOL_MEMBER_CONNECT_TICKET_BYTES_V1, MAX_POOL_MEMBER_PEER_DID_BYTES_V1,
+    MAX_SESSION_RECIPIENTS_V2, MAX_SIGNED_POOL_DESCRIPTOR_BYTES_V1, MAX_TRUST_ATTESTATION_BYTES_V1,
+    MAX_VIEWER_DASH_RENDITION_V1,
+};
+pub use pool_mint::{PoolMintShareStatementV1, SignedPoolMintShareV1};
+pub use pool_rollover::{
+    ExpectedPoolRolloverReadinessV1, PoolRolloverConsentV1, PoolRolloverMemberEvidenceV1,
+    PoolRolloverProposalV1, PoolRolloverReadinessV1, SignedPoolRolloverConsentV1,
+    SignedPoolRolloverProposalV1, SignedPoolRolloverReadinessV1,
 };
 pub use recipient_authorization::{
     RecipientAuthorizationError, RecipientKeyAuthorizationContextV1,
@@ -85,19 +131,31 @@ pub use release_request::{
     KeyReleaseError, KeyReleaseRequestV1, VerifiedKeyReleaseRequestV1,
     MAX_RELEASE_REQUEST_LIFETIME_SECS,
 };
+pub use remote_seal::{
+    ClearLayoutV1, ClearPartIndexV1, ClearRenditionV1, MintPieceAadV1, MintRequestV1,
+    PoolProvisioningAuthorizationV1, RemoteShareAdmissionV1, SealCompletedV1,
+    SealSessionAttestationV1, SignedMintRequestV1, SignedPoolProvisioningAuthorizationV1,
+    SignedSealCompletedV1, SignedSealSessionAttestationV1, MAX_REMOTE_SHARE_ADMISSION_BYTES_V1,
+    SEAL_DASH_MAX_SEGMENTS_PER_RENDITION, SEAL_OBJECT_CHUNK_CLEAR_BYTES,
+    SEAL_PIECE_MAX_CLEAR_BYTES, SEAL_PIECE_OVERHEAD_BYTES, SEAL_SESSION_GRACE_SECS,
+};
 pub use replay::{AtomicReplayClaimer, ReplayClaimEntryV1, ReplayClaimError, ReplayClaimKeyV1};
 pub use rights::{
-    ReplayNonce16, RightsActionV1, RightsDecisionV1, RightsError, RightsRequestV1,
-    RightsVerificationContextV1, VerifiedRightsRequestV1, WalletSignedRightsRequestV1,
-    MAX_RIGHTS_REQUEST_LIFETIME_SECS, RIGHTS_CLOCK_SKEW_SECS,
+    ReplayNonce16, RightsActionV1, RightsDecisionV1, RightsError, RightsRequestAnyV1,
+    RightsRequestV1, RightsRequestV2, RightsVerificationContextV1, VerifiedRightsRequestV1,
+    WalletSignedRightsRequestAnyV1, WalletSignedRightsRequestV1, WalletSignedRightsRequestV2,
+    MAX_RIGHTS_REQUEST_LIFETIME_SECS, PRE_ALIGNMENT_V2, RIGHTS_CLOCK_SKEW_SECS,
 };
 pub use rights_receipt::{
     RightsReceiptIssuerKey, RightsReceiptStatementV1, SignedRightsReceiptV1,
     MAX_RIGHTS_RECEIPT_LIFETIME_SECS,
 };
 pub use runtime_release_operation::{
-    AuthenticatedRuntimeReleaseOperationV1, RuntimeReleaseAuditIdV1, RuntimeReleaseOperationError,
-    RuntimeReleaseOperationStatementV1, SignedRuntimeReleaseOperationV1,
+    AuthenticatedRuntimeReleaseOperationAnyV1, AuthenticatedRuntimeReleaseOperationV1,
+    AuthenticatedRuntimeReleaseOperationV2, PoolSessionRecipientV1, RuntimeIssuerPolicyV1,
+    RuntimeReleaseAuditIdV1, RuntimeReleaseOperationAnyV1, RuntimeReleaseOperationError,
+    RuntimeReleaseOperationStatementV1, RuntimeReleaseOperationStatementV2,
+    SignedRuntimeReleaseOperationV1, SignedRuntimeReleaseOperationV2,
     MAX_RUNTIME_RELEASE_OPERATION_LIFETIME_SECS,
 };
 pub use terminal_receipt::{

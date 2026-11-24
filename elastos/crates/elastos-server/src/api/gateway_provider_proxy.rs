@@ -20,7 +20,7 @@ const MODEL_TEXT_OUTPUT_SCHEMA: &str = "elastos.model.output.text/v1";
 const MODEL_OBJECT_OUTPUT_SCHEMA: &str = "elastos.model.output.object/v1";
 const MODEL_CONTENT_OUTPUT_SCHEMA: &str = "elastos.model.output.content/v1";
 const MODEL_OUTPUT_URI_MAX_BYTES: usize = 4 * 1024;
-use crate::protected_content_runtime::ELACITY_PLAYER_CAPSULE_ID;
+use crate::protected_content_runtime::{ELACITY_PLAYER_CAPSULE_ID, ELACITY_READER_CAPSULE_ID};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -71,6 +71,64 @@ macro_rules! creator_mint_unavailable {
             anyhow::anyhow!("{:?}", error)
                 .context(format!("{}:{}", file!(), line!()))
                 .context(RUNTIME_CUSTODY_CREATOR_UNAVAILABLE_MESSAGE)
+        }
+    };
+}
+
+/// Download refuses for one reason a person can act on -- the copy is not
+/// theirs -- and fails closed for everything else, with the cause in the log.
+macro_rules! download_denied {
+    () => {
+        |error| {
+            tracing::warn!(
+                line = line!(),
+                error = ?error,
+                "Runtime custody download denied without an owned copy"
+            );
+            anyhow::anyhow!("{:?}", error)
+                .context(format!("{}:{}", file!(), line!()))
+                .context(crate::protected_content_runtime::RUNTIME_CUSTODY_DOWNLOAD_DENIED_MESSAGE)
+        }
+    };
+}
+
+macro_rules! download_denied_missing {
+    () => {
+        || {
+            tracing::warn!(
+                line = line!(),
+                "Runtime custody download denied without an owned copy"
+            );
+            anyhow::anyhow!("{}:{}", file!(), line!())
+                .context(crate::protected_content_runtime::RUNTIME_CUSTODY_DOWNLOAD_DENIED_MESSAGE)
+        }
+    };
+}
+
+macro_rules! download_unavailable {
+    () => {
+        |error| {
+            tracing::warn!(
+                line = line!(),
+                error = ?error,
+                "Runtime custody download failed closed"
+            );
+            anyhow::anyhow!("{:?}", error)
+                .context(format!("{}:{}", file!(), line!()))
+                .context(
+                    crate::protected_content_runtime::RUNTIME_CUSTODY_DOWNLOAD_UNAVAILABLE_MESSAGE,
+                )
+        }
+    };
+}
+
+macro_rules! download_unavailable_missing {
+    () => {
+        || {
+            tracing::warn!(line = line!(), "Runtime custody download failed closed");
+            anyhow::anyhow!("{}:{}", file!(), line!()).context(
+                crate::protected_content_runtime::RUNTIME_CUSTODY_DOWNLOAD_UNAVAILABLE_MESSAGE,
+            )
         }
     };
 }
@@ -128,6 +186,12 @@ macro_rules! purchase_unavailable_missing {
     };
 }
 
+// The buy-side refusal helpers, shared with `gateway_marketplace_buy`.
+pub(super) use purchase_denied;
+pub(super) use purchase_denied_missing;
+pub(super) use purchase_unavailable;
+pub(super) use purchase_unavailable_missing;
+
 macro_rules! creator_mint_unavailable_missing {
     () => {
         || {
@@ -149,10 +213,30 @@ pub(crate) use self::creator_publish::*;
 pub(crate) use self::custody_buy::*;
 pub(super) use self::library_transfer::*;
 
+// The creator-mint wire, defined once in the contracts crate and used by both
+// sides of it. These aliases keep the names this file already reads by.
+//
+// Declaring these shapes here as well is what let four field mismatches reach
+// a person: `deny_unknown_fields` on one side and a JSON literal on the other,
+// reconciled only by a hand-written mock that the tests answered with instead
+// of the capsule.
+pub(crate) use elastos_protected_content_contracts::{
+    ProtectedContentCreatorMintSourceV1 as ResolvedProtectedContentCreatorMintSource,
+    ProtectedContentCreatorMintV1 as ResolvedProtectedContentCreatorMint,
+    ProtectedContentMintReceiptV1 as ResolvedProtectedContentMintReceipt,
+};
+
+/// One pay token the deployment offers, as the capsule describes it.
+
 #[derive(Clone)]
-struct RuntimeCustodyCreatorAccount {
-    account_id: String,
-    address: String,
+pub(in crate::api::gateway) struct RuntimeCustodyCreatorAccount {
+    pub(super) account_id: String,
+    pub(super) address: String,
+    /// Not an authority decision -- `signing_available` already made that. This
+    /// only lets a pending answer say whose turn it is: an external signer's
+    /// outstanding approval is waiting on the person, a managed one is not.
+    pub(super) external_signer: bool,
+    pub(super) connector_id: Option<String>,
 }
 
 pub(super) async fn gateway_provider_proxy(
@@ -161,642 +245,377 @@ pub(super) async fn gateway_provider_proxy(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let allowed_apps: &[&str] = match scheme.as_str() {
-        "documents" => match op.as_str() {
-            "summary" | "get" => &[DOCUMENTS_CAPSULE_ID, LIBRARY_CAPSULE_ID],
-            _ => &[DOCUMENTS_CAPSULE_ID],
-        },
-        "object" => match op.as_str() {
-            "roots"
-            | "list"
-            | "stat"
-            | "read"
-            | "download"
-            | "write"
-            | "mkdir"
-            | "rename"
-            | "move"
-            | "copy"
-            | "trash"
-            | "restore"
-            | "delete_permanently"
-            | "empty_trash"
-            | "status"
-            | "sync"
-            | "extract_archive"
-            | "archive_entries"
-            | "archive_preview_entry"
-            | "archive_extract_entries"
-            | "compress_archive"
-            | "publish"
-            | "unpublish"
-            | "repair"
-            | "share"
-            | "shared_access"
-            | "events" => &[LIBRARY_CAPSULE_ID],
-            "open_viewer" | "read_viewer" | "close_viewer" => &[ELACITY_PLAYER_CAPSULE_ID],
-            "import_runtime_custody" => &[LIBRARY_CAPSULE_ID, MARKETPLACE_CAPSULE_ID],
-            "list_runtime_custody" | "buy" => &[LIBRARY_CAPSULE_ID, MARKETPLACE_CAPSULE_ID],
-            _ => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    "Gateway provider operation not found",
-                )
-                    .into_response()
-            }
-        },
-        "chain" => match op.as_str() {
-            "networks" | "status" | "block_number" | "sync_health" | "node_lifecycle" => {
-                &[SYSTEM_CAPSULE_ID]
-            }
-            "balance" => &[SYSTEM_CAPSULE_ID, WALLET_CAPSULE_ID],
-            _ => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    "Gateway provider operation not found",
-                )
-                    .into_response()
-            }
-        },
-        "net" => match op.as_str() {
-            "status" | "resolve" | "connect" | "stream" | "http" => &[BROWSER_CAPSULE_ID],
-            _ => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    "Gateway provider operation not found",
-                )
-                    .into_response()
-            }
-        },
-        "inspect" => match op.as_str() {
-            "capsules" | "capsule" | "self" | "plan" | "request_act" => &[SYSTEM_CAPSULE_ID],
-            _ => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    "Gateway provider operation not found",
-                )
-                    .into_response()
-            }
-        },
-        "model" => match op.as_str() {
-            "offers_list" => &[
-                ASSISTANT_CAPSULE_ID,
-                HOME_AGENT_CAPSULE_ID,
-                MARKETPLACE_CAPSULE_ID,
-            ],
-            "runs_create" | "runs_get" | "runs_events" | "runs_cancel" => {
-                &[ASSISTANT_CAPSULE_ID, HOME_AGENT_CAPSULE_ID]
-            }
-            _ => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    "Gateway provider operation not found",
-                )
-                    .into_response()
-            }
-        },
-        _ => return (StatusCode::NOT_FOUND, "Gateway provider not found").into_response(),
-    };
-    let required = match require_home_launch_token_binding(&state.data_dir, &headers, allowed_apps)
-    {
-        Ok(required) => required,
-        Err(err) => return gateway_provider_error_response(&scheme, err),
-    };
-    let is_protected_viewer_op =
-        scheme == "object" && matches!(op.as_str(), "open_viewer" | "read_viewer" | "close_viewer");
-    if is_protected_viewer_op
-        && (required.launch_context.selected_resource != ELACITY_PLAYER_CAPSULE_ID
-            || required.launch_context.executable_actor != ELACITY_PLAYER_CAPSULE_ID)
-    {
-        return (
-            StatusCode::FORBIDDEN,
-            "home launch token is not authorized for this viewer",
-        )
-            .into_response();
+    // Keep the large coordinator future out of this additional tracing frame.
+    // Both traced and untraced operations retain their existing dispatch.
+    if scheme != "object" || op != "import_runtime_custody" {
+        return Box::pin(gateway_provider_proxy_inner(
+            State(state),
+            Path((scheme, op)),
+            headers,
+            body,
+        ))
+        .await;
     }
-    let context = required.context.clone();
-    let principal_id = context.principal_id.clone();
-    let session_id = context.session_id.clone();
-    /* The verified capsule behind the launch token: model runs are bound and
-    audited to it, never to a fixed name. */
-    let launch_capsule_id = required.launch_context.executable_actor.clone();
-    if scheme == "net" && matches!(op.as_str(), "http" | "connect" | "resolve" | "stream") {
-        return (
-            StatusCode::GONE,
-            format!("legacy /api/provider/net/{op} is disabled; Browser streams must be opened through /api/apps/browser/open"),
-        ).into_response();
-    }
-    let registry = match state.provider_registry.as_ref().cloned() {
-        Some(registry) => registry,
-        None => {
-            return gateway_provider_error_response(
-                &scheme,
-                anyhow::anyhow!("{} provider unavailable", scheme),
-            )
-        }
-    };
-    let mut request = if body.is_empty() {
-        serde_json::json!({})
-    } else {
-        match serde_json::from_slice::<serde_json::Value>(&body) {
-            Ok(value) if value.is_object() => value,
-            Ok(_) => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    "provider request body must be a JSON object",
-                )
-                    .into_response();
-            }
-            Err(err) => return (StatusCode::BAD_REQUEST, err.to_string()).into_response(),
-        }
-    };
-    if let Some(field) = provider_proxy_runtime_metadata_field(&request) {
-        return (
-            StatusCode::BAD_REQUEST,
-            format!("provider request must not predeclare Runtime metadata field {field}"),
-        )
-            .into_response();
-    }
-    let mut remote_model_grants = Vec::new();
-    if scheme == "model" {
-        request =
-            match normalize_model_provider_request(&op, &request, &context, &launch_capsule_id) {
-                Ok(value) => value,
-                Err((status, message)) => return (status, message).into_response(),
-            };
-        if op == "runs_create" && !hosted_run_allowed(&state.data_dir, &context, &request) {
-            return (StatusCode::FORBIDDEN, HOSTED_RUN_ADMIN_ONLY).into_response();
-        }
-        // Approved remote model grants route new runs to the granting Runtime.
-        // A grant lookup failure keeps the local path; it cannot widen
-        // authority. Runs already routed remotely settle through their stored
-        // route even after the grant expired or was denied, so every run
-        // operation consults the route; a local run returns to the local path.
-        remote_model_grants = super::gateway_model_remote::consumer_grants(
-            &state.data_dir,
-            &context,
-            state.collaboration_discovery_service.as_ref(),
-        )
-        .unwrap_or_default();
-        if op != "offers_list" {
-            match super::gateway_model_remote::route_run_operation(
-                Arc::clone(&registry),
-                &state.data_dir,
-                &remote_model_grants,
-                &context,
-                &launch_capsule_id,
-                (&op, &request),
-                crate::auth::now_ts(),
-            )
-            .await
-            {
-                Ok(Some(mut remote_response)) => {
-                    if let Err(err) = project_model_provider_response(&op, &mut remote_response) {
-                        return gateway_provider_error_response(
-                            &scheme,
-                            anyhow::anyhow!(
-                                "remote model service returned an invalid typed response: {err}"
-                            ),
-                        );
-                    }
-                    return (StatusCode::OK, Json(remote_response)).into_response();
-                }
-                Ok(None) => {}
-                Err(super::gateway_model_remote::RemoteRouteError::InvocationRefused {
-                    binding,
-                    reason,
-                }) => {
-                    return (
-                        StatusCode::CONFLICT,
-                        Json(serde_json::json!({
-                            "status": "error", "code": "remote_model_invocation_refused",
-                            "message": super::gateway_model_service::invocation_refusal_message(&reason),
-                            "reason": reason, "refusal": binding,
-                        })),
-                    )
-                        .into_response();
-                }
-                Err(super::gateway_model_remote::RemoteRouteError::Transport(message)) => {
-                    return (
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        Json(serde_json::json!({
-                            "status": "error",
-                            "code": super::gateway_model_remote::TRANSPORT_INTERRUPTED,
-                            "message": format!("remote model service unreachable: {message}"),
-                        })),
-                    )
-                        .into_response();
-                }
-                Err(err) => {
-                    return gateway_provider_error_response(&scheme, anyhow::anyhow!("{err}"));
-                }
-            }
-        }
-    } else {
-        request["op"] = serde_json::Value::String(op.clone());
-    }
-    if scheme == "documents" || scheme == "object" || scheme == "net" {
-        request["principal_id"] = serde_json::Value::String(principal_id.clone());
-    }
-    if is_protected_viewer_op {
-        if let Some(object) = request.as_object_mut() {
-            object.remove("launch_id");
-            object.remove("proof_binding_id");
-            object.remove("session_id");
-            object.remove("grant_id");
-            object.remove("wallet_request_hex");
-            object.remove("wallet_response_hex");
-            if let Some(proof) = context
-                .proof_binding_id
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            {
-                object.insert(
-                    "proof_binding_id".to_string(),
-                    serde_json::Value::String(proof.to_string()),
-                );
-            }
-            if !context.session_id.trim().is_empty() {
-                object.insert(
-                    "session_id".to_string(),
-                    serde_json::Value::String(context.session_id.clone()),
-                );
-            }
-            if !context.grant_id.trim().is_empty() {
-                object.insert(
-                    "grant_id".to_string(),
-                    serde_json::Value::String(context.grant_id.clone()),
-                );
-            }
-            object.insert(
-                "launch_id".to_string(),
-                serde_json::Value::String(required.launch_id.clone()),
-            );
-        }
-    }
-    if scheme == "object" && op == "shared_access" {
-        if let Some(object) = request.as_object_mut() {
-            object.remove("recipient_proof");
-            if object
-                .get("recipient")
-                .and_then(serde_json::Value::as_str)
-                .map(str::trim)
-                == Some(principal_id.as_str())
-                && context.proof_binding_id.is_some()
-            {
-                object.insert(
-                    "recipient_proof".to_string(),
-                    serde_json::json!({
-                        "schema": "elastos.library.recipient-proof/v1",
-                        "source": "runtime-launch-grant",
-                        "recipient": principal_id,
-                        "principal_id": principal_id,
-                        "proof_binding_id": context.proof_binding_id.as_deref().unwrap_or_default(),
-                        "session_id": session_id,
-                    }),
-                );
-            }
-        }
-    }
-
-    if scheme == "inspect" && op == "request_act" {
-        return gateway_inspect_action_request(&state, &context, &request).await;
-    }
-
-    let chain_lifecycle_audit = chain_lifecycle_effect_audit(&scheme, &op, &request);
-    let library_audit = (scheme == "object").then(|| format!("object:{op}:{}", now_ts()));
-    let model_audit = model_provider_effect_audit(&scheme, &op, &request);
-    if let Some(audit) = &chain_lifecycle_audit {
-        if let Err(err) = append_provider_effect_audit(
-            &state.data_dir,
-            ProviderEffectAuditInput {
-                capsule_id: SYSTEM_CAPSULE_ID,
-                event_type: "chain.node_lifecycle.requested",
-                principal_id: &principal_id,
-                session_id: &session_id,
-                request_id: &audit.request_id,
-                result: "requested",
-                reason: &format!(
-                    "System requested chain node lifecycle action {} for {}",
-                    audit.action, audit.network
-                ),
-            },
-        ) {
-            return gateway_provider_error_response(
-                &scheme,
-                anyhow::anyhow!("chain node lifecycle audit failed: {}", err),
-            );
-        }
-    }
-    if let Some(request_id) = &library_audit {
-        if let Err(err) = append_provider_effect_audit(
-            &state.data_dir,
-            ProviderEffectAuditInput {
-                capsule_id: LIBRARY_CAPSULE_ID,
-                event_type: "object.provider.requested",
-                principal_id: &principal_id,
-                session_id: &session_id,
-                request_id,
-                result: "requested",
-                reason: &format!("Library requested object provider operation {op}"),
-            },
-        ) {
-            return gateway_provider_error_response(
-                &scheme,
-                anyhow::anyhow!("object provider audit failed: {}", err),
-            );
-        }
-    }
-    if let Some(audit) = &model_audit {
-        if let Err(err) = append_provider_effect_audit(
-            &state.data_dir,
-            ProviderEffectAuditInput {
-                capsule_id: &launch_capsule_id,
-                event_type: audit.requested_event,
-                principal_id: &principal_id,
-                session_id: &session_id,
-                request_id: audit.request_id,
-                result: "requested",
-                reason: audit.requested_reason,
-            },
-        ) {
-            return gateway_provider_error_response(
-                &scheme,
-                anyhow::anyhow!("model provider audit failed: {}", err),
-            );
-        }
-        if launch_capsule_id == "assistant" && op == "runs_create" {
-            if let Some(offer_id) = request.get("offer_id").and_then(serde_json::Value::as_str) {
-                if let Some(hint) = crate::api::hosted_model_offer_hint(&state.data_dir, offer_id) {
-                    // No evaluator acts while Approval Lens is hidden: log the
-                    // hosted request and let it through to its own Inbox approval.
-                    let _ = crate::jev_approval_lens::record_assistant_hosted_http_shadow(
-                        &state.data_dir,
-                        &crate::jev_approval_lens::AssistantHostedHttpContext {
-                            request_id: audit.request_id,
-                            principal_id: &principal_id,
-                            session_id: &session_id,
-                            capsule_id: &launch_capsule_id,
-                            grant_id: &context.grant_id,
-                            offer_id,
-                            hint,
-                        },
-                    );
-                }
-            }
-        }
-    }
-
-    let mut response = if scheme == "object"
-        && (library_operation_needs_runtime_coordinator(&op)
-            || library_request_targets_webspace(&request))
-    {
-        let wallet_authority =
-            if (op == "publish" && request.get("protection").is_some()) || op == "buy" {
-                match runtime_wallet_authority(&required) {
-                    Ok(authority) => Some(authority),
-                    Err(err) => return gateway_provider_error_response(&scheme, err),
-                }
-            } else {
-                None
-            };
-        crate::library::handle_object_provider_runtime_request_with_gateway(
-            crate::library::ObjectProviderRuntimeRequest {
-                data_dir: &state.data_dir,
-                registry: Arc::clone(&registry),
-                request: &request,
-                gateway_authority: wallet_authority
-                    .as_ref()
-                    .map(|authority| (&state, authority)),
-            },
-        )
-        .await
-    } else {
-        match registry.send_raw(&scheme, &request).await {
-            Ok(value)
-                if scheme == "net"
-                    && value.get("status").and_then(|v| v.as_str()) == Some("error") =>
-            {
-                let message = value
-                    .get("message")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("net provider unavailable");
-                return gateway_provider_error_response(
-                    &scheme,
-                    anyhow::anyhow!("net provider unavailable: {}", message),
-                );
-            }
-            Ok(value) => value,
-            Err(err) if scheme == "net" => {
-                return gateway_provider_error_response(
-                    &scheme,
-                    anyhow::anyhow!("net provider unavailable: {}", err),
-                )
-            }
-            Err(err) => serde_json::json!({
-            "status": "error",
-            "code": "provider_error",
-                "message": err.to_string(),
-            }),
-        }
-    };
-    let mut response_status = StatusCode::OK;
-    if scheme == "model" {
-        if let Some(refusal) = local_model_request_expiry_refusal(&request, &response) {
-            response = refusal;
-            response_status = StatusCode::CONFLICT;
-        }
-        if op == "offers_list" && !remote_model_grants.is_empty() {
-            // A consumer Home may run no local model provider at all; granted
-            // remote offers still form its list.
-            if response.get("status").and_then(serde_json::Value::as_str) != Some("ok") {
-                response = super::gateway_model_remote::offers_list_without_local_provider();
-            }
-            super::gateway_model_remote::append_remote_offers(
-                &registry,
-                &remote_model_grants,
-                &context,
-                &launch_capsule_id,
-                &mut response,
-            )
-            .await;
-        }
-        if let Err(err) = project_model_provider_response(&op, &mut response) {
-            return gateway_provider_error_response(
-                &scheme,
-                anyhow::anyhow!("model provider returned an invalid typed response: {err}"),
-            );
-        }
-    }
-
-    if let Some(audit) = &chain_lifecycle_audit {
-        let completed = response.get("status").and_then(|value| value.as_str()) == Some("ok");
-        if let Err(err) = append_provider_effect_audit(
-            &state.data_dir,
-            ProviderEffectAuditInput {
-                capsule_id: SYSTEM_CAPSULE_ID,
-                event_type: if completed {
-                    "chain.node_lifecycle.completed"
-                } else {
-                    "chain.node_lifecycle.failed"
-                },
-                principal_id: &principal_id,
-                session_id: &session_id,
-                request_id: &audit.request_id,
-                result: if completed { "completed" } else { "failed" },
-                reason: &format!(
-                    "System {} chain node lifecycle action {} for {}",
-                    if completed { "completed" } else { "failed" },
-                    audit.action,
-                    audit.network
-                ),
-            },
-        ) {
-            return gateway_provider_error_response(
-                &scheme,
-                anyhow::anyhow!("chain node lifecycle audit failed: {}", err),
-            );
-        }
-    }
-    if let Some(request_id) = &library_audit {
-        let completed = response.get("status").and_then(|value| value.as_str()) == Some("ok");
-        if completed && library_operation_emits_events(&op) {
-            crate::library::library_event_notifier().notify_waiters();
-        }
-        if let Err(err) = append_provider_effect_audit(
-            &state.data_dir,
-            ProviderEffectAuditInput {
-                capsule_id: LIBRARY_CAPSULE_ID,
-                event_type: if completed {
-                    "object.provider.completed"
-                } else {
-                    "object.provider.failed"
-                },
-                principal_id: &principal_id,
-                session_id: &session_id,
-                request_id,
-                result: if completed { "completed" } else { "failed" },
-                reason: &format!(
-                    "Library {} object provider operation {op}",
-                    if completed { "completed" } else { "failed" }
-                ),
-            },
-        ) {
-            return gateway_provider_error_response(
-                &scheme,
-                anyhow::anyhow!("object provider audit failed: {}", err),
-            );
-        }
-    }
-    if let Some(audit) = &model_audit {
-        let completed = response.get("status").and_then(|value| value.as_str()) == Some("ok");
-        if let Err(err) = append_provider_effect_audit(
-            &state.data_dir,
-            ProviderEffectAuditInput {
-                capsule_id: &launch_capsule_id,
-                event_type: if completed {
-                    audit.completed_event
-                } else {
-                    audit.failed_event
-                },
-                principal_id: &principal_id,
-                session_id: &session_id,
-                request_id: audit.request_id,
-                result: if completed { "completed" } else { "failed" },
-                reason: if completed {
-                    audit.completed_reason
-                } else {
-                    audit.failed_reason
-                },
-            },
-        ) {
-            return gateway_provider_error_response(
-                &scheme,
-                anyhow::anyhow!("model provider audit failed: {}", err),
-            );
-        }
-        if launch_capsule_id == "assistant" && op == "runs_create" {
-            let outcome = if completed { "accepted" } else { "failed" };
-            let request_id = request
-                .get("offer_id")
-                .and_then(serde_json::Value::as_str)
-                .map(|offer_id| {
-                    crate::jev_approval_lens::outcome_request_id(
-                        &state.data_dir,
-                        offer_id,
-                        audit.request_id,
-                    )
-                })
-                .unwrap_or_else(|| audit.request_id.to_string());
-            let _ = crate::jev_approval_lens::record_actual_outcome(
-                &state.data_dir,
-                &request_id,
-                outcome,
-            );
-        }
-    }
-
-    (response_status, Json(response)).into_response()
+    let mut trace = crate::action_trace::ActionTrace::new(
+        headers
+            .get("x-elastos-action-id")
+            .and_then(|value| value.to_str().ok()),
+        "import_runtime_custody",
+        "",
+        "",
+    );
+    let mut response = tracing::Instrument::instrument(
+        Box::pin(gateway_provider_proxy_inner(
+            State(state),
+            Path((scheme, op)),
+            headers,
+            body,
+        )),
+        trace.span(),
+    )
+    .await;
+    trace.complete(&mut response);
+    response
 }
 
-async fn resolve_runtime_custody_wallet_default_account(
+pub(in crate::api::gateway) async fn resolve_runtime_custody_wallet_default_account(
     state: &GatewayState,
     authority: &RuntimeWalletAuthority,
     chain_namespace: &str,
     unavailable_message: &'static str,
 ) -> anyhow::Result<RuntimeCustodyCreatorAccount> {
+    // Every arm below fails closed with the caller's one opaque message, per
+    // this file's discipline, and keeps it outermost so nothing that matches on
+    // that sentence breaks. Each arm names WHICH precondition failed twice over,
+    // because the two readers differ: in the operator log, without which the
+    // five causes are indistinguishable and a live failure reads as an
+    // unexplained "unavailable"; and as a typed reason beneath the sentence,
+    // which is what an app branches on to offer the one action that fixes it.
+    // Reason codes and the chain namespace only -- never an account id,
+    // address, or balance.
+    use crate::protected_content_runtime::{
+        RuntimeCustodyWalletDefaultReason, RuntimeCustodyWalletDefaultUnusable,
+    };
+    use elastos_wallet_contract::{
+        account_serves_chain_namespace, chain_namespaces_compatible, is_evm_eoa_proof_type,
+    };
     let accounts = system_wallet_accounts_summary(state, authority).await;
-    let latest_default = accounts
-        .default_accounts
+    let namespace_accounts = accounts
+        .accounts
         .iter()
-        .filter(|default| {
-            default.intent == "transaction_intent" && default.chain_namespace == chain_namespace
-        })
+        .filter(|account| chain_namespaces_compatible(&account.chain_namespace, chain_namespace))
+        .count();
+    // A default set on this chain itself wins. Without one, the Wallet's EVM
+    // default serves it: the Wallet keeps a single EVM default for every EVM
+    // chain, so the native EVM account a fresh Home creates is the creator's
+    // Base account too. That reuse holds only for an externally owned
+    // account; a contract account exists only on the chain it was deployed to.
+    let transaction_defaults = || {
+        accounts
+            .default_accounts
+            .iter()
+            .filter(|default| default.intent == "transaction_intent")
+    };
+    let exact_default_exists =
+        transaction_defaults().any(|default| default.chain_namespace == chain_namespace);
+    let serves_chain = |default: &&SystemWalletDefaultSummary| {
+        if exact_default_exists {
+            default.chain_namespace == chain_namespace
+        } else {
+            chain_namespaces_compatible(&default.chain_namespace, chain_namespace)
+                && accounts
+                    .accounts
+                    .iter()
+                    .find(|account| account.account_id == default.account_id)
+                    // A missing account is refused below with its own reason.
+                    .is_none_or(|account| is_evm_eoa_proof_type(&account.proof_type))
+        }
+    };
+    let latest_default = transaction_defaults()
+        .filter(serves_chain)
         .max_by_key(|default| default.set_at)
-        .ok_or_else(|| anyhow::anyhow!(unavailable_message))?;
-    if accounts.default_accounts.iter().any(|default| {
-        default.intent == "transaction_intent"
-            && default.chain_namespace == chain_namespace
-            && default.set_at == latest_default.set_at
-            && default.account_id != latest_default.account_id
+        .ok_or_else(|| {
+            let unusable = RuntimeCustodyWalletDefaultUnusable::new(
+                RuntimeCustodyWalletDefaultReason::NoTransactionDefaultForChainNamespace,
+                chain_namespace,
+            );
+            tracing::warn!(
+                line = line!(),
+                reason = unusable.reason_label(),
+                chain_namespace,
+                wallet_accounts_total = accounts.accounts.len(),
+                wallet_accounts_on_chain_namespace = namespace_accounts,
+                "Runtime custody wallet default account failed closed"
+            );
+            anyhow::Error::new(unusable).context(unavailable_message)
+        })?;
+    if transaction_defaults().filter(serves_chain).any(|default| {
+        default.set_at == latest_default.set_at && default.account_id != latest_default.account_id
     }) {
-        anyhow::bail!(unavailable_message);
+        let unusable = RuntimeCustodyWalletDefaultUnusable::new(
+            RuntimeCustodyWalletDefaultReason::AmbiguousTransactionDefault,
+            chain_namespace,
+        );
+        tracing::warn!(
+            line = line!(),
+            reason = unusable.reason_label(),
+            chain_namespace,
+            "Runtime custody wallet default account failed closed"
+        );
+        return Err(anyhow::Error::new(unusable).context(unavailable_message));
     }
     let account = accounts
         .accounts
         .iter()
+        // The default must name an account that serves both the chain it was
+        // set for, as the Wallet only ever records, and this one. An
+        // externally owned account serves every EVM chain; a record naming
+        // any other account off its own chain is not trusted.
         .find(|account| {
             account.account_id == latest_default.account_id
-                && account.chain_namespace == chain_namespace
+                && account_serves_chain_namespace(
+                    &account.chain_namespace,
+                    &account.proof_type,
+                    &latest_default.chain_namespace,
+                )
+                && account_serves_chain_namespace(
+                    &account.chain_namespace,
+                    &account.proof_type,
+                    chain_namespace,
+                )
         })
-        .ok_or_else(|| anyhow::anyhow!(unavailable_message))?;
-    if !account.signing_available || !is_managed_wallet_proof_type(&account.proof_type) {
-        anyhow::bail!(unavailable_message);
+        .ok_or_else(|| {
+            let unusable = RuntimeCustodyWalletDefaultUnusable::new(
+                RuntimeCustodyWalletDefaultReason::DefaultAccountNotInWallet,
+                chain_namespace,
+            );
+            tracing::warn!(
+                line = line!(),
+                reason = unusable.reason_label(),
+                chain_namespace,
+                wallet_accounts_on_chain_namespace = namespace_accounts,
+                "Runtime custody wallet default account failed closed"
+            );
+            anyhow::Error::new(unusable).context(unavailable_message)
+        })?;
+    // `signing_available` is the whole precondition, and it already tells a
+    // connector-linked external account (signable through the handoff) apart
+    // from an unlinked one (not signable). The tail past this point needs an
+    // address and a completed approval — it never asks the Wallet to sign — so
+    // requiring a managed proof type here only shut out linked external wallets.
+    if !account.signing_available {
+        let unusable = RuntimeCustodyWalletDefaultUnusable::new(
+            RuntimeCustodyWalletDefaultReason::DefaultAccountSigningUnavailable,
+            chain_namespace,
+        );
+        tracing::warn!(
+            line = line!(),
+            reason = unusable.reason_label(),
+            chain_namespace,
+            "Runtime custody wallet default account failed closed"
+        );
+        return Err(anyhow::Error::new(unusable).context(unavailable_message));
     }
-    validate_wallet_evm_address(&account.address, "wallet")
-        .map_err(|_| anyhow::anyhow!(unavailable_message))?;
+    validate_wallet_evm_address(&account.address, "wallet").map_err(|_| {
+        let unusable = RuntimeCustodyWalletDefaultUnusable::new(
+            RuntimeCustodyWalletDefaultReason::DefaultAccountAddressInvalid,
+            chain_namespace,
+        );
+        tracing::warn!(
+            line = line!(),
+            reason = unusable.reason_label(),
+            chain_namespace,
+            "Runtime custody wallet default account failed closed"
+        );
+        anyhow::Error::new(unusable).context(unavailable_message)
+    })?;
     Ok(RuntimeCustodyCreatorAccount {
         account_id: account.account_id.clone(),
         address: account.address.to_ascii_lowercase(),
+        external_signer: !is_managed_wallet_proof_type(&account.proof_type),
+        connector_id: account.connector_id.clone(),
     })
 }
 
-const ERC1155_IS_APPROVED_FOR_ALL_SELECTOR: &str = "e985e9c5";
-const ERC1155_SET_APPROVAL_FOR_ALL_SELECTOR: &str = "a22cb465";
-
-fn abi_word_from_address(address: &str) -> anyhow::Result<String> {
-    let raw = address
-        .strip_prefix("0x")
-        .filter(|raw| raw.len() == 40 && raw.bytes().all(|byte| byte.is_ascii_hexdigit()))
-        .ok_or_else(|| anyhow::anyhow!("invalid EVM address for ABI encoding"))?;
-    Ok(format!("{:0>64}", raw.to_ascii_lowercase()))
+/// Build the confirmed-stage record for a purchase stage from its Runtime
+/// transaction completion, or `None` if the completion has no validated
+/// Chain outcome attached yet (the caller must treat that the same as
+/// pending -- `RUNTIME_CUSTODY_PURCHASE_PENDING_MESSAGE`/`purchase_unavailable_missing!`).
+pub(super) fn confirmed_stage(
+    completion: RuntimeTransactionCompletion,
+) -> Option<crate::protected_content_runtime::RuntimeCustodyConfirmedPurchaseStage> {
+    let outcome = completion.validated_chain_outcome?;
+    Some(
+        crate::protected_content_runtime::RuntimeCustodyConfirmedPurchaseStage {
+            chain_transaction: completion.transaction_hash,
+            wallet_binding: outcome.binding,
+            chain_observation: outcome.chain_observation,
+            confirmed_at: outcome.confirmed_at,
+        },
+    )
 }
 
-async fn resolve_runtime_custody_market_gateway(
+#[cfg(test)]
+pub(crate) mod test_seams {
+    pub(crate) async fn materialize_owned_artifacts(
+        registry: &elastos_runtime::provider::ProviderRegistry,
+        package: &crate::protected_content_runtime::RuntimePortableListingPackage,
+    ) {
+        super::materialize_runtime_custody_artifacts(registry, package).await;
+    }
+    use std::collections::HashMap;
+    use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
+
+    static LISTING_COPY_HOLDERS: Mutex<Option<HashMap<PathBuf, Vec<String>>>> = Mutex::new(None);
+
+    /// The pool members a test's Home places its listings on, in place of
+    /// its pool descriptors.
+    pub(crate) fn set_listing_copy_holders(data_dir: &Path, holders: Vec<String>) {
+        LISTING_COPY_HOLDERS
+            .lock()
+            .unwrap()
+            .get_or_insert_with(HashMap::new)
+            .insert(data_dir.to_path_buf(), holders);
+    }
+
+    pub(super) fn listing_copy_holders(data_dir: &Path) -> Option<Vec<String>> {
+        LISTING_COPY_HOLDERS
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|holders| holders.get(data_dir).cloned())
+    }
+}
+
+/// The typed refusal of a new attempt that would re-term a mint already on
+/// record, built directly so its wire spelling can be pinned. In service the
+/// same refusal comes from `RuntimeCustodyAttemptArchiveOutcome::kept_refusal`,
+/// for an attempt whose transaction was sent or mined, or that is listed.
+#[cfg(test)]
+fn runtime_custody_creator_mint_blocked(
+    mint_id: Digest32,
+    existing: &elastos_protected_content_runtime::RuntimeMintCreatorState,
+    progress: Option<serde_json::Value>,
+    conflict: Option<crate::protected_content_runtime::RuntimeCustodyCreatorMintConflict>,
+) -> anyhow::Error {
+    let mut blocked =
+        crate::protected_content_runtime::RuntimeCustodyCreatorMintBlocked::new(mint_id, existing);
+    if let Some(progress) = progress {
+        blocked = blocked.with_progress(progress);
+    }
+    if let Some(conflict) = conflict {
+        blocked = blocked.with_conflict(conflict);
+    }
+    tracing::warn!(
+        line = line!(),
+        state = blocked.state_label(),
+        "Runtime custody creator mint refused new terms for a mint already on record"
+    );
+    anyhow::Error::new(blocked)
+}
+
+/// File an owned protected item into its owner's Library as a `.ddrm`.
+///
+/// The capsule carries the asset's own `metadata.json` whole, so the Library
+/// can show it and the viewer can open it without fetching anything; the
+/// document is read back from the CID it was published under rather than kept
+/// from whatever built it, so a copy acquired by buying is assembled exactly
+/// like one acquired by minting.
+///
+/// When the metadata states no authority -- because none was configured at the
+/// time it was written -- it is asked for now and filled in, which is the whole
+/// reason the authority sits at the capsule's top level rather than only inside
+/// the metadata it was published with.
+///
+/// Best effort: the asset is owned whether or not a file could be written for
+/// it, and the owner keeps it either way. `None` when nothing was filed.
+pub(super) async fn write_runtime_custody_owned_capsule(
     state: &GatewayState,
-    network: &str,
-) -> anyhow::Result<String> {
+    registry: &ProviderRegistry,
+    package: &crate::protected_content_runtime::RuntimePortableListingPackage,
+    principal_id: &str,
+    acquisition: crate::protected_content_runtime::RuntimeCustodyAcquisitionV1,
+) -> Option<String> {
+    let metadata = match crate::content::fetch_bytes_via_provider(
+        registry,
+        &package.metadata_cid,
+        Some("metadata.json"),
+    )
+    .await
+    .ok()
+    .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+    {
+        Some(metadata) => metadata,
+        None => {
+            tracing::debug!("runtime custody: no metadata document to build a capsule from");
+            return None;
+        }
+    };
+    let mut capsule = crate::protected_content_runtime::runtime_custody_capsule_document(
+        package,
+        &metadata,
+        acquisition,
+    );
+    if capsule
+        .get("authority")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .is_empty()
+    {
+        if let Some(authority) = runtime_custody_market_authority(state, &package.network).await {
+            capsule["authority"] = serde_json::Value::String(authority);
+        }
+    }
+    // The asset's material belongs on the machine that owns it, whether this
+    // copy was minted here or bought from someone else.
+    materialize_runtime_custody_artifacts(registry, package).await;
+    let content_type =
+        crate::protected_content_runtime::runtime_custody_capsule_content_type(&metadata);
+    match crate::library::write_runtime_custody_capsule(
+        &state.data_dir,
+        principal_id,
+        &package.display_name,
+        &content_type,
+        &capsule,
+    ) {
+        Ok(uri) => Some(uri),
+        Err(error) => {
+            tracing::warn!(error = %error, "runtime custody: the owned capsule was not filed");
+            None
+        }
+    }
+}
+
+/// Keep an owned asset's material on the machine that owns it.
+///
+/// Content owns the local retention attempt. Recursive
+/// pinning keeps a DASH directory's segments as well as its manifest. The
+/// existing content read path owns delivery of material this Home lacks.
+///
+/// Silent and best effort, as the owner asked: nothing here is shown, and an
+/// asset whose material could not be kept is still owned and still readable --
+/// just over the network until the next attempt.
+async fn materialize_runtime_custody_artifacts(
+    registry: &ProviderRegistry,
+    package: &crate::protected_content_runtime::RuntimePortableListingPackage,
+) {
+    for cid in [&package.content_cid, &package.metadata_cid] {
+        if cid.trim().is_empty() {
+            continue;
+        }
+        if let Err(error) = crate::content::retain_local_via_provider(registry, cid).await {
+            tracing::debug!(
+                error = %error,
+                "runtime custody: owned material was not kept locally"
+            );
+        }
+    }
+}
+
+/// The authority gateway this network's market is configured with, asked for
+/// when an asset's metadata did not state one.
+async fn runtime_custody_market_authority(state: &GatewayState, network: &str) -> Option<String> {
     let response = wallet_chain_provider_data(
         state,
         serde_json::json!({
@@ -805,17 +624,12 @@ async fn resolve_runtime_custody_market_gateway(
         }),
     )
     .await
-    .map_err(creator_mint_unavailable!())?;
-    let source: ResolvedProtectedContentMarketSource =
-        serde_json::from_value(response).map_err(creator_mint_unavailable!())?;
-    if source.schema != "elastos.chain.protected-content-market-source/v1"
-        || source.network != network
-    {
-        return Err(creator_mint_unavailable_missing!()());
-    }
-    validate_wallet_evm_address(&source.authority_gateway_contract, "market gateway")
-        .map_err(creator_mint_unavailable!())?;
-    Ok(source.authority_gateway_contract.to_ascii_lowercase())
+    .ok()?;
+    response
+        .get("authority_gateway_contract")
+        .and_then(serde_json::Value::as_str)
+        .filter(|authority| !authority.is_empty())
+        .map(str::to_string)
 }
 
 pub(super) fn provider_proxy_runtime_metadata_field(request: &serde_json::Value) -> Option<&str> {
@@ -1132,10 +946,14 @@ fn library_operation_needs_runtime_coordinator(op: &str) -> bool {
         "publish"
             | "unpublish"
             | "repair"
+            | "discard_protection"
+            | "unfinished_protections"
             | "sync"
             | "list_runtime_custody"
             | "import_runtime_custody"
             | "buy"
+            | "buy_offer"
+            | "download_owned_copy"
             | "open_viewer"
             | "read_viewer"
             | "close_viewer"
@@ -1177,71 +995,56 @@ mod tests {
         assert!(missing.chain().nth(1).unwrap().to_string().contains(".rs:"));
     }
 
+    /// STAB-34 / D5: after mining, "not finalized yet" and a transient chain
+    /// answer (the upstream unreachable, the provider not answering) are both
+    /// pending; only a definite refusal fails closed. (Before D5 the
+    /// transient answers failed closed too, which stopped the open page.)
     #[test]
-    fn erc1155_operator_approval_abi_helpers_encode_and_decode_exactly() {
-        let owner = "0xF36C114c19F96b4174B6D71E392c00dB95093a1E";
-        let gateway = "0x09dBe796f40ECEffEAccf243c3d758C4c1d8D87D";
-        assert_eq!(
-            super::erc1155_is_approved_for_all_call_data(owner, gateway).unwrap(),
-            "0xe985e9c5000000000000000000000000f36c114c19f96b4174b6d71e392c00db95093a1e00000000000000000000000009dbe796f40eceffeaccf243c3d758c4c1d8d87d"
-        );
-        assert_eq!(
-            super::erc1155_set_approval_for_all_call_data(gateway, true).unwrap(),
-            "0xa22cb46500000000000000000000000009dbe796f40eceffeaccf243c3d758c4c1d8d87d0000000000000000000000000000000000000000000000000000000000000001"
-        );
-        assert!(super::erc1155_is_approved_for_all_call_data("0x1234", gateway).is_err());
-        assert_eq!(
-            super::erc1155_bool_result(
-                "0x0000000000000000000000000000000000000000000000000000000000000001"
-            ),
-            Some(true)
-        );
-        assert_eq!(
-            super::erc1155_bool_result(
-                "0x0000000000000000000000000000000000000000000000000000000000000000"
-            ),
-            Some(false)
-        );
-        assert_eq!(super::erc1155_bool_result("0x01"), None);
-        assert_eq!(
-            super::erc1155_bool_result(
-                "0x0000000000000000000000000000000000000000000000000000000000000042"
-            ),
-            None
-        );
-    }
-
-    #[test]
-    fn creator_mint_chain_error_maps_pending_codes_to_pending_and_others_to_unavailable() {
-        let pending = super::creator_mint_chain_error(
+    fn creator_mint_chain_error_maps_pending_and_transient_to_pending_refusals_to_unavailable() {
+        for (status, message) in [
             (
                 StatusCode::BAD_REQUEST,
                 "protected_content_mint_receipt_pending: protected-content mint receipt is not finalized on enough configured sources".to_string(),
             ),
-            1,
-        );
-        assert_eq!(
-            pending.to_string(),
-            super::RUNTIME_CUSTODY_CREATOR_PENDING_MESSAGE
-        );
+            (
+                StatusCode::BAD_REQUEST,
+                "upstream_unreachable: EVM RPC request failed".to_string(),
+            ),
+            (
+                StatusCode::BAD_REQUEST,
+                "unavailable: mint receipt unavailable".to_string(),
+            ),
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "chain provider unavailable: timed out".to_string(),
+            ),
+        ] {
+            let pending = super::creator_mint_chain_error((status, message.clone()), 1);
+            assert_eq!(
+                pending.to_string(),
+                super::RUNTIME_CUSTODY_CREATOR_PENDING_MESSAGE,
+                "{message}"
+            );
+        }
         for (status, message) in [
             (
                 StatusCode::BAD_REQUEST,
                 "invalid_protected_content_mint_receipt: bad".to_string(),
             ),
             (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "protected_content_mint_receipt_pending: x".to_string(),
+                StatusCode::BAD_REQUEST,
+                "upstream_invalid_protected_content_verified_listing: bad".to_string(),
             ),
             (
                 StatusCode::BAD_REQUEST,
-                "upstream_unreachable: EVM RPC request failed".to_string(),
+                "protected_content_mint_receipt_reverted_already_bound: reverted".to_string(),
             ),
         ] {
-            let error = super::creator_mint_chain_error((status, message), 1);
+            let error = super::creator_mint_chain_error((status, message.clone()), 1);
             assert_eq!(
                 error.to_string(),
-                super::RUNTIME_CUSTODY_CREATOR_UNAVAILABLE_MESSAGE
+                super::RUNTIME_CUSTODY_CREATOR_UNAVAILABLE_MESSAGE,
+                "{message}"
             );
         }
     }
@@ -1253,6 +1056,11 @@ mod tests {
             "wallet-account-1".to_string(),
             "0x2".to_string(),
             "0x5".to_string(),
+            Vec::new(),
+            elastos_protected_content_runtime::RuntimeMintAccessMethod::BuyOnce,
+            None,
+            String::new(),
+            String::new(),
         )
         .unwrap();
         elastos_protected_content_runtime::RuntimeMintCreatorState::new(
@@ -1282,12 +1090,15 @@ mod tests {
             chain_id,
             token_id: "0x77".to_string(),
             operative: "0x00000000000000000000000000000000000000dd".to_string(),
+            quantity: Some("0x7".to_string()),
+            price: Some("0xf4240".to_string()),
+            pay_token: Some(RUNTIME_CUSTODY_NATIVE_PAY_TOKEN.to_string()),
         }
     }
 
     fn test_listing(chain_id: u64) -> ResolvedProtectedContentVerifiedListing {
         ResolvedProtectedContentVerifiedListing {
-            schema: "elastos.chain.protected-content-verified-listing/v1".to_string(),
+            schema: RUNTIME_CUSTODY_VERIFIED_LISTING_SCHEMA.to_string(),
             network: "base-mainnet".to_string(),
             chain_id,
             seller: "0x00000000000000000000000000000000000000ee".to_string(),
@@ -1299,6 +1110,141 @@ mod tests {
             pay_token: "0x00000000000000000000000000000000000000bb".to_string(),
             payment_processor: Some("0x00000000000000000000000000000000000000ff".to_string()),
         }
+    }
+
+    #[test]
+    fn runtime_custody_creator_mint_blocked_reports_the_stage_and_the_recorded_terms() {
+        let mint_id = elastos_protected_content_contracts::Digest32::new([0x11; 32]);
+        let recorded = test_creator_state();
+
+        // Recorded only: the wire spelling stays, though such an attempt is now
+        // set aside rather than refused. Never offered Start over from here.
+        let error = super::runtime_custody_creator_mint_blocked(mint_id, &recorded, None, None);
+        let blocked = error
+            .downcast_ref::<crate::protected_content_runtime::RuntimeCustodyCreatorMintBlocked>()
+            .expect("refusal must carry its reason as data");
+        let json = blocked.as_json();
+        assert_eq!(
+            json["schema"],
+            crate::protected_content_runtime::RUNTIME_CUSTODY_CREATOR_MINT_BLOCKED_SCHEMA_V1
+        );
+        assert_eq!(json["state"], "recorded_only");
+        assert_eq!(json["recorded_copies"], "0x2");
+        assert_eq!(json["recorded_price"], "0x5");
+        assert_eq!(json["can_start_over"], false);
+        assert_eq!(json["can_resume"], true);
+        assert_eq!(json["mint_id"], hex::encode(mint_id.as_bytes()));
+
+        // A transaction is out for approval: it may still settle, so the
+        // record must survive; only finishing it is on offer.
+        let raised = recorded
+            .clone()
+            .with_effect(
+                elastos_protected_content_runtime::RuntimeMintCreatorEffectBinding::new(
+                    "effect-1",
+                    "approval-1",
+                    "a".repeat(64),
+                    "wallet-account-1",
+                    "0x00000000000000000000000000000000000000ee",
+                    "eip155:8453",
+                    "base-mainnet",
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let json = super::runtime_custody_creator_mint_blocked(mint_id, &raised, None, None)
+            .downcast_ref::<crate::protected_content_runtime::RuntimeCustodyCreatorMintBlocked>()
+            .expect("refusal must carry its reason as data")
+            .as_json();
+        assert_eq!(json["state"], "approval_outstanding");
+        assert_eq!(json["can_start_over"], false);
+        assert_eq!(json["can_resume"], true);
+
+        // Settled: a seller and a token id exist, so nothing may be dropped.
+        // Resuming stays on offer: it finishes a listing that never published,
+        // and only replays one that did.
+        let settled = raised
+            .with_terminal(creator_terminal_evidence_for_test())
+            .unwrap();
+        let json = super::runtime_custody_creator_mint_blocked(mint_id, &settled, None, None)
+            .downcast_ref::<crate::protected_content_runtime::RuntimeCustodyCreatorMintBlocked>()
+            .expect("refusal must carry its reason as data")
+            .as_json();
+        assert_eq!(json["state"], "already_minted");
+        assert_eq!(json["can_start_over"], false);
+        assert_eq!(json["can_resume"], true);
+    }
+
+    /// The refusal's own sentence stays plain, and no app is expected to read
+    /// it: it is a fallback for surfaces that predate the typed answer.
+    /// A blocked mint says how far it got, so an app can show which stage the
+    /// existing attempt reached instead of only that one exists.
+    #[test]
+    fn runtime_custody_creator_mint_blocked_carries_progress_when_the_caller_has_it() {
+        let mint_id = elastos_protected_content_contracts::Digest32::new([0x11; 32]);
+        let progress = serde_json::json!({
+            "schema": crate::protected_content_runtime::RUNTIME_CUSTODY_CREATOR_PROGRESS_SCHEMA_V1,
+            "stages": [
+                { "id": "escrow", "state": "done" },
+                { "id": "publish", "state": "done" },
+                { "id": "listing", "state": "active" },
+            ],
+        });
+        let json = super::runtime_custody_creator_mint_blocked(
+            mint_id,
+            &test_creator_state(),
+            Some(progress.clone()),
+            None,
+        )
+        .downcast_ref::<crate::protected_content_runtime::RuntimeCustodyCreatorMintBlocked>()
+        .expect("the refusal must stay typed")
+        .as_json();
+        assert_eq!(json["progress"], progress);
+
+        // A caller without the record leaves it out rather than guessing.
+        let without =
+            super::runtime_custody_creator_mint_blocked(mint_id, &test_creator_state(), None, None)
+                .downcast_ref::<crate::protected_content_runtime::RuntimeCustodyCreatorMintBlocked>(
+                )
+                .expect("the refusal must stay typed")
+                .as_json();
+        assert!(without.get("progress").is_none());
+    }
+
+    #[test]
+    fn runtime_custody_creator_mint_blocked_never_reuses_the_unavailable_sentence() {
+        let error = super::runtime_custody_creator_mint_blocked(
+            elastos_protected_content_contracts::Digest32::new([0x11; 32]),
+            &test_creator_state(),
+            None,
+            None,
+        );
+        assert_ne!(
+            error.to_string(),
+            super::RUNTIME_CUSTODY_CREATOR_UNAVAILABLE_MESSAGE
+        );
+        assert!(error.to_string().contains("earlier attempt"));
+    }
+
+    fn creator_terminal_evidence_for_test(
+    ) -> elastos_protected_content_runtime::RuntimeMintCreatorTerminalEvidence {
+        elastos_protected_content_runtime::RuntimeMintCreatorTerminalEvidence::new(
+            "bafycreatorcid",
+            "ipfs://bafymetadata/metadata.json",
+            "0x00000000000000000000000000000000000000ee",
+            "eip155:8453",
+            "base-mainnet",
+            "0x00000000000000000000000000000000000000aa",
+            "0x77",
+            "0x00000000000000000000000000000000000000dd",
+            "0x2",
+            "0x5",
+            "0x00000000000000000000000000000000000000bb",
+            Some("0x00000000000000000000000000000000000000ff".to_string()),
+            "c".repeat(64),
+            1,
+        )
+        .unwrap()
     }
 
     #[test]
@@ -1318,6 +1264,75 @@ mod tests {
         .is_ok());
     }
 
+    /// The native pay-token path builds its own listing instead of reading one
+    /// back from chain state, so it has to satisfy the same bindings a fetched
+    /// listing does. A field left unset here fails closed at the terminal --
+    /// after the mint has already settled on chain -- which is the worst place
+    /// to find out.
+    #[test]
+    fn runtime_custody_native_listing_from_receipt_satisfies_terminal_bindings() {
+        let creator_state = test_creator_state();
+        let chain_plan = RuntimeCustodyCreatorChainPlan {
+            pay_token: RUNTIME_CUSTODY_NATIVE_PAY_TOKEN.to_string(),
+            ..test_chain_plan()
+        };
+        let receipt = ResolvedProtectedContentMintReceipt {
+            quantity: Some(creator_state.desired_terms().copies().to_string()),
+            price: Some(creator_state.desired_terms().price().to_string()),
+            pay_token: Some(RUNTIME_CUSTODY_NATIVE_PAY_TOKEN.to_string()),
+            ..test_receipt(8453)
+        };
+        let creator_address = "0x00000000000000000000000000000000000000ee";
+
+        let listing =
+            runtime_custody_listing_from_mint_receipt(creator_address, &chain_plan, &receipt);
+
+        assert_eq!(listing.schema, RUNTIME_CUSTODY_VERIFIED_LISTING_SCHEMA);
+        assert!(validate_runtime_custody_creator_terminal_bindings(
+            &creator_state,
+            creator_address,
+            &chain_plan,
+            &receipt,
+            &listing,
+        )
+        .is_ok());
+    }
+
+    /// The synthesized listing must not become a way to launder terms the
+    /// creator never asked for: a receipt whose `ItemListed` priced the token
+    /// differently is still refused.
+    #[test]
+    fn runtime_custody_native_listing_from_receipt_refuses_unrecorded_terms() {
+        let creator_state = test_creator_state();
+        let chain_plan = RuntimeCustodyCreatorChainPlan {
+            pay_token: RUNTIME_CUSTODY_NATIVE_PAY_TOKEN.to_string(),
+            ..test_chain_plan()
+        };
+        let creator_address = "0x00000000000000000000000000000000000000ee";
+        for (quantity, price) in [
+            ("0x3", creator_state.desired_terms().price().to_string()),
+            (creator_state.desired_terms().copies(), "0x6".to_string()),
+        ] {
+            let receipt = ResolvedProtectedContentMintReceipt {
+                quantity: Some(quantity.to_string()),
+                price: Some(price),
+                pay_token: Some(RUNTIME_CUSTODY_NATIVE_PAY_TOKEN.to_string()),
+                ..test_receipt(8453)
+            };
+            let listing =
+                runtime_custody_listing_from_mint_receipt(creator_address, &chain_plan, &receipt);
+
+            assert!(validate_runtime_custody_creator_terminal_bindings(
+                &creator_state,
+                creator_address,
+                &chain_plan,
+                &receipt,
+                &listing,
+            )
+            .is_err());
+        }
+    }
+
     #[test]
     fn runtime_custody_creator_terminal_bindings_accept_normalized_price_terms() {
         let creator_state = elastos_protected_content_runtime::RuntimeMintCreatorState::new(
@@ -1325,6 +1340,11 @@ mod tests {
                 "wallet-account-1",
                 "0x02",
                 "0x05",
+                Vec::new(),
+                elastos_protected_content_runtime::RuntimeMintAccessMethod::BuyOnce,
+                None,
+                String::new(),
+                String::new(),
             )
             .unwrap(),
             "bafycreatorcid",
@@ -1354,6 +1374,8 @@ mod tests {
         let creator_account = RuntimeCustodyCreatorAccount {
             account_id: "wallet:eip155:8453:0x00000000000000000000000000000000000000ee".to_string(),
             address: "0x00000000000000000000000000000000000000ee".to_string(),
+            external_signer: false,
+            connector_id: None,
         };
         let request = runtime_custody_creator_transaction_request(
             "did:key:z6Mkcreatorprincipal1111111111111111111111111111111",
@@ -1438,5 +1460,165 @@ mod tests {
             .unwrap_err();
             assert_eq!(err.to_string(), RUNTIME_CUSTODY_CREATOR_UNAVAILABLE_MESSAGE);
         }
+    }
+
+    fn test_purchase_buyer_account() -> RuntimeCustodyCreatorAccount {
+        RuntimeCustodyCreatorAccount {
+            account_id: "wallet:eip155:8453:0x00000000000000000000000000000000000000bb".to_string(),
+            address: "0x00000000000000000000000000000000000000bb".to_string(),
+            external_signer: false,
+            connector_id: None,
+        }
+    }
+
+    fn test_purchase_listing_package(
+    ) -> crate::protected_content_runtime::RuntimePortableListingPackage {
+        crate::protected_content_runtime::RuntimePortableListingPackage {
+            schema: "elastos.library.runtime-custody-portable-listing/v1".to_string(),
+            mint_id: "0".repeat(64),
+            content_id: "content:fixture".to_string(),
+            content_cid: "bafyfixturecontent".to_string(),
+            metadata_cid: "bafyfixturemetadata".to_string(),
+            token_uri: "ipfs://bafyfixturemetadata".to_string(),
+            publisher_profile_did: "did:key:z6MkFixture".to_string(),
+            display_name: "Demo".to_string(),
+            media_identity_base64: Some("ZGVtbw==".to_string()),
+            content_identity_base64: None,
+            content_access_id: format!("0x{}", "00".repeat(32)),
+            key_envelope_identity_base64: "ZGVtbw==".to_string(),
+            rights_policy_identity_base64: "ZGVtbw==".to_string(),
+            content_key_commitment_base64: "ZGVtbw==".to_string(),
+            seller_address: "0x0000000000000000000000000000000000000044".to_string(),
+            chain_namespace: "eip155:8453".to_string(),
+            network: "base".to_string(),
+            ledger: "0x0000000000000000000000000000000000000022".to_string(),
+            token_id: "0x3".to_string(),
+            operative: "0x0000000000000000000000000000000000000033".to_string(),
+            quantity: "0x1".to_string(),
+            price: "0x5".to_string(),
+            pay_token: "0x0000000000000000000000000000000000000055".to_string(),
+            payment_processor: None,
+            mint_transaction_hash: Some(format!("0x{}", "00".repeat(32))),
+            published_at: Some(1),
+            pool_mint_share_b64: None,
+            sealed_rights_policy_base64: None,
+            remote_seal: None,
+        }
+    }
+
+    fn test_purchase_buy_stage() -> ResolvedProtectedContentPurchaseStep {
+        ResolvedProtectedContentPurchaseStep {
+            stage: "buy".to_string(),
+            to: "0x0000000000000000000000000000000000000099".to_string(),
+            value: "0x0".to_string(),
+            data: "0xabcdef".to_string(),
+        }
+    }
+
+    /// Guards `request_sha256` stability for the `ListingPackage` binding
+    /// across the Task 4 refactor: the hash below was captured by running
+    /// the pre-refactor `runtime_custody_purchase_transaction_request`
+    /// (listing + listing_sha256 + mint_id signature) against this exact
+    /// fixture. If this test ever needs a new literal, every in-flight
+    /// purchase's `request_sha256` has silently changed underneath it.
+    #[test]
+    fn purchase_request_hash_is_unchanged_for_listing_packages() {
+        let buyer_account = test_purchase_buyer_account();
+        let listing = test_purchase_listing_package();
+        let (item, offer) = crate::protected_content_market::market_terms_from_package(
+            &listing,
+            &listing.content_access_id,
+        );
+        let listing_sha256 = format!("sha256:{}", "cc".repeat(32));
+        let mint_id = elastos_protected_content_contracts::Digest32::new([0x99; 32]);
+        let stage = test_purchase_buy_stage();
+        let request = runtime_custody_purchase_transaction_request(
+            "did:key:z6Mkbuyerprincipal11111111111111111111111111111111",
+            &buyer_account,
+            &item,
+            &offer,
+            &RuntimePurchaseBinding::ListingPackage {
+                listing_sha256: &listing_sha256,
+                mint_id,
+            },
+            &stage,
+        )
+        .unwrap();
+        assert_eq!(
+            request.request_sha256,
+            "d8d0abc7e0bbca17ecce84efe8140ae6c434060fe01cd5fc1f967e83c42450c3"
+        );
+        // Q-M10: the effect it names is pinned too -- a changed effect id is a
+        // second effect for a purchase already in flight.
+        assert_eq!(request.effect_id, "transaction-effect:sha256:b372d80079ffff8a7b8f2c25c4a05dd7de156d9c48cd81d5d15f71be95ee048c");
+    }
+
+    #[test]
+    fn purchase_request_binds_asset_uri_for_a_market_buy() {
+        let buyer_account = test_purchase_buyer_account();
+        let listing = test_purchase_listing_package();
+        let (item, offer) = crate::protected_content_market::market_terms_from_package(
+            &listing,
+            &listing.content_access_id,
+        );
+        let stage = test_purchase_buy_stage();
+        let asset_uri = "elastos://bafyfixturemetadata";
+        let request = runtime_custody_purchase_transaction_request(
+            "did:key:z6Mkbuyerprincipal11111111111111111111111111111111",
+            &buyer_account,
+            &item,
+            &offer,
+            &RuntimePurchaseBinding::Market {
+                asset_uri,
+                attempt_id: "0123456789abcdef0123456789abcdef",
+            },
+            &stage,
+        )
+        .unwrap();
+        // A market buy binds a different domain and `asset_uri` in place of
+        // `listing_sha256` / `mint_id`, so it must hash to a different value
+        // than the listing-package request built from the very same terms.
+        assert_ne!(
+            request.request_sha256,
+            "d8d0abc7e0bbca17ecce84efe8140ae6c434060fe01cd5fc1f967e83c42450c3"
+        );
+        let other_uri_request = runtime_custody_purchase_transaction_request(
+            "did:key:z6Mkbuyerprincipal11111111111111111111111111111111",
+            &buyer_account,
+            &item,
+            &offer,
+            &RuntimePurchaseBinding::Market {
+                asset_uri: "elastos://someotherfolder",
+                attempt_id: "0123456789abcdef0123456789abcdef",
+            },
+            &stage,
+        )
+        .unwrap();
+        assert_ne!(request.request_sha256, other_uri_request.request_sha256);
+        // R23: the attempt is part of what the hash binds. The same terms,
+        // item and asset under another attempt are another effect; the same
+        // attempt again is the same effect.
+        let market_request = |attempt_id: &str| {
+            runtime_custody_purchase_transaction_request(
+                "did:key:z6Mkbuyerprincipal11111111111111111111111111111111",
+                &buyer_account,
+                &item,
+                &offer,
+                &RuntimePurchaseBinding::Market {
+                    asset_uri,
+                    attempt_id,
+                },
+                &stage,
+            )
+            .unwrap()
+        };
+        let same = market_request("0123456789abcdef0123456789abcdef");
+        assert_eq!(same.request_sha256, request.request_sha256);
+        assert_eq!(same.effect_id, request.effect_id);
+        let retry = market_request("fedcba9876543210fedcba9876543210");
+        assert_ne!(retry.request_sha256, request.request_sha256);
+        assert_ne!(retry.effect_id, request.effect_id);
+        // The Wallet is shown the asset, never the attempt's identity.
+        assert!(retry.metadata.get("attempt_id").is_none());
     }
 }

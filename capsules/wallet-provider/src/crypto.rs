@@ -76,15 +76,20 @@ pub(super) fn sign_managed_approval(
     request: &WalletApprovalRequest,
 ) -> Result<ManagedSignatureOutput, String> {
     if request.intent == PROTECTED_CONTENT_RIGHTS_SIGNATURE_INTENT {
-        let (rights_request, canonical_bytes) =
+        let (rights_request, _canonical_bytes) =
             protected_content_rights_request_from_payload(&request.payload)?;
-        let signature = sign_evm_message(signing_key, &canonical_bytes)?;
-        let signed_request = WalletSignedRightsRequestV1::new(
+        // A managed account signs the same message an external wallet is
+        // shown, from the one definition in the contracts crate. The two
+        // paths must produce identical signed results, and a test asserts it.
+        let message = rights_request
+            .signing_message()
+            .map_err(|err| format!("rights request has no signing message: {err:?}"))?;
+        let signature = sign_evm_message(signing_key, message.as_bytes())?;
+        let signed_request = wallet_signed_rights_request(
             rights_request,
             canonicalize_evm_signature(&signature)
                 .map_err(|err| format!("invalid managed rights signature: {err}"))?,
-        )
-        .map_err(|err| err.to_string())?;
+        )?;
         let payload = serde_json::to_value(
             ProtectedContentRightsSignatureResultV1::new(
                 request.account_id.clone(),
@@ -186,14 +191,22 @@ pub(super) fn external_wallet_handoff(request: &WalletApprovalRequest) -> Result
         }));
     }
     if request.intent == PROTECTED_CONTENT_RIGHTS_SIGNATURE_INTENT {
-        let (_, canonical_bytes) = protected_content_rights_request_from_payload(&request.payload)?;
+        let (rights_request, _) = protected_content_rights_request_from_payload(&request.payload)?;
+        // The readable message, not the canonical bytes hex-encoded. A wallet
+        // decodes `0x`-prefixed input before displaying it, which is how a
+        // nested identity graph reached the screen as two kilobytes of
+        // replacement characters. This text is rendered verbatim, and it is
+        // the same string every verifier recovers against.
+        let message = rights_request
+            .signing_message()
+            .map_err(|err| format!("rights request has no signing message: {err:?}"))?;
         return Ok(json!({
             "schema": "elastos.wallet.webconnect_handoff/v1",
             "request_id": request.request_id,
             "intent": request.intent,
             "payload_hash": request.payload_hash,
             "signer": request.address,
-            "message": format!("0x{}", hex::encode(canonical_bytes)),
+            "message": message,
             "signature_type": "personal_sign",
             "status": "awaiting_wallet_signature"
         }));
@@ -273,9 +286,11 @@ pub(super) fn protected_content_rights_approval_payload(
     })
 }
 
+/// A V1 or V2 rights request, picked by its canonical domain (L16). Any
+/// other domain is refused.
 pub(super) fn protected_content_rights_request_from_hex(
     canonical_rights_request_hex: &str,
-) -> Result<(RightsRequestV1, Vec<u8>), String> {
+) -> Result<(RightsRequestAnyV1, Vec<u8>), String> {
     let canonical_rights_request_hex = canonical_rights_request_hex.trim();
     if canonical_rights_request_hex.is_empty() {
         return Err("protected-content rights request hex is required".to_string());
@@ -304,14 +319,14 @@ pub(super) fn protected_content_rights_request_from_hex(
             "protected-content rights request exceeds the Wallet wire limit of {MAX_PROTECTED_CONTENT_RIGHTS_WIRE_BYTES} bytes"
         ));
     }
-    let request = RightsRequestV1::from_canonical_bytes(&canonical_bytes)
+    let request = RightsRequestAnyV1::from_canonical_bytes(&canonical_bytes)
         .map_err(|err| format!("invalid protected-content rights request: {err}"))?;
     Ok((request, canonical_bytes))
 }
 
 pub(super) fn protected_content_rights_request_from_payload(
     payload: &Value,
-) -> Result<(RightsRequestV1, Vec<u8>), String> {
+) -> Result<(RightsRequestAnyV1, Vec<u8>), String> {
     let object = payload.as_object().ok_or_else(|| {
         "protected-content rights approval payload must be a JSON object".to_string()
     })?;
@@ -337,7 +352,7 @@ pub(super) fn protected_content_rights_request_from_payload(
 }
 
 pub(super) fn validate_protected_content_rights_request_account(
-    rights_request: &RightsRequestV1,
+    rights_request: &RightsRequestAnyV1,
     account: &LinkedAccount,
     now: u64,
 ) -> Result<(), String> {
@@ -383,11 +398,49 @@ pub(super) fn validate_protected_content_rights_result_for_request(
     }
     let signed_bytes = hex::decode(&result.wallet_signed_rights_request_hex)
         .map_err(|err| format!("invalid stored protected-content rights result hex: {err}"))?;
-    let signed = WalletSignedRightsRequestV1::from_canonical_bytes(&signed_bytes)
+    let signed = WalletSignedRightsRequestAnyV1::from_canonical_bytes(&signed_bytes)
         .map_err(|err| format!("invalid stored protected-content signed request: {err}"))?;
     let (expected_request, expected_bytes) =
         protected_content_rights_request_from_payload(&request.payload)?;
-    if signed.request() != &expected_request {
+    match (signed, expected_request) {
+        (WalletSignedRightsRequestAnyV1::V1(signed), RightsRequestAnyV1::V1(expected)) => {
+            validate_stored_rights_result_v1(result, &signed, &expected, &expected_bytes)
+        }
+        (WalletSignedRightsRequestAnyV1::V2(signed), RightsRequestAnyV1::V2(expected)) => {
+            validate_stored_rights_result_v2(result, &signed, &expected, &expected_bytes)
+        }
+        _ => Err(
+            "protected-content rights signed request does not match the approved request"
+                .to_string(),
+        ),
+    }
+}
+
+/// Builds the signed request of the same version as the approved one.
+pub(super) fn wallet_signed_rights_request(
+    request: RightsRequestAnyV1,
+    wallet_signature: Vec<u8>,
+) -> Result<WalletSignedRightsRequestAnyV1, String> {
+    match request {
+        RightsRequestAnyV1::V1(request) => {
+            WalletSignedRightsRequestV1::new(request, wallet_signature)
+                .map(WalletSignedRightsRequestAnyV1::V1)
+        }
+        RightsRequestAnyV1::V2(request) => {
+            WalletSignedRightsRequestV2::new(request, wallet_signature)
+                .map(WalletSignedRightsRequestAnyV1::V2)
+        }
+    }
+    .map_err(|err| err.to_string())
+}
+
+fn validate_stored_rights_result_v1(
+    result: &ProtectedContentRightsSignatureResultV1,
+    signed: &WalletSignedRightsRequestV1,
+    expected_request: &RightsRequestV1,
+    expected_bytes: &[u8],
+) -> Result<(), String> {
+    if signed.request() != expected_request {
         return Err(
             "protected-content rights signed request does not match the approved request"
                 .to_string(),
@@ -424,6 +477,46 @@ pub(super) fn validate_protected_content_rights_result_for_request(
             ),
             &mut replay_check,
         )
+        .map_err(|err| format!("invalid stored protected-content signed request: {err}"))?;
+    Ok(())
+}
+
+/// The V2 twin: the same checks, and the wallet signature must recover to
+/// the bound wallet at the request's issue time.
+fn validate_stored_rights_result_v2(
+    result: &ProtectedContentRightsSignatureResultV1,
+    signed: &WalletSignedRightsRequestV2,
+    expected_request: &RightsRequestV2,
+    expected_bytes: &[u8],
+) -> Result<(), String> {
+    if signed.request() != expected_request {
+        return Err(
+            "protected-content rights signed request does not match the approved request"
+                .to_string(),
+        );
+    }
+    if !result
+        .signer
+        .eq_ignore_ascii_case(&wallet_address_hex(signed.request().binding().wallet()))
+    {
+        return Err(
+            "protected-content rights signature result signer does not match the bound Wallet"
+                .to_string(),
+        );
+    }
+    if signed
+        .request()
+        .canonical_bytes()
+        .map_err(|err| err.to_string())?
+        != expected_bytes
+    {
+        return Err(
+            "protected-content rights signed request bytes do not match the approved request"
+                .to_string(),
+        );
+    }
+    signed
+        .verify_unclaimed_at(expected_request.issued_at())
         .map_err(|err| format!("invalid stored protected-content signed request: {err}"))?;
     Ok(())
 }
