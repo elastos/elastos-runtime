@@ -30,7 +30,7 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
       if(path==='/api/apps/wallet-walletconnect/wallet/config'){json({walletconnect:{project_id:'fixture-project',storage_revision:'"0"'}});return;}
       if(path.endsWith('/wallet/accounts')){if(failSummary){res.writeHead(500);res.end();}else json({accounts:verified?[{address:'0x'+'12'.repeat(20),chain_namespace:'eip155:20',connector_id:'wallet-walletconnect',capsule_id:'browser',proof_type:'siwe'}]:[]});return;}
       if(path.endsWith('/wallet/approvals')){const summary={approval_requests:approvalRequests.filter(r=>r.status==='pending'||r.status==='approved'&&r.intent==='transaction_intent')};if(holdApprovalList){holdApprovalList=false;const snapshot=structuredClone(summary);releaseApprovalList=()=>json(snapshot);approvalListHeld();return;}json(summary);return;}
-      if(path.includes('/wallet/approvals/')&&path.endsWith('/complete')){const approvalId=decodeURIComponent(path.split('/').at(-2));const request=approvalRequests.find(r=>r.request_id===approvalId);if(request?.status!=='approved'){json({},409);return;}request.status='completed';completions++;json({});return;}
+      if(path.includes('/wallet/approvals/')&&path.endsWith('/complete')){const approvalId=decodeURIComponent(path.split('/').at(-2));const request=approvalRequests.find(r=>r.request_id===approvalId);if(request?.status!=='approved'){json({},409);return;}let raw='';for await(const chunk of req)raw+=chunk;const body=JSON.parse(raw||'{}');if(body.declined){request.status='rejected';request.wallet_outcome='declined';json({receipt_status:'declined'});return;}request.status='completed';completions++;json({});return;}
       if(path.includes('/wallet/approvals/')&&path.endsWith('/approve')){const approvalId=decodeURIComponent(path.split('/').at(-2));const request=approvalRequests.find(r=>r.request_id===approvalId);if(request?.status!=='pending'){json({},409);return;}request.status='approved';json({handoff:{request_id:request.request_id,intent:request.intent,transaction:{from:'0x'+'12'.repeat(20),chainId:'0x14',to:'0x'+'78'.repeat(20),value:'0x1'},payload_hash:'0x'+'34'.repeat(32),signer:'0x'+'12'.repeat(20),signature_type:'personal_sign',message:'Fixture review'},binding:{payload_hash:'0x'+'34'.repeat(32),chain_namespace:'eip155:20',expires_at:Math.floor(Date.now()/1000)+600}});return;}
       if(path.endsWith('/api/auth/evm/challenge')){json({message:'Fixture ownership',expires_at:Math.floor(Date.now()/1000)+600});return;}
       if(path.endsWith('/api/auth/evm/verify')){verified++;json({});return;}
@@ -292,7 +292,7 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
       const linking=['proposal','ownership'].includes(scope);
       const key=scope==='proposal'?'proposalFailure':'phoneFailure';
       const phoneError=scope==='proposal'&&ending==='timeout'?{message:'The QR code expired. Select Connect wallet for a new one.'}:error;
-      const message=scope==='proposal' ? ending==='timeout'?'QR code expired.':ending==='decline'?'Connection declined.':'Could not connect.' : scope==='ownership' ? ending==='decline'?'Your wallet declined to sign the message.':ending==='timeout'?'Time to connect ran out.':'Could not connect.' : scope==='signature' ? ending==='decline'?'Your wallet declined this request.':ending==='timeout'?'Time to answer ran out.':/go back to the app and start a new request\./ : ending==='decline'?'your wallet did not approve this transaction.':'Home could not confirm the transaction result.';
+      const message=scope==='proposal' ? ending==='timeout'?'QR code expired.':ending==='decline'?'Connection declined.':'Could not connect.' : scope==='ownership' ? ending==='decline'?'Your wallet declined to sign the message.':ending==='timeout'?'Time to connect ran out.':'Could not connect.' : scope==='signature' ? ending==='decline'?'Your wallet declined this request.':ending==='timeout'?'Time to answer ran out.':/go back to the app and start a new request\./ : ending==='decline'?'your wallet did not approve this transaction.':'The transaction may already have been sent.';
       approvalRequests=linking?[]:[freshRequest(scope==='transaction'?'transaction_intent':'browser_personal_sign')];
       await reload();
       await walletFrame.evaluate(({key,error,sdkError})=>{window[key]=sdkError?Object.assign(new Error(error.message),error.code===undefined?{}:{code:error.code}):error;},{key,error:phoneError,sdkError});
@@ -304,14 +304,15 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
       if(!linking)await walletFrame.waitForFunction(()=>!document.querySelector('[data-wallet-request-sign]'));
       for(const value of ['dark','light']){await theme(value);await shot(`r17-${scope}-${ending}-${value}`);}
       if(!linking) {
-        assert.equal(approvalRequests[0].status,'approved','handoff consumes the pending request');
+        assert.equal(approvalRequests[0].status,ending==='decline'?'rejected':'approved','wallet refusal closes the handed-off request');
+        if(ending==='decline')assert.equal(approvalRequests[0].wallet_outcome,'declined');
         if(scope==='transaction')assert.match(await wallet.locator('main').innerText(),/Wallet|wallet/);
         else assert.equal(await wallet.locator('[data-wallet-request-sign]').count(),0,'consumed signature has no Send control');
         // Home consumes the record after the visible Send was drawn.
         // Clicking that real control must still read the canonical record.
         approvalRequests=[freshRequest(scope==='transaction'?'transaction_intent':'browser_personal_sign')];await reload();
         const stale=wallet.locator('[data-wallet-request-sign="approval-fixture"]');await stale.waitFor();
-        approvalRequests[0].status='approved';const posts=permissionPosts,beforeCompletions=completions;
+        approvalRequests[0].status='approved';delete approvalRequests[0].wallet_outcome;const posts=permissionPosts,beforeCompletions=completions;
         await stale.click();
         await wallet.locator(scope==='transaction'?'[data-state=transaction-wallet-error]':'[data-state=request-unavailable]').waitFor();
         assert.equal(await wallet.locator('[data-wallet-request-sign]').count(),0);

@@ -136,7 +136,7 @@ for(const engine of ['chromium','webkit']){
   r.peer.choose({proposal:'approve',request:'reject'});await r.qr();await r.pair();await r.state('link-declined');await r.capture('link-declined');
   await r.reopen();await r.state('saved-unlinked');await r.capture('saved-unlinked');
   const proposals=r.peer.trace.filter(e=>e.kind==='proposal').length;r.peer.choose({request:'sign'});await r.click('finish');await r.state('linked');assert.equal(r.peer.trace.filter(e=>e.kind==='proposal').length,proposals,'explicit finish reuses session');
-  await r.approval('declined');r.peer.choose({request:'reject'});await r.click('send-request');await r.state('request-declined');await r.capture('request-declined');assert.equal(r.fixture.state.completed,0);assert.equal(r.fixture.state.approvals[0].status,'approved');
+  await r.approval('declined');r.peer.choose({request:'reject'});await r.click('send-request');await r.state('request-declined');await r.capture('request-declined');assert.equal(r.fixture.state.completed,0);assert.equal(r.fixture.state.approvals[0].status,'rejected');assert.equal(r.fixture.state.approvals[0].wallet_outcome,'declined');
   // Reopen clears only local display outcome, exactly as a person reopening the window.
   await r.leave();r.fixture.state.approvals=[];await r.reopen();await r.state('linked');
   r.peer.choose({request:'silent'});await r.approval('silent');await r.click('send-request');await r.state('request-phone');await until(()=>r.peer.trace.some(e=>e.kind==='request'&&e.decision==='silent'),'silent wallet receives request');
@@ -251,6 +251,7 @@ for(const engine of ['chromium','webkit'])test(`remaining live states and transa
   if(ending!=='reject'){await r.state('transaction-phone');await until(()=>r.peer.trace.filter(e=>e.kind==='request').length>before,'phone holds transaction');if(ending==='timeout')await r.frame.evaluate(()=>{for(const fn of window.longTimers)fn();});else await r.click('stop-waiting');}
   const stage={reject:'transaction-declined',timeout:'transaction-timeout',cancel:'transaction-cancelled'}[ending];await r.state(stage);await r.capture(stage);
   assert.equal(r.fixture.state.completed,1,'refusal/wait end creates no second result');
+  if(ending==='reject'){assert.equal(r.fixture.state.approvals[0].status,'rejected');assert.equal(r.fixture.state.approvals[0].wallet_outcome,'declined');}
   if(ending==='timeout'){
    await r.peer.answer('reject'); // Close the old phone prompt before the next independent transaction.
    await until(()=>r.fixture.pendingDeliveryAcks()===0,'Runtime acknowledged the old wallet answer');await r.page.waitForLoadState('networkidle');
