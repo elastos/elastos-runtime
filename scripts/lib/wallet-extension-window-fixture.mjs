@@ -64,7 +64,7 @@ function installProvider({ kind, address, dualAlt = false, wallets }) {
   if (kind === 'unisat') window.unisat = provider;
 }
 
-export async function fixture(browser, kind, { saved = false, requests = false, recording, mutate, oldHost = false, oldWindow = false, readFailure = null, launch = true, noHomeWallet = false, extraHomeAccount = false, pictures = true, pictureContext = null, dualAlt = false, wallets, hostSource, realExtension = false } = {}) {
+export async function fixture(browser, kind, { saved = false, requests = false, recording, mutate, oldHost = false, oldWindow = false, readFailure = null, launch = true, noHomeWallet = false, extraHomeAccount = false, pictures = true, pictureContext = null, dualAlt = false, wallets, hostSource, realExtension = false, stateTimeout = 3000 } = {}) {
   const address = kind === 'metamask' ? A : U;
   const context = await browser.newContext({ viewport: { width: 480, height: 560 }, colorScheme: 'dark' });
   const replay = recording ? await replayInput(recording) : null;
@@ -184,12 +184,12 @@ export function renderConnection(document,view) {
   });
   await top.goto('https://extensions.test/');
   const frame = top.frames().find(f => f !== top.mainFrame());
-  await frame.waitForSelector(oldWindow ? '#wallet-connect' : 'main[data-state]', { timeout: 3000 });
+  await frame.waitForSelector(oldWindow ? '#wallet-connect' : 'main[data-state]', { timeout: stateTimeout });
   // Home opens a 480 by 560 window with a 38px title bar (design's -window PNGs).
   assert.deepEqual(await frame.evaluate(() => ({width:innerWidth,height:innerHeight})), {width:480,height:522});
   if (recording) await top.evaluate(() => __walletReplay.advance(1000));
   const action = id => frame.locator(`[data-action="${id}"]`);
-  const state = async expected => { try { await frame.locator(`main[data-state="${expected}"]`).waitFor({ timeout: 3000 }); } catch (e) { throw Error(e.message + JSON.stringify(await frame.locator('body').innerText()) + JSON.stringify(await top.evaluate(() => ({effects:testState.effects,calls:testState.calls,receipts:testState.receipts})))) }
+  const state = async expected => { try { await frame.locator(`main[data-state="${expected}"]`).waitFor({ timeout: stateTimeout }); } catch (e) { throw Error(e.message + JSON.stringify(await frame.locator('body').innerText()) + JSON.stringify(await top.evaluate(() => ({effects:testState.effects,calls:testState.calls,receipts:testState.receipts})))) }
     if (process.env.EXTENSION_WINDOW_PICTURES && pictures && !mutate && !oldHost && !oldWindow) {
       const receipts = process.env.EXTENSION_WINDOW_RECEIPTS || process.env.EXTENSION_WINDOW_PICTURES;
       const dir = join(receipts, 'window-extensions-captures', randomUUID());
