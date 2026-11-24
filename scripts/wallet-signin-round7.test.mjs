@@ -19,6 +19,11 @@ async function setup(engine,width,run) {
  } finally {try{await context?.close();}finally{try{await browser?.close();}finally{await f.close();}}}
 }
 
+async function fixtureStep(promise,step) {
+ let timeout;
+ try{return await Promise.race([promise,new Promise((_,reject)=>{timeout=setTimeout(()=>reject(new Error('Wallet fixture timed out: '+step)),8000);})]);}
+ finally{clearTimeout(timeout);}
+}
 const saved=page=>page.evaluate(()=>localStorage.getItem('elastos.signin.choice.v1'));
 const starts=f=>f.state.calls.filter(c=>c.path==='/api/auth/wallet/signin/begin').length;
 const passkeyStarts=f=>f.state.calls.filter(c=>c.path==='/api/auth/passkey/authenticate/begin').length;
@@ -110,7 +115,7 @@ for(const lost of [false,true])test(`round7 Passkey wins while wallet completion
  await page.route('**/api/auth/wallet/signin/complete',async route=>{const response=await route.fetch();if(lost){heldResolve();return route.abort('failed');}await new Promise(resolve=>{release=resolve;heldResolve();});await route.fulfill({response});});
  try {
   await page.evaluate(()=>localStorage.setItem('elastos.signin.choice.v1','metamask:io.metamask'));
-  await page.getByRole('button',{name:'Sign in',exact:true}).click();await held;
+  await page.getByRole('button',{name:'Sign in',exact:true}).click();await fixtureStep(held,'request reached hold');
   const dialog=page.locator('.signin-dialog');
   if(lost){await page.locator('.signin-dialog[data-state=unknown]').waitFor();await dialog.getByRole('button',{name:'Use passkey',exact:true}).click();}
   else {await page.locator('.signin-dialog[data-state=completing]').waitFor();await dialog.getByRole('button',{name:/^Passkey\b/}).click();}
@@ -120,12 +125,30 @@ for(const lost of [false,true])test(`round7 Passkey wins while wallet completion
   assert.equal(await page.evaluate(()=>window.openedFlow?.walletSignin===true),false);assert.equal(f.state.walletSession,false);
  } finally {release?.();}
 }));
+for(const engine of ['chromium','webkit'])test(`round7 late wallet completion cannot replace the Passkey session cookie in ${engine}`,windowTestOptions(engine,30000),()=>setup(engine,390,async({f,page})=>{
+ f.state.boundSigninCookies=true;
+ let release,heldResolve,routeDoneResolve;const held=new Promise(resolve=>heldResolve=resolve),routeDone=new Promise(resolve=>routeDoneResolve=resolve);
+ const settled=new Promise(resolve=>{for(const event of ['requestfinished','requestfailed'])page.on(event,request=>{if(request.url().endsWith('/api/auth/wallet/signin/complete'))resolve(event);});});
+ await page.route('**/api/auth/wallet/signin/complete',async route=>{
+  const response=await route.fetch();await new Promise(resolve=>{release=resolve;heldResolve();});
+  try{await route.fulfill({response});}catch(error){if(!route.request().failure())throw error;}finally{routeDoneResolve();}
+ });
+ try {
+  await page.evaluate(()=>localStorage.setItem('elastos.signin.choice.v1','metamask:io.metamask'));
+  await page.getByRole('button',{name:'Sign in',exact:true}).click();await fixtureStep(held,'request reached hold');
+  await page.locator('.signin-dialog').getByRole('button',{name:/^Passkey\b/}).click();await page.waitForFunction(()=>window.openedPrincipal==='principal:alex');
+  release();await fixtureStep(routeDone,'release completion');await fixtureStep(settled,'settle completion');
+  const status=await page.evaluate(async()=> (await fetch('/api/auth/sessions/refresh',{method:'POST',cache:'no-store'})).status);
+  assert.equal(status,200,'Passkey remains signed in after the old wallet response arrives');
+  const cookie=(await page.context().cookies()).find(cookie=>cookie.name==='fixture-session');assert.equal(cookie?.value,'passkey');
+ } finally {release?.();}
+}));
 test('round7 a late wallet begin is retired after switching to Passkey; unticking clears the choice',()=>setup('chromium',1280,async({f,page})=>{
  let release,heldResolve;const held=new Promise(resolve=>heldResolve=resolve);
  await page.route('**/api/auth/wallet/signin/begin',async route=>{const response=await route.fetch();await new Promise(resolve=>{release=resolve;heldResolve();});await route.fulfill({response});});
  try {
   await page.evaluate(()=>localStorage.setItem('elastos.signin.choice.v1','metamask:io.metamask'));
-  await page.getByRole('button',{name:'Sign in',exact:true}).click();await held;
+  await page.getByRole('button',{name:'Sign in',exact:true}).click();await fixtureStep(held,'request reached hold');
   const dialog=page.locator('.signin-dialog');await dialog.getByLabel('Remember my choice').uncheck();assert.equal(await saved(page),null);
   await dialog.getByRole('button',{name:/^Passkey\b/}).click();await page.waitForFunction(()=>window.openedPrincipal==='principal:alex');release();
   await page.waitForFunction(()=>window.walletFixture.calls.some(c=>c.method==='passkey'));
@@ -136,6 +159,7 @@ test('round7 a late wallet begin is retired after switching to Passkey; untickin
 }));
 async function assertEventually(check){for(let i=0;i<100;i++){try{return check();}catch(error){if(i===99)throw error;await new Promise(resolve=>setTimeout(resolve,10));}}}
 if(pictures)test('round7 picture index',async()=>{
- const images=['chromium','webkit'].flatMap(engine=>[1280,390].flatMap(width=>['metamask','walletconnect'].flatMap(connector=>['remembered-starting','after-cancel','after-passkey'].map(stage=>engine+'-'+width+'-'+connector+'-'+stage+'.png'))));
- await mkdir(pictures,{recursive:true});await writeFile(join(pictures,'index.html'),'<!doctype html><meta charset="utf-8"><title>Round 7 sign-in</title><style>body{font:16px system-ui;margin:24px}img{max-width:100%;border:1px solid #ddd}figure{margin:24px 0}</style><h1>Round 7 sign-in</h1><p>Real Home modules with isolated wallet and passkey boundary fixtures. Desktop 1280 and phone 390.</p>'+images.map(name=>'<figure><figcaption>'+name+'</figcaption><a href="'+name+'"><img src="'+name+'" loading="lazy"></a></figure>').join(''));
+ const stages={'remembered-starting':'Remembered choice starting','after-cancel':'After Cancel','after-passkey':'After choosing Passkey'};
+ const images=['chromium','webkit'].flatMap(engine=>[1280,390].flatMap(width=>['metamask','walletconnect'].flatMap(connector=>Object.entries(stages).map(([stage,label])=>({name:engine+'-'+width+'-'+connector+'-'+stage+'.png',caption:`${connector==='metamask'?'MetaMask':'WalletConnect'}: ${label}, ${engine==='webkit'?'WebKit':'Chromium'}, ${width} pixels.`})))));
+ await mkdir(pictures,{recursive:true});await writeFile(join(pictures,'index.html'),'<!doctype html><meta charset="utf-8"><title>Round 7 sign-in</title><style>body{font:16px system-ui;margin:24px}img{max-width:100%;border:1px solid #ddd}figure{margin:24px 0}</style><h1>Round 7 sign-in</h1><p>Real Home modules with isolated wallet and passkey boundary fixtures. Desktop 1280 and phone 390.</p>'+images.map(({name,caption})=>'<figure><figcaption>'+caption+'</figcaption><a href="'+name+'"><img src="'+name+'" alt="'+caption+'" loading="lazy"></a></figure>').join(''));
 });

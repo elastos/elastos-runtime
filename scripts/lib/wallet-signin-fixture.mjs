@@ -25,7 +25,7 @@ export async function signinFixture() {
         if(path.startsWith('/api/auth/wallet')&&req.headers.authorization)return json({},403);
         const passkeys=()=>[...Array.from({length:state.passkeyCount},(_,index)=>({proof_binding_id:`passkey:${index}`,principal_id:'principal:alex',display_name:'Alex',added_from:index?'Security key':'Safari on Mac',role:state.role,current:index===0&&!state.walletSession,created_at:Math.floor(Date.parse('2026-11-20T15:00:00Z')/1000),last_used_at:Math.floor(Date.parse('2026-11-21T15:00:00Z')/1000)})),...(state.otherAdmin?[{proof_binding_id:'passkey:other',principal_id:'principal:morgan',display_name:'Morgan',added_from:'Security key',role:state.otherRole||'admin',current:false,created_at:Math.floor(Date.parse('2026-11-20T15:00:00Z')/1000)}]:[])];
         if(path==='/api/auth/passkey/authenticate/begin')return json({ceremony_id:'passkey-login',options:{publicKey:{challenge:'YWJj',rpId:'127.0.0.1',allowCredentials:[{type:'public-key',id:'YWJj'}]}}});
-        if(path==='/api/auth/passkey/authenticate/complete'){state.signed=true;state.walletSession=false;return json({home_token:'fixture-home',session_id:'fixture-session',principal_id:'principal:alex',proof_binding_id:'proof:passkey:one'});}
+        if(path==='/api/auth/passkey/authenticate/complete'){state.signed=true;state.walletSession=false;if(state.boundSigninCookies){state.activeSession='fixture-passkey-session';res.setHeader('set-cookie','fixture-session=passkey; HttpOnly; SameSite=Lax; Path=/');}return json({home_token:'fixture-home',session_id:'fixture-session',principal_id:'principal:alex',proof_binding_id:'proof:passkey:one'});}
         if(path==='/api/auth/passkey/status')return json({registered:state.scenario!=='first-run',guest_registration_enabled:false,wallet_signin_connectors:[...(state.methods.some(m=>m.sign_in_enabled&&m.connector!=='unisat')?['metamask']:[]),...(state.methods.some(m=>m.sign_in_enabled&&m.connector==='unisat')?['unisat']:[]),...(state.methods.some(m=>m.sign_in_enabled&&m.connector==='walletconnect'&&[20,8453].includes(m.chain_id))?['walletconnect']:[])],wallet_signin_relay_notice:relayNotice,wallet_signin_available:state.methods.some(m=>m.sign_in_enabled),walletconnect_signin_available:state.methods.some(m=>m.sign_in_enabled&&m.connector==='walletconnect'&&[20,8453].includes(m.chain_id))});
         if(path==='/api/auth/passkeys')return state.scenario==='passkeys-load-failed'?json({},503):json({passkeys:passkeys()});
         if(path==='/api/auth/wallet-methods' && req.method==='GET') {
@@ -93,7 +93,7 @@ export async function signinFixture() {
               c.result={status:c.action==='remove'?'removed':'complete',method_id:id,sign_in_enabled:c.action==='add'};
             }
           }
-          if(c.action==='signin')res.setHeader('set-cookie','fixture-session=fixture; HttpOnly; SameSite=Lax; Path=/');
+          if(c.action==='signin')res.setHeader('set-cookie',`fixture-session=${state.boundSigninCookies?'wallet':'fixture'}; HttpOnly; SameSite=Lax; Path=/`);
           return json(c.result);
         }
         const passkeyAction=path.match(/^\/api\/auth\/passkeys\/([^/]+)\/(revoke|promote-admin|demote-guest)$/);
@@ -140,6 +140,7 @@ export async function signinFixture() {
         if(path==='/api/apps/wallet-walletconnect/relay-admission')return json({token:'fixture-relay'});
         if(path==='/api/apps/system/summary' || path==='/api/apps/system/update')return json({wallet_accounts:{accounts:state.connected},identity:{profile:{schema:'elastos.profile-summary/v1',display_name:'Alex'}},access:{role:state.role},authority:{proof_binding_id:state.walletSession?'proof:signin-wallet:fixture':'proof:passkey:fixture'},runtime:{},source:{},appearance:{schema:'elastos.home.appearance/v1',revision:0,theme:state.theme,accent:'blue',accent_custom:'#4f7fff',dock_auto_hide:false,sounds:false,focus_mode:false,background_image_url:null,background_overlay_enabled:true,background_overlay_opacity:0.55}});
         if(path==='/api/apps/wallet/wallet/summary')return json({wallet_accounts:{accounts:state.connected},wallet_approvals:{approval_requests:[]},approval_methods:{walletconnect:{available:true}}});
+        if(path==='/api/auth/sessions/refresh'&&state.boundSigninCookies&&!/(?:^|; )fixture-session=passkey(?:;|$)/.test(req.headers.cookie||''))return json({},403);
         if(path==='/api/auth/sessions/refresh')return state.signed?json({home_token:'fixture-home',session_id:'fixture-session',principal_id:'principal:alex',proof_binding_id:'wallet:metamask'}):json({},403);
         if(path==='/api/apps/home/summary')return json({authority:{signed_in:state.signed},signed_in:state.signed,active_shell:{},targets:[]});
         return json({});

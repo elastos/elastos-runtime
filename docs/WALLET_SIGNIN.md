@@ -130,8 +130,8 @@ The gateway gives wallet sign-in and passkey sign-in separate budgets: each sock
 peer can start 32 requests per minute and 64 per five minutes for each mechanism.
 Account creation and recovery retain their separate 4-per-minute, 8-per-five-minute
 budget. Wallet retries leave the passkey budget available.
-WalletConnect transport setup allows 32 starts per minute on loopback and 64 for
-remote callers, with at most 32 per remote address budget (IPv6 /64). Cancelled
+Signed-out WalletConnect transport setup allows 32 starts per minute on
+loopback and 64 for remote callers, with at most 32 per remote address budget (IPv6 /64). Cancelled
 starts still count. Live transport slots remain limited to three anonymous
 attempts, with two per local or remote pool and one per remote address; loopback
 keeps a reserved slot. A 429 supplies Retry-After; Home shows the wait in seconds
@@ -158,6 +158,8 @@ sign-in in this browser." Home keeps its sign-in options visible while the walle
 
 `POST /api/auth/wallet/cancel` accepts ceremony_id and browser_secret and returns
 `{"status":"cancelled"}`. It clears the ceremony's temporary transport authority.
+Home retires late begin results and cancels pending sign-in completion responses.
+Passkey owns the new session cookie when selected.
 
 WalletConnect begin also returns `attempt_token`, `instance_id` and
 `storage_revision`. Reuse Runtime's temporary connector transport: config,

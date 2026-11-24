@@ -167,7 +167,8 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
   async function complete(current) {
     assertLive(current);show('completing');current.effect='dispatched';
     try {
-      const result=await api(state.action==='signin'?'/api/auth/wallet/signin/complete':'/api/auth/wallet-methods/complete',JSON.parse(current.completion));
+      // Home retires late begins by ID; sign-in completion responses also own the session cookie.
+      const result=await api(state.action==='signin'?'/api/auth/wallet/signin/complete':'/api/auth/wallet-methods/complete',JSON.parse(current.completion),state.action==='signin'?{signal:current.controller.signal}:undefined);
       if(!live(current))return;
       if(state.action!=='signin') {
         const request=current.ceremony.approval.request;

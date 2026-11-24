@@ -7,9 +7,9 @@ import {walletSigninRequestTimeoutMs} from './wallet-signin-methods.mjs';
 import {connectionView,renderConnection} from './wallet-connection-view.mjs';
 const titles={signin:'Sign in',add:'Add wallet',remove:'Remove wallet'};
 function node(tag,text,className) {const el=document.createElement(tag);if(text)el.textContent=text;if(className)el.className=className;return el;}
-export async function walletSigninApi(path,body,token='') {
+export async function walletSigninApi(path,body,token='',{signal}={}) {
   const response=await fetch(path,{
-    method:body===undefined?'GET':'POST',cache:'no-store',signal:AbortSignal.timeout(15000),
+    method:body===undefined?'GET':'POST',cache:'no-store',signal:signal?AbortSignal.any([signal,AbortSignal.timeout(15000)]):AbortSignal.timeout(15000),
     headers:{'content-type':'application/json',...(token?{'x-elastos-home-token':token}:{})},
     ...(body===undefined?{}:{body:JSON.stringify(body)}),
   });
@@ -20,7 +20,7 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
   let passkeyController,passkeyFinished=Promise.resolve();
   let dialog,previousFocus,token='',initial={},watcher,managementTimer,epoch=0,remember=false,currentState,chooser,management={kind:'idle'};
   const flow=createWalletSigninFlow({
-    api:(path,body)=>{const finishingRead=path==='/api/auth/wallet-methods'&&body===undefined&&initial.sessionCurrent?.();if(initial.isCurrent&&!initial.isCurrent()&&!path.endsWith('/cancel')&&!finishingRead)throw new Error('Home session changed');return walletSigninApi(path,body,token);},
+    api:(path,body,options)=>{const finishingRead=path==='/api/auth/wallet-methods'&&body===undefined&&initial.sessionCurrent?.();if(initial.isCurrent&&!initial.isCurrent()&&!path.endsWith('/cancel')&&!finishingRead)throw new Error('Home session changed');return walletSigninApi(path,body,token,options);},
     select:async(connector,options)=>{
       let wallet;options={...options,method:initial.connectedMethod||options.method,opened:focus=>{initial.focusCurrent=focus;}};
       if(connector==='walletconnect'&&initial.delegateWalletConnect&&initial.selectWalletConnect){dialog?.close();wallet=await initial.selectWalletConnect(options);}
