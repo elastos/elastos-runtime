@@ -1,20 +1,18 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import vm from "node:vm";
+import { registerHooks } from "node:module";
 import { createHomeClipboardClient } from "../capsules/home/browser/home-clipboard-client.js";
 import { createHomeClipboardHost, createHomeClipboardFrameState } from "../capsules/home/browser/home-clipboard-host.js";
 import { createHomeNavigationClient } from "../capsules/home/browser/home-navigation-client.js";
 
 const homeOrigin = "https://home.fixture";
-const hostSource = readFileSync(new URL("../capsules/home/browser/home-shell-host.js", import.meta.url), "utf8");
-function sourceFunction(name) {
-  const start = hostSource.indexOf(`function ${name}(`);
-  assert.ok(start >= 0, name);
-  return hostSource.slice(hostSource.slice(start - 6, start) === "async " ? start - 6 : start, hostSource.indexOf("\n}", start) + 2);
-}
-function fixture(target = "chat-room", enabled = true) {
-  const listeners = new Map(), timers = new Map(), frames = new Map(), commands = [], launchQueries = [];
+test.beforeEach(t => t.mock.timers.enable({ apis: ["Date"], now: 59_000 }));
+const hostURL = new URL("../capsules/home/browser/home-shell-host.js", import.meta.url);
+const hostImports = [...readFileSync(hostURL, "utf8").matchAll(/import\s*\{([^}]+)\}\s*from\s*["']([^"']+)["']/g)];
+let fixtureNumber = 0;
+async function fixture(target = "chat-room", enabled = true) {
+  const listeners = new Map(), timers = new Map(), commands = [], launchQueries = [];
   let next = 0, receive, launches = 0, refreshed = 0, currentToken = "old-frame", holdPrepare = false;
   const authority = { signed_in: true, principal_id: "alice", proof_binding_id: "proof:alice" };
   const shell = {}, home = { location: { origin: homeOrigin, href: homeOrigin },
@@ -30,33 +28,76 @@ function fixture(target = "chat-room", enabled = true) {
   const message = (data, source = frame, origin = "null") => receive({ data, source, origin });
   home.postMessage = data => message(data);
   const old = { targetId: target, source: frame, origin: "null", expiresAt: 60_000 };
-  frames.set("old-frame", old);
-  const shellState = { currentSummary: { authority } };
+  const shellState = { currentSummary: { authority }, activeShellRootTarget: "home-gui" };
   const receipt = command => message({ type: `home:frame-authority-${command.phase === "prepare" ? "renewed" : "committed"}`,
     homeToken: "shell-token", requestId: command.requestId, oldHomeToken: command.homeToken,
     freshHomeToken: "fresh-frame", ok: true }, shell);
-  const context = vm.createContext({ console, URL, URLSearchParams, Promise, crypto: { randomUUID: () => `picker-${++next}` }, window: home,
-    Date: class extends Date { static now() { return 59_000; } },
-    shellState, launchedAppContexts: frames,
-    activeShellFrame: { contentWindow: shell, dataset: { route: "/apps/home-gui/#home_token=shell-token" } },
+  const clipboardHost = { handle: () => false, retireFrame() {}, resetFrame() {} };
+  let booting = true;
+  const dependencies = {
+    shellState, activeShellFrame: { addEventListener() {}, contentWindow: shell, dataset: { route: "/apps/home-gui/#home_token=shell-token" } },
     activeShellRoot: { dataset: { target: "home-gui" } },
-    OPAQUE_CAPSULE_ORIGIN: "null", OPAQUE_FRAME_TARGET: "*", HOME_GUI_SHELL_ID: "home-gui",
-    HOME_CLI_SHELL_ID: "home-cli", WALLET_CONNECTOR_EFFECT_TYPE: "wallet-effect", FORM_FACTOR_MESSAGE: "form-factor",
-    BROWSER_AUTHORITY_RENEWAL_REQUEST_TYPE: "browser-request", BROWSER_AUTHORITY_RENEWAL_RESULT_TYPE: "browser-result",
-    pendingBrowserAuthorityRenewals: new Map(),
-    homeExternalLinkPrompt: { retire() {}, transfer() {} },
-    homeClipboardHost: { handle: () => false, retireFrame() {}, resetFrame() {} },
-    handleHomeWalletConnectorEffect: () => false,
-
-    hasExactMessageKeys: (data, keys) => Object.keys(data).sort().join() === [...keys].sort().join(),
-    requireHomeGuiActive() { assert.equal(authority.signed_in, true); },
+    HOME_GUI_SHELL_ID: "home-gui", SYSTEM_APP_ID: "system", HOME_SHELL_HOST_ID: "home-shell-host",
+    homeActiveShellName: value => value,
+    shellHostRecoveryHomeButton: null, shellHostRecoveryReloadButton: null, shellHostRecoverySignOutButton: null,
+    createHomeClipboardPrompt: () => ({}), createHomeClipboardHost: () => clipboardHost,
+    createHomeExternalLinkPrompt: () => ({ retire() {}, transfer() {} }),
+    createHomeLinkStatus: () => ({ replay() {} }), bindKeyboardInsetRelay() {}, bindHomeUnlock() {},
+    handleHomeWalletConnectorEffect: () => false, isHomeAuthError: () => false,
+    refreshHomeSession: () => {
+      // Leave startup pending. Each test drives session refresh itself.
+      if (booting) { booting = false; return new Promise(() => {}); }
+      refreshed++;
+      return Promise.resolve();
+    },
+  };
+  globalThis.window = home;
+  globalThis.document = { body: { dataset: { homeAuthority: "signed" } }, querySelector: () => null };
+  globalThis.__homeRenewalDependencies = dependencies;
+  const url = `${hostURL.href}?renewal-fixture=${++fixtureNumber}`;
+  // Import the complete host. Substitute its UI/network dependencies and expose
+  // private controls only in this test loader; renewal helpers stay in scope.
+  const hooks = registerHooks({
+    resolve(specifier, options, nextResolve) {
+      if (options.parentURL === url) {
+        const declaration = hostImports.find(match => match[2] === specifier);
+        assert.ok(declaration, `unexpected host dependency: ${specifier}`);
+        const exports = declaration[1].split(",").map(name => name.trim()).filter(Boolean).map(name =>
+          `export const ${name} = Object.hasOwn(globalThis.__homeRenewalDependencies, ${JSON.stringify(name)})
+            ? globalThis.__homeRenewalDependencies[${JSON.stringify(name)}]
+            : (() => { throw new Error("Unexpected dependency: ${name}"); });`).join("\n");
+        return { shortCircuit: true, url: `data:text/javascript,${encodeURIComponent(exports)}#${fixtureNumber}` };
+      }
+      return nextResolve(specifier, options);
+    },
+    load(moduleURL, options, nextLoad) {
+      const loaded = nextLoad(moduleURL, options);
+      if (moduleURL !== url) return loaded;
+      return { ...loaded, source: `${loaded.source}
+        export { launchedAppContexts, pendingBrowserAuthorityRenewals, homeClipboardHost,
+          refreshSignedHomeSession, retireLaunchedAppContext, openLibraryPicker,
+          currentLibraryPicker, deliverMessageToHomeGuiTargetFrame, acceptLibraryPicker };
+        export function configureFixture(overrides) {
+          postToActiveShell = overrides.postToActiveShell;
+          refreshShellSummary = overrides.refreshShellSummary;
+          launchHomeTarget = overrides.launchHomeTarget;
+        }
+        export function setPickerLauncher(value) { openTargetFromHomeGui = value; }
+      ` };
+    },
+  });
+  let api;
+  try { api = await import(url); }
+  finally { hooks.deregister(); delete globalThis.__homeRenewalDependencies; }
+  const frames = api.launchedAppContexts;
+  frames.set("old-frame", old);
+  api.configureFixture({
     postToActiveShell(command) {
       commands.push(command);
       if (command.command === "renew-frame-authority" && (!holdPrepare || command.phase === "commit")) queueMicrotask(() => receipt(command));
       return true;
     },
-    refreshHomeSession: async () => { refreshed++; }, refreshShellSummary: async () => shellState.currentSummary,
-    isHomeAuthError: () => false,
+    refreshShellSummary: async () => shellState.currentSummary,
     launchHomeTarget: async (requested, query) => {
       launches++;
       launchQueries.push(query);
@@ -66,14 +107,11 @@ function fixture(target = "chat-room", enabled = true) {
         route: `/apps/${requested}/#home_token=fresh-frame` };
     },
   });
-  for (const name of ["homeMessageContext", "homeLaunchTokenFromRoute", "retireLaunchedAppContext", "cancelFrameRenewal",
-    "cancelBrowserAuthorityRenewalsForToken", "openLibraryPicker", "validPickerIdentity", "currentLibraryPicker", "settleLibraryPicker", "cancelLibraryPicker", "acceptLibraryPicker",
-    "deliverMessageToHomeGuiTargetFrame", "settleFrameRenewal", "replyToShellRequest", "homeSummarySignedIn", "homeSummaryHasProofBoundSession",
-    "renewExpiringFrames", "refreshSignedHomeSession"])
-    vm.runInContext(sourceFunction(name), context);
-  if (hostSource.includes("function transferFrameAssociations(")) vm.runInContext(sourceFunction("transferFrameAssociations"), context);
-  const start = hostSource.indexOf('window.addEventListener("message", (event) => {');
-  vm.runInContext(hostSource.slice(start, hostSource.indexOf("\n});", start) + 4), context);
+  const context = { ...api };
+  Object.defineProperties(context, {
+    homeClipboardHost: { get: () => clipboardHost, set: value => Object.assign(clipboardHost, value) },
+    openTargetFromHomeGui: { set: api.setPickerLauncher },
+  });
   const client = createHomeNavigationClient({ homeToken: currentToken, homeOrigin, target, enabled, windowRef,
     onHomeToken(token) { currentToken = token; } });
   return { client, context, frames, message, receipt, commands, launchQueries, authority, frame, old, timers, home, windowRef,
@@ -85,7 +123,7 @@ const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve()
 
 for (const target of ["chat-room", "people", "documents", "assistant", "library"]) {
   test(`Home refresh replaces an expiring open ${target} frame authority`, async () => {
-    const f = fixture(target);
+    const f = await fixture(target);
     await f.context.refreshSignedHomeSession(); await settle();
     assert.equal(f.refreshed(), 1);
     assert.equal(f.token(), "fresh-frame");
@@ -97,7 +135,7 @@ for (const target of ["chat-room", "people", "documents", "assistant", "library"
 }
 
 test("A stolen frame token, wrong origin or another target cannot request renewal", async () => {
-  const f = fixture();
+  const f = await fixture();
   const request = { type: "home:launch-target", homeToken: "old-frame", requestId: "renew-1", target: "chat-room", query: {} };
   f.message(request, {});
   f.message(request, f.frame, homeOrigin);
@@ -110,7 +148,7 @@ test("A stolen frame token, wrong origin or another target cannot request renewa
 for (const target of ["chat-room", "people", "documents", "assistant", "library"]) {
   test(`${target} renewal refuses unexpected query keys and picker authority`, async () => {
     for (const query of [{ unexpected: "value" }, { pickerRequestId: "foreign-picker" }]) {
-      const f = fixture(target);
+      const f = await fixture(target);
       f.client.setQuery(query);
       await assert.rejects(f.client.renewAuthority(), /could not reconnect/);
       assert.equal(f.launches(), 0);
@@ -123,7 +161,7 @@ for (const [target, query] of [["chat-room", { conversation_id: "direct:fixture"
   ["documents", { doc: "did:fixture" }], ["documents", { objectUri: "library://fixture/file" }],
   ["library", { uri: "library://fixture/folder" }]]) {
   test(`${target} renewal accepts its ${Object.keys(query)[0]} selector`, async () => {
-    const f = fixture(target);
+    const f = await fixture(target);
     f.client.setQuery(query);
     await f.client.renewAuthority();
     assert.equal(f.token(), "fresh-frame");
@@ -132,7 +170,7 @@ for (const [target, query] of [["chat-room", { conversation_id: "direct:fixture"
 }
 
 test("Home's own refused authority leaves the registered app unchanged", async () => {
-  const f = fixture(); f.authority.signed_in = false;
+  const f = await fixture(); f.authority.signed_in = false;
   await assert.rejects(f.client.renewAuthority(), /Sign in to Home/);
   assert.equal(f.token(), "old-frame");
   assert.equal(f.frames.has("fresh-frame"), false);
@@ -140,7 +178,7 @@ test("Home's own refused authority leaves the registered app unchanged", async (
 
 for (const invalidation of ["close", "principal", "sign-out"]) {
   test(`${invalidation} during renewal rejects late receipts`, async () => {
-    const f = fixture(); f.hold();
+    const f = await fixture(); f.hold();
     const pending = f.client.renewAuthority();
     const rejected = assert.rejects(pending);
     assert.equal(f.client.renewAuthority(), pending);
@@ -160,8 +198,8 @@ for (const invalidation of ["close", "principal", "sign-out"]) {
   });
 }
 
-function pickerFixture(renewTarget, openerTarget = "chat-room") {
-  const f = fixture(renewTarget, renewTarget !== "library");
+async function pickerFixture(renewTarget, openerTarget = "chat-room") {
+  const f = await fixture(renewTarget, renewTarget !== "library");
   const opener = renewTarget === "library" ? { targetId: openerTarget, source: { postMessage(data) { delivered.push(data); } }, origin: "null" } : f.old;
   const delivered = [];
   if (opener === f.old) {
@@ -194,7 +232,7 @@ function pickerFixture(renewTarget, openerTarget = "chat-room") {
 }
 
 test("Library renewal accepts only its own in-flight picker without acquiring picker authority", async () => {
-  const f = pickerFixture("library");
+  const f = await pickerFixture("library");
   f.client.setQuery({ pickerRequestId: f.record.id });
   await f.client.renewAuthority();
   assert.equal(f.token(), "fresh-frame");
@@ -204,7 +242,7 @@ test("Library renewal accepts only its own in-flight picker without acquiring pi
 
 for (const invalidation of ["foreign token", "retired", "foreign record"]) {
   test(`Library renewal refuses a picker with ${invalidation}`, async () => {
-    const f = pickerFixture("library");
+    const f = await pickerFixture("library");
     if (invalidation === "foreign token") f.record.pickerToken = "another-frame";
     if (invalidation === "retired") f.record.phase = "retired";
     if (invalidation === "foreign record") f.old.pickerOwner = { ...f.record };
@@ -216,7 +254,7 @@ for (const invalidation of ["foreign token", "retired", "foreign record"]) {
 
 for (const target of ["chat-room", "library"]) {
   test(`Library selection survives renewal of the ${target} frame`, async () => {
-    const f = pickerFixture(target);
+    const f = await pickerFixture(target);
     await f.client.renewAuthority(); await settle();
     const fresh = f.frames.get("fresh-frame");
     assert.equal(f.context.currentLibraryPicker(f.record), true);
@@ -247,7 +285,7 @@ for (const target of ["chat-room", "library"]) {
 
 for (const target of ["documents", "library"]) {
   test(`A Documents-owned picker record survives ${target} renewal`, async () => {
-    const f = pickerFixture(target, "documents");
+    const f = await pickerFixture(target, "documents");
     await f.client.renewAuthority(); await settle();
     assert.equal(f.context.currentLibraryPicker(f.record), true);
     assert.equal(f.record.phase, "ready");
@@ -258,7 +296,7 @@ for (const target of ["documents", "library"]) {
 
 for (const target of ["chat-room", "library"]) for (const closed of ["opener", "picker"]) {
   test(`Closing ${closed} cancels the picker during ${target} renewal`, async () => {
-    const f = pickerFixture(target); f.hold();
+    const f = await pickerFixture(target); f.hold();
     const pending = f.client.renewAuthority();
     const result = pending.catch(() => {});
     await settle();
@@ -275,7 +313,7 @@ for (const target of ["chat-room", "library"]) for (const closed of ["opener", "
 
 
 test("Clipboard confirmation and replay state survive frame renewal", async () => {
-  const f = fixture("chat-room");
+  const f = await fixture("chat-room");
   let allow;
   const writes = [];
   const host = createHomeClipboardHost({
@@ -311,7 +349,7 @@ test("Clipboard confirmation and replay state survive frame renewal", async () =
 });
 
 test("Pending Browser requests move ownership and retain their GUI reply identity", async () => {
-  const f = fixture();
+  const f = await fixture();
   const record = { requestId: "browser-request", oldHomeToken: "old-frame", frameToken: "old-frame", timeout: 0 };
   f.context.pendingBrowserAuthorityRenewals.set(record.requestId, record);
   await f.client.renewAuthority();
