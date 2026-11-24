@@ -935,6 +935,11 @@ try {
       await connector.locator(connectSelector).textContent() === connectLabel,
       `${target} did not render its credential-free UI`,
     );
+    await homeGui.waitForFunction(targetId=>{
+      const node=document.querySelector(`.window[data-target="${targetId}"]`);
+      const height=node?.getBoundingClientRect().height;
+      return height>=240&&height<560;
+    },target,{timeout:5000});
 
     const walletWindowDuringConnector = await homeWindowSnapshot(
       homeGui,
@@ -1003,12 +1008,11 @@ try {
       `${target} click attached more than one connector window`,
     );
 
-    if (["wallet-metamask", "wallet-unisat"].includes(target)) {
-      assert(Math.round(connectorWindow.rect.width) === 480 && Math.round(connectorWindow.rect.height) === 560,
-        `${target} uses its real connector window size`, connectorWindow.rect);
-      const content = await connector.evaluate(() => ({width:innerWidth,height:innerHeight}));
-      assert(content.width === 480 && content.height === 522, `${target} leaves Home's 38px title bar`, content);
-    }
+    assert(connectorWindow.rect.width>=360&&connectorWindow.rect.width<=640&&connectorWindow.rect.height>=240&&connectorWindow.rect.height<560,
+      `${target} fits its initial content with a sensible minimum`,connectorWindow.rect);
+    const content = await connector.evaluate(() => ({width:innerWidth,height:innerHeight}));
+    assert(Math.abs(content.width-connectorWindow.rect.width)<1&&Math.abs(connectorWindow.rect.height-content.height-38)<1,
+      `${target} keeps Home's title bar outside its content`,{content,rect:connectorWindow.rect});
     if (target === "wallet-metamask") {
       state.approvalRequests = [{request_id:"metamask-second",capsule_id:"browser",address:"0x3333333333333333333333333333333333333333",connector_id:target,proof_type:"siwe",intent:"browser_personal_sign",status:"pending",reason:"Second MetaMask request",chain_namespace:"eip155:20",expires_at:Math.floor(Date.now()/1000)+600}];
       // Wallet's real request card opens the second request while the first connector stays open.

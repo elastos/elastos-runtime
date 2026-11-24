@@ -10,11 +10,11 @@ const recordedReject=recordings.cases.find(c=>c.id==='MM-7-known-reject').snapsh
 assert.equal(recordedReject.code,4001);assert.equal(recordedReject.constructor,'Object');
 const skip=engine=>windowTestOptions(engine).skip;
 for(const engine of ['chromium','webkit']) {
-  test(`${engine} MetaMask: recorded plain-object switch rejection stays honestly unclassified by v1`,{skip:skip(engine)},async()=>{
+  test(`${engine} MetaMask: recorded plain-object switch rejection is declined before broadcast`,{skip:skip(engine)},async()=>{
     const browser=await playwright[engine].launch({headless:true});try{const f=await fixture(browser,'metamask',{saved:true,requests:'transaction'});try{
       await f.state('transaction-waiting');await f.top.evaluate(rejection=>{testState.added=true;testState.refuseSwitch='reject';testState.switchRejection=rejection;},{code:recordedReject.code,message:recordedReject.message});
-      await f.action('send-request').click();await f.state('transaction-wallet-error');
-      assert.match(await f.frame.locator('body').innerText(),/transaction may have been sent/);
+      await f.action('send-request').click();await f.state('transaction-declined');
+      assert.match(await f.frame.locator('body').innerText(),/did not approve this transaction/);
       assert.equal(await f.top.evaluate(()=>testState.calls.filter(c=>c.method==='eth_sendTransaction').length),0);
       assert.equal(await f.top.evaluate(()=>testState.requests[0].status),'approved');
       assert.equal(await f.action('send-request').count(),0);await f.assertShared();

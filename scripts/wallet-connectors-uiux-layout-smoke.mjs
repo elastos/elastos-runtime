@@ -1,15 +1,16 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
-import {mkdtemp} from 'node:fs/promises';
-import {tmpdir} from 'node:os';
+import {mkdir} from 'node:fs/promises';
 import {join} from 'node:path';
 import {importProductSmokePlaywright,productSmokeLaunchOptions} from './product-smoke-browser.mjs';
 import {fixture as extensionFixture} from './lib/wallet-extension-window-fixture.mjs';
 import {windowFixture,observeWindowErrors,walletWindowLifetime} from './lib/walletconnect-phone-window-fixture.mjs';
 import {scriptedPhoneWallet} from './lib/walletconnect-phone-wallet.mjs';
-const screenshotRoot=await mkdtemp(join(tmpdir(),'wallet-connectors-uiux-'));
+import {temporaryDirectory} from './lib/wallet-connection-test-temp.mjs';
 const {chromium}=await importProductSmokePlaywright();
-const browser=await chromium.launch({headless:true,...productSmokeLaunchOptions()});
+const ownedPictures=process.env.WALLETCONNECT_SCREENSHOTS?null:temporaryDirectory('wallet-connectors-uiux-');
+const screenshotRoot=process.env.WALLETCONNECT_SCREENSHOTS||ownedPictures.path;
+await mkdir(screenshotRoot,{recursive:true});let browser;
 const screenshots=[];
 async function assertExtensionAuthority(f){
  assert(f.reads.length>0);for(const read of f.reads)assert.equal(read.headers['x-elastos-home-token'],'fixture-token');
@@ -32,6 +33,7 @@ async function capture(page,frame,id,control){
  }
 }
 try{
+ browser=await chromium.launch({headless:true,...productSmokeLaunchOptions()});
  for(const kind of ['metamask','unisat']){
   const locked=await extensionFixture(browser,kind,{launch:false});
   try{await locked.state('window-expired');assert.equal(await locked.frame.locator('button').count(),0);assert.equal(locked.reads.length,0);}finally{await locked.close();}
@@ -60,9 +62,10 @@ try{
   f.state.approvals=[{request_id:'layout-signature',connector_id:'wallet-walletconnect',capsule_id:'browser',requesting_origin:'https://example.test',reason:'Review this message.',status:'pending',intent:'browser_personal_sign',proof_type:'siwe',address:peer.address,chain_namespace:'eip155:8453',expires_at:Math.floor(Date.now()/1000)+600}];
   await frame.evaluate(()=>window.dispatchEvent(new Event('focus')));await state('request-waiting');await capture(page,frame,'walletconnect','send-request');
   f.state.approvals=[{...f.state.approvals[0],request_id:'layout-recovery',intent:'transaction_intent',status:'approved'}];await frame.evaluate(()=>window.dispatchEvent(new Event('focus')));
-  await frame.getByRole('button',{name:'View requests',exact:true}).click();await frame.locator('[data-focus-key="select-request:layout-recovery"]').click();await state('transaction-reopened');
+  await frame.waitForFunction(()=>document.querySelector('main')?.dataset.requestId==='layout-recovery'||document.querySelector('[data-action=view-requests]'));
+  if(await frame.locator('main').getAttribute('data-request-id')!=='layout-recovery'){await frame.getByRole('button',{name:'View requests',exact:true}).click();await frame.locator('[data-focus-key="select-request:layout-recovery"]').click();}await state('transaction-reopened');
   assert.equal(await frame.locator('[data-action=send-request]').count(),0,'unfinished transaction cannot send again');await capture(page,frame,'walletconnect','back-to-connection');
  }finally{try{await settle(frame);}finally{await peer.stop();await page.close();await f.stop();}assert.deepEqual(errors,[]);}
-}finally{await browser.close();}
-for(const path of screenshots)console.log('screenshot: '+path);
+}finally{await browser?.close();ownedPictures?.cleanup();}
+if(!ownedPictures)for(const path of screenshots)console.log('screenshot: '+path);
 console.log('wallet connector UIUX layout smoke: ok');

@@ -13,7 +13,7 @@ function fixture(t,{action='add',refused=0,applied=false}={}) {
     if(path==='/api/auth/wallet-methods'){reads++;return {account_id:'a',methods:applied?[method]:[],open_changes:open?['c']:[]};}
     return {};
   }});
-  return {flow,calls,states,get reads(){return reads;},get complete(){return complete;},apply(){applied=true;open=false;},keepMethod(){applied=true;},retire(){open=false;},async start(){await flow.start({action,method,automatic:true,accountId:'a',sessionMethodId:'m'});}};
+  return {flow,calls,states,get reads(){return reads;},get complete(){return complete;},apply(){applied=true;open=false;},keepMethod(){applied=true;},retire(){open=false;},async start(options={}){await flow.start({action,method,automatic:true,accountId:'a',sessionMethodId:'m',...options});}};
 }
 for(const action of ['add','remove'])for(const status of [403,409])test(`round3 ${action} ${status} retires refusal immediately`,async t=>{
   const f=fixture(t,{action,refused:status});if(action==='remove')f.apply();await f.start();
@@ -36,7 +36,7 @@ test('round3 ending the current wallet session clears an uncertain removal',asyn
  assert.equal(await f.flow.sessionEnded(),true);assert.equal(f.flow.state.stage,'done');
 });
 test('round3 another wallet change cannot use session end as a receipt',async t=>{
- const f=fixture(t);await f.start();assert.equal(await f.flow.sessionEnded(),false);assert.equal(f.flow.state.stage,'unknown');
+ const f=fixture(t,{action:'remove'});f.keepMethod();await f.start({sessionMethodId:'another-wallet'});assert.equal(await f.flow.sessionEnded(),false);assert.equal(f.flow.state.stage,'unknown');
 });
 
 import {reduceSummary,connectionView,viewText} from '../capsules/_shared/wallet-connection-view.mjs';

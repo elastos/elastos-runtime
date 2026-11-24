@@ -213,7 +213,7 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
           await f.top.waitForFunction(() => __walletReplay.requests.length === 1);
           await f.top.clock.runFor(Math.min(60001, Math.ceil(f.peerElapsed)));
           await f.top.evaluate(person => { __walletReplay.person(person); return __walletReplay.advance(200000); }, person);
-          await f.state(f.peerElapsed > 60000 ? 'extension-timeout' : 'link-error');
+          await f.state(f.peerElapsed > 60000 ? 'extension-timeout' : 'link-declined');
           assert.equal(await f.top.evaluate(() => testState.receipts.length), 0);
         } finally { await f.close(); }
       }
@@ -254,7 +254,7 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
         }
         for (const key of expected) assert(visited.has(key), `Tab reaches ${key}`);
         await f.top.evaluate(() => { testState.mode = 'decline'; });
-        await f.action('send-request').click(); await f.state('request-wallet-error');
+        await f.action('send-request').click(); await f.state('request-declined');
         assert.equal(await f.top.evaluate(() => testState.receipts.length), 0);
       } finally { await f.close(); }
       const g = await fixture(browser, kind, { saved: true, requests: true });
@@ -578,10 +578,10 @@ for (const engine of ['chromium','webkit']) test(`${engine} MetaMask: typed data
         await f.top.evaluate(mode=>{testState.mode=mode==='approve'||mode==='stop'||mode==='timeout'?'pending':'decline';},mode);
         await f.action('send-request').click();
         if(mode==='decline'){
-          await f.state('transaction-wallet-error');
+          await f.state('transaction-declined');
           assert.doesNotMatch(await f.frame.locator('body').innerText(), /Home does not know if the transaction was sent/);
           await f.top.evaluate(value=>{emitWallet('chainChanged','0x1');emitWallet('accountsChanged',[value]);},B);
-          await f.state('transaction-wallet-error');assert.equal(await f.action('send-request').count(),0);continue;
+          await f.state('transaction-declined');assert.equal(await f.action('send-request').count(),0);continue;
         }
         await f.state('transaction-extension');
         await f.top.waitForFunction(()=>testState.pending.length>0);

@@ -346,8 +346,13 @@ test("Accounts groups methods beneath their owner with equal add controls in bot
           assert.equal(await block.getByRole("button", { name: "Remove account", exact: true }).count(), 0);
           assert.equal(new Set(await block.locator(".passkey-name").allTextContents()).size, 2);
           const remove = block.locator(".passkey-remove").first();
+          await page.bringToFront();
           await remove.press("Tab");
           await page.keyboard.press("Shift+Tab");
+          await frame.waitForFunction(id=>{
+            const node=[...document.querySelectorAll('[data-passkey-revoke]')].find(button=>button.dataset.passkeyRevoke===id);
+            return node===document.activeElement&&node.matches(':focus-visible')&&parseFloat(getComputedStyle(node).outlineWidth)>=2;
+          },key.proof_binding_id);
           const focus = await remove.evaluate(node => { const style = getComputedStyle(node); return { width: style.outlineWidth, style: style.outlineStyle }; });
           assert.notEqual(focus.style, "none");
           assert.ok(parseFloat(focus.width) >= 2);

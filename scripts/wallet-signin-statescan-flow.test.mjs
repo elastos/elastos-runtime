@@ -91,7 +91,8 @@ for(const action of ['add','remove']) {
   });
 }
 
-test('a method list for another account leaves the saved change unknown',async()=>{
+test('a method list for another account leaves the saved change unknown',async t=>{
+  t.mock.timers.enable({apis:['setTimeout']});
   let clock=1000;
   const h=createWalletSigninFlow({now:()=>clock,render(){},approve:async()=>'step',select:async()=>({address:'0x'+'11'.repeat(20),chain_id:20,network:'',check:async()=>{},sign:async()=>({signature:'proof'}),close(){}}),api:async path=>{
     if(path.endsWith('/begin'))return {ceremony_id:'one',expires_at:1180,message:'Add',approval:{operation:'auth.wallet.method',request:{ceremony_id:'one',action:'add',account_id:'acct',method_id:'m1'}}};
