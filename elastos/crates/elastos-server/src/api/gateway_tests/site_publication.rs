@@ -1600,3 +1600,109 @@ async fn an_ordinary_home_serves_its_local_store_over_http_only_to_its_own_sessi
         .unwrap();
     assert_eq!(&body[..], b"a file Bob shared");
 }
+
+#[tokio::test]
+async fn an_ordinary_home_serves_a_file_inside_a_cid_bundle_only_to_its_own_app_token() {
+    let dir = tempfile::tempdir().unwrap();
+    let (state, _holder) = verified_store_state(
+        dir.path(),
+        &[(TEST_CIDV1, "metadata.json", b"{\"title\":\"Cover\"}")],
+    )
+    .await;
+    let app = gateway_router(state);
+    let authority = passkey_authority_with_name(dir.path(), Some("owner"));
+    let token = app_token_for_authority(dir.path(), LIBRARY_CAPSULE_ID, &authority);
+    let path = format!("/content/{TEST_CIDV1}/metadata.json");
+
+    let (status, body) = gateway_get(&app, &path).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_ne!(body, b"{\"title\":\"Cover\"}");
+
+    let read = app
+        .clone()
+        .oneshot(
+            test_browser_request("localhost:61180", "null")
+                .uri(path)
+                .header("x-elastos-home-token", token)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(read.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(read.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(&body[..], b"{\"title\":\"Cover\"}");
+}
+
+/// A CID carries no name, so its content type comes from its bytes.
+///
+/// Answering `application/octet-stream` for everything is what sent every
+/// channel cover to the browser's downloads tray instead of onto the card.
+#[test]
+fn test_cid_content_type_comes_from_the_bytes() {
+    let png = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13];
+    assert_eq!(sniffed_cid_content_type(&png), "image/png");
+    assert_eq!(
+        sniffed_cid_content_type(&[0xff, 0xd8, 0xff, 0xe0, 0, 16, b'J', b'F', b'I', b'F', 0, 1]),
+        "image/jpeg"
+    );
+    assert_eq!(
+        sniffed_cid_content_type(b"GIF89a\x01\x00\x01\x00\x00\x00"),
+        "image/gif"
+    );
+    let mut webp = b"RIFF\x24\x00\x00\x00WEBP".to_vec();
+    webp.extend_from_slice(b"VP8 ");
+    assert_eq!(sniffed_cid_content_type(&webp), "image/webp");
+    assert_eq!(
+        sniffed_cid_content_type(b"%PDF-1.7\n1 0 obj"),
+        "application/pdf"
+    );
+    assert_eq!(
+        sniffed_cid_content_type(b"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00"),
+        "video/mp4"
+    );
+    assert_eq!(
+        sniffed_cid_content_type(b"\x00\x00\x00\x20ftypM4A \x00\x00\x02\x00"),
+        "audio/mp4"
+    );
+    assert_eq!(
+        sniffed_cid_content_type(&[0x1a, 0x45, 0xdf, 0xa3, 1, 0, 0, 0, 0, 0, 0, 0x1f]),
+        "video/webm"
+    );
+    assert_eq!(
+        sniffed_cid_content_type(b"OggS\x00\x02\x00\x00\x00\x00\x00\x00\x00\x00"),
+        "audio/ogg"
+    );
+    assert_eq!(
+        sniffed_cid_content_type(b"ID3\x04\x00\x00\x00\x00\x00\x23TAG\x00"),
+        "audio/mpeg"
+    );
+    // Too few bytes to recognise anything is not a guess.
+    assert_eq!(
+        sniffed_cid_content_type(b"ID3\x04"),
+        "application/octet-stream"
+    );
+
+    // A document that can carry script is never typed as one from an unnamed
+    // blob: this origin serves the Home's own pages.
+    assert_eq!(
+        sniffed_cid_content_type(b"<svg xmlns=\"http://www.w3.org/2000/svg\"><script/></svg>"),
+        "application/octet-stream"
+    );
+    assert_eq!(
+        sniffed_cid_content_type(b"<!DOCTYPE html><html><script>alert(1)</script>"),
+        "application/octet-stream"
+    );
+    // Anything else stays what it always was.
+    assert_eq!(
+        sniffed_cid_content_type(b"{\"schema\":\"whatever\"}"),
+        "application/octet-stream"
+    );
+    assert_eq!(sniffed_cid_content_type(b""), "application/octet-stream");
+    assert_eq!(
+        sniffed_cid_content_type(b"RIFF"),
+        "application/octet-stream"
+    );
+}

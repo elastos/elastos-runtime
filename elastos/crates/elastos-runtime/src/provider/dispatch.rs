@@ -6,12 +6,14 @@ use std::sync::Arc;
 type AsyncCheck =
     Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), String>> + Send>> + Send + Sync>;
 use tokio::sync::{OwnedRwLockReadGuard, RwLock};
+use tokio::time::Instant;
 
 #[derive(Clone)]
 pub struct DispatchFence {
     active: Arc<RwLock<bool>>,
     async_check: Option<AsyncCheck>,
     validate: Arc<dyn Fn() -> Result<(), String> + Send + Sync>,
+    deadline: Option<Instant>,
 }
 
 impl DispatchFence {
@@ -20,6 +22,7 @@ impl DispatchFence {
             active: Arc::new(RwLock::new(true)),
             validate: Arc::new(validate),
             async_check: None,
+            deadline: None,
         }
     }
 
@@ -35,7 +38,17 @@ impl DispatchFence {
                 parent()?;
                 validate()
             }),
+            deadline: self.deadline,
         }
+    }
+
+    /// Bound dispatch without extending a deadline inherited from the caller.
+    pub fn with_deadline(mut self, deadline: Instant) -> Self {
+        self.deadline = Some(
+            self.deadline
+                .map_or(deadline, |parent| parent.min(deadline)),
+        );
+        self
     }
 
     pub fn with_async_check(
@@ -60,10 +73,22 @@ impl DispatchFence {
             return Err("Browser internet access has stopped".into());
         }
         (self.validate)()?;
+        self.check_deadline()?;
         if let Some(check) = &self.async_check {
             check().await?;
+            self.check_deadline()?;
         }
         Ok(guard)
+    }
+
+    fn check_deadline(&self) -> Result<(), String> {
+        if self
+            .deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            return Err("provider dispatch deadline elapsed".into());
+        }
+        Ok(())
     }
 
     /// Completed writes may finish at the provider. Queued writes cannot start.
@@ -73,6 +98,12 @@ impl DispatchFence {
 
     pub async fn scope<F: Future>(&self, future: F) -> F::Output {
         CURRENT.scope(self.clone(), future).await
+    }
+
+    /// The fence the current task runs in, if any. A task spawned to own an
+    /// operation captures it first and re-enters it with [`Self::scope`].
+    pub fn current() -> Option<Self> {
+        current()
     }
 }
 

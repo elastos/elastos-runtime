@@ -68,13 +68,9 @@ pub fn build_capability_resource(
                 _ => Err(format!("Unsupported chain provider operation: {op}")),
             }
         }
-        "drm" => drm_resource(op),
         "net" => net_resource(op),
         "exit" => exit_resource(op),
         "browser-engine" => browser_engine_resource(op),
-        "rights" => rights_resource(op),
-        "key" => key_resource(op),
-        "decrypt" => decrypt_resource(op),
         "wallet" => wallet_resource(op),
         "did" => did_resource(op),
         "ipfs" => ipfs_resource(op),
@@ -138,7 +134,6 @@ pub fn provider_operation_action(scheme: &str, op: &str) -> Option<Action> {
             "publish" | "ensure" | "repair" | "unpublish" => Some(Action::Write),
             _ => None,
         },
-        "drm" | "rights" | "key" | "decrypt" => read_only_provider_action(op),
         "net" => match op {
             "status" | "resolve" => Some(Action::Read),
             "connect" | "stream" | "http" => Some(Action::Write),
@@ -164,7 +159,7 @@ pub fn provider_operation_action(scheme: &str, op: &str) -> Option<Action> {
             "runs_create" | "runs_cancel" => Some(Action::Execute),
             _ => None,
         },
-        "object" => object_op_required_action(op),
+        "object" => object_operation_action(op),
         "operator-drive-adapter" => match op {
             "status" | "metadata_index" | "read_bytes" => Some(Action::Read),
             "write_bytes" => Some(Action::Write),
@@ -237,21 +232,6 @@ fn chain_op_required_action(op: &str) -> Option<Action> {
     }
 }
 
-fn read_only_provider_action(op: &str) -> Option<Action> {
-    match op {
-        "status"
-        | "open"
-        | "has_access_by_content_id"
-        | "is_subscription_active"
-        | "can_stream"
-        | "can_download"
-        | "release"
-        | "open_session"
-        | "render" => Some(Action::Read),
-        _ => None,
-    }
-}
-
 fn wallet_op_required_action(op: &str) -> Option<Action> {
     match op {
         "status" => Some(Action::Read),
@@ -265,12 +245,22 @@ fn ipfs_op_required_action(op: &str) -> Option<Action> {
             Some(Action::Read)
         }
         "add_bytes" | "add_path" | "add_directory" | "pin" => Some(Action::Write),
+        // Brings the node's kubo daemon up (or adopts a running one) and
+        // reports its libp2p identity. Write rather than Execute: it changes
+        // node state, and Write is already in this capsule's declared action
+        // set, so mapping it here grants no new class of authority (the
+        // manifest declares the method `risk: write` for the same reason).
+        // The provider host calls it at startup so peering is established
+        // long before a publish needs replicas -- a kubo first started at
+        // publish time cannot be found by peers that have never met it, and
+        // the resulting pin has no timeout.
+        "ensure_started" => Some(Action::Write),
         "unpin" => Some(Action::Delete),
         _ => None,
     }
 }
 
-fn object_op_required_action(op: &str) -> Option<Action> {
+fn object_operation_action(op: &str) -> Option<Action> {
     match op {
         "roots"
         | "list"
@@ -284,8 +274,15 @@ fn object_op_required_action(op: &str) -> Option<Action> {
         | "read_viewer"
         | "close_viewer" => Some(Action::Read),
         "import_runtime_custody" => Some(Action::Write),
+        // Rebuilding an owned copy writes a file and spends nothing. What
+        // makes it safe is the chain read at its door, not the authority it
+        // asks for here.
+        "download_owned_copy" => Some(Action::Write),
         "write" | "mkdir" | "rename" | "move" | "copy" | "trash" | "restore" | "publish"
-        | "unpublish" | "repair" | "share" | "buy" => Some(Action::Write),
+        | "unpublish" | "repair" | "share" => Some(Action::Write),
+        // `buy` spends the user's money: it must never be satisfied by a
+        // capsule that only holds generic object write authority.
+        "buy" => Some(Action::Buy),
         "delete_permanently" | "empty_trash" => Some(Action::Delete),
         _ => None,
     }
@@ -385,6 +382,7 @@ fn ipfs_resource(op: &str) -> Result<String, String> {
             "download_directory",
             "pin",
             "unpin",
+            "ensure_started",
             "health",
             "status",
         ],
@@ -419,6 +417,7 @@ fn object_resource(op: &str) -> Result<String, String> {
             "list_runtime_custody",
             "import_runtime_custody",
             "buy",
+            "download_owned_copy",
             "open_viewer",
             "read_viewer",
             "close_viewer",
@@ -511,46 +510,6 @@ pub fn ensure_generic_wallet_capability(resource: &str, action: Action) -> Resul
         "generic Wallet access is limited to read-only elastos://wallet/meta/status; use the private Runtime Wallet Bus for authority-bound operations"
             .to_string(),
     )
-}
-
-fn drm_resource(op: &str) -> Result<String, String> {
-    match op {
-        "status" => Ok("elastos://drm/meta/status".to_string()),
-        "open" => Ok("elastos://drm/open".to_string()),
-        _ => Err(format!("Unsupported drm provider operation: {op}")),
-    }
-}
-
-fn rights_resource(op: &str) -> Result<String, String> {
-    match op {
-        "status" => Ok("elastos://rights/meta/status".to_string()),
-        "has_access_by_content_id" => {
-            Ok("elastos://rights/access/has_access_by_content_id".to_string())
-        }
-        "is_subscription_active" => {
-            Ok("elastos://rights/subscription/is_subscription_active".to_string())
-        }
-        "can_stream" => Ok("elastos://rights/content/can_stream".to_string()),
-        "can_download" => Ok("elastos://rights/content/can_download".to_string()),
-        _ => Err(format!("Unsupported rights provider operation: {op}")),
-    }
-}
-
-fn key_resource(op: &str) -> Result<String, String> {
-    match op {
-        "status" => Ok("elastos://key/meta/status".to_string()),
-        "release" => Ok("elastos://key/release".to_string()),
-        _ => Err(format!("Unsupported key provider operation: {op}")),
-    }
-}
-
-fn decrypt_resource(op: &str) -> Result<String, String> {
-    match op {
-        "status" => Ok("elastos://decrypt/meta/status".to_string()),
-        "open_session" => Ok("elastos://decrypt/session/open".to_string()),
-        "render" => Ok("elastos://decrypt/render".to_string()),
-        _ => Err(format!("Unsupported decrypt provider operation: {op}")),
-    }
 }
 
 fn model_resource(op: &str, request: &Value) -> Result<String, String> {
@@ -787,19 +746,15 @@ mod tests {
                 "../../../capsules/content-block-graph-provider/capsule.json",
             ),
             ("chain", "../../../capsules/chain-provider/capsule.json"),
-            ("decrypt", "../../../capsules/decrypt-provider/capsule.json"),
             ("did", "../../../capsules/did-provider/capsule.json"),
-            ("drm", "../../../capsules/drm-provider/capsule.json"),
             ("exit", "../../../capsules/exit-provider/capsule.json"),
             ("ipfs", "../../../capsules/ipfs-provider/capsule.json"),
-            ("key", "../../../capsules/key-provider/capsule.json"),
             ("net", "../../../capsules/net-provider/capsule.json"),
             ("object", "../../../capsules/object-provider/capsule.json"),
             (
                 "operator-drive-adapter",
                 "../../../capsules/operator-drive-adapter/capsule.json",
             ),
-            ("rights", "../../../capsules/rights-provider/capsule.json"),
             ("tunnel", "../../../capsules/tunnel-provider/capsule.json"),
             ("wallet", "../../../capsules/wallet-provider/capsule.json"),
             (
@@ -815,12 +770,29 @@ mod tests {
             let authority = manifest
                 .authority
                 .unwrap_or_else(|| panic!("{scheme} provider manifest must declare authority"));
-            for capability in authority.capabilities {
-                for operation in capability.operations {
+            for capability in &authority.capabilities {
+                for operation in &capability.operations {
+                    let action = provider_operation_action(scheme, operation);
                     assert!(
-                        provider_operation_action(scheme, &operation).is_some(),
+                        action.is_some(),
                         "{scheme}/{operation} in {} must have a canonical Runtime action",
                         path.display()
+                    );
+                    let action = action.unwrap();
+                    // The manifest's own declared `actions` must cover every
+                    // action its `operations` actually require -- otherwise a
+                    // narrower action (e.g. `buy`) can silently ride on a
+                    // broader one already listed there (e.g. `write`), which
+                    // is exactly how `buy` used to be an alias for `write`.
+                    assert!(
+                        capability
+                            .actions
+                            .iter()
+                            .any(|declared| declared == action.to_string().as_str()),
+                        "{scheme}/{operation} in {} requires action `{action}`, but the \
+                         manifest's declared actions {:?} do not include it",
+                        path.display(),
+                        capability.actions
                     );
                 }
             }
@@ -1063,29 +1035,23 @@ mod tests {
             build_capability_resource("chain", "networks", &serde_json::json!({})).unwrap(),
             "elastos://chain/meta/networks"
         );
-        assert_eq!(
-            build_capability_resource("rights", "has_access_by_content_id", &serde_json::json!({}))
-                .unwrap(),
-            "elastos://rights/access/has_access_by_content_id",
-            "the active provisional rights-provider mapping is preserved until product cutover"
-        );
         assert!(
             build_capability_resource("custody", "release_contribution", &serde_json::json!({}))
                 .is_err(),
-            "inactive custody registration is Runtime-internal until product cutover"
+            "custody is a Runtime-only target and is never capsule-invokable"
         );
         assert!(
             build_capability_resource("custody", "status", &serde_json::json!({})).is_err(),
-            "inactive custody registration is Runtime-internal until product cutover"
+            "custody is a Runtime-only target and is never capsule-invokable"
         );
         assert!(
             build_capability_resource("protect", "open_protection_session", &serde_json::json!({}))
                 .is_err(),
-            "protect registration is Runtime-internal until product cutover"
+            "protect is a Runtime-only target and is never capsule-invokable"
         );
         assert!(
             build_capability_resource("protect", "status", &serde_json::json!({})).is_err(),
-            "protect registration is Runtime-internal until product cutover"
+            "protect is a Runtime-only target and is never capsule-invokable"
         );
         assert!(
             build_capability_resource(
@@ -1276,16 +1242,31 @@ mod tests {
     }
 
     #[test]
-    fn drm_resource_uses_documented_scopes() {
-        assert_eq!(
-            build_capability_resource("drm", "status", &serde_json::json!({})).unwrap(),
-            "elastos://drm/meta/status"
-        );
-        assert_eq!(
-            build_capability_resource("drm", "open", &serde_json::json!({})).unwrap(),
-            "elastos://drm/open"
-        );
-        assert!(build_capability_resource("drm", "raw_key", &serde_json::json!({})).is_err());
+    fn retired_provisional_schemes_fail_closed() {
+        for (scheme, op) in [
+            ("drm", "status"),
+            ("drm", "open"),
+            ("rights", "status"),
+            ("rights", "has_access_by_content_id"),
+            ("rights", "is_subscription_active"),
+            ("rights", "can_stream"),
+            ("rights", "can_download"),
+            ("key", "status"),
+            ("key", "release"),
+            ("decrypt", "status"),
+            ("decrypt", "open_session"),
+            ("decrypt", "render"),
+        ] {
+            assert_eq!(
+                build_capability_resource(scheme, op, &serde_json::json!({})).unwrap_err(),
+                format!("Unsupported provider scheme: {scheme}"),
+                "retired provisional scheme {scheme}/{op} must fail closed"
+            );
+            assert!(
+                provider_operation_action(scheme, op).is_none(),
+                "retired provisional scheme {scheme}/{op} must map to no Runtime action"
+            );
+        }
     }
 
     #[test]
@@ -1384,54 +1365,6 @@ mod tests {
         assert!(
             build_capability_resource("browser-engine", "wallet", &serde_json::json!({})).is_err()
         );
-    }
-
-    #[test]
-    fn rights_resource_uses_documented_scopes() {
-        assert_eq!(
-            build_capability_resource("rights", "status", &serde_json::json!({})).unwrap(),
-            "elastos://rights/meta/status"
-        );
-        assert_eq!(
-            build_capability_resource("rights", "has_access_by_content_id", &serde_json::json!({}))
-                .unwrap(),
-            "elastos://rights/access/has_access_by_content_id"
-        );
-        assert_eq!(
-            build_capability_resource("rights", "can_stream", &serde_json::json!({})).unwrap(),
-            "elastos://rights/content/can_stream"
-        );
-        assert!(build_capability_resource("rights", "raw_key", &serde_json::json!({})).is_err());
-    }
-
-    #[test]
-    fn key_resource_uses_documented_scopes() {
-        assert_eq!(
-            build_capability_resource("key", "status", &serde_json::json!({})).unwrap(),
-            "elastos://key/meta/status"
-        );
-        assert_eq!(
-            build_capability_resource("key", "release", &serde_json::json!({})).unwrap(),
-            "elastos://key/release"
-        );
-        assert!(build_capability_resource("key", "raw_cek", &serde_json::json!({})).is_err());
-    }
-
-    #[test]
-    fn decrypt_resource_uses_documented_scopes() {
-        assert_eq!(
-            build_capability_resource("decrypt", "status", &serde_json::json!({})).unwrap(),
-            "elastos://decrypt/meta/status"
-        );
-        assert_eq!(
-            build_capability_resource("decrypt", "open_session", &serde_json::json!({})).unwrap(),
-            "elastos://decrypt/session/open"
-        );
-        assert_eq!(
-            build_capability_resource("decrypt", "render", &serde_json::json!({})).unwrap(),
-            "elastos://decrypt/render"
-        );
-        assert!(build_capability_resource("decrypt", "raw_cek", &serde_json::json!({})).is_err());
     }
 
     #[test]
@@ -1571,5 +1504,15 @@ mod tests {
             .unwrap(),
             "elastos://chain/esc-mainnet/broadcast_transaction"
         );
+    }
+
+    #[test]
+    fn buy_requires_its_own_action() {
+        // The real "does the manifest's declared `actions` list cover `buy`"
+        // check lives in `first_party_provider_authority_operations_have_action_mapping`
+        // below, against the actual `capsules/object-provider/capsule.json` --
+        // a check built from a fixture the test itself constructs cannot fail
+        // on a production regression (e.g. deleting `"buy"` from that file).
+        assert_eq!(object_operation_action("buy"), Some(Action::Buy));
     }
 }

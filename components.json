@@ -130,42 +130,6 @@
         "aarch64-linux"
       ]
     },
-    "drm-provider": {
-      "cid": "",
-      "sha256": "",
-      "size": 0,
-      "platforms": [
-        "x86_64-linux",
-        "aarch64-linux"
-      ]
-    },
-    "rights-provider": {
-      "cid": "",
-      "sha256": "",
-      "size": 0,
-      "platforms": [
-        "x86_64-linux",
-        "aarch64-linux"
-      ]
-    },
-    "key-provider": {
-      "cid": "",
-      "sha256": "",
-      "size": 0,
-      "platforms": [
-        "x86_64-linux",
-        "aarch64-linux"
-      ]
-    },
-    "decrypt-provider": {
-      "cid": "",
-      "sha256": "",
-      "size": 0,
-      "platforms": [
-        "x86_64-linux",
-        "aarch64-linux"
-      ]
-    },
     "ipfs-provider": {
       "cid": "",
       "sha256": "",
@@ -552,86 +516,6 @@
           "size": 0,
           "release_path": "content-block-graph-provider-darwin-arm64",
           "install_path": "bin/content-block-graph-provider"
-        }
-      }
-    },
-    "drm-provider": {
-      "install_path": "bin/drm-provider",
-      "description": "Host DRM provider binary for Runtime-mediated protected content requests",
-      "platforms": {
-        "linux-amd64": {
-          "cid": "",
-          "checksum": "",
-          "size": 0,
-          "release_path": "drm-provider-linux-amd64",
-          "install_path": "bin/drm-provider"
-        },
-        "linux-arm64": {
-          "cid": "",
-          "checksum": "",
-          "size": 0,
-          "release_path": "drm-provider-linux-arm64",
-          "install_path": "bin/drm-provider"
-        }
-      }
-    },
-    "rights-provider": {
-      "install_path": "bin/rights-provider",
-      "description": "Host rights provider binary for typed protected-content access checks",
-      "platforms": {
-        "linux-amd64": {
-          "cid": "",
-          "checksum": "",
-          "size": 0,
-          "release_path": "rights-provider-linux-amd64",
-          "install_path": "bin/rights-provider"
-        },
-        "linux-arm64": {
-          "cid": "",
-          "checksum": "",
-          "size": 0,
-          "release_path": "rights-provider-linux-arm64",
-          "install_path": "bin/rights-provider"
-        }
-      }
-    },
-    "key-provider": {
-      "install_path": "bin/key-provider",
-      "description": "Host key provider binary for fail-closed protected-content key release",
-      "platforms": {
-        "linux-amd64": {
-          "cid": "",
-          "checksum": "",
-          "size": 0,
-          "release_path": "key-provider-linux-amd64",
-          "install_path": "bin/key-provider"
-        },
-        "linux-arm64": {
-          "cid": "",
-          "checksum": "",
-          "size": 0,
-          "release_path": "key-provider-linux-arm64",
-          "install_path": "bin/key-provider"
-        }
-      }
-    },
-    "decrypt-provider": {
-      "install_path": "bin/decrypt-provider",
-      "description": "Host decrypt/render provider binary for fail-closed protected-content sessions",
-      "platforms": {
-        "linux-amd64": {
-          "cid": "",
-          "checksum": "",
-          "size": 0,
-          "release_path": "decrypt-provider-linux-amd64",
-          "install_path": "bin/decrypt-provider"
-        },
-        "linux-arm64": {
-          "cid": "",
-          "checksum": "",
-          "size": 0,
-          "release_path": "decrypt-provider-linux-arm64",
-          "install_path": "bin/decrypt-provider"
         }
       }
     },
@@ -1196,6 +1080,48 @@
           "release_path": "library.tar.gz",
           "extract_path": "library",
           "install_path": "capsules/library"
+        }
+      }
+    },
+    "creator": {
+      "install_path": "capsules/creator",
+      "description": "Protect a file and list it for sale in one flow",
+      "platforms": {
+        "*": {
+          "cid": "",
+          "checksum": "",
+          "size": 0,
+          "release_path": "creator.tar.gz",
+          "extract_path": "creator",
+          "install_path": "capsules/creator"
+        }
+      }
+    },
+    "custody": {
+      "install_path": "capsules/custody",
+      "description": "Form this Home's custody pool from node cards and see the installed pool",
+      "platforms": {
+        "*": {
+          "cid": "",
+          "checksum": "",
+          "size": 0,
+          "release_path": "custody.tar.gz",
+          "extract_path": "custody",
+          "install_path": "capsules/custody"
+        }
+      }
+    },
+    "elacity-reader": {
+      "install_path": "capsules/elacity-reader",
+      "description": "Protected document, picture, book, comic and 3D viewer capsule through Runtime-scoped object-provider access.",
+      "platforms": {
+        "*": {
+          "cid": "",
+          "checksum": "",
+          "size": 0,
+          "release_path": "elacity-reader.tar.gz",
+          "extract_path": "elacity-reader",
+          "install_path": "capsules/elacity-reader"
         }
       }
     },

@@ -432,7 +432,7 @@ test("Inbox manages active and off grants with confirmation, passkey and retaine
     const off=frame.locator("#entry-detail").getByRole("button",{name:"Turn Off",exact:true});
     await off.waitFor({timeout:3000});await screen(page,"inbox-decided-allowed");
     await off.click();await frame.locator("dialog[open]").waitFor();
-    assert.equal(await frame.locator('dialog [value="cancel"]').evaluate(e=>e===document.activeElement),true);
+    assert.equal(await frame.locator('dialog[open] [value="cancel"]').evaluate(e=>e===document.activeElement),true);
     await screen(page,"inbox-confirm");
     await frame.getByRole("button",{name:"Cancel",exact:true}).click();
     assert.deepEqual(await page.evaluate(()=>approvals),[]);assert.equal(f.state.consent,"granted");

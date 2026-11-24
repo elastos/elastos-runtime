@@ -670,7 +670,9 @@ export function renewHomeGuiFrameAuthority(homeToken, launched, homeOrigin, appl
   let route;
   try { route = new URL(launched?.route, homeOrigin); } catch { return false; }
   if (!entry || entry.targetId !== launched?.target || !frame?.contentWindow
-    || !["chat-room", "people", "documents", "assistant", "library"].includes(launched?.target) || launched.attach_kind !== "iframe"
+    || !["chat-room", "people", "documents", "assistant", "library",
+      "creator", "custody", "marketplace", "elacity-player", "elacity-reader"].includes(launched?.target)
+    || launched.attach_kind !== "iframe"
     || (launched.launch_status && launched.launch_status !== "launched")
     || route.origin !== homeOrigin || route.pathname !== `/apps/${entry.targetId}/`
     || route.username || route.password

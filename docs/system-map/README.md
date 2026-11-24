@@ -14,7 +14,7 @@ Read these in order when a statement matters:
    boundaries.
 3. [GitHub issues](https://github.com/elastos/elastos-runtime/issues) record verified behavior, known limitations and open work.
 4. [`AGENTS.md`](../../AGENTS.md) defines the operator and agent process.
-6. The contract for the touched surface defines its exact interface.
+5. The contract for the touched surface defines its exact interface.
 
 If this map disagrees with one of those files, the source of truth wins and
 this map must be corrected.
@@ -35,6 +35,15 @@ boundary. `Capability` names the exact resource and operation. `Hidden detail`
 states what the capsule or projection must not see, such as a host path, peer,
 backend, credential, socket, or transport. `Done-check` is one command a new
 contributor can run to prove the change.
+
+Most recent record, for the protected-content open view:
+
+```text
+Layer: Buyer Runtime -> verified pool server -> Runtime-only custody/decrypt and Chain providers
+Capability: signed descriptor resolution; pool-session prepare/open/read; recipient-bound release after finalized account-rights checks
+Hidden detail: private IPFS repositories, Carrier endpoints, custody shares, CEKs, evidence RPC sources and decrypt handles
+Done-check: node scripts/system-map-check.mjs
+```
 
 For this map, the minimum check is `node scripts/system-map-check.mjs` from the
 repository root. A code or contract change also needs the narrow test for its

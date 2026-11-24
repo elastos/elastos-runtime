@@ -9,9 +9,14 @@ const playerModule = await import(
 const {
   MAX_VIEWER_MEDIA_PART_BYTES,
   MAX_VIEWER_SEGMENT_COUNT,
+  PRESENTATION_CONTROLS_ONLY,
+  PRESENTATION_IMAGE_TRACK,
+  PRESENTATION_POSTER,
   createPlayerController,
   parseViewerOpenData,
   parseViewerPartData,
+  presentationFor,
+  renditionHasImageTrack,
 } = playerModule;
 
 function createDeferred() {
@@ -103,6 +108,17 @@ class FakeVideo extends EventTarget {
     this.playCalls = 0;
     this.pauseCalls = 0;
     this.loadCalls = 0;
+    this.poster = "";
+    this.classes = new Set();
+    this.classList = {
+      toggle: (name, force) => {
+        if (force) {
+          this.classes.add(name);
+        } else {
+          this.classes.delete(name);
+        }
+      },
+    };
   }
 
   async play() {
@@ -117,6 +133,10 @@ class FakeVideo extends EventTarget {
     this.loadCalls += 1;
   }
 
+  getAttribute(name) {
+    return name === "poster" ? this.poster || null : null;
+  }
+
   removeAttribute(name) {
     if (name === "src") {
       this.src = "";
@@ -127,7 +147,16 @@ class FakeVideo extends EventTarget {
 function createDom() {
   const video = new FakeVideo();
   const status = { textContent: "", dataset: {} };
-  const overlay = { hidden: false };
+  const overlay = {
+    hidden: false,
+    children: [],
+    appendChild(child) {
+      this.children.push(child);
+    },
+    removeChild(child) {
+      this.children = this.children.filter((entry) => entry !== child);
+    },
+  };
   const overlayText = { textContent: "" };
   const nodes = new Map([
     ["player-video", video],
@@ -143,6 +172,10 @@ function createDom() {
     documentObject: {
       getElementById(id) {
         return nodes.get(id);
+      },
+      createElement(tag) {
+        assert.equal(tag, "button");
+        return new EventTarget();
       },
     },
   };
@@ -197,6 +230,132 @@ function createFetchHarness(responses) {
   };
 }
 
+test("presentation prefers an image track, then a poster, then the controls alone", () => {
+  assert.equal(renditionHasImageTrack("avc1.640028,mp4a.40.2"), true);
+  assert.equal(renditionHasImageTrack("AV01.0.04M.08"), true);
+  assert.equal(renditionHasImageTrack("vp09.00.10.08"), true);
+  assert.equal(renditionHasImageTrack("mp4a.40.2"), false);
+  assert.equal(renditionHasImageTrack("opus"), false);
+  assert.equal(renditionHasImageTrack(""), false);
+
+  // An image track wins even when a poster is also set.
+  assert.equal(
+    presentationFor({ codecs: "avc1.640028" }, "cover.png"),
+    PRESENTATION_IMAGE_TRACK,
+  );
+  assert.equal(presentationFor({ codecs: "avc1.640028" }, ""), PRESENTATION_IMAGE_TRACK);
+  assert.equal(presentationFor({ codecs: "mp4a.40.2" }, "cover.png"), PRESENTATION_POSTER);
+  // Nothing is substituted when there is neither.
+  assert.equal(presentationFor({ codecs: "mp4a.40.2" }, ""), PRESENTATION_CONTROLS_ONLY);
+  assert.equal(presentationFor({ codecs: "mp4a.40.2" }, "   "), PRESENTATION_CONTROLS_ONLY);
+  assert.equal(presentationFor({}, null), PRESENTATION_CONTROLS_ONLY);
+});
+
+test("player plays an audio rendition and collapses the frame to its controls", async () => {
+  const mintId = "1a".repeat(32);
+  const handle = "2b".repeat(32);
+  const openData = {
+    schema: "elastos.library.runtime-custody-viewer/v1",
+    mint_id: mintId,
+    viewer_session_handle: handle,
+    expires_at: 123,
+    mime_type: "audio/mp4",
+    codecs: "mp4a.40.2",
+    content_kind: "media",
+    has_init_segment: true,
+    segment_count: 1,
+  };
+  const part = (bytes) => ({
+    schema: "elastos.library.runtime-custody-viewer-part/v1",
+    mint_id: mintId,
+    viewer_session_handle: handle,
+    encoding: "base64",
+    data: base64(bytes),
+  });
+  const fetchHarness = createFetchHarness([
+    jsonResponse({ status: "ok", data: openData }),
+    jsonResponse({ status: "ok", data: part([9, 8, 7]) }),
+    jsonResponse({ status: "ok", data: part([6, 5]) }),
+  ]);
+  const recordedBuffers = [];
+  const dom = createDom();
+  const windowObject = createWindowObject();
+  const MediaSourceClass = createMediaSourceClass(recordedBuffers);
+  MediaSourceClass.supported.add('audio/mp4; codecs="mp4a.40.2"');
+  const controller = createPlayerController({
+    documentObject: dom.documentObject,
+    windowObject,
+    locationObject: {
+      search: `?mint_id=${mintId}`,
+      hash: "#home_token=token-audio",
+    },
+    fetchImpl: fetchHarness.fetchImpl,
+    mediaSourceClass: MediaSourceClass,
+    urlObject: createUrlObject(() => "blob:player-audio"),
+  });
+
+  await controller.startPlayback();
+
+  assert.equal(dom.overlay.hidden, true);
+  assert.equal(dom.status.textContent, "Playing");
+  assert.equal(dom.video.playCalls, 1);
+  assert.deepEqual(recordedBuffers, [[9, 8, 7], [6, 5]]);
+  assert.deepEqual([...dom.video.classes], ["audio-only"]);
+  assert.deepEqual(
+    fetchHarness.requests.map(({ op }) => op),
+    ["open_viewer", "read_viewer", "read_viewer"],
+  );
+});
+
+test("player keeps the frame for an audio rendition that has a poster", async () => {
+  const mintId = "3c".repeat(32);
+  const handle = "4d".repeat(32);
+  const openData = {
+    schema: "elastos.library.runtime-custody-viewer/v1",
+    mint_id: mintId,
+    viewer_session_handle: handle,
+    expires_at: 123,
+    mime_type: "audio/mp4",
+    codecs: "mp4a.40.2",
+    content_kind: "media",
+    has_init_segment: true,
+    segment_count: 1,
+  };
+  const part = (bytes) => ({
+    schema: "elastos.library.runtime-custody-viewer-part/v1",
+    mint_id: mintId,
+    viewer_session_handle: handle,
+    encoding: "base64",
+    data: base64(bytes),
+  });
+  const fetchHarness = createFetchHarness([
+    jsonResponse({ status: "ok", data: openData }),
+    jsonResponse({ status: "ok", data: part([1, 2]) }),
+    jsonResponse({ status: "ok", data: part([3]) }),
+  ]);
+  const recordedBuffers = [];
+  const dom = createDom();
+  dom.video.poster = "cover.png";
+  const MediaSourceClass = createMediaSourceClass(recordedBuffers);
+  MediaSourceClass.supported.add('audio/mp4; codecs="mp4a.40.2"');
+  const controller = createPlayerController({
+    documentObject: dom.documentObject,
+    windowObject: createWindowObject(),
+    locationObject: {
+      search: `?mint_id=${mintId}`,
+      hash: "#home_token=token-poster",
+    },
+    fetchImpl: fetchHarness.fetchImpl,
+    mediaSourceClass: MediaSourceClass,
+    urlObject: createUrlObject(() => "blob:player-poster"),
+  });
+
+  await controller.startPlayback();
+
+  assert.equal(dom.status.textContent, "Playing");
+  assert.deepEqual([...dom.video.classes], []);
+});
+
 test("player opens, reads ordered media parts, and closes once on ended", async () => {
   const mintId = "ab".repeat(32);
   const handle = "cd".repeat(32);
@@ -207,6 +366,7 @@ test("player opens, reads ordered media parts, and closes once on ended", async 
     expires_at: 123,
     mime_type: "video/mp4",
     codecs: "avc1.640028",
+    content_kind: "media",
     has_init_segment: true,
     segment_count: 2,
   };
@@ -263,6 +423,7 @@ test("player opens, reads ordered media parts, and closes once on ended", async 
   assert.equal(dom.status.textContent, "Playing");
   assert.equal(dom.video.playCalls, 1);
   assert.deepEqual(recordedBuffers, [[1, 2, 3], [4, 5]]);
+  assert.deepEqual([...dom.video.classes], []);
 
   finalSegment.resolve(jsonResponse({ status: "ok", data: part([6, 7]) }));
   await playbackPromise;
@@ -310,6 +471,7 @@ test("player sends one keepalive close on pagehide", async () => {
         expires_at: 123,
         mime_type: "video/mp4",
         codecs: "avc1.640028",
+        content_kind: "media",
         has_init_segment: true,
         segment_count: 1,
       },
@@ -388,6 +550,7 @@ test("player keeps the first visible state when quiet close fails", async () => 
         expires_at: 123,
         mime_type: "video/mp4",
         codecs: "avc1.640028",
+        content_kind: "media",
         has_init_segment: true,
         segment_count: 1,
       },
@@ -450,7 +613,7 @@ test("player keeps the first visible state when quiet close fails", async () => 
   );
 });
 
-test("player fails closed on malformed part data and closes once", async () => {
+test("player appends no malformed part and closes the stalled session on pagehide", async () => {
   const mintId = "12".repeat(32);
   const handle = "34".repeat(32);
   const fetchHarness = createFetchHarness([
@@ -463,6 +626,7 @@ test("player fails closed on malformed part data and closes once", async () => {
         expires_at: 123,
         mime_type: "video/mp4",
         codecs: "avc1.640028",
+        content_kind: "media",
         has_init_segment: true,
         segment_count: 1,
       },
@@ -488,11 +652,13 @@ test("player fails closed on malformed part data and closes once", async () => {
     }),
   ]);
   const dom = createDom();
-  const MediaSourceClass = createMediaSourceClass([]);
+  const windowObject = createWindowObject();
+  const recordedBuffers = [];
+  const MediaSourceClass = createMediaSourceClass(recordedBuffers);
   MediaSourceClass.supported.add('video/mp4; codecs="avc1.640028"');
   const controller = createPlayerController({
     documentObject: dom.documentObject,
-    windowObject: createWindowObject(),
+    windowObject,
     locationObject: {
       search: `?mint_id=${mintId}`,
       hash: "#home_token=token-3",
@@ -502,11 +668,17 @@ test("player fails closed on malformed part data and closes once", async () => {
     urlObject: createUrlObject(() => "blob:player"),
   });
 
-  await controller.startPlayback();
+  const playback = controller.startPlayback();
+  await flushMicrotasks(24);
 
   assert.equal(dom.overlay.hidden, false);
   assert.equal(dom.status.dataset.state, "error");
-  assert.match(dom.status.textContent, /Video data is unavailable|Protected video is unavailable/);
+  assert.match(dom.status.textContent, /Media data is unavailable|Protected media is unavailable/);
+  assert.deepEqual(dom.overlay.children.map((child) => child.textContent), ["Try again"]);
+  assert.equal(recordedBuffers.length, 0);
+  assert.equal(fetchHarness.requests.filter((request) => request.op === "close_viewer").length, 0);
+  windowObject.dispatch("pagehide");
+  await playback;
   assert.equal(
     fetchHarness.requests.filter((request) => request.op === "close_viewer").length,
     1,
@@ -554,6 +726,7 @@ test("player parser rejects malformed viewer data", async () => {
           expires_at: 1,
           mime_type: "video/mp4",
           codecs: "avc1.640028",
+          content_kind: "media",
           has_init_segment: true,
         },
         "ab".repeat(32),
@@ -570,8 +743,29 @@ test("player parser rejects malformed viewer data", async () => {
           expires_at: 1,
           mime_type: "video/mp4",
           codecs: "avc1.640028",
+          content_kind: "media",
           has_init_segment: true,
           segment_count: MAX_VIEWER_SEGMENT_COUNT + 1,
+        },
+        "ab".repeat(32),
+      ),
+    /Viewer response is unavailable/,
+  );
+  // A non-media session must be refused outright: the player has no renderer
+  // for object chunk geometry, and its segment ladder would misread it.
+  assert.throws(
+    () =>
+      parseViewerOpenData(
+        {
+          schema: "elastos.library.runtime-custody-viewer/v1",
+          mint_id: "ab".repeat(32),
+          viewer_session_handle: "cd".repeat(32),
+          expires_at: 1,
+          mime_type: "video/mp4",
+          codecs: "avc1.640028",
+          content_kind: "object",
+          has_init_segment: true,
+          segment_count: 1,
         },
         "ab".repeat(32),
       ),
@@ -590,7 +784,7 @@ test("player parser rejects malformed viewer data", async () => {
         "ab".repeat(32),
         "cd".repeat(32),
       ),
-    /Video data is unavailable/,
+    /Media data is unavailable/,
   );
   assert.throws(
     () =>
@@ -605,7 +799,7 @@ test("player parser rejects malformed viewer data", async () => {
         "ab".repeat(32),
         "cd".repeat(32),
       ),
-    /Video data is unavailable/,
+    /Media data is unavailable/,
   );
   assert.throws(
     () =>
@@ -620,7 +814,7 @@ test("player parser rejects malformed viewer data", async () => {
         "ab".repeat(32),
         "cd".repeat(32),
       ),
-    /Video data is unavailable/,
+    /Media data is unavailable/,
   );
   const oversizedPartData = Buffer.alloc(MAX_VIEWER_MEDIA_PART_BYTES + 1, 7).toString("base64");
   assert.throws(
@@ -636,7 +830,7 @@ test("player parser rejects malformed viewer data", async () => {
         "ab".repeat(32),
         "cd".repeat(32),
       ),
-    /Video data is unavailable/,
+    /Media data is unavailable/,
   );
 });
 
@@ -664,6 +858,7 @@ test("player preserves the first failure and closes once under repeated media er
         expires_at: 123,
         mime_type: "video/mp4",
         codecs: "avc1.640028",
+        content_kind: "media",
         has_init_segment: true,
         segment_count: 1,
       },
@@ -719,7 +914,8 @@ test("player preserves the first failure and closes once under repeated media er
   dom.video.dispatchEvent(new Event("error"));
   await Promise.resolve();
 
-  assert.equal(dom.status.textContent, "Video data is unavailable.");
+  assert.equal(dom.status.textContent, "Media data is unavailable.");
+  assert.deepEqual(dom.overlay.children.map((child) => child.textContent), ["Try again"]);
   assert.equal(
     fetchHarness.requests.filter((request) => request.op === "close_viewer").length,
     1,

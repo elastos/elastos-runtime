@@ -365,9 +365,10 @@ fn shell_content_security_policy(
             " 'wasm-unsafe-eval'",
             "worker-src 'none'; media-src 'none'".to_string(),
         )),
-        // The default header allowed Home media only; intersecting it with
-        // the old Player meta policy still excluded blob media.
-        "elacity-player" => Some(("", format!("media-src {home_source}"))),
+        // The Player attaches its MediaSource with `srcObject` where the
+        // engine accepts one (WebKit); Chromium accepts only a `blob:` URL
+        // for it, so `blob:` stays here and nowhere wider.
+        "elacity-player" => Some(("", format!("media-src {home_source} blob:"))),
         _ => None,
     };
     if let Some((script_eval, media)) = viewer_limits {
@@ -1006,6 +1007,42 @@ mod tests {
         );
     }
 
+    /// DEMO-ISSUES A: the Elacity Player attaches every protected video
+    /// through `URL.createObjectURL(MediaSource)` (player.js:1041-1043). Its
+    /// document is served by the viewer branch, not the generic app path
+    /// above, so it needs `blob:` in its own `media-src` or the browser
+    /// refuses the load and the Player shows "Playback failed.".
+    #[tokio::test]
+    async fn player_document_lets_media_play_from_blob_urls() {
+        let data_dir = tempfile::tempdir().unwrap();
+        write_test_wasm_browser_capsule(data_dir.path(), "elacity-player", "Viewer", "viewer");
+        let response = serve_browser_capsule_path(
+            data_dir.path(),
+            &test_request_headers(),
+            "elacity-player",
+            None,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let policy = response.headers()["content-security-policy"]
+            .to_str()
+            .unwrap()
+            .to_string();
+        let media = policy
+            .split(';')
+            .map(str::trim)
+            .find(|directive| directive.starts_with("media-src "))
+            .unwrap_or_else(|| panic!("player policy has no media-src: {policy}"));
+        assert!(
+            media.split_whitespace().any(|source| source == "blob:"),
+            "the Player's media-src must allow blob: for its MediaSource: {media}"
+        );
+        assert!(
+            !media.contains('*') && !media.contains("data:"),
+            "media-src must stay narrow: {media}"
+        );
+    }
+
     #[tokio::test]
     async fn cached_svg_documents_keep_the_opaque_script_policy_on_revalidation() {
         let data_dir = tempfile::tempdir().unwrap();
@@ -1254,7 +1291,7 @@ mod tests {
                 " 'wasm-unsafe-eval'",
                 "worker-src 'none'; media-src 'none'",
             ),
-            ("elacity-player", "", "media-src HOME"),
+            ("elacity-player", "", "media-src HOME blob:"),
         ] {
             write_test_wasm_browser_capsule(data_dir.path(), app, "Viewer", "viewer");
             fs::write(

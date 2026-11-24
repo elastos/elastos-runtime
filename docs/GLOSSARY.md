@@ -160,8 +160,8 @@ A capsule or Runtime-owned service that implements a typed contract. Examples
 include `localhost-provider` for rooted local storage, `did-provider` for
 identity, `model-provider` for typed model offers and durable runs,
 `chain-provider` for typed chain reads and proofs, `wallet-provider` for Wallet
-proof and approval authority, `rights-provider` for protected-content rights
-evidence, `decrypt-provider` for scoped decrypt/render sessions,
+proof and approval authority, the Runtime-only `custody` and
+`protected-content-decrypt` targets for protected content,
 `availability-provider` for configured replication, and `ipfs-provider` for
 low-level local IPFS through Kubo. Runtime selects providers. Application
 capsules use typed Runtime resources instead of choosing providers or network
@@ -199,13 +199,33 @@ markets. Normal app capsules should use `elastos://content/*`, not raw
 
 ## Protected Content Coordination
 
-The intended Runtime-owned sequence for sealed content. Runtime will bind the
-exact object, Profile, Wallet-approved action, session, rights evidence, custody
-epoch, and decrypt session. It will then coordinate rights, custody, and decrypt
-providers.
-Apps receive scoped output or an opaque handle. They do not receive raw CEKs,
-custody shares, provider routes, endpoint DIDs, network locations, credentials,
-Wallet RPC, Chain RPC, Kubo/IPFS APIs, or Elacity authority.
+Runtime binds the object, Profile, Wallet-approved action, session, finalized
+rights evidence, custody epoch and authorized pool recipients. It resolves a
+verified signed pool descriptor, prepares server content sessions, coordinates
+custody release and returns bounded output encrypted to the buyer's delivery
+key. The server's Runtime-only decrypt provider owns CEK reconstruction.
+Apps receive scoped output or an opaque handle, never CEKs, custody shares,
+private routes, endpoint credentials or backend APIs.
+
+## Custody pool descriptor
+
+A signed description of the pool bound to an immutable custody epoch.
+Descriptor v3 identifies the serving members used by the pool-session path.
+Signature, issuer and epoch checks establish its authority; an unverified peer
+or discovery response cannot select a release recipient.
+
+## Pool member copy
+
+A verified protected package kept under an accepted pool storage obligation.
+Copies have host-wide storage accounting and active Carrier announcements.
+Keeping a key share alone does not establish a content copy or availability.
+
+## Public metadata store
+
+A separate online Kubo store containing validated metadata folders and covers.
+It requires admin consent. Protected ciphertext stays in private offline IPFS
+and moves between Homes over Carrier; public metadata is not a key-release
+grant.
 
 ## dKMS
 

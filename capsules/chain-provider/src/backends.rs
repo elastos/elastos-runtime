@@ -1,5 +1,173 @@
 use super::*;
 
+/// The most calls one JSON-RPC batch may carry.
+///
+/// Measured against the configured sources rather than chosen:
+///
+/// ```text
+/// mainnet.base.org   40 calls -> {"error":{"code":-32014,
+///                                "message":"maximum 10 calls in 1 batch"}}
+/// base.drpc.org      40 calls -> 40 elements, each an error:
+///                                "Batch of more than 3 requests are not
+///                                 allowed on free plan"
+/// ```
+///
+/// Three, because the strictest source decides. The two refusals are not even
+/// the same shape -- one is a single object where an array was expected, the
+/// other a perfectly well-formed array in which every answer is an error --
+/// and the second is the dangerous one: it looks exactly like a source that
+/// answered and knew nothing.
+pub(super) const EVM_RPC_BATCH_MAX: usize = 3;
+
+/// How many more times a request answered HTTP 429 is sent (R47).
+const EVM_RPC_RATE_LIMIT_RETRIES: usize = 2;
+/// The waits before those retries when the source names no usable
+/// `Retry-After`.
+const EVM_RPC_RATE_LIMIT_BACKOFF: [Duration; EVM_RPC_RATE_LIMIT_RETRIES] =
+    [Duration::from_millis(250), Duration::from_millis(750)];
+/// The longest `Retry-After` honoured; a longer one uses the backoff above.
+const EVM_RPC_RATE_LIMIT_MAX_RETRY_AFTER_SECS: u64 = 2;
+/// How long an origin that stayed rate-limited is asked last.
+pub(super) const RATE_LIMITED_ORIGIN_COOLDOWN_SECS: u64 = 60;
+
+/// The wait before retry `retry` (0-based): the source's own `Retry-After`
+/// when it asks for at most two seconds, else the bounded backoff.
+fn rate_limit_wait(retry_after_secs: Option<u64>, retry: usize) -> Duration {
+    match retry_after_secs {
+        Some(secs) if secs <= EVM_RPC_RATE_LIMIT_MAX_RETRY_AFTER_SECS => Duration::from_secs(secs),
+        _ => EVM_RPC_RATE_LIMIT_BACKOFF[retry],
+    }
+}
+
+/// `Retry-After` in delta-seconds; the HTTP-date form counts as absent.
+fn retry_after_secs(response: &reqwest::blocking::Response) -> Option<u64> {
+    response
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+}
+
+/// A bound on one multi-request read. Every request the read sends ends by
+/// `deadline`, and no single request waits longer than `request_timeout`, so
+/// one stalled source cannot spend the whole read's time.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct RpcReadDeadline {
+    deadline: Instant,
+    request_timeout: Duration,
+}
+
+impl RpcReadDeadline {
+    pub(super) fn after(budget: Duration, request_timeout: Duration) -> Self {
+        Self {
+            deadline: Instant::now() + budget,
+            request_timeout,
+        }
+    }
+
+    fn remaining(&self) -> Duration {
+        self.deadline.saturating_duration_since(Instant::now())
+    }
+
+    /// The time the next request may take, or `None` once the read is over.
+    pub(super) fn next_request_timeout(&self) -> Option<Duration> {
+        let remaining = self.remaining();
+        (!remaining.is_zero()).then(|| remaining.min(self.request_timeout))
+    }
+
+    /// Whether a wait of `wait` still leaves the read time to ask again.
+    fn allows_wait(&self, wait: Duration) -> bool {
+        wait < self.remaining()
+    }
+
+    pub(super) fn passed(&self) -> bool {
+        self.remaining().is_zero()
+    }
+}
+
+/// The key a cooldown is held under: scheme, host and port. Two paths on one
+/// origin share one rate limit.
+fn rpc_origin(rpc_url: &str) -> String {
+    reqwest::Url::parse(rpc_url)
+        .map(|url| url.origin().ascii_serialization())
+        .unwrap_or_else(|_| rpc_url.to_string())
+}
+
+/// The log line for one 429 retry. Only the host is named: a configured RPC
+/// URL may carry an API key in its path or query.
+pub(super) fn rate_limit_retry_log(rpc_url: &str, retry: usize, wait: Duration) -> String {
+    format!(
+        "chain-provider: rpc source rate limited source={} retry={retry} wait_ms={}",
+        rpc_source_host(rpc_url),
+        wait.as_millis(),
+    )
+}
+
+/// The log line for an origin put in cooldown. Host only, as above.
+pub(super) fn rate_limit_cooldown_log(rpc_url: &str) -> String {
+    format!(
+        "chain-provider: rpc source cooled source={} reason=http_429 cooldown_secs={RATE_LIMITED_ORIGIN_COOLDOWN_SECS}",
+        rpc_source_host(rpc_url),
+    )
+}
+
+/// Reads a batch answer, and decides whether it is an answer at all.
+///
+/// Two refusals to tell apart, both seen from configured sources:
+///
+/// - a single object where an array was expected, which is plainly not a batch
+///   answer;
+/// - a well-formed array in which EVERY element carries an error, which is
+///   what dRPC returns when a batch exceeds its plan. That shape is
+///   indistinguishable from a source that answered and knew nothing, and read
+///   as the latter it made a source contribute silence while looking healthy.
+///   A whole batch failing is treated as a refusal so the caller can ask again
+///   one call at a time.
+///
+/// An individual element carrying an error is `None` -- one reverting call
+/// among several is an answer about that call, not a failure of the batch.
+///
+/// Answers arrive in whatever order the node chooses, so each is placed by its
+/// own id and never by position.
+pub(super) fn interpret_evm_rpc_batch(
+    body: &Value,
+    expected: usize,
+) -> Result<Vec<Option<Value>>, Response> {
+    let entries = body.as_array().ok_or_else(|| {
+        Response::error(
+            "upstream_batch_unsupported",
+            "EVM RPC source did not answer a batch with a batch",
+        )
+    })?;
+    let mut results = vec![None; expected];
+    let mut errored = 0usize;
+    for entry in entries {
+        if entry.get("error").is_some() {
+            errored += 1;
+        }
+        let Some(index) = entry.get("id").and_then(Value::as_u64) else {
+            continue;
+        };
+        let Some(slot) = results.get_mut(index as usize) else {
+            continue;
+        };
+        if entry.get("error").is_some() {
+            continue;
+        }
+        *slot = entry.get("result").cloned();
+    }
+    if !entries.is_empty() && errored == entries.len() {
+        return Err(Response::error(
+            "upstream_batch_refused",
+            "EVM RPC source answered every call in the batch with an error",
+        ));
+    }
+    Ok(results)
+}
+
 pub(super) struct MainchainTip {
     pub(super) height: u64,
     pub(super) hash: String,
@@ -8,6 +176,91 @@ pub(super) struct MainchainTip {
 }
 
 impl ChainProvider {
+    /// The order a corroborated read asks its sources in: the configured
+    /// order, with origins still cooling after a persistent 429 moved last.
+    /// A cooled source stays in the list, so it still answers when nothing
+    /// else can.
+    pub(super) fn corroboration_order(&self, evidence_rpc_urls: &[String]) -> Vec<String> {
+        let now = (self.now_unix_seconds)();
+        let (ready, cooled): (Vec<String>, Vec<String>) = evidence_rpc_urls
+            .iter()
+            .cloned()
+            .partition(|rpc_url| !self.rpc_origin_cooling(rpc_url, now));
+        ready.into_iter().chain(cooled).collect()
+    }
+
+    fn rpc_origin_cooling(&self, rpc_url: &str, now: u64) -> bool {
+        let cooldowns = self
+            .rate_limited_origins
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        cooldowns
+            .get(&rpc_origin(rpc_url))
+            .is_some_and(|until| now < *until)
+    }
+
+    fn cool_rpc_origin(&self, rpc_url: &str) {
+        let until = (self.now_unix_seconds)().saturating_add(RATE_LIMITED_ORIGIN_COOLDOWN_SECS);
+        self.rate_limited_origins
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(rpc_origin(rpc_url), until);
+        eprintln!("{}", rate_limit_cooldown_log(rpc_url));
+    }
+
+    /// Posts one JSON-RPC payload (single or batch). A 429 is retried at most
+    /// twice (R47); an origin still answering 429 after that is cooled. Every
+    /// other outcome returns at once, exactly as before.
+    ///
+    /// With a `deadline`, each attempt is bounded by the time the read has
+    /// left, and a retry that would wait past it is not made: the answer is
+    /// the 429 itself, and the origin is not cooled on that shortened proof.
+    fn post_evm_rpc(
+        &self,
+        rpc_url: &str,
+        payload: &Value,
+        unreachable: &str,
+        deadline: Option<RpcReadDeadline>,
+    ) -> Result<reqwest::blocking::Response, Response> {
+        let mut retry = 0;
+        loop {
+            let mut request = self.client.post(rpc_url).json(payload);
+            if let Some(deadline) = deadline {
+                let Some(timeout) = deadline.next_request_timeout() else {
+                    return Err(Response::error(
+                        "upstream_unreachable",
+                        "EVM RPC read deadline passed",
+                    ));
+                };
+                request = request.timeout(timeout);
+            }
+            let response = request
+                .send()
+                .map_err(|_| Response::error("upstream_unreachable", unreachable))?;
+            let status = response.status();
+            if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                if retry < EVM_RPC_RATE_LIMIT_RETRIES {
+                    let wait = rate_limit_wait(retry_after_secs(&response), retry);
+                    if deadline.is_none_or(|deadline| deadline.allows_wait(wait)) {
+                        retry += 1;
+                        eprintln!("{}", rate_limit_retry_log(rpc_url, retry, wait));
+                        (self.sleep)(wait);
+                        continue;
+                    }
+                } else {
+                    self.cool_rpc_origin(rpc_url);
+                }
+            }
+            if !status.is_success() {
+                return Err(Response::error(
+                    "upstream_http_error",
+                    &format!("upstream returned HTTP {}", status.as_u16()),
+                ));
+            }
+            return Ok(response);
+        }
+    }
+
     pub(super) fn network_for_status(&self, network_id: &str) -> Result<&ChainNetwork, Response> {
         if let Err(err) = validate_network_id(network_id) {
             return Err(Response::error("invalid_network", &err));
@@ -163,24 +416,28 @@ impl ChainProvider {
         method: &str,
         params: Value,
     ) -> Result<Value, Response> {
-        let response = self
-            .client
-            .post(&network.rpc_url)
-            .json(&json!({
+        self.evm_rpc_within(network, method, params, None)
+    }
+
+    /// [`Self::evm_rpc`] for one step of a read bounded by `deadline`.
+    pub(super) fn evm_rpc_within(
+        &self,
+        network: &ChainNetwork,
+        method: &str,
+        params: Value,
+        deadline: Option<RpcReadDeadline>,
+    ) -> Result<Value, Response> {
+        let response = self.post_evm_rpc(
+            &network.rpc_url,
+            &json!({
                 "jsonrpc": "2.0",
                 "id": 1,
                 "method": method,
                 "params": params,
-            }))
-            .send()
-            .map_err(|_| Response::error("upstream_unreachable", "EVM RPC request failed"))?;
-        let status = response.status();
-        if !status.is_success() {
-            return Err(Response::error(
-                "upstream_http_error",
-                &format!("upstream returned HTTP {}", status.as_u16()),
-            ));
-        }
+            }),
+            "EVM RPC request failed",
+            deadline,
+        )?;
         let body = response
             .json::<Value>()
             .map_err(|_| Response::error("upstream_invalid_json", "EVM RPC response malformed"))?;
@@ -213,6 +470,92 @@ impl ChainProvider {
         body.get("result")
             .cloned()
             .ok_or_else(|| Response::error("upstream_missing_result", "RPC result missing"))
+    }
+
+    /// One JSON-RPC call whose node error is part of the answer:
+    /// `Ok(Err(error))` carries the node's `error` object whole, so a caller
+    /// can read a revert's ABI data from it. A transport failure or a
+    /// malformed body is `Err`.
+    pub(super) fn evm_rpc_answer_or_error(
+        &self,
+        network: &ChainNetwork,
+        method: &str,
+        params: Value,
+    ) -> Result<Result<Value, Value>, Response> {
+        let response = self.post_evm_rpc(
+            &network.rpc_url,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": method,
+                "params": params,
+            }),
+            "EVM RPC request failed",
+            None,
+        )?;
+        let body = response
+            .json::<Value>()
+            .map_err(|_| Response::error("upstream_invalid_json", "EVM RPC response malformed"))?;
+        if let Some(error) = body.get("error") {
+            return Ok(Err(error.clone()));
+        }
+        body.get("result")
+            .cloned()
+            .map(Ok)
+            .ok_or_else(|| Response::error("upstream_missing_result", "RPC result missing"))
+    }
+
+    /// Several `eth_call`s to one source in a single JSON-RPC batch.
+    ///
+    /// The Shops surface asks two questions of every channel across every
+    /// configured source. Sent one at a time that is eighty-odd round trips
+    /// for a directory of fourteen channels, which measured 46 seconds on an
+    /// installed Home while every card sat at "checking".
+    ///
+    /// Answers come back in whatever order the node chooses, so each is
+    /// matched by its own id and never by position. An element that carries an
+    /// `error`, or that no answer arrives for, is `None` -- the caller decides
+    /// what a missing answer means, and for an access check it means "unknown"
+    /// rather than "no".
+    ///
+    /// A node that refuses batches is reported as one failure rather than
+    /// silently as a set of them; the caller falls back to asking singly.
+    pub(super) fn evm_rpc_batch(
+        &self,
+        network: &ChainNetwork,
+        calls: &[(String, Value)],
+    ) -> Result<Vec<Option<Value>>, Response> {
+        if calls.is_empty() {
+            return Ok(Vec::new());
+        }
+        if calls.len() > EVM_RPC_BATCH_MAX {
+            return Err(Response::error(
+                "invalid_batch_request",
+                "too many calls in one EVM RPC batch",
+            ));
+        }
+        let payload: Value = calls
+            .iter()
+            .enumerate()
+            .map(|(index, (method, params))| {
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": index,
+                    "method": method,
+                    "params": params,
+                })
+            })
+            .collect();
+        let response = self.post_evm_rpc(
+            &network.rpc_url,
+            &payload,
+            "EVM RPC batch request failed",
+            None,
+        )?;
+        let body = response
+            .json::<Value>()
+            .map_err(|_| Response::error("upstream_invalid_json", "EVM RPC batch malformed"))?;
+        interpret_evm_rpc_batch(&body, calls.len())
     }
 
     pub(super) fn bitcoin_rpc(
