@@ -934,6 +934,48 @@ async function run() {
     await createFrame.getByRole('button',{name:'Back',exact:true}).click();await createFrame.locator('.wallet-flow-row').filter({hasText:'Bitcoin'}).click();await capture(createFrame,'wallet-create-bitcoin-address','Create a Bitcoin address.');
     await createFrame.getByRole('button',{name:'Back',exact:true}).click();await createFrame.getByRole('button',{name:'Cancel',exact:true}).click();
     console.log("Wallet approved-send dismissal PASS: visible recovery card, Dismiss, one Runtime request, removed after refresh");
+    server.state.accounts = [{ account_id: "phone-account", address: sendAddress, label: "",
+      connector_id: "wallet-walletconnect", proof_type: "siwe", chain_namespace: "eip155:8453",
+      wallet_display_name: "Scripted phone wallet", wallet_mark: "wallet" }];
+    server.state.defaultAccounts = [];
+    server.state.approvals = [];
+    await railPage.reload({ waitUntil: "networkidle" });
+    const phoneFrame = await walletFrame(railPage);
+    await phoneFrame.locator(".wallet-account .wallet-card-name").filter({ hasText: "Scripted phone wallet" }).waitFor();
+    await phoneFrame.locator(".wallet-account").getByText("Name reported by wallet", { exact: true }).waitFor({ timeout: 4000 });
+    if (process.env.PRODUCT_FAULT_PICTURES) await screenshot(phoneFrame, join(process.env.PRODUCT_FAULT_PICTURES, "211-wallet-card.png"));
+    await phoneFrame.locator("#wallet-settings-open").click();
+    const linked = phoneFrame.locator("#wallet-settings-drawer");
+    await linked.getByText("Scripted phone wallet", { exact: true }).waitFor({ timeout: 4000 });
+    await linked.getByText("Name reported by wallet", { exact: true }).waitFor();
+    await linked.evaluate(async drawer => {
+      await Promise.all(drawer.getAnimations().map(animation => animation.finished));
+    });
+    if (process.env.PRODUCT_FAULT_PICTURES) await screenshot(phoneFrame, join(process.env.PRODUCT_FAULT_PICTURES, "211-wallet-settings.png"));
+    await railPage.setViewportSize({ width: 390, height: 844 });
+    if (process.env.PRODUCT_FAULT_PICTURES) await screenshot(phoneFrame, join(process.env.PRODUCT_FAULT_PICTURES, "211-wallet-settings-phone.png"));
+    server.state.accounts[0].wallet_display_name = "Phone <img src=x onerror=alert(1)>";
+    await railPage.reload({ waitUntil: "networkidle" });
+    const textFrame = await walletFrame(railPage);
+    await textFrame.locator("#wallet-settings-open").click();
+    await textFrame.locator("#wallet-settings-drawer").getByText(server.state.accounts[0].wallet_display_name, { exact: true }).waitFor();
+    assert(await textFrame.locator("#wallet-settings-drawer img[onerror]").count() === 0, "Settings renders peer metadata as plain text");
+    server.state.accounts[0].wallet_display_name = "界".repeat(40);
+    await railPage.reload({ waitUntil: "networkidle" });
+    const longNameFrame = await walletFrame(railPage);
+    await longNameFrame.locator("#wallet-settings-open").click();
+    await longNameFrame.locator("#wallet-settings-wallet-list").getByText(server.state.accounts[0].wallet_display_name, { exact: true }).waitFor();
+    await longNameFrame.locator("#wallet-settings-drawer").evaluate(async drawer => {
+      await Promise.all(drawer.getAnimations().map(animation => animation.finished));
+    });
+    const nameBounds = await longNameFrame.locator("#wallet-settings-wallet-list .wallet-display-name").evaluate(node => ({ right: node.getBoundingClientRect().right, width: window.innerWidth }));
+    assert(nameBounds.right <= nameBounds.width, "a bounded wide-character wallet name fits phone Settings", nameBounds);
+    server.state.accounts[0].wallet_display_name = "x".repeat(41);
+    await railPage.reload({ waitUntil: "networkidle" });
+    const boundedFrame = await walletFrame(railPage);
+    await boundedFrame.locator("#wallet-settings-open").click();
+    await boundedFrame.locator("#wallet-settings-drawer").getByText("Your wallet", { exact: true }).waitFor();
+    assert(await boundedFrame.locator("#wallet-settings-drawer").getByText("Name reported by wallet", { exact: true }).count() === 0, "invalid name keeps the generic fallback");
     await railPage.close();
 
     console.log(`wallet-product-layout-smoke: OK\n${desktopShot}\n${narrowShot}\n${latePhoneShot}`);

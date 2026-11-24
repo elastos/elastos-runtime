@@ -104,6 +104,9 @@ export function accountCard(account, displayedAccountId = "", { privacyMode, pri
     name.dir = "auto";
     title.append(name);
   }
+  if (account.connector_id === "wallet-walletconnect" && display.name !== "Your wallet") {
+    title.append(textNode("span", "Name reported by wallet", "wallet-card-address"));
+  }
   const mark = isPasskeyManagedAccount(account)
     ? methodMark(account.method, account.monogram, false, account.chain_namespace)
     : walletDisplayMark(display.mark);

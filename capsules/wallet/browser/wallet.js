@@ -14,6 +14,7 @@ import {
   accountDisplayBalance,
   accountName,
   accountDisplayName,
+  walletDisplay,
   cardAddressDisplay,
   cardNetworkLabel,
   chainLabel,
@@ -605,6 +606,7 @@ function renderAll() {
   renderHero(allAccounts);
   renderHeroAccount(allAccounts);
   renderAccounts(allAccounts);
+  renderSettingsWallets(allAccounts);
   renderWalletReviewRequests();
   renderMethods(allAccounts, currentApprovalMethods);
   renderActivity(currentRequests);
@@ -891,6 +893,27 @@ function renderAccounts(accounts) {
       prices: currentPrices,
       displayCurrency: getDisplayCurrency(),
     }));
+  }
+}
+
+function renderSettingsWallets(accounts) {
+  const section = document.querySelector("#wallet-settings-wallets");
+  const list = document.querySelector("#wallet-settings-wallet-list");
+  const connected = accounts.filter(account => account.connector_id === "wallet-walletconnect");
+  section.hidden = connected.length === 0;
+  list.replaceChildren();
+  for (const account of connected) {
+    const display = walletDisplay(account);
+    const row = document.createElement("div");
+    row.className = "wallet-card-title";
+    const name = textNode("p", display.name, "wallet-display-name");
+    name.dir = "auto";
+    row.append(name);
+    if (display.name !== "Your wallet") row.append(textNode("p", "Name reported by wallet"));
+    const address = textNode("bdi", getPrivacyMode() ? "••••••" : shortAddress(account.address), "wallet-card-address");
+    address.dir = "auto";
+    row.append(address);
+    list.append(row);
   }
 }
 

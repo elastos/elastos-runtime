@@ -326,10 +326,12 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
       };
       await check();
       operationDispatched = true;
-      onPhase('ownership',{expiresAt:challenge.expires_at,address:signer,chain:namespace,name:String(provider.session?.peer?.metadata?.name || 'your wallet').replace(/[\u0000-\u001f\u007f]/g,'').slice(0,80)});
+      const reportedName = provider.session?.peer?.metadata?.name;
+      const walletPeerName = typeof reportedName === 'string' ? Array.from(reportedName.replace(/[\u0000-\u001f\u007f\ud800-\udfff]/gu,'')).slice(0,80).join('') : undefined;
+      onPhase('ownership',{expiresAt:challenge.expires_at,address:signer,chain:namespace,name:walletPeerName || 'your wallet'});
       const signature = await request({method:'personal_sign',params:[signData(challenge.message),signer]}, 300, 'ownership',signal);
       await check();
-      await api('/api/auth/evm/verify',{method:'POST',body:JSON.stringify({message:challenge.message,signature})});
+      await api('/api/auth/evm/verify',{method:'POST',body:JSON.stringify({message:challenge.message,signature,...(walletPeerName ? {wallet_peer_name:walletPeerName} : {})})});
       return {status:'linked'};
     }
     if (action.kind !== 'approve') throw new Error('Unsupported wallet request.');
