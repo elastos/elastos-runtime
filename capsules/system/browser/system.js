@@ -2517,8 +2517,7 @@ function joinWords(values) {
 
 async function changeWalletSignin(action, methodId = "") {
   const button=action==="add"?document.querySelector("#wallet-signin-add"):null;
-  if(button?.disabled)return;
-  if(button){button.disabled=true;button.setAttribute("aria-busy","true");}
+  if(button){button.setAttribute("aria-busy","true");}
   try {
     const result = await requestWalletSigninChange({action, methodId, token:apiHomeToken, origin:homeParentOrigin,loadConnected:async()=>{
       const summary=await fetchJson('/api/apps/system/summary',{headers:shellHeaders()});
@@ -2526,15 +2525,15 @@ async function changeWalletSignin(action, methodId = "") {
       return summary.wallet_accounts.accounts;
     }});
     await refreshAccountList();
-    if (["failed", "changed", "busy"].includes(result?.status)) throw new Error("Refresh the sign-in methods and try again.");
-  } catch (error) { showError(error.message); }
-  finally {if(button){button.disabled=false;button.removeAttribute("aria-busy");}}
+    if (["failed", "changed"].includes(result?.status)) showSigninListFailure("Home could not change this wallet.",()=>changeWalletSignin(action,methodId));
+  } catch (error) { showSigninListFailure("Home could not change this wallet.",()=>changeWalletSignin(action,methodId)); }
+  finally {if(button){button.removeAttribute("aria-busy");}}
 }
 
-function showSigninListFailure(message) {
+function showSigninListFailure(message, retryAction = () => refreshAccountList().catch(error => showError(error))) {
   const retry = document.createElement("button");
   retry.type = "button"; retry.className = "system-button system-button-secondary";
-  retry.textContent = "Try again"; retry.onclick = () => refreshAccountList().catch(error => showError(error));
+  retry.textContent = "Try again"; retry.onclick = retryAction;
   const error = document.createElement("p"); error.textContent = message;
   accountListNode.append(error, retry);
 }

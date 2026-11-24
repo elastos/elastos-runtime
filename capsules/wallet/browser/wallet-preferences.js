@@ -29,6 +29,7 @@ export function createWalletPreferences({
   refreshWalletState,
   shellHeaders,
   showStatus,
+  getSigninChooser = () => null,
 }) {
   const homeParentOrigin = new URLSearchParams(window.location.search).get("home_origin") || "";
   const privacyButton = document.querySelector("#wallet-privacy");
@@ -73,6 +74,23 @@ export function createWalletPreferences({
 
   function renderMethods(accounts, approvalMethods = {}) {
     if (!methodsNode) {
+      return;
+    }
+    const signin = getSigninChooser();
+    if (signin) {
+      methodsNode.replaceChildren();
+      for (const [connector,label,mark] of [['metamask','MetaMask','metamask'],['unisat','UniSat','btc'],['walletconnect','Phone wallet','wc']]) {
+        const method=signin.methods?.find(m=>m.connector===connector);
+        const row=document.createElement('article');row.className='wallet-method wallet-method-head';
+        row.append(methodMark(mark,METHOD_MONOGRAMS[mark],true,''));
+        const copy=document.createElement('div');copy.append(textNode('strong',label));
+        const used=method?.sign_in_enabled===true;
+        copy.append(textNode('span',used?'Used for sign-in':method?'Connected':'Connect'));
+        row.append(copy);
+        const button=actionButton('Choose','walletSigninChoose',connector,true);
+        button.disabled=used||signin.stage!=='options';
+        button.onclick=()=>signin.act(connector);row.append(button);methodsNode.append(row);
+      }
       return;
     }
     methodsNode.replaceChildren();

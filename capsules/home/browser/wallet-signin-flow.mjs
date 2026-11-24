@@ -22,7 +22,7 @@ export function walletSigninError(error, action) {
   if(error?.code === 'disconnected') return 'The connection to your wallet ended. Try again.';
   if([4001,5000,5001,5002,5003].includes(Number(error?.code))) return 'Your wallet declined the request. Try again or choose another wallet.';
   if(error?.status === 429) return 'Home is busy. Try again in a moment.';
-  if(error?.status === 409) return action === 'signin' ? 'This wallet cannot sign in to this Home. Use your passkey or choose another wallet.' : 'Home could not make this change. Refresh the list, then check the wallet and try again.';
+  if(error?.status === 409) return action === 'signin' ? 'This wallet cannot sign in to this Home. Use your passkey or choose another wallet.' : 'Home could not make this change. Choose your wallet again.';
   if(error?.status === 403) return action === 'signin' ? 'This wallet cannot sign in to this Home. Use your passkey or choose another wallet.' : 'Home could not approve this change. Use your own passkey and try again.';
   if(error?.status === 503) return 'The wallet connection is unavailable. Try again.';
   return action === 'signin' ? 'Home could not sign you in. Check the connection to Home, then try again.' : 'Home could not change this wallet. Check the connection to Home, then try again.';

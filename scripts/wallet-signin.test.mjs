@@ -207,10 +207,10 @@ test('method refresh preserves control focus and refreshes when the page returns
   try {
     const {watchWalletSigninMethods}=await import('../capsules/home/browser/wallet-signin-methods.mjs');let refreshed=0;
     watchWalletSigninMethods(()=>{refreshed++;},'https://home.example');
-    fakeWindow.dispatchEvent(new Event('focus'));assert.equal(refreshed,0);
-    fakeDocument.dispatchEvent(new Event('visibilitychange'));assert.equal(refreshed,1);
-    fakeDocument.visibilityState='hidden';fakeDocument.dispatchEvent(new Event('visibilitychange'));assert.equal(refreshed,1);
-    fakeWindow.dispatchEvent(Object.assign(new Event('message'),{source:fakeWindow.top,origin:'https://home.example',data:{type:'home:wallet-signin-changed'}}));assert.equal(refreshed,2);
+    fakeWindow.dispatchEvent(new Event('focus'));assert.equal(refreshed,1);
+    fakeDocument.dispatchEvent(new Event('visibilitychange'));assert.equal(refreshed,2);
+    fakeDocument.visibilityState='hidden';fakeDocument.dispatchEvent(new Event('visibilitychange'));assert.equal(refreshed,2);
+    fakeWindow.dispatchEvent(Object.assign(new Event('message'),{source:fakeWindow.top,origin:'https://home.example',data:{type:'home:wallet-signin-changed'}}));assert.equal(refreshed,3);
   } finally {globalThis.window=previousWindow;globalThis.document=previousDocument;}
 });
 

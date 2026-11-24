@@ -1,6 +1,6 @@
 import {selectSigninWallet} from './wallet-signin-signers.mjs';
 import {openWalletSigninEntry} from './wallet-signin-window.mjs';
-import {selectConnectedWalletConnect,selectConnectedExtension} from './wallet-signin-connector.mjs';
+import {selectConnectedWalletConnect,selectConnectedExtension,openWalletSigninChooser} from './wallet-signin-connector.mjs';
 import { handleWalletSigninRequest } from "./wallet-signin-host.mjs?v=wallet-signin-1";
 import { walletSigninApi } from "./wallet-signin-view.mjs?v=wallet-signin-1";
 import {
@@ -1758,6 +1758,8 @@ window.addEventListener("message", (event) => {
       ? fetchJson(path, {headers:{"x-elastos-home-token":token}}) : walletSigninApi(path, body, token),
     manage: manageWalletSignin,
     openConnector: openSigninConnector,
+    focusConnector: connector=>{const entry=[...launchedAppContexts.entries()].find(([,c])=>c.targetId===`wallet-${connector}`&&c.source&&c.expiresAt>Date.now());if(entry)postToActiveShell({type:'home:gui-command',command:'focus-window',homeToken:entry[0]});},
+    openChooser: onAction=>openWalletSigninChooser({open:openSigninConnector,current:currentSigninConnector,focus:homeToken=>postToActiveShell({type:"home:gui-command",command:"focus-window",homeToken}),onAction}),
     focusCaller: ()=>postToActiveShell({type:"home:gui-command",command:"focus-window",homeToken:context.homeToken}),
     selectExtension: (connector,options)=>selectConnectedExtension(connector,options,{open:signinConnectorWindow,current:currentSigninConnector,select:selectSigninWallet}),
     selectWalletConnect: options=>selectConnectedWalletConnect(options,{open:()=>signinConnectorWindow(),current:currentSigninConnector}),

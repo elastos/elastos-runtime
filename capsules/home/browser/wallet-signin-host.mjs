@@ -1,6 +1,6 @@
 import {connectedWalletSigninMethods,requestConnectedSigninWallets} from './wallet-signin-methods.mjs';
 // The shell supplies a source/token-bound context from its launch registry.
-export function handleWalletSigninRequest(event,context,{api,manage,current,changed,authorityToken,authorityCurrent,openConnector,selectWalletConnect,selectExtension,focusCaller=()=>{}}) {
+export function handleWalletSigninRequest(event,context,{api,manage,current,changed,authorityToken,authorityCurrent,openConnector,selectWalletConnect,selectExtension,openChooser,focusConnector,focusCaller=()=>{}}) {
   const data=event.data;
   if(data?.type!=='home:wallet-signin-request')return false;
   const keys=['type','requestId','homeToken','action','methodId'];
@@ -23,17 +23,17 @@ export function handleWalletSigninRequest(event,context,{api,manage,current,chan
       const passkey=passkeys.passkeys?.find(row=>row.principal_id===wallets.account_id && !row.revoked_at);
       if(data.action==='list')return reply({status:'complete',...wallets,can_manage:passkey?.role==='admin'});
       if(data.action!=='add' && !method)return reply({status:'changed'});
-      const result=await manage({action:data.action,method,token,account:passkey?.display_name||'Your account',accountId:wallets.account_id,isCurrent:active,openConnector,selectWalletConnect,selectExtension,loadConnected:async()=>{
+      const result=await manage({action:data.action,method,token,account:passkey?.display_name||'Your account',accountId:wallets.account_id,isCurrent:active,focusConnector,openChooser,openConnector,selectWalletConnect,selectExtension,loadConnected:async()=>{
         const accounts=await requestConnectedSigninWallets(event.source,data.requestId);
         if(!active())throw new Error('Home session changed');
         const latest=await api('/api/auth/wallet-methods',undefined,token);
         if(!active())throw new Error('Home session changed');
-        return connectedWalletSigninMethods(accounts,[]).map(row=>{
+        return connectedWalletSigninMethods(accounts,latest.methods).map(row=>{
           const existing=latest.methods.find(m=>(row.connector==='unisat'?m.address===row.address:m.address.toLowerCase()===row.address.toLowerCase())&&m.chain_id===row.chain_id&&m.network===row.network);
           return existing?{...row,...existing,connector:row.connector,paymentOnly:false}:row;
-        }).filter(row=>!row.sign_in_enabled);
+        });
       }});
-      reply(result);changed();if(active())focusCaller();
+      reply(result);changed();if(active()&&result?.refocus!==false)focusCaller();
     }).catch(()=>reply({status:'failed'}));
   return true;
 }

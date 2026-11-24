@@ -149,7 +149,7 @@ export async function signinFixture() {
 import {bindHomeUnlock,showHomeUnlock,hideHomeUnlock,manageWalletSignin,requestPasskeyStepUp} from '/apps/home/shell-auth.js?v=wallet-signin-fixture';
 import {handleWalletSigninRequest} from '/apps/home/wallet-signin-host.mjs';
 import {walletSigninApi} from '/apps/home/wallet-signin-view.mjs';
-import {selectConnectedWalletConnect,selectConnectedExtension} from '/apps/home/wallet-signin-connector.mjs';
+import {selectConnectedWalletConnect,selectConnectedExtension,openWalletSigninChooser} from '/apps/home/wallet-signin-connector.mjs';
 import {selectSigninWallet} from '/apps/home/wallet-signin-signers.mjs';
 import {openWalletSigninEntry} from '/apps/home/wallet-signin-window.mjs';
 import {homeGuiReply} from '/apps/home-gui/home-gui-authority.js';
@@ -201,7 +201,7 @@ addEventListener('message',event=>{
  if(event.data?.type==='home:open-target'&&frame.dataset.target==='wallet'&&event.data.homeToken==='fixture-wallet'&&['wallet-metamask','wallet-unisat','wallet-walletconnect'].includes(event.data.target)){void openConnector(event.data.target);return;}
  const context=contexts.get(frame)||{kind:'app-frame',targetId:frame.dataset.target,source:event.source,homeToken:'fixture-'+frame.dataset.target,walletEffectState:{inFlight:false,requestIds:new Set()}};contexts.set(frame,context);
  if(handleHomeWalletConnectorEffect(event,context,event.data))return;
- handleWalletSigninRequest(event,context,{authorityToken:()=> 'fixture-home',api:(path,body,token)=>walletSigninApi(path,body,token),manage:manageWalletSignin,openConnector,selectWalletConnect,selectExtension,focusCaller:()=>{for(const f of document.querySelectorAll('#fixture-desktop iframe'))f.hidden=f.dataset.target!==frame.dataset.target;},current:()=>frame.isConnected,changed:()=>{for(const f of document.querySelectorAll('#fixture-desktop iframe'))f.contentWindow.postMessage({type:'home:wallet-signin-changed'},'*');}});
+ handleWalletSigninRequest(event,context,{authorityToken:()=> 'fixture-home',api:(path,body,token)=>walletSigninApi(path,body,token),manage:manageWalletSignin,focusConnector:connector=>{for(const f of document.querySelectorAll('#fixture-desktop iframe'))f.hidden=f.dataset.target!=='wallet-'+connector;},openChooser:onAction=>openWalletSigninChooser({open:openConnector,current:c=>[...document.querySelectorAll("#fixture-desktop iframe")].some(f=>f.isConnected&&f.contentWindow===c.source),focus:token=>{for(const f of document.querySelectorAll("#fixture-desktop iframe"))f.hidden=token!=="fixture-"+f.dataset.target;},onAction}),openConnector,selectWalletConnect,selectExtension,focusCaller:()=>{for(const f of document.querySelectorAll('#fixture-desktop iframe'))f.hidden=f.dataset.target!==frame.dataset.target;},current:()=>frame.isConnected,changed:()=>{for(const f of document.querySelectorAll('#fixture-desktop iframe'))f.contentWindow.postMessage({type:'home:wallet-signin-changed'},'*');}});
 });
 window.fixtureReady=true;
 `);return;

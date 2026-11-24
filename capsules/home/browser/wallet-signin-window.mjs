@@ -20,5 +20,5 @@ export async function openWalletSigninEntry({post,listen=window,source,desktopTo
   }
   if(source()!==desktop||desktopToken()!==shellToken||wallet?.targetId!=='wallet'||!wallet.source||wallet.source.closed)throw new Error('Wallet window changed');
   wallet.source.postMessage({type:'elastos.wallet.connect-entry/v1'},'*');
-  return {isOpen:()=>context(token)===wallet&&!wallet.source.closed};
+  return {homeToken:token,source:wallet.source,isOpen:()=>context(token)===wallet&&!wallet.source.closed};
 }

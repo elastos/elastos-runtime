@@ -85,6 +85,7 @@ const homeClipboard = createHomeClipboardClient({
 });
 homeClipboard.start();
 let currentAccounts = [];
+let signinChooser=null;
 let currentDefaults = [];
 let currentBalanceRows = [];
 let currentPrices = {};
@@ -133,6 +134,7 @@ const {
   renderMethods,
   togglePrivacy,
 } = createWalletPreferences({
+  getSigninChooser: () => signinChooser,
   closeModal,
   fetchJson,
   getHomeToken: () => activeHomeToken,
@@ -286,6 +288,7 @@ function boot() {
         || heroNode?.classList.contains("is-flipped")
         || accountsSectionNode?.classList.contains("is-flipped"),
     );
+    if(signinChooser){signinChooser.act('cancel');return;}
     closeModal();
     closeDrawers();
     if (!hadOverlay) {
@@ -300,6 +303,8 @@ function boot() {
   window.addEventListener("message", onShellMenuCommand);
   window.addEventListener("message", onWalletChromeCommand);
   window.addEventListener("message", onHomeConnectCommand);
+  window.addEventListener("message", onSigninChooserCommand);
+  window.addEventListener("focus",()=>{if(signinChooser?.stage==="options")signinChooser.act("refresh");});
   window.addEventListener("pagehide", () => {
     if (activeHomeToken && homeParentOrigin && window.top !== window) {
       window.top.postMessage({type:"home:app-retired", homeToken:activeHomeToken}, homeParentOrigin);
@@ -415,6 +420,29 @@ function onShellMenuCommand(event) {
       return;
     default:
   }
+}
+
+function onSigninChooserCommand(event) {
+  const data=event.data;
+  if(event.source!==window.top||event.origin!==homeParentOrigin||data?.type!=='home:wallet-signin-chooser'||data.homeToken!==activeHomeToken||typeof data.requestId!=='string'||Object.keys(data).length!==4)return;
+  window.top.postMessage({type:'home:wallet-signin-chooser-action',homeToken:activeHomeToken,requestId:data.requestId,action:'ready'},homeParentOrigin);
+  const state=data.state;
+  if(!state||typeof state.stage!=='string')return;
+  if(signinChooser&&signinChooser.requestId!==data.requestId)return;
+  if(state.stage==='closed'){
+    signinChooser=null;delete document.documentElement.dataset.signinChooser;delete signersSection.dataset.signin;
+    document.querySelector('#wallet-signin-actions')?.remove();
+    signersSection.querySelector('h2').textContent='Wallets & signers';renderAll();return;
+  }
+  signinChooser={...state,requestId:data.requestId,act:action=>window.top.postMessage({type:'home:wallet-signin-chooser-action',homeToken:activeHomeToken,requestId:data.requestId,action},homeParentOrigin)};
+  document.documentElement.dataset.signinChooser='true';signersSection.dataset.signin=state.stage;
+  signersSection.querySelector('h2').textContent='Choose wallet';
+  document.querySelector('#wallet-signin-actions')?.remove();
+  const actions=document.createElement('div');actions.id='wallet-signin-actions';actions.className='wallet-modal-actions';
+  const status=textNode('p',state.message||({loading:'Loading wallets…',connecting:'Continue in the connection window.',signing:'Continue in your wallet.',passkey:'Confirm with your passkey.',completing:'Saving change…'}[state.stage]||''),'wallet-state');status.setAttribute('role','status');actions.append(status);
+  for(const [action,label] of state.stage==='approval'?[['approve','Use passkey']]:state.stage==='unknown'?[['check','Check again']]:['error','list-error'].includes(state.stage)?[['retry','Choose wallet']]:[])actions.append(modalButton(label,()=>signinChooser?.act(action)));
+  actions.append(modalButton('Cancel',()=>signinChooser?.act('cancel'),true));signersSection.append(actions);
+  renderMethods(buildViewAccounts(),currentApprovalMethods);
 }
 
 function onHomeConnectCommand(event) {

@@ -17,7 +17,7 @@ export async function walletSigninApi(path,body,token='') {
   return response.json();
 }
 export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=>{}}) {
-  let dialog,previousFocus,token='',initial={},resolveRequest,ticker,watcher,managementTimer,epoch=0,remember=false,currentState;
+  let dialog,previousFocus,token='',initial={},resolveRequest,ticker,watcher,managementTimer,epoch=0,remember=false,currentState,chooser,managementResult;
   const flow=createWalletSigninFlow({
     api:(path,body)=>{if(initial.isCurrent&&!initial.isCurrent()&&!path.endsWith('/cancel'))throw new Error('Home session changed');return walletSigninApi(path,body,token);},
     select:async(connector,options)=>{
@@ -33,8 +33,9 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
     },
   });
   function close() {
+    chooser?.close();chooser=null;managementResult=null;
     epoch++;clearInterval(ticker);clearInterval(watcher);clearTimeout(managementTimer);dialog?.close();dialog?.remove();dialog=null;previousFocus?.focus();
-    resolveRequest?.({status:'cancelled'});resolveRequest=null;
+    resolveRequest?.({status:'cancelled',...(initial.restarting?{refocus:false}:{})});resolveRequest=null;
   }
   function button(text,action,quiet=false) {
     const el=node('button',text,quiet?'el-button el-button-quiet connection-quiet':'el-button el-button-primary');el.type='button';el.onclick=action;return el;
@@ -51,36 +52,48 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
     initial={...initial,waitingId:method.chooseConnector?signinChoiceId(method):optionId(method),waitingLabel:method.connector==='walletconnect'?'Phone wallet':method.displayName||connectorName(method.connector),action:'signin',method:method.chooseConnector?null:method,chooseConnector:method.chooseConnector?method.connector:null,providerId:method.providerId,automatic:true};await restart();
   }
   async function restart() {if(initial.action==='signin'&&!dialog?.querySelector('.connection-options-list'))options(initial.signinMethods);const config=initial;await flow.start(config);if(config.chooseConnector)await flow.choose(config.chooseConnector);}
-  function chooseConnected(method) {initial={...initial,action:'add',method,automatic:true,delegateWalletConnect:Boolean(initial.selectWalletConnect)};return flow.start(initial);}
-  function options(methods) {
-    render({stage:'options',action:initial.action,methods});
+  function options(methods) {render({stage:'options',action:initial.action,methods});}
+  async function chooseAdd(kind) {
+    const request=epoch;
+    initial={...initial,method:null,chooseConnector:kind};
+    render({stage:'loading',action:'add'});
+    try {
+      let methods=await initial.loadConnected();if(request!==epoch)return;
+      let method=methods.find(m=>m.connector===kind);
+      if(method?.sign_in_enabled){await connected();return;}
+      initial.chooseConnector=kind;
+      if(!method) {
+        render({stage:'connecting',action:'add'});
+        const opened=await initial.openConnector(`wallet-${kind}`),until=Date.now()+180000;
+        while(request===epoch&&!method&&opened.isOpen()&&Date.now()<until) {
+          await new Promise(resolve=>setTimeout(resolve,500));
+          methods=await initial.loadConnected();if(request!==epoch)return;
+          method=methods.find(m=>m.connector===kind);
+        }
+        if(request!==epoch)return;
+        if(!method){await connected();chooser?.focus();return;}
+      }
+      initial={...initial,method:method||null,chooseConnector:method?null:kind,delegateWalletConnect:true};
+      await restart();
+    }catch{if(request===epoch)render({stage:'list-error',action:'add',message:'Home could not load your wallets.'});}
   }
   async function connected() {
     const request=epoch;
-    try{const methods=await initial.loadConnected();if(request===epoch&&dialog){if(initial.action==='add'&&!methods.length){render({stage:'connect',action:initial.action,methods});}else options(methods);}}
-    catch{if(request===epoch&&dialog)render({stage:'list-error',action:initial.action,message:'Home could not load your wallets.'});}
+    try{const methods=await initial.loadConnected();if(request===epoch&&chooser)render({stage:'options',action:'add',methods});}
+    catch{if(request===epoch)render({stage:'list-error',action:'add',message:'Home could not load your wallets.'});}
   }
-  async function openConnector(kind) {
-    const request=epoch,known=new Set(currentState.methods?.map(optionId));
-    try {
-      dialog.close();const opened=await initial.openConnector(`wallet-${kind}`),until=Date.now()+180000;
-      if(request!==epoch||!dialog)return;
-      // Wallet owns connection completion. Read its saved accounts before returning.
-      clearInterval(ticker);let loading=false;
-      ticker=setInterval(async()=>{
-        if(request!==epoch||!dialog)return;
-        if(opened?.isOpen?.()===false||Date.now()>until){clearInterval(ticker);render({stage:'connect',action:initial.action,methods:currentState.methods||[]});return;}
-        if(loading)return;
-        if(initial.isCurrent&&!initial.isCurrent()){void flow.cancel();return;}
-        loading=true;
-        try{const methods=await initial.loadConnected();if(request===epoch&&dialog&&(methods.some(m=>m.connector===kind&&!known.has(optionId(m)))||opened?.isOpen?.()===false||Date.now()>until)){clearInterval(ticker);const added=methods.find(m=>m.connector===kind&&!known.has(optionId(m)));if(added){await chooseConnected(added);}else{dialog.showModal();render({stage:'connect',action:initial.action,methods});}}}
-        catch{if(request===epoch&&dialog){clearInterval(ticker);render({stage:'list-error',action:initial.action,message:'Home could not load your wallets.'});}}finally{loading=false;}
-      },1000);
-    } catch {if(request===epoch&&dialog){dialog.showModal();render({stage:'list-error',action:initial.action,message:'Home could not open this wallet.'});}}
+  function chooserAction(action) {
+    if(action==='cancel'){void flow.cancel();return;}
+    if(action==='approve'){void flow.approve();return;}
+    if(action==='check'){void flow.retry();return;}
+    if(action==='retry'||action==='refresh'&&currentState?.stage==='options'){void connected();return;}
+    if(currentState?.stage==='options')void chooseAdd(action);
   }
   function render(state) {
     if(state.action==='signin'&&['review','signing','completing'].includes(state.stage)&&!dialog?.querySelector('.connection-options-list')&&initial.signinMethods)options(initial.signinMethods);
+    if(state.stage==='closed'){close();return;}
     currentState=state;
+    if(state.action==='add'&&chooser){if(state.message||['error','list-error','unknown'].includes(state.stage))chooser.focus();chooser.render({stage:state.stage,message:state.message||'',methods:state.stage==='options'?state.methods:[]});return;}
     if(state.action==='signin'&&['choice','connecting','review','signing','completing'].includes(state.stage)&&dialog?.querySelector('.connection-options-list')){
       dialog.dataset.state=state.stage;
       for(const row of dialog.querySelectorAll('.connection-option')){row.disabled=true;const label=row.querySelector('.connection-option-label');if(label&&row.dataset.choice===initial.waitingId){label.dataset.waiting='true';label.textContent=`Waiting for ${initial.waitingLabel}…`;}}
@@ -124,19 +137,12 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
         const list=node('div',null,'connection-card connection-options-list');
         if(state.action==='signin'&&initial.availability?.passkey!==false){const passkey=option('Passkey','','passkey',()=>chooseSignin(null));passkey.disabled=!window.PublicKeyCredential;list.append(passkey);}
         const phoneNotice=initial.availability?.relayNotice?"Connects through a relay that can see this computer's internet address.":'';
-        for(const method of state.methods||[]){const row=option(state.action==='signin'?(method.connector==='walletconnect'?'Phone wallet':method.displayName||connectorName(method.connector)):(method.displayName||connectorName(method.connector)),state.action==='signin'?(method.connector==='walletconnect'?phoneNotice:''):`${shortWalletAddress(method.address)} · ${walletNetwork(method)}`,method.connector==='metamask'&&method.providerId&&method.providerId!=='io.metamask'?'wallet':method.connector,()=>state.action==='signin'?chooseSignin(method):chooseConnected(method));row.dataset.choice=method.chooseConnector?signinChoiceId(method):optionId(method);list.append(row);}
-        if(state.action!=='signin')list.append(option('Connect another wallet','','wallet',()=>render({stage:'connect',action:initial.action,methods:state.methods})));
+        for(const method of state.methods||[]){const row=option(state.action==='signin'?(method.connector==='walletconnect'?'Phone wallet':method.displayName||connectorName(method.connector)):(method.displayName||connectorName(method.connector)),state.action==='signin'?(method.connector==='walletconnect'?phoneNotice:''):`${shortWalletAddress(method.address)} · ${walletNetwork(method)}`,method.connector==='metamask'&&method.providerId&&method.providerId!=='io.metamask'?'wallet':method.connector,()=>chooseSignin(method));row.dataset.choice=method.chooseConnector?signinChoiceId(method):optionId(method);list.append(row);}
+
         body.append(list);
         if(state.action==='signin') {
           const label=node('label',null,'signin-remember'),input=node('input');input.type='checkbox';input.checked=remember;input.onchange=()=>{remember=input.checked;if(!remember)saveSigninChoice('');};label.append(input,document.createTextNode('Remember my choice'));body.append(label);
         }
-      }
-      if(state.stage==='connect'){
-        title.textContent='Connect wallet';
-        body.append(node('p','Connect MetaMask, UniSat or a phone wallet.','connection-note'));
-        const list=node('div',null,'connection-card connection-options-list');
-        for(const [kind,label] of [['metamask','MetaMask'],['unisat','UniSat'],['walletconnect','Phone wallet']])list.append(option(label,'',kind,()=>openConnector(kind)));
-        body.append(list);
       }
       if(state.wallet&&state.stage!=='review')body.append(node('p',`${connectorName(state.wallet.connector)} · ${shortWalletAddress(state.wallet.address)} · ${walletNetwork(state.wallet)}`,'connection-note'));
       const connector=state.wallet?.connector||state.connector;
@@ -157,9 +163,11 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
     if(hadFocus)dialog.querySelector('button')?.focus();
   }
   return {
-    get active(){return Boolean(dialog);},
+    get active(){return Boolean(dialog||managementResult);},
     async start(optionsInput={}) {
-      if(dialog)return {status:'busy'};
+      if(managementResult&&chooser&&!chooser.isOpen()){initial.restarting=true;await flow.cancel();}
+      if(managementResult){if(['connecting','review','signing','passkey','completing'].includes(currentState?.stage))initial.focusConnector?.(initial.method?.connector||initial.chooseConnector);else chooser?.focus();return managementResult;}
+      if(dialog){dialog.showModal();return {status:'cancelled'};}
       token=optionsInput.token||'';initial={...optionsInput,automatic:true};remember=Boolean(readSigninChoice());
       if(!walletSigninOriginAllowed(location.href)){
         render({stage:'error',action:initial.action||'signin',message:'Open this Home with HTTPS to sign in with a wallet.',retryable:false,allowPasskey:false});return {status:'failed'};
@@ -173,20 +181,14 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
         if(!initial.otherOptions&&(saved==='passkey'&&initial.availability?.passkey!==false||method))return chooseSignin(method||null);
         options(methods);return;
       }
-      const result=new Promise(resolve=>{resolveRequest=resolve;});
+      const result=new Promise(resolve=>{resolveRequest=resolve;});managementResult=result;
+      const request=epoch;
       managementTimer=setTimeout(()=>void flow.cancel(),walletSigninRequestTimeoutMs-15000);
       watcher=setInterval(()=>{if(initial.isCurrent&&!initial.isCurrent())void flow.cancel();},500);
-      if(initial.method&&['add'].includes(initial.action)&&initial.loadConnected) {
-        render({stage:'loading',action:initial.action});const request=epoch;
-        try {
-          const methods=await initial.loadConnected();if(request!==epoch)return result;
-          const connectedMethod=methods.find(method=>optionId(method)===optionId(initial.method));
-          if(connectedMethod){initial.method=connectedMethod;}
-          else{render({stage:'list-error',action:initial.action,message:'Refresh the wallet list and choose a connected wallet.'});return result;}
-        }catch{if(request===epoch)render({stage:'list-error',action:initial.action,message:'Home could not load your wallets.'});return result;}
-      }
-      if(initial.method){initial.delegateWalletConnect=Boolean(initial.selectWalletConnect);void flow.start(initial);}
-      else {render({stage:'loading',action:initial.action});void connected();}
+      if(initial.action==='add') {
+        try{const opened=await initial.openChooser(chooserAction);if(request!==epoch){opened.close();return result;}chooser=opened;void connected();}
+        catch{const done=resolveRequest;resolveRequest=null;close();done?.({status:'failed'});}
+      }else if(initial.method){void flow.start(initial);}
       return result;
     },
     cancel:()=>flow.cancel(),
