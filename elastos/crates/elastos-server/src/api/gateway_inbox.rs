@@ -95,6 +95,8 @@ pub(super) async fn append_inbox_requests(
             .count();
     }
     append_home_service_access_notifications(&state.data_dir, context, notifications);
+    append_custody_request_notifications(&state.data_dir, context, notifications);
+    super::gateway_public_ipfs::append_public_metadata_notifications(state, context, notifications);
     if let Some(card) =
         super::gateway_collaboration_presence::community_presence_request_notification(
             state, context,
@@ -109,7 +111,11 @@ pub(super) async fn append_inbox_requests(
         notifications.attention_count += usize::from(card.severity == "attention");
         notifications.entries.push(card);
     }
-    append_wallet_approval_notifications(notifications, wallet_approvals);
+    append_wallet_approval_notifications(
+        notifications,
+        wallet_approvals,
+        crate::public_metadata_consent::public_metadata_offered(&state.data_dir),
+    );
     // Runtime capability requests are the admin's to answer.
     if ensure_admin_context(&state.data_dir, context).is_ok() {
         if let Ok(capability_requests) = runtime_capability_pending_requests(&state.data_dir).await
@@ -172,13 +178,19 @@ pub(super) fn append_hosted_route_notifications(
             severity: "attention".to_string(),
             read: false,
             created_at: route.requested_at,
+            passkey_approval: false,
+            step_up_request: None,
         });
     }
 }
 
+/// `metadata_public_line`: whether public metadata sharing is offered on
+/// this Home (A5); only then does a creator approval say its metadata is
+/// public.
 pub(super) fn append_wallet_approval_notifications(
     notifications: &mut HomeNotificationsSummary,
     approval_requests: Vec<SystemWalletApprovalSummary>,
+    metadata_public_line: bool,
 ) {
     for request in approval_requests {
         notifications.unread_count += 1;
@@ -188,20 +200,39 @@ pub(super) fn append_wallet_approval_notifications(
         } else {
             request.capsule_id.clone()
         };
+        let browser_account_access = request.intent == "browser_account_access";
+        let passkey_approval =
+            !browser_account_access && is_managed_wallet_proof_type(&request.proof_type);
+        // Runtime raises some requests itself (opening protected content); it
+        // is not an app Home can open, so the entry names no source app.
+        let source_app =
+            if request.capsule_id == crate::protected_content_runtime::RUNTIME_PROVIDER_ID {
+                String::new()
+            } else {
+                request.capsule_id.clone()
+            };
         notifications.entries.push(HomeNotificationEntrySummary {
             id: format!("wallet-approval-request:{}", request.request_id),
-            source_app: request.capsule_id.clone(),
+            source_app,
             kind: "wallet_approval_request".to_string(),
             title: wallet_approval_title(&request.intent),
             body: format!(
-                "{} requests wallet approval for {}.",
-                capsule, request.reason
+                "{} requests wallet approval for {}.{}",
+                capsule,
+                request.reason,
+                // Display only: the hashed approval request is unchanged.
+                if metadata_public_line && request.reason == RUNTIME_CUSTODY_CREATOR_APPROVAL_REASON
+                {
+                    " This asset's metadata is public on IPFS."
+                } else {
+                    ""
+                }
             ),
             action_ref: Some(HomeNotificationActionSummary {
                 app: WALLET_CAPSULE_ID.to_string(),
                 action_id: format!(
                     "{}:{}",
-                    if request.intent == "browser_account_access" {
+                    if browser_account_access {
                         "wallet-review-request"
                     } else {
                         "wallet-approve-request"
@@ -212,6 +243,8 @@ pub(super) fn append_wallet_approval_notifications(
             severity: "attention".to_string(),
             read: false,
             created_at: request.created_at,
+            passkey_approval,
+            step_up_request: None,
         });
     }
 }
@@ -260,6 +293,8 @@ pub(super) fn append_runtime_capability_notifications(
             severity: "attention".to_string(),
             read: false,
             created_at: request.requested_at,
+            passkey_approval: false,
+            step_up_request: None,
         });
     }
 }
@@ -339,6 +374,14 @@ pub(super) async fn inbox_action(
                 Err(err) => inbox_error_response(err),
             }
         }
+        // A custody refusal answers with its code, as the Custody app's do.
+        Err(err)
+            if err
+                .downcast_ref::<crate::custody_pool_setup::CustodyRefusal>()
+                .is_some() =>
+        {
+            custody_error_response(err)
+        }
         Err(err) => inbox_error_response(err),
     }
 }
@@ -367,6 +410,7 @@ fn parse_inbox_action_request(
         Ok(InboxActionRequest {
             action_id,
             step_up_token: None,
+            step_up_request: None,
         })
     } else {
         Err("unsupported inbox action content type".to_string())
@@ -519,6 +563,38 @@ async fn dispatch_inbox_action(
         )?;
         return Ok("Rejected wallet request.".to_string());
     }
+    if let Some(request_id) = action_id
+        .strip_prefix(crate::custody_surface::INBOX_ACTION_APPROVE_REQUEST)
+        .and_then(|rest| rest.strip_prefix(':'))
+    {
+        return approve_custody_request(
+            state,
+            launch,
+            request_id,
+            action.step_up_token.as_deref(),
+            action.step_up_request.as_ref(),
+        )
+        .await;
+    }
+    if let Some(request_id) = action_id
+        .strip_prefix(crate::custody_surface::INBOX_ACTION_DECLINE_REQUEST)
+        .and_then(|rest| rest.strip_prefix(':'))
+    {
+        return decline_custody_request(state, context, request_id).await;
+    }
+    // META-PUBLIC A4: consent and "Stop sharing metadata".
+    if action_id == crate::custody_surface::INBOX_ACTION_PUBLIC_METADATA_ENABLE {
+        return super::gateway_public_ipfs::public_metadata_enable(
+            state,
+            launch,
+            action.step_up_token.as_deref(),
+            action.step_up_request.as_ref(),
+        )
+        .await;
+    }
+    if action_id == crate::custody_surface::INBOX_ACTION_PUBLIC_METADATA_STOP {
+        return super::gateway_public_ipfs::public_metadata_stop(state, launch).await;
+    }
     if let Some(request_id) = action_id.strip_prefix("capability-approve-request:") {
         return approve_runtime_capability_request(data_dir, request_id).await;
     }
@@ -576,6 +652,62 @@ async fn dispatch_inbox_action(
             "Approved Wallet market-price HTTP source through Inbox",
         )?;
         return Ok("Approved Wallet market-price source.".to_string());
+    }
+    if action_id == CREATOR_CHANNELS_HTTP_APPROVE_ACTION_ID {
+        ensure_admin_context(data_dir, context)?;
+        let approved_at = now_ts();
+        store_creator_channels_http_policy(data_dir, &context.principal_id, approved_at)?;
+        let _ = crate::notifications::mark_acted_for_action(data_dir, None, action_id);
+        append_creator_channels_policy_audit(
+            data_dir,
+            &context.principal_id,
+            &context.session_id,
+            "approved",
+            "Approved Creator channel directory HTTP source through Inbox",
+        )?;
+        return Ok("Approved Creator channel directory.".to_string());
+    }
+    if action_id == MARKETPLACE_DIRECTORY_HTTP_APPROVE_ACTION_ID {
+        ensure_admin_context(data_dir, context)?;
+        let approved_at = now_ts();
+        MARKET_DIRECTORY.store_policy(data_dir, &context.principal_id, approved_at)?;
+        let _ = crate::notifications::mark_acted_for_action(data_dir, None, action_id);
+        MARKET_DIRECTORY.append_policy_audit(
+            data_dir,
+            &context.principal_id,
+            &context.session_id,
+            "approved",
+            "Approved Marketplace directory HTTP source through Inbox",
+        )?;
+        return Ok("Approved Marketplace directory.".to_string());
+    }
+    if MARKET_DIRECTORY.is_deny_action(action_id) {
+        let _ = crate::notifications::dismiss_external_http_request(
+            data_dir,
+            MARKETPLACE_DIRECTORY_HTTP_REQUEST_ID,
+        );
+        MARKET_DIRECTORY.append_policy_audit(
+            data_dir,
+            &context.principal_id,
+            &context.session_id,
+            "rejected",
+            "Rejected Marketplace directory HTTP source through Inbox",
+        )?;
+        return Ok("Rejected Marketplace directory.".to_string());
+    }
+    if CREATOR_CHANNEL_DIRECTORY.is_deny_action(action_id) {
+        let _ = crate::notifications::dismiss_external_http_request(
+            data_dir,
+            CREATOR_CHANNELS_HTTP_REQUEST_ID,
+        );
+        append_creator_channels_policy_audit(
+            data_dir,
+            &context.principal_id,
+            &context.session_id,
+            "rejected",
+            "Rejected Creator channel directory HTTP source through Inbox",
+        )?;
+        return Ok("Rejected Creator channel directory.".to_string());
     }
     if action_id.strip_prefix(WALLET_PRICE_HTTP_DENY_ACTION_PREFIX) == Some("coingecko") {
         let _ = crate::notifications::dismiss_external_http_request(

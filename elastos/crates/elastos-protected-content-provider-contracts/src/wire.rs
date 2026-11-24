@@ -2,7 +2,8 @@ use std::{fmt, io};
 
 use elastos_protected_content_contracts::{
     CanonicalContract, ContractError, MAX_KEY_ENVELOPE_BYTES,
-    MAX_RECIPIENT_SEALED_CONTRIBUTION_BYTES, MAX_RIGHTS_POLICY_BYTES, MAX_THRESHOLD_NODES,
+    MAX_RECIPIENT_SEALED_CONTRIBUTION_BYTES, MAX_RIGHTS_POLICY_BYTES,
+    MAX_SIGNED_POOL_DESCRIPTOR_BYTES_V1, MAX_THRESHOLD_NODES,
 };
 use serde::{
     de::{DeserializeOwned, Error as _, SeqAccess, Visitor},
@@ -15,6 +16,12 @@ pub const MAX_PROVIDER_OPAQUE_HANDLE_BYTES_V1: usize = 32;
 pub const MAX_RECIPIENT_IDENTITY_BYTES_V1: usize = 256;
 pub const MAX_SIGNED_RUNTIME_RELEASE_OPERATION_BYTES_V1: usize =
     (MAX_RIGHTS_POLICY_BYTES as usize) + (32 * 1024);
+/// A V2 operation embeds the signed pool descriptor and up to four vouched
+/// recipients (L9). The provider frame bound is unchanged.
+pub const MAX_SIGNED_RUNTIME_RELEASE_OPERATION_BYTES_V2: usize =
+    MAX_SIGNED_RUNTIME_RELEASE_OPERATION_BYTES_V1 + MAX_SIGNED_POOL_DESCRIPTOR_BYTES_V1 + 32 * 1024;
+/// One pool statement a node is asked to sign (a recipient attestation).
+pub const MAX_POOL_STATEMENT_BYTES_V1: usize = 8 * 1024;
 pub const MAX_SIGNED_NODE_RIGHTS_DECISION_BYTES_V1: usize = 8 * 1024;
 pub const MAX_CUSTODY_ENVELOPE_BYTES_V1: usize = MAX_KEY_ENVELOPE_BYTES as usize;
 pub const MAX_CUSTODY_NODE_PROVISIONING_RECORD_BYTES_V1: usize = MAX_KEY_ENVELOPE_BYTES as usize;

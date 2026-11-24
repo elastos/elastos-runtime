@@ -1,5 +1,5 @@
 import { createHomeNavigationClient } from "/apps/home/home-navigation-client.js";
-import { createHomeClipboardClient } from "/apps/home/home-clipboard-client.js?v=home-20260726a";
+import { createHomeClipboardClient } from "/apps/home/home-clipboard-client.js?v=home-20261111a";
 
 const lockedShell = document.getElementById("locked-shell");
 const peopleShell = document.getElementById("people-shell");

@@ -1,12 +1,32 @@
 # Protected-content v1 contracts
 
-Status: source-only authority, operational-contract, and canonical-wire
-foundation. The normative authority types are in the
-`elastos-protected-content-contracts` crate, and the companion source-only
-custody helper lives in `elastos-protected-content-custody`. This document
-describes the reviewed contract layer; it does not claim running rights
-providers, custody nodes, content availability, decryption, playback, or
-product integration.
+This reference defines the v1 canonical authority foundation in
+`elastos-protected-content-contracts` and its custody helper. Runtime now
+integrates these primitives; this document's v1 type descriptions are not a
+complete description of the active pool-session protocol or installed proof.
+
+## Active pool-session layer
+
+The active server path composes the foundation with `SignedPoolDescriptorV3`,
+verified against the item's immutable custody epoch. Descriptor version 3,
+media format version 2 and the `PoolSession*V1` transport types identify
+separate contracts; their version numbers are not interchangeable.
+
+Runtime prepares the pool servers before Wallet authorization. Each server
+returns a `SignedPoolRecipientAttestationV2`. The Wallet request and
+`SignedRuntimeReleaseOperationV2` bind the authorized server recipients and
+content operation. Custody nodes independently verify rights and seal their
+contributions to those recipients. The server's Runtime-only decrypt provider
+reconstructs the CEK and encrypts verified output to the buyer's session
+delivery key. Neither Carrier nor the buyer-facing capsule receives a CEK.
+
+The implementation is in `custody_pool_descriptor.rs`,
+`protected_content_pool_open.rs`, `custody_pool_service.rs` and
+`protected_content_runtime.rs` in `elastos-server`, with canonical authority schemas in
+the contracts crate and pool-session transport/state types in
+`elastos-protected-content-runtime/src/pool_session.rs`. [Protected content](PROTECTED_CONTENT.md) describes the
+product workflow. Source integration does not prove installed
+playback or production confidentiality.
 
 ## Authority boundaries
 
@@ -109,8 +129,9 @@ its public key and identity, and a caller cannot replace either the owner Wallet
 or recipient after the signature.
 
 Runtime must create the session binding, request time window, and fresh replay
-nonce, then ask Wallet Provider to sign those exact canonical bytes. A capsule
-may request an action, but it does not choose replay or session authority.
+nonce, then ask Wallet Provider to sign the request's readable signing message.
+A capsule may request an action, but it does not choose replay or session
+authority.
 
 `RecipientKeyIdentityV1` contains a bounded encryption-suite identifier and the
 SHA-256 identity of the exact recipient public-key bytes under that suite. It
@@ -119,19 +140,26 @@ the selected key and suite; the custody integration must enforce a reviewed
 suite allowlist, carry the exact public key to each selected node, require
 `matches_public_key` before encryption, and prove key ownership.
 
-The signature is EIP-191 over the request's canonical bytes. Its 65th byte is
-canonically `0` or `1`. Values `27` and `28` are rejected at construction and
-canonical decode; v1 has no compatibility fallback. Current Wallet Provider
-surfaces still need a typed protected-content integration that verifies an
-externally completed signature, canonicalizes its recovery byte to `0` or `1`,
-and only then constructs `WalletSignedRightsRequestV1`.
+The Wallet signs a readable message, not the canonical bytes. `signing_message`
+in `elastos-protected-content-contracts/src/rights.rs` returns it: for v1 the
+action, Wallet account and expiry, then a `Request:` line carrying the
+request's canonical hash, so the message commits to every other field; v2 uses
+its consent text (`consent_text_v2`), whose `Request:` line is the same hash.
+The signature is EIP-191 (`personal_sign`) over that message's UTF-8 bytes;
+`signing_hash` is the digest every verifier recovers against, and the fixed
+vectors in `canonical_signature_golden_vectors` and `rights_v2_tests.rs` pin
+both forms. The signature's 65th byte is canonically `0` or `1`. Values `27` and `28` are rejected at construction and
+canonical decode; v1 has no compatibility fallback. The Runtime Wallet
+integration verifies an externally completed signature
+and canonicalizes its recovery byte before constructing the canonical signed
+request. The contract itself still rejects `27` and `28`.
 
 Verification requires an `AtomicReplayClaimer`. Its insert-if-absent key is the
 domain-separated exact authority scope plus nonce, not the request hash. Times
 are intentionally outside that scope, so changing expiry cannot reuse a nonce.
-There is no verification overload that omits replay enforcement. The crate has
-only a private in-memory test implementation; Runtime/node durable storage is
-integration work.
+There is no verification overload that omits replay enforcement. The contract
+crate supplies a private in-memory implementation for tests;
+Runtime and custody integrations own their durable replay stores.
 
 `SignedRightsReceiptV1` is authenticated preliminary audit evidence. Even an
 authentic `Allowed` receipt is not key-release authority. The release verifier
@@ -141,7 +169,7 @@ path into release verification.
 ## Typed policy and recipient-key authorization
 
 `RightsPolicyBodyV1` is the v1 immutable policy body. It is intentionally
-narrow and grounded in the current reviewed rights-provider surface:
+narrow and grounded in the reviewed rights-evaluation surface:
 
 - one exact full `EncryptedContentIdentityV1`;
 - one exact 16-byte `ContentAccessIdV1` bound separately from the full
@@ -158,7 +186,7 @@ narrow and grounded in the current reviewed rights-provider surface:
   `RightsObservationFinalityV1::Finalized`.
 
 This is not a generic policy language, opaque byte blob, or arbitrary map.
-It is the smallest reviewed source-only policy shape that matches the current
+It is the smallest reviewed policy shape that matches the current
 typed `chain-provider` `has_access_by_content_id(address,bytes16)` path. The
 signed policy binds the exact full encrypted-content identity, the exact Base
 access content ID, and the exact `RightsActionV1`; product code must not infer
@@ -166,7 +194,9 @@ action semantics from the boolean on-chain entitlement alone. Production-
 approved chain ids, contract addresses, selectors, and ABI fixtures remain open
 review inputs, but they are required typed policy fields now, not ambient
 provider configuration. The observation finality model itself is fixed to
-`finalized` in this current review v1 line.
+`finalized` in this current review v1 line. The reasons and the cost it adds
+before a new mint or purchase can be opened are in
+[Key release waits for finality](PROTECTED_CONTENT.md#key-release-waits-for-finality).
 
 `RightsEvaluationEvidenceRequestV1` is the matching typed evidence request. It
 pins the exact `ProtectedContentBindingV1` and `RightsPolicyIdentityV1`. A node
@@ -247,16 +277,17 @@ binds:
 
 Verification proves those bindings and requires the Profile-signed
 recipient-key authorization to authorize the Runtime issuer. Carrier endpoint
-authentication remains transport evidence only. This source-only contract does
+authentication remains transport evidence only. This primitive contract does
 not implement provider routing or Runtime durable replay state. Verification
 returns an authenticated replay-pending surface only: it proves signatures and
 exact bindings, exposes the nested request hashes and replay-claim keys, and
 does not expose actionable `VerifiedRightsRequestV1` or
-`VerifiedKeyReleaseRequestV1` values. The companion source-only custody helper
+`VerifiedKeyReleaseRequestV1` values. The companion custody helper
 uses those exact claim keys for one local dual-key atomic claim transition. It
 can persist the exact recipient-encrypted node contribution with that claim and
 replay only that result after restart. Runtime durable replay and orchestration
-remain later work. A crash or storage failure after the claim becomes durable
+are implemented above this primitive contract; they do not change the node-local
+claim rule. A crash or storage failure after the claim becomes durable
 but before its result becomes durable is fail closed and requires a fresh
 Runtime release operation; there is no operation-resume journal for that state.
 
@@ -288,15 +319,15 @@ The contribution payload is provider-private
 `RecipientSealedContributionV1`: exact recipient key identity plus bounded
 opaque bytes. The contract requires that recipient to equal the signed release
 recipient and authenticates the bytes and commitment. The contract type itself
-does not implement encryption. The companion source-only
+does not implement encryption. The companion
 `elastos-protected-content-custody` crate implements X-Wing draft-06 PQ-hybrid
 recipient-sealed contributions and threshold reconstruction, including a
 manifest-bound reconstructed-key commitment check that detects a wrong
 reconstructed key. It strictly validates the embedded X25519 component. It
 does not identify the malicious node and is not verifiable secret sharing.
-The Runtime and private providers use it in the inactive source path, including
-the process-backed two-Runtime proof. Installed activation and external
-cryptographic review remain open; this contract alone is not production
+Runtime and private providers use this helper in the protected-content path.
+Source and process-backed tests remain distinct from installed acceptance and
+external cryptographic review; this contract alone is not production
 confidentiality evidence.
 
 ## Terminal result
@@ -316,7 +347,28 @@ Contributions from another request or recipient cannot be reused. The receipt
 is audit/result evidence, not a portable grant that can authorize another
 release.
 
+## Media format v2 fields
+
+New media mints use the DASH format (suite `cenc-dash-aes128ctr/v2`, identity
+kind `0x03`, package root `protected-content/v2/`). The provider operations gain
+only optional fields, so a v1 request is byte-identical to before. The decrypt
+provider's open takes `media_identity_v2` and `protected_init_segments` in place
+of the v1 identity and init segment, and its read takes `rendition_index` and
+returns `segment_proof`; the viewer open answer is a new schema,
+`elastos.library.runtime-custody-viewer/v2`. The protect provider takes
+`representations`, `extra_pssh_boxes`, `rendition_index` and
+`media_identity_v2`; the media provider's output is
+`elastos.media-provider.prepared-media/v2`. There are no new routes, operations,
+approval types or capabilities. The identity binds the rendition set through a
+Merkle root per rendition; its domains are
+`elastos.protected-content.cenc-dash-media-identity/v2`,
+`...cenc-dash-segment-leaf/v2` and `...cenc-dash-manifest-root/v2`. The pssh
+system ids and registry are described in
+[Protected content](PROTECTED_CONTENT.md).
+
 ## Threat model and fail-closed rules
+
+This section is a list of the inputs these contracts reject.
 
 Tests reject wrong Wallet, attacker-signed victim address, wrong content,
 policy, evidence request, node set, threshold, Profile, session, action,
@@ -329,14 +381,15 @@ insufficient threshold, required-plus-one released evidence, malformed
 canonical input, noncanonical Wallet/Profile encodings, and noncanonical or
 low-order X25519 contract key encodings.
 
-These contracts plus the source-only `elastos-protected-content-custody` helper
+These contracts plus the `elastos-protected-content-custody` helper
 provide one bounded node-local owner-only dual-key replay store. It binds the
 store to one node, privately gates release on the exact claim, persists the
 exact recipient-encrypted contribution, and replays only that result. They do
-not solve malicious custody nodes, rights-policy correctness, Runtime durable
-replay storage, full operational custody state, recovery from a durable claim
-without a result, issuer-key lifecycle, node admission/rotation/recovery,
-Library list/open/play, rendering, or product workflow safety. The share-wrap
+not by themselves solve malicious custody nodes, rights-policy correctness,
+recovery from a durable claim without a result, issuer-key lifecycle, or node
+admission/rotation/recovery. Runtime orchestration, Library list/open/play and
+rendering are separate integration layers with their own verification gates.
+The share-wrap
 suite is `elastos-xwing-draft06-hkdf-sha256-aes256gcm/v1`:
 X-Wing draft-06 with X25519 + ML-KEM-768, HKDF-SHA256, and AES-256-GCM.
 This is PQ-hybrid confidentiality only; authority signatures remain
@@ -344,9 +397,9 @@ Ed25519/classical and full PQ authorization is a pre-activation decision. The
 Runtime mint journal can commit 2-of-3 PQ-hybrid envelopes without claiming
 content availability or a catalog path. Buy/open remains blocked until Runtime
 verifies the existing content provider's exact signed availability receipt.
-Remaining inactive e2e and cutover work is tracked in GitHub issues.
+Remaining installed proof work is tracked in GitHub issues.
 
-The parent branch's provisional `elastos_common::protected_content` DTOs are
-not this canonical contract. Integration must replace that surface atomically
-after independent review. It must not add parallel decoders, migration adapters,
-or compatibility fallbacks.
+The provisional `elastos_common::protected_content` DTOs were never this
+canonical contract, and the atomic cutover removed that surface. No parallel
+decoder, migration adapter, or compatibility fallback was added, and none may
+be introduced.

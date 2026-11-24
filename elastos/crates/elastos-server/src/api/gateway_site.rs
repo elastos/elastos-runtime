@@ -529,11 +529,89 @@ pub(super) async fn serve_cid_root(
     if !is_valid_cid(&cid) {
         return (StatusCode::BAD_REQUEST, "Invalid CID").into_response();
     }
-    if !cid_route_admitted(&state, &headers) {
+    let Some(reader) = cid_route_admitted(&state, &headers) else {
         return cid_route_refused();
-    }
+    };
 
-    serve_directory_root(&state, &cid).await
+    serve_directory_root(&state, &cid, reader).await
+}
+
+/// Published CID content is embeddable by a capsule page.
+///
+/// A capsule runs under `Cross-Origin-Embedder-Policy: require-corp` in an
+/// opaque origin, so every subresource it loads must say it may be embedded.
+/// Without this the fetch succeeds and the browser throws the bytes away:
+/// `ERR_BLOCKED_BY_RESPONSE.NotSameOriginAfterDefaultedToSameOriginByCoep`,
+/// a 200 that renders nothing. Capsule assets already answer `cross-origin`
+/// for the same reason, and this content is public by construction.
+const CID_CONTENT_CORP: &str = "cross-origin";
+
+/// Published CID content is also readable by a capsule's own `fetch`.
+///
+/// `Cross-Origin-Resource-Policy` lets a capsule EMBED this content -- an
+/// `<img>`, which is a no-cors request. Reading it with `fetch`, as the shelf
+/// does for an item's metadata document, is a CORS request from an opaque
+/// origin, and without this it fails before any status is seen: not a 404 a
+/// caller can act on, but a network error it cannot tell from a missing file.
+///
+/// `null` is the capsule origin, the same value the capsule's own assets are
+/// served with.
+const CID_CONTENT_ORIGIN: &str = "null";
+
+/// What a bare CID's bytes actually are.
+///
+/// A CID carries no name, so this route answered `application/octet-stream`
+/// for everything -- which a browser treats as a file to save rather than a
+/// picture to show, and which made every channel cover arrive in the
+/// downloads tray instead of on the card.
+///
+/// Decided from the bytes' own magic number, never from anything a caller
+/// said. Only a short list, and deliberately no `text/html` or `image/svg+xml`
+/// from an unnamed blob: both are documents that can carry script, and this
+/// origin is the one the Home's own pages are served from. A named path inside
+/// a CID bundle is a different case, handled by `content_type` and by the
+/// publishing flow that put a name there.
+pub(super) fn sniffed_cid_content_type(bytes: &[u8]) -> &'static str {
+    const UNKNOWN: &str = "application/octet-stream";
+    if bytes.len() < 12 {
+        return UNKNOWN;
+    }
+    if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]) {
+        return "image/png";
+    }
+    if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        return "image/jpeg";
+    }
+    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        return "image/gif";
+    }
+    if bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP" {
+        return "image/webp";
+    }
+    if bytes.starts_with(&[0x00, 0x00, 0x01, 0x00]) {
+        return "image/x-icon";
+    }
+    if bytes.starts_with(b"%PDF-") {
+        return "application/pdf";
+    }
+    // ISO base media: `ftyp` at offset 4, with the brand deciding which.
+    if &bytes[4..8] == b"ftyp" {
+        return match &bytes[8..11] {
+            b"M4A" => "audio/mp4",
+            b"qt " => "video/quicktime",
+            _ => "video/mp4",
+        };
+    }
+    if bytes.starts_with(&[0x1a, 0x45, 0xdf, 0xa3]) {
+        return "video/webm";
+    }
+    if bytes.starts_with(b"OggS") {
+        return "audio/ogg";
+    }
+    if bytes.starts_with(b"ID3") || bytes.starts_with(&[0xff, 0xfb]) {
+        return "audio/mpeg";
+    }
+    UNKNOWN
 }
 
 pub(super) async fn serve_ipfs_cid_root(
@@ -544,38 +622,56 @@ pub(super) async fn serve_ipfs_cid_root(
     if !is_valid_cid(&cid) {
         return (StatusCode::BAD_REQUEST, "Invalid CID").into_response();
     }
-    if !cid_route_admitted(&state, &headers) {
+    let Some(reader) = cid_route_admitted(&state, &headers) else {
         return cid_route_refused();
-    }
+    };
 
-    match fetch_file_inline(&state, &cid, "").await {
+    match fetch_file_inline(&state, &cid, "", reader).await {
         Ok(bytes) => (
             StatusCode::OK,
-            [("content-type", "application/octet-stream")],
+            [
+                ("content-type", sniffed_cid_content_type(&bytes)),
+                ("cross-origin-resource-policy", CID_CONTENT_CORP),
+                ("access-control-allow-origin", CID_CONTENT_ORIGIN),
+            ],
             bytes,
         )
             .into_response(),
-        Err(_) => serve_directory_root(&state, &cid).await,
+        Err(_) => serve_directory_root(&state, &cid, reader).await,
     }
 }
 
-/// Whether the raw CID routes serve this request. An ordinary Home reads its
-/// local store over HTTP only for its own signed-in sessions and apps: it
-/// shares files with others over Carrier, with its contacts, never over open
-/// HTTP, so a file that stops being shared is never served here either. A
-/// node that serves publisher content (a seed) keeps its public CID gateway.
-/// A published site is served through its own route.
-fn cid_route_admitted(state: &GatewayState, headers: &HeaderMap) -> bool {
-    crate::carrier::is_trusted_source_runtime(&state.data_dir)
-        || super::gateway_home_token::require_gateway_launch(&state.data_dir, headers).is_ok()
+/// Who a raw CID read is for, which decides how far it reaches.
+#[derive(Clone, Copy)]
+enum CidReader {
+    /// This Home's own signed-in session or app: a file this Home does not
+    /// hold is read from the holders Carrier knows, as the `/listing` route
+    /// reads an item's folder (D4, STAB-20).
+    App,
+    /// The public CID gateway of a node that serves publisher content: its
+    /// own store only, as before.
+    Public,
+}
+
+/// Whether the raw CID routes serve this request, and for whom. An ordinary
+/// Home reads its local store over HTTP only for its own signed-in sessions
+/// and apps: it shares files with others over Carrier, with its contacts,
+/// never over open HTTP, so a file that stops being shared is never served
+/// here either. A node that serves publisher content (a seed) keeps its
+/// public CID gateway. A published site is served through its own route.
+fn cid_route_admitted(state: &GatewayState, headers: &HeaderMap) -> Option<CidReader> {
+    if super::gateway_home_token::require_gateway_launch(&state.data_dir, headers).is_ok() {
+        return Some(CidReader::App);
+    }
+    crate::carrier::is_trusted_source_runtime(&state.data_dir).then_some(CidReader::Public)
 }
 
 fn cid_route_refused() -> Response {
     (StatusCode::NOT_FOUND, "File not found").into_response()
 }
 
-async fn serve_directory_root(state: &GatewayState, cid: &str) -> Response {
-    match serve_cid_path_result(state, cid, "index.html").await {
+async fn serve_directory_root(state: &GatewayState, cid: &str, reader: CidReader) -> Response {
+    match serve_cid_path_result(state, cid, "index.html", reader).await {
         Ok(response) => response,
         Err(_) => (StatusCode::NOT_FOUND, "index.html not found in CID bundle").into_response(),
     }
@@ -585,14 +681,24 @@ async fn serve_cid_path_result(
     state: &GatewayState,
     cid: &str,
     file_path: &str,
+    reader: CidReader,
 ) -> Result<Response, StatusCode> {
     validate_file_path(file_path).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     // Every read goes to the local content store; the gateway keeps no copy.
-    match fetch_file_inline(state, cid, file_path).await {
+    match fetch_file_inline(state, cid, file_path, reader).await {
         Ok(bytes) => {
             let ct = content_type(file_path);
-            Ok((StatusCode::OK, [("content-type", ct)], bytes).into_response())
+            Ok((
+                StatusCode::OK,
+                [
+                    ("content-type", ct),
+                    ("cross-origin-resource-policy", CID_CONTENT_CORP),
+                    ("access-control-allow-origin", CID_CONTENT_ORIGIN),
+                ],
+                bytes,
+            )
+                .into_response())
         }
         Err(_) => Err(StatusCode::NOT_FOUND),
     }
@@ -663,8 +769,9 @@ async fn serve_site_file(
                 vec![requested.to_string(), format!("{}/index.html", requested)]
             };
             for bundle_path in bundle_candidates {
+                // A published site is served from this Home's own store.
                 if let Ok(mut response) =
-                    serve_cid_path_result(state, bundle_cid, &bundle_path).await
+                    serve_cid_path_result(state, bundle_cid, &bundle_path, CidReader::Public).await
                 {
                     stamp_site_headers(&mut response, site_root_uri, Some(site_head))?;
                     return Ok(response);
@@ -729,39 +836,49 @@ pub(super) async fn serve_cid_file(
     if !is_valid_cid(&cid) {
         return (StatusCode::BAD_REQUEST, "Invalid CID").into_response();
     }
-    if !cid_route_admitted(&state, &headers) {
+    let Some(reader) = cid_route_admitted(&state, &headers) else {
         return cid_route_refused();
-    }
-    match serve_cid_path_result(&state, &cid, &file_path).await {
+    };
+    match serve_cid_path_result(&state, &cid, &file_path, reader).await {
         Ok(response) => response,
-        Err(StatusCode::BAD_REQUEST) => {
-            (StatusCode::BAD_REQUEST, "Invalid file path").into_response()
-        }
-        Err(_) => (StatusCode::NOT_FOUND, "File not found").into_response(),
+        Err(StatusCode::BAD_REQUEST) => (
+            StatusCode::BAD_REQUEST,
+            [("access-control-allow-origin", CID_CONTENT_ORIGIN)],
+            "Invalid file path",
+        )
+            .into_response(),
+        Err(_) => (
+            StatusCode::NOT_FOUND,
+            [("access-control-allow-origin", CID_CONTENT_ORIGIN)],
+            "File not found",
+        )
+            .into_response(),
     }
 }
 
-/// Fetch a single file from this node's IPFS repo only: no network search, pin
-/// or gateway fallback, and content held only by availability replicas is not
-/// served.
-/// The gateway keeps no copy: earlier releases' cache entries are never read.
-/// The local backend refuses a file past `MAX_GATEWAY_FILE_SIZE` while reading.
-async fn fetch_file_inline(state: &GatewayState, cid: &str, path: &str) -> anyhow::Result<Vec<u8>> {
+/// Apply the admitted reader's scope to the Content read.
+async fn fetch_file_inline(
+    state: &GatewayState,
+    cid: &str,
+    path: &str,
+    reader: CidReader,
+) -> anyhow::Result<Vec<u8>> {
     let registry = state
         .provider_registry
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("gateway provider registry unavailable"))?;
-    let bytes = crate::content::fetch_verified_local_bytes_via_provider(
+    let scope = match reader {
+        CidReader::App => crate::content::CidReadScope::LocalThenKnownHolders,
+        CidReader::Public => crate::content::CidReadScope::LocalOnly,
+    };
+    crate::content::fetch_bounded_cid_bytes(
         registry,
         cid,
         (!path.is_empty()).then_some(path),
         MAX_GATEWAY_FILE_SIZE,
+        scope,
     )
-    .await?;
-    if bytes.len() > MAX_GATEWAY_FILE_SIZE {
-        anyhow::bail!("file exceeds size limit");
-    }
-    Ok(bytes)
+    .await
 }
 
 // ---------------------------------------------------------------------------

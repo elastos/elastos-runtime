@@ -199,11 +199,12 @@ cleanup() {
     fi
 
     if [ "${#NEW_DIDS[@]}" -gt 0 ]; then
-        log "-- removing this run's ${#NEW_DIDS[@]} descriptor/ticket file(s) from ${SHARED_LIVE_DIR} (by DID, never a blind glob) --"
+        log "-- removing this run's ${#NEW_DIDS[@]} descriptor/ticket/node-card file set(s) from ${SHARED_LIVE_DIR} (by DID, never a blind glob) --"
         local did
         for did in "${NEW_DIDS[@]}"; do
             rm -f "${SHARED_LIVE_DIR}/${did}.descriptor.json" "${SHARED_LIVE_DIR}/${did}.ticket" \
-                || log "WARN: failed to remove one of ${did}'s descriptor/ticket files from ${SHARED_LIVE_DIR}; remove by hand if they're stale"
+                "${SHARED_LIVE_DIR}/${did}.node-card" \
+                || log "WARN: failed to remove one of ${did}'s descriptor/ticket/node-card files from ${SHARED_LIVE_DIR}; remove by hand if they're stale"
         done
     fi
 

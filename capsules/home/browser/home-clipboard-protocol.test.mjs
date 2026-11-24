@@ -213,3 +213,76 @@ for (const target of ["people", "chat-room"]) {
     assert.equal(homeClipboardOperationAllowed("browser", "profile.id", "write"), false);
   });
 }
+
+test("Custody identifiers and fingerprints are bounded and write-only", () => {
+  const identifiers = [
+    "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+    "0x3f2a9c4b7e1d5a6f8b0c2e4d6a8f1b3c5e7d9a0b",
+    // A Carrier connect ticket: lowercase base32, no padding.
+    "vqaaaamgf5g3ak7wq2mbtqefxk7kfqsxz6hkd3dk5pf2kqz4mfm5vxuaaeaqaa2abrgaqb",
+    "a".repeat(MAX_HOME_CLIPBOARD_IDENTIFIER_UTF8_BYTES),
+  ];
+  for (const identifier of identifiers) {
+    assert.equal(
+      homeClipboardValidWriteText("custody", "custody.identifier", identifier),
+      true,
+    );
+  }
+  for (const denied of [
+    "",
+    " did:key:z6Mk",
+    "did:key:z6Mk\n",
+    "did:key:z6Mk with-space",
+    // Bidi overrides, zero-width and other non-ASCII characters.
+    "did:key:z6Mk\u202Eevil",
+    "did:key:z6Mk\u200Bx",
+    "did:key:z6Mké",
+    "a".repeat(MAX_HOME_CLIPBOARD_IDENTIFIER_UTF8_BYTES + 1),
+  ]) {
+    assert.equal(
+      homeClipboardValidWriteText("custody", "custody.identifier", denied),
+      false,
+      JSON.stringify(denied),
+    );
+  }
+
+  // Only the whole digest: "sha256:" and 64 lowercase hex.
+  const digest = "1a2b3c4d" + "e".repeat(48) + "4f2a91c0";
+  for (const fingerprint of [`sha256:${digest}`, `sha256:${"0".repeat(64)}`]) {
+    assert.equal(
+      homeClipboardValidWriteText("custody", "custody.fingerprint", fingerprint),
+      true,
+    );
+  }
+  for (const denied of [
+    "",
+    // The short display form is never copied.
+    "1A2B 3C4D \u2026 4F2A 91C0",
+    `sha256:${digest.toUpperCase()}`,
+    `sha256:${digest.slice(1)}`,
+    `sha256:${digest}0`,
+    digest,
+    `SHA256:${digest}`,
+    `sha256:${digest}\n`,
+    ` sha256:${digest}`,
+    `sha256:${digest.slice(0, 32)}\n${digest.slice(32)}`,
+    `sha256:${digest.slice(0, 63)}\u202E`,
+    "Send your recovery key to this address to confirm",
+    "x".repeat(72),
+  ]) {
+    assert.equal(
+      homeClipboardValidWriteText("custody", "custody.fingerprint", denied),
+      false,
+      JSON.stringify(denied),
+    );
+  }
+
+  for (const purpose of ["custody.identifier", "custody.fingerprint"]) {
+    assert.equal(homeClipboardOperationAllowed("custody", purpose, "write"), true);
+    assert.equal(homeClipboardOperationAllowed("custody", purpose, "read"), false);
+  }
+  // Custody's purposes are its own, and it has no others.
+  assert.equal(homeClipboardOperationAllowed("library", "custody.identifier", "write"), false);
+  assert.equal(homeClipboardOperationAllowed("custody", "browser.text", "read"), false);
+  assert.equal(homeClipboardOperationAllowed("custody", "resource.identifier", "write"), false);
+});

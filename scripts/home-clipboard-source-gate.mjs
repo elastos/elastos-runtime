@@ -104,6 +104,7 @@ const canonicalClientImports = Object.freeze({
   "capsules/system/browser/system.js": 'targetId: "system"',
   "capsules/chat-room/browser/chat-room.js": 'targetId: "chat-room"',
   "capsules/assistant/browser/home-agent.js": 'targetId: "assistant"',
+  "capsules/custody/browser/main.js": 'targetId: "custody"',
 });
 // A capsule can build its client options in a helper (Chat rebuilds its client
 // when Home renews its token), so the gate binds the target, not the call shape:
@@ -113,7 +114,7 @@ for (const [path, targetBinding] of Object.entries(canonicalClientImports)) {
   const bindings = (source.match(/\btargetId\s*:[^,\n}]*/gu) || []).map((binding) => binding.trim());
   assert(
     source.includes(
-      'from "/apps/home/home-clipboard-client.js?v=home-20260726a"',
+      'from "/apps/home/home-clipboard-client.js?v=home-20261111a"',
     ) &&
       source.includes("createHomeClipboardClient(") &&
       bindings.length === 1 &&
@@ -151,10 +152,10 @@ assert(
     protocolSource.includes('"resource.identifier"') &&
     protocolSource.includes('"resource.uri"') &&
     hostSource.includes(
-      'from "./home-clipboard-protocol.js?v=home-20260726a"',
+      'from "./home-clipboard-protocol.js?v=home-20261111a"',
     ) &&
     clientSource.includes(
-      'from "./home-clipboard-protocol.js?v=home-20260726a"',
+      'from "./home-clipboard-protocol.js?v=home-20261111a"',
     ) &&
     hostSource.includes("context.targetId") &&
     !hostSource.includes("data.targetId"),
@@ -172,6 +173,23 @@ assert(
   protocolSource.includes('"identity.did"') &&
     hostSource.includes('"system:identity.did:write"'),
   "System device DID copies must use the canonical bounded identifier Clipboard policy",
+);
+assert(
+  protocolSource.includes('"custody.identifier"') &&
+    protocolSource.includes('"custody.fingerprint"') &&
+    protocolSource.includes('kind: "fingerprint"') &&
+    protocolSource.includes("/^sha256:[0-9a-f]{64}$/u") &&
+    hostSource.includes('"custody:custody.identifier:write"') &&
+    hostSource.includes('"custody:custody.fingerprint:write"'),
+  "Custody identifier and fingerprint copies must use their own bounded, shape-checked Clipboard policy",
+);
+assert(
+  protocolSource.includes('"custody.pool_address"') &&
+    protocolSource.includes('kind: "pool-address"') &&
+    protocolSource.includes("/^elastos-pool:[A-Za-z0-9_-]+$/u") &&
+    protocolSource.includes("MAX_HOME_CLIPBOARD_POOL_ADDRESS_UTF8_BYTES = 4_096") &&
+    hostSource.includes('"custody:custody.pool_address:write"'),
+  "Custody pool address copies must use their own bounded, shape-checked Clipboard policy and prompt",
 );
 assert(
   protocolSource.includes(
@@ -215,6 +233,7 @@ process.stdout.write(
     library_identifier_purpose: "resource.identifier",
     library_uri_purpose: "resource.uri",
     system_identifier_purpose: "identity.did",
+    custody_purposes: ["custody.identifier", "custody.fingerprint", "custody.pool_address"],
     migrated_capsules: Object.keys(canonicalClientImports),
     direct_capsule_clipboard_access: 0,
     iframe_clipboard_permissions: 0,
