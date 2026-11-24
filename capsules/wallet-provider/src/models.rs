@@ -113,9 +113,10 @@ impl BitcoinChallengeV1 {
             .collect::<Vec<_>>()
             .join("\n");
         format!(
-            "{domain} wants you to prove Bitcoin account ownership:\n{address}\n\nURI: {uri}\nVersion: 1\nNetwork: {network}\nNonce: {nonce}\nIssued At: {issued_at}\nExpiration Time: {expires_at}\nResources:\n{resources}",
+            "{domain} wants you to prove Bitcoin account ownership:\n{address}\n\n{statement}\n\nURI: {uri}\nVersion: 1\nNetwork: {network}\nNonce: {nonce}\nIssued At: {issued_at}\nExpiration Time: {expires_at}\nResources:\n{resources}",
             domain = self.domain,
             address = self.address,
+            statement = elastos_auth::WALLET_LINK_STATEMENT,
             uri = self.uri,
             network = self.network,
             nonce = self.nonce,

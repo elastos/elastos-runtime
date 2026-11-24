@@ -632,3 +632,98 @@ fn proof_challenge_rejects_invalid_runtime_origin() {
         other => panic!("expected invalid origin rejection, got {other:?}"),
     }
 }
+
+#[test]
+fn bitcoin_connection_uses_runtime_fixed_sentence() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut provider = init_provider(dir.path());
+    let key = bip322_test_signing_key();
+    let address = bip322_test_address(&key);
+    let response = invoke_wallet(
+        &mut provider,
+        "person:local:test",
+        "wallet",
+        WalletProviderOperationV2::BitcoinChallenge {
+            domain: "elastos.local".into(),
+            uri: "http://elastos.local/apps/home/".into(),
+            address,
+            network: PublicNetwork::bitcoin(),
+            resources: vec![],
+        },
+    );
+    let Response::Ok { data: Some(data) } = response else {
+        panic!("{response:?}")
+    };
+    assert!(data["message"].as_str().unwrap().contains(&format!(
+        "\n\n{}\n\nURI:",
+        elastos_auth::WALLET_LINK_STATEMENT
+    )));
+}
+
+#[test]
+fn bitcoin_connection_refuses_old_changed_and_cross_action_sentences() {
+    for legacy in [false, true] {
+        for sentence in [
+            "",
+            "Connect this wallet to Wallet on another Home.",
+            "Add this wallet so it can sign in to this Home.",
+            "Sign in to this Home.",
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut provider = init_provider(dir.path());
+            let key = bip322_test_signing_key();
+            let address = if legacy {
+                bitcoin_p2pkh_test_address(&key)
+            } else {
+                bip322_test_address(&key)
+            };
+            let response = invoke_wallet(
+                &mut provider,
+                "person:local:test",
+                "wallet",
+                WalletProviderOperationV2::BitcoinChallenge {
+                    domain: "elastos.local".into(),
+                    uri: "http://elastos.local/apps/home/".into(),
+                    address: address.clone(),
+                    network: PublicNetwork::bitcoin(),
+                    resources: vec![],
+                },
+            );
+            let Response::Ok { data: Some(data) } = response else {
+                panic!("{response:?}")
+            };
+            let original = data["message"].as_str().unwrap();
+            let message = if sentence.is_empty() {
+                original.replace(&format!("{}\n\n", elastos_auth::WALLET_LINK_STATEMENT), "")
+            } else {
+                original.replace(elastos_auth::WALLET_LINK_STATEMENT, sentence)
+            };
+            let signature = if legacy {
+                sign_bitcoin_message(&key, &message)
+            } else {
+                sign_bip322_simple_p2wpkh(&key, &address, &message)
+            };
+            let result = invoke_wallet(
+                &mut provider,
+                "person:local:test",
+                "wallet",
+                WalletProviderOperationV2::VerifyBip322Proof {
+                    message,
+                    signature,
+                    signature_type: if legacy {
+                        "bitcoin_signed_message"
+                    } else {
+                        "bip322_simple"
+                    }
+                    .into(),
+                    public_key: legacy.then(|| bitcoin_test_public_key(&key)),
+                },
+            );
+            assert!(
+                matches!(result, Response::Error { ref code, .. } if code == "invalid_proof"),
+                "{sentence:?}: {result:?}"
+            );
+            assert!(provider.store.bitcoin_challenges[0].consumed_at.is_none());
+        }
+    }
+}
