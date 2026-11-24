@@ -255,7 +255,7 @@ export function installSigninProviders({evmAddress,bitcoinAddress,theme='light'}
   const provider={on:(name,listener)=>{if(!listeners.has(name))listeners.set(name,new Set());listeners.get(name).add(listener);},removeListener:(name,listener)=>listeners.get(name)?.delete(listener),request:({method})=>ask(method,method==='eth_chainId'?'0x'+Number(f.chain).toString(16):method==='personal_sign'?'fixture-signature':[f.address])};
   window.addEventListener('eip6963:requestProvider',()=>{
     if(f.missing)return;
-    for(const [uuid,rdns,name]of f.multiple?[['rabby','io.rabby','Rabby Wallet'],['brave','com.brave.wallet','Brave Wallet']]:[['metamask','io.metamask','MetaMask']])window.dispatchEvent(new CustomEvent('eip6963:announceProvider',{detail:{provider:f.multiple?{...provider,request:args=>provider.request(args)}:provider,info:{uuid,rdns,name}}}));
+    for(const [uuid,rdns,name]of f.multiple?[['rabby','io.rabby','Rabby Wallet'],['brave','com.brave.wallet','Brave Wallet']]:[['metamask','io.metamask','MetaMask']])window.dispatchEvent(new CustomEvent('eip6963:announceProvider',{detail:{provider:f.multiple?{...provider,request:args=>{const result=provider.request(args);f.calls.at(-1).providerId=rdns;return result;}}:provider,info:{uuid,rdns,name}}}));
   });
   window.unisat={...provider,requestAccounts:()=>ask('requestAccounts',[bitcoinAddress]),getAccounts:()=>Promise.resolve([bitcoinAddress]),getNetwork:()=>Promise.resolve(f.network),getPublicKey:()=>Promise.resolve('fixture-public-key'),signMessage:()=>ask('signMessage','fixture-signature')};
   if(new URLSearchParams(location.search).has('desktop-app'))window.unisat=undefined;
