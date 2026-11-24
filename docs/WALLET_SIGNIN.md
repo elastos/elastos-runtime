@@ -360,7 +360,7 @@ action-specific approval flow.
 Runtime chooses one fixed sentence for each signed action: "Sign in to this Home.",
 "Add this wallet as a way to sign in to this Home.", and "Connect this wallet to
 Wallet on this Home." Removal uses a passkey approval and asks for zero wallet
-signatures. MetaMask, the wallet and UniSat use the same sentence per action.
+signatures. MetaMask, WalletConnect and UniSat use the same sentence per action.
 Home, ceremony, browser commitment and intent use `elastos://auth/home/<id>`,
 `elastos://auth/ceremony/<id>`, `elastos://auth/browser/<commitment>` and
 `elastos://auth/intent/<intent>`. The Home ID is the same literal ID for all
