@@ -124,7 +124,7 @@ test('network refusal before handoff preserves a pending request and retry contr
 test('waits use the earliest shared deadline and an explicit clock, never a new TTL',()=>{
   const row=states.find(r=>r.designState==='metamask/request-extension');
   const original=fixtureView(row);
-  assert.equal(original.wait,'Time left: 4:59');
+  assert.equal(original.wait,null,'countdown appears only during the last 30 seconds');
   const fixture=structuredClone(shared);
   fixture.messages.find(r=>r.id===row.provider).message.deadlineAt=1800000011000;
   assert.equal(fixtureView(row,{sharedFixture:fixture}).wait,'Time left: 0:10');
@@ -230,8 +230,8 @@ test('signing windows expose sr-only page titles and no visible connection-headi
     ['metamask', 'linked', linkedAccount, 'MetaMask'],
     ['unisat', 'ready', null, 'UniSat'],
     ['unisat', 'linked', linkedAccount, 'UniSat'],
-    ['walletconnect', 'nothing-saved', null, 'WalletConnect'],
-    ['walletconnect', 'linked', { ...linkedAccount, connection: 'WalletConnect' }, 'WalletConnect'],
+    ['walletconnect', 'nothing-saved', null, 'Phone wallet'],
+    ['walletconnect', 'linked', { ...linkedAccount, connection: 'WalletConnect' }, 'Phone wallet'],
   ];
   for (const [window, stage, account, title] of cases) {
     const view = connectionView({ window, stage, ...(account ? { account, localSafety: false } : {}) });

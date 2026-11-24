@@ -283,10 +283,10 @@ function dataFixture() {
     }
     for (const name of ['_shared', 'wallet-metamask/browser', 'wallet-unisat/browser', 'wallet-walletconnect/browser', 'home/browser']) {
       for (const asset of walletViewAssets) {
-        if (name === 'home/browser' && asset === 'wallet-connection-view.css') continue;
+        if (name === 'home/browser' && ['wallet-connection-view.css','wallet-connection-loading.mjs'].includes(asset)) continue;
         const path = `capsules/${name}/${asset}`;
         mkdirSync(dirname(resolve(fixture, path)), { recursive: true });
-        copyFileSync(resolve(root, path), resolve(fixture, path));
+        copyFileSync(resolve(root, name === 'home/browser' ? `capsules/_shared/${asset}` : path), resolve(fixture, path));
       }
     }
     return fixture;
@@ -351,14 +351,14 @@ test("product data accepts a symlink alias for its repository root", () => {
   }
 });
 
-for (const kind of ['missing', 'drift', 'escaping symlink']) test(`product data refuses shared wallet view ${kind}`, () => {
+for (const asset of ['wallet-connection-view.mjs','wallet-connection-loading.mjs']) for (const kind of ['missing', 'drift', 'escaping symlink']) test(`product data refuses shared wallet view ${asset} ${kind}`, () => {
   const fixture = dataFixture();
-  const path = resolve(fixture, 'capsules/wallet-unisat/browser/wallet-connection-view.mjs');
+  const path = resolve(fixture, 'capsules/wallet-unisat/browser', asset);
   try {
     if (kind === 'drift') writeFileSync(path, '// changed copy');
     else {
       rmSync(path);
-      if (kind === 'escaping symlink') symlinkSync(resolve(root, 'capsules/_shared/wallet-connection-view.mjs'), path);
+      if (kind === 'escaping symlink') symlinkSync(resolve(root, 'capsules/_shared', asset), path);
     }
     assert.throws(() => validateWalletViewAssets(fixture), /shared wallet view asset (missing|drift|stays in its capsule)/);
   } finally { rmSync(fixture, {recursive:true, force:true}); }

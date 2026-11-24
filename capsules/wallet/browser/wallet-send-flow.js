@@ -34,11 +34,11 @@ export function createWalletSendFlow({
     if (accounts.length === 0) {
       openFlowModal(
         "Send",
-        "Create or import a Wallet account before sending funds.",
+        "Create or import a Wallet address before sending funds.",
         [
           textNode(
             "p",
-            "Create an EVM or Bitcoin account from Accounts, or import a Wallet key there.",
+            "Create an EVM or Bitcoin address from Addresses, or import a Wallet key there.",
             "wallet-flow-hint",
           ),
         ],
@@ -54,11 +54,11 @@ export function createWalletSendFlow({
         : [
             textNode(
               "p",
-              "Create a passkey-managed EVM account before sending on an EVM chain.",
+              "Create a passkey-managed EVM address before sending on an EVM chain.",
               "wallet-flow-hint",
             ),
           ];
-      openFlowModal("Send", "No signing account available", rows, [
+      openFlowModal("Send", "No signing address available", rows, [
         modalButton("Done", closeModal),
       ]);
       return;
@@ -94,7 +94,7 @@ export function createWalletSendFlow({
         ),
       ),
     );
-    openFlowModal("Send", "Choose a signing account", rows);
+    openFlowModal("Send", "Choose a signing address", rows);
   }
 
   function renderSendAssetStep(account) {
@@ -105,7 +105,7 @@ export function createWalletSendFlow({
         [
           textNode(
             "p",
-            "This account is unfunded. Receive assets before sending.",
+            "This address is unfunded. Receive assets before sending.",
             "wallet-flow-hint",
           ),
         ],
@@ -190,22 +190,22 @@ export function createWalletSendFlow({
       return "";
     }
     if (!account.chain_namespace || !account.chain_namespace.startsWith("eip155:")) {
-      return "Sending currently supports built-in EVM accounts protected by your passkey.";
+      return "Sending currently supports built-in EVM addresses protected by your passkey.";
     }
     if (!["eip155:20", "eip155:8453"].includes(account.chain_namespace)) {
       return "This EVM network is not available yet.";
     }
     if (!isPasskeyManagedAccount(account)) {
-      return "Open the approval method for this account to send.";
+      return "Open the approval method for this address to send.";
     }
     if (account.signing_status === "managed_key_missing") {
-      return "This built-in account is missing its local signing key. Import this account's Wallet recovery key or create a new account.";
+      return "This built-in address is missing its local signing key. Import this address's Wallet recovery key or create a new address.";
     }
     if (account.signing_status === "managed_key_unavailable") {
-      return "This account cannot be unlocked on this device. Import its Wallet recovery key or create a new account.";
+      return "This address cannot be unlocked on this device. Import its Wallet recovery key or create a new address.";
     }
     if (!managedAccountCanSign(account)) {
-      return "This built-in account cannot sign on this device yet.";
+      return "This built-in address cannot sign on this device yet.";
     }
     return "";
   }

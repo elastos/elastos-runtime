@@ -127,7 +127,7 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     await wallet.locator('.connection-qr').waitFor({timeout:20000});
     assert.equal(methods.filter(method=>method==='wc_proposeSession').length,1,'Allow continues one pairing');
     assert.equal(await page.locator('#wallet').count(),1);
-    assert.equal(await wallet.getByRole('dialog',{name:'WalletConnect',exact:true}).count(),1);
+    assert.equal(await wallet.getByRole('dialog',{name:'Phone wallet',exact:true}).count(),1);
     const canvas=await wallet.locator('.connection-qr').evaluate(image=>{const canvas=document.createElement('canvas');canvas.width=image.naturalWidth;canvas.height=image.naturalHeight;canvas.getContext('2d').drawImage(image,0,0); const {data}=canvas.getContext('2d').getImageData(0,0,canvas.width,canvas.height);let min=canvas.width;for(let y=0;y<canvas.height;y++)for(let x=0;x<canvas.width;x++)if(data[(y*canvas.width+x)*4]<10)min=Math.min(min,x);return {width:canvas.width,margin:min};});
     assert.ok(canvas.margin>=16,JSON.stringify(canvas));
     for(const value of ['dark','light']){await theme(value);await shot(`r6-r7-r8-r9-qr-${value}`);}
@@ -376,7 +376,7 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     await t.test('a result offers its local return to the waiting request list',{},async()=>{
       await wallet.getByRole('button',{name:'View requests',exact:true}).click();
       await wallet.getByRole('button',{name:'View request',exact:true}).first().click();
-      await wallet.getByRole('button',{name:/^Send to /}).waitFor();await walletFrame.evaluate(()=>{window.phoneFailure=undefined;window.phoneWait=false;});const before=completions;await wallet.getByRole('button',{name:/^Send to /}).click();await wallet.locator('[data-state=request-done],[data-state=request-next]').waitFor();assert.equal(completions,before+1,'the next visible request completes through its existing route');
+      await wallet.getByRole('button',{name:/^Continue in /}).waitFor();await walletFrame.evaluate(()=>{window.phoneFailure=undefined;window.phoneWait=false;});const before=completions;await wallet.getByRole('button',{name:/^Continue in /}).click();await wallet.locator('[data-state=request-done],[data-state=request-next]').waitFor();assert.equal(completions,before+1,'the next visible request completes through its existing route');
     });
     assert.deepEqual(errors,[]);
   } finally {await browser?.close();for(const socket of relay.clients)socket.terminate();await new Promise(resolve=>relay.close(resolve));server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
@@ -384,7 +384,7 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
 
 // Exercise the real window module while Runtime changes its list during a link or disconnect.
 for (const ending of ['decline','expiry','cancel','disconnect']) for (const returning of ['focus','Home']) {
-  test(`request controls recover after ${ending} and ${returning} return`,{timeout:20000},async()=>{
+  test(`an unresolved payment owns recovery after ${ending} and ${returning} return`,{timeout:60000},async()=>{
     const pending=id=>({request_id:id,connector_id:'wallet-walletconnect',capsule_id:'browser',proof_type:'siwe',intent:'browser_personal_sign',status:'pending',address:'0x'+'12'.repeat(20),reason:id,chain_namespace:'eip155:20',expires_at:Math.floor(Date.now()/1000)+600});
     let requests=[pending('first')],linked=false;
     const server=http.createServer((req,res)=>{
@@ -431,17 +431,14 @@ for (const ending of ['decline','expiry','cancel','disconnect']) for (const retu
       if(ending==='disconnect')await frame.evaluate(()=>window.endDisconnect());
       else if(ending==='cancel')await wallet.getByRole('button',{name:'Cancel',exact:true}).click();
       else await frame.evaluate(ending=>window.endLink(ending==='decline'?{code:4001,message:'User rejected.'}:new Error('The QR code expired. Select Connect wallet for a new one.')),ending);
-      await wallet.locator('[data-focus=outcome]').filter({hasText:ending==='disconnect'?'Disconnected. Your accounts remain in Wallet.':ending==='cancel'?'Connection cancelled.':ending==='expiry'?'QR code expired.':'Connection declined.'}).waitFor();
-      // Wait for a possible final refresh, then inspect without any extra focus or visibility event.
-      await wallet.locator('main').waitFor();await frame.evaluate(()=>new Promise(resolve=>setTimeout(resolve,100)));
-      assert.equal(await wallet.locator('[data-wallet-request-sign="first"]').count(),0,'ending the action refreshes the stale list');
-      await frame.evaluate(()=>{window.holdLink=false;window.holdDisconnect=false;});await wallet.getByRole('button',{name:'View requests',exact:true}).click();await wallet.locator('[data-focus-key="select-request:next"]').click();
-      await wallet.locator('[data-wallet-request-sign="next"]:enabled').waitFor();
-      assert.equal(await wallet.locator('[data-wallet-request-sign="next"]').isEnabled(),true,'the pending request is ready for Review');
-      assert.equal(await wallet.locator('[data-wallet-request-sign]').count(),1,'unsupported and approved requests have their own recovery controls');
-      assert.equal(requests.length,3,'unsupported and already approved requests stay in the source list');
-      await wallet.locator('[data-action=view-requests]').click();
-      assert.equal(await wallet.locator('[data-action=select-request]').count(),3,'the picker retains all three canonical request IDs');
+      // The refreshed list now contains a sent payment with no known answer.
+      // It owns recovery, even if the connection action ended or another request waits.
+      await wallet.locator('[data-state="transaction-reopened"],[data-state="transaction-wallet-removed"],[data-state="transaction-wallet-error"]').waitFor();
+      assert.equal(await wallet.locator('main').getAttribute('data-request-id'),'sent');
+      assert.equal(await wallet.locator('[data-wallet-request-sign],[data-action=view-requests],[data-action=select-request]').count(),0,'a pending request cannot hide an unresolved payment');
+      assert.match(await wallet.locator('main').innerText(),/Activity in Wallet/);
+      assert.equal(await wallet.getByRole('button',{name:'Close window',exact:true}).count(),1);
+      assert.equal(requests.length,3,'all canonical records remain in the source list');
     }finally{await browser?.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
   });
 }

@@ -85,7 +85,7 @@ export function createWalletPreferences({
         row.append(methodMark(mark,METHOD_MONOGRAMS[mark],true,''));
         const copy=document.createElement('div');copy.append(textNode('strong',label));
         const used=method?.used===true;
-        copy.append(textNode('span',used?'Used for sign-in':method?.connected?'Connected':'Connect'));
+        copy.append(textNode('span',used?'Already signs in':method?.connected?'Connected':'Not connected'));
         row.append(copy);
         const button=actionButton('Choose','walletSigninChoose',connector,true);
         button.disabled=used||signin.stage!=='options';
@@ -97,17 +97,17 @@ export function createWalletPreferences({
     const walletConnectConnected = namesForMethod(accounts, "wc");
     const walletConnectAvailable = approvalMethods.walletconnect?.available === true;
     const methods = [
-      { id: "passkey", label: "Built-in accounts", hint: "Passkey-controlled · Wallet Send", connected: namesForMethod(accounts, "passkey") },
-      { id: "metamask", label: "MetaMask", hint: "MetaMask or another wallet in this browser", connected: namesForMethod(accounts, "metamask"), target: "wallet-metamask", addLabel: "Connect", openLabel: "Add account" },
-      { id: "btc", label: "UniSat", hint: "Link & approve in UniSat", connected: namesForMethod(accounts, "btc"), target: "wallet-unisat", addLabel: "Connect", openLabel: "Add account" },
+      { id: "passkey", label: "Built-in addresses", hint: "Passkey-controlled · Wallet Send", connected: namesForMethod(accounts, "passkey") },
+      { id: "metamask", label: "MetaMask", hint: "MetaMask or another wallet in this browser", connected: namesForMethod(accounts, "metamask"), target: "wallet-metamask", addLabel: "Connect", openLabel: "Add address" },
+      { id: "btc", label: "UniSat", hint: "Connect with UniSat", connected: namesForMethod(accounts, "btc"), target: "wallet-unisat", addLabel: "Connect", openLabel: "Add address" },
       {
         id: "wc",
-        label: "WalletConnect",
-        hint: walletConnectAvailable ? "Link & approve via WalletConnect" : "Pinned WalletConnect config required",
+        label: "Phone wallet",
+        hint: walletConnectAvailable ? "Connect with your phone wallet" : "Phone wallet connection is unavailable",
         connected: walletConnectConnected,
         target: walletConnectAvailable ? "wallet-walletconnect" : "",
         addLabel: "Connect",
-        openLabel: "Add account",
+        openLabel: "Add address",
       },
     ].filter((method) => method.id !== "wc" || walletConnectAvailable || method.connected.length > 0);
 
@@ -159,7 +159,7 @@ export function createWalletPreferences({
         : method.addLabel || "Add";
       row.append(actionButton(label, "walletOpenMethod", method.target, true));
     } else if (method.connected.length > 0 || method.id === "passkey") {
-      row.append(textNode("span", "linked", "wallet-method-chip"));
+      row.append(textNode("span", "Connected", "wallet-method-chip"));
     }
     return row;
   }
@@ -213,7 +213,7 @@ export function createWalletPreferences({
     if (!accountId) {
       return;
     }
-    const name = readStoredValueFromDataset(remove.dataset.walletAccountName) || "account";
+    const name = readStoredValueFromDataset(remove.dataset.walletAccountName) || "address";
     const displayName = readStoredValueFromDataset(remove.dataset.walletDisplayName) || name;
     // Keep peer identity separate from the trusted confirmation sentence.
     const heading = textNode("h2", "");
@@ -226,8 +226,8 @@ export function createWalletPreferences({
     openFlowModal(
       `Remove ${displayName}?`,
       remove.dataset.walletAccountManaged === "true"
-        ? "Built-in accounts require their Wallet recovery key to restore later. Passkey confirmation is required."
-        : "Remove this account from your Home. Your funds stay unchanged. This does not cancel a transaction in your wallet. Removing the last account connected through WalletConnect also clears Home's saved connection. Confirm with your passkey to remove the account.",
+        ? "Built-in addresses require their Wallet recovery key to restore later. Passkey confirmation is required."
+        : "Remove this address from Wallet. Your funds stay unchanged. This does not cancel a transaction in your wallet. Removing the last address connected through your phone wallet also clears Home's saved connection. Confirm with your passkey to remove the address.",
       [textNode("p", remove.dataset.walletAccountDescription || "", "wallet-state")],
       [
         modalButton("Cancel", closeModal, true),

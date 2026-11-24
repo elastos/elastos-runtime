@@ -62,7 +62,7 @@ for(const engine of ['chromium','webkit']){
  test(`R4 F-A: caller-owned redraw continuity in ${engine} at 320x182`,{skip,timeout:120000},async t=>{
   const f=await browserFixture(engine,{width:320,height:182});
   try{
-   await f.page.evaluate(()=>document.fonts.ready);const args=approvalArguments(requestRow('metamask'));args[1].summary.expires_at=null;
+   await f.page.evaluate(()=>document.fonts.ready);const args=approvalArguments(requestRow('metamask'));args[1].summary.expires_at=null;args[1].summary.reason='A long app reason. '.repeat(30);
    await mount(f.page,args);assert.equal(await f.page.evaluate(()=>document.activeElement.dataset.action),'close-window');
    const send=f.page.locator('[data-action="send-request"]');await send.focus();await assertApprovalPaint(f.page,await observeApproval(f.page));
    const initial=await f.page.evaluate(()=>{window.originalFocus=document.activeElement;return {top:document.querySelector('main').scrollTop};});
@@ -71,14 +71,14 @@ for(const engine of ['chromium','webkit']){
    assert(after.same,'timer redraw preserves the focused DOM node for assistive technology');assert.equal(after.action,'send-request');assert.equal(after.top,initial.top);await check(f.page);
    await f.page.evaluate(()=>{document.querySelector('main').scrollTop=57;});args[0].waitSeconds=88;await mount(f.page,args);assert.equal(await f.page.evaluate(()=>document.querySelector('main').scrollTop),57,'partial scroll survives timer redraw exactly');
    // A changed visible summary requires replacement, but the same card preserves logical focus/scroll.
-   args[1].summary.reason='A changed app reason.';await mount(f.page,args);assert.equal(await f.page.evaluate(()=>document.activeElement.dataset.action),'send-request');assert.equal(await f.page.evaluate(()=>document.querySelector('main').scrollTop),57);
+   args[1].summary.reason='A changed app reason. '.repeat(30);await mount(f.page,args);assert.equal(await f.page.evaluate(()=>document.activeElement.dataset.action),'send-request');assert.equal(await f.page.evaluate(()=>document.querySelector('main').scrollTop),57);
    for(const key of ['Enter','Space']){await f.page.evaluate(()=>{document.querySelector('main').scrollTop=57;});await f.page.keyboard.press(key);const o=await observeApproval(f.page);assertApprovalGeometry(o);assert(o.visible.length,'keyboard activation reveals approval after manual scrolling');await assertApprovalPaint(f.page,o);}
    args[1].summary.request_id+='-next';await mount(f.page,args);assert.equal(await f.page.evaluate(()=>document.activeElement.dataset.action),'close-window');assert.equal(await f.page.evaluate(()=>document.querySelector('main').scrollTop),0);
    await bottom(f.page);args[0].stage='request-multiple';await mount(f.page,args);assert.equal(await f.page.evaluate(()=>document.activeElement.dataset.action),'close-window');assert.equal(await f.page.evaluate(()=>document.querySelector('main').scrollTop),0);
    await send.focus();await check(f.page);await f.page.screenshot({path:proof.path+`/redraw-send-${engine}.png`});
    await t.test('a forced redraw reset fails continuity',async()=>{
     const before=await f.page.evaluate(()=>({action:document.activeElement.dataset.action,top:document.querySelector('main').scrollTop}));
-    await f.page.evaluate(()=>{document.querySelector('.connection-card-start button').focus({preventScroll:true});document.querySelector('main').scrollTop=0;});
+    await f.page.evaluate(()=>{document.querySelector('.connection-approve-actions [data-action=close-window]').focus({preventScroll:true});document.querySelector('main').scrollTop=0;});
     const broken=await f.page.evaluate(()=>({action:document.activeElement.dataset.action,top:document.querySelector('main').scrollTop}));
     assert.throws(()=>assert.deepEqual(broken,before),assert.AssertionError,'forced opening reset must fail the continuity oracle');
    });
@@ -136,13 +136,13 @@ for(const engine of ['chromium','webkit']){
    });
   }finally{await f.close();}
  });
- test(`R4: more cue, whole labels and site contrast in ${engine}`,{skip,timeout:120000},async()=>{
+ test(`R4: native scrolling, whole labels and site contrast in ${engine}`,{skip,timeout:120000},async()=>{
   const f=await browserFixture(engine,{width:320,height:182});
   try{
    await f.page.evaluate(()=>document.fonts.ready);await mount(f.page,approvalArguments(requestRow('metamask')));
-   const cue=f.page.locator('.connection-more');await assert.doesNotReject(()=>cue.waitFor({state:'visible'}));
-   await bottom(f.page);await f.page.waitForFunction(()=>getComputedStyle(document.querySelector('.connection-more')).visibility==='hidden');
-   await f.page.setViewportSize({width:480,height:1200});await mount(f.page,approvalArguments(requestRow('metamask'),{origin:'https://example.com',compact:false}));assert.equal(await cue.evaluate(e=>getComputedStyle(e).visibility),'hidden','fitting card has no more-below cue');
+   assert(await f.page.locator('main').evaluate(r=>r.scrollHeight>r.clientHeight),'long approval scrolls as one card');
+   await bottom(f.page);await check(f.page);
+   await f.page.setViewportSize({width:480,height:1200});await mount(f.page,approvalArguments(requestRow('metamask'),{origin:'https://example.com',compact:false}));assert.equal(await f.page.locator('main').evaluate(r=>r.scrollHeight>r.clientHeight),false,'short approval fits without scrolling');
    for(const theme of ['dark','light']){
     await f.page.evaluate(theme=>{document.documentElement.dataset.elTheme=theme;},theme);const o=await observeApproval(f.page);assertApprovalGeometry(o);evidence.push({engine,theme,contrast:o.contrast,result:'PASS'});
    }

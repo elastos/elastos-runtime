@@ -321,12 +321,12 @@ export function validateComponents(components, manifests) {
   }
 }
 
-export const walletViewAssets = ['wallet-connection-view.mjs', 'wallet-connection-screens.mjs', 'wallet-connection-view.css', 'connection-wallet.png', 'connection-walletconnect.png', 'connection-metamask.png', 'connection-unisat.png'];
+export const walletViewAssets = ['wallet-connection-loading.mjs', 'wallet-connection-view.mjs', 'wallet-connection-screens.mjs', 'wallet-connection-view.css', 'connection-wallet.png', 'connection-walletconnect.png', 'connection-metamask.png', 'connection-unisat.png'];
 export function validateWalletViewAssets(repoRoot) {
   for (const asset of walletViewAssets) {
     const source = readFileSync(resolve(repoRoot, 'capsules/_shared', asset));
     for (const name of ['wallet-metamask', 'wallet-unisat', 'wallet-walletconnect', 'home']) {
-      if (name === 'home' && asset === 'wallet-connection-view.css') continue;
+      if (name === 'home' && ['wallet-connection-view.css','wallet-connection-loading.mjs'].includes(asset)) continue;
       const path = resolve(repoRoot, 'capsules', name, 'browser', asset);
       assert(existsSync(path), `shared wallet view asset missing: ${name}/${asset}`);
       assert(realpathSync(path).startsWith(realpathSync(resolve(repoRoot, 'capsules', name)) + sep), `shared wallet view asset stays in its capsule: ${name}/${asset}`);

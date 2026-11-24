@@ -29,7 +29,7 @@ test('wording R2: MetaMask has one stop-sharing instruction',()=>{
   const v=connectionView({window:'metamask',stage:'linked'});
   assert.equal(viewText(v.afterNote),'');
   assert.match(viewText(v.notice),/remove this Home's connection in your wallet/);
-  assert.match(viewText(v.notice),/Your account stays in Wallet\./);
+  assert.match(viewText(v.notice),/Your address stays in Wallet\./);
 });
 test('wording R2: S237 directs a sent transaction to Activity',()=>{
   const input=wordingInputs('metamask').find(r=>r.stage==='transaction-done'&&!r.supportedActions.includes('close-window'));

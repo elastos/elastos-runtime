@@ -203,7 +203,7 @@ test("n4_metadata_bounds_and_text_rendering: real Wallet", async t => {
   const builtin = await runtimeView(t, "wallet", { accounts:[{ ...account, account_id:"account:managed-fixture", proof_type:"managed_evm",
     connector_id:null, wallet_display_name:null, wallet_mark:null }] });
   await builtin.frame.locator(".wallet-method-account").getByRole("button", { name:"Remove", exact:true }).click();
-  assert.match(await builtin.frame.locator(".wallet-modal-header").textContent(), /Built-in accounts require their Wallet recovery key/);
+  assert.match(await builtin.frame.locator(".wallet-modal-header").textContent(), /Built-in addresses require their Wallet recovery key/);
   assert.deepEqual(builtin.errors, []);
 });
 

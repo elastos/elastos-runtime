@@ -124,7 +124,7 @@ for (const engine of ['chromium','webkit']) test(`extension_request_feedback_in_
           let expectedControls=labels.map(s=>({label:normalized(s.replace(/ \[(primary|quiet secondary|bordered secondary)\]$/,'')),primary:s.endsWith('[primary]')}));
           if(['walletconnect','metamask','unisat'].includes(row.window)&&['linked','linked-multiple'].includes(row.stage)){
             expectedControls=expectedControls.map(c=>c.label==='Open Wallet'?{label:'Close window',primary:true}:c);
-            if(row.window==='walletconnect')expectedControls.push({label:'Add account',primary:false});
+            if(row.window==='walletconnect')expectedControls.push({label:'Add address',primary:false});
           }
           if(row.window==='walletconnect'&&row.stage==='internet-ready')expectedControls=expectedControls.filter(c=>c.label!=='Manage in Inbox');
           if(row.window==='walletconnect'&&row.stage==='internet-refused')expectedControls=[{label:'Connect wallet',primary:true}];

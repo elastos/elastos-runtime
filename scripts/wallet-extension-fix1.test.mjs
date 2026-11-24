@@ -334,7 +334,7 @@ for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'
       await f.state('request-waiting');await f.action('send-request').click();await f.state('request-done');
       await assertNoVisibleWindowHeading(f.frame, kind==='metamask'?'MetaMask':'UniSat');
       // The old request-done mark belonged only to the removed window heading.
-      assert.equal(await f.frame.locator('img').count(), kind==='metamask'?1:0, 'only the selected MetaMask-option wallet supplies its request card mark');
+      assert.equal(await f.frame.locator('img').count(), 1, 'each request keeps one wallet identity mark');
       assert.equal(await f.frame.locator('.connection-status').innerText(), 'Message signed.');
       // Existing response schema permits these statuses. This is a projection
       // check: today's pending-only Runtime endpoint normally omits them.

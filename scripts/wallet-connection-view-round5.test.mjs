@@ -66,7 +66,7 @@ async function variant(engine,mutate,run){const f=await browserFixture(engine,{w
  return await run(f);
  }finally{await f.close();}}
 async function labelGuard(f){const args=fixtureArguments(states.find(r=>r.designState==='metamask/request-waiting'),{compact:true});await f.page.evaluate(async args=>{const m=await import('/capsules/_shared/wallet-connection-view.mjs');m.mountConnection(document.querySelector('#mount'),m.reduceConnection(...args));},args);assert.equal(await f.page.locator('.connection-site-row > span').textContent(),'Site reported by Browser');}
-async function focusGuard(f,engine,capture=false){const args=approvalArguments(approvalCatalog.stages.find(r=>r.window==='metamask'&&r.stage==='request-waiting'));args[1].summary={...args[1].summary,expires_at:null};
+async function focusGuard(f,engine,capture=false){const args=approvalArguments(approvalCatalog.stages.find(r=>r.window==='metamask'&&r.stage==='request-waiting'));args[1].summary={...args[1].summary,expires_at:null,reason:'A long app reason. '.repeat(30)};
  const mount=args=>f.page.evaluate(async args=>{const m=await import('/capsules/_shared/wallet-connection-view.mjs');window.m=m.mountConnection(document.querySelector('#mount'),m.reduceConnection(...args),window.m);return{focus:document.activeElement.dataset.focus||document.activeElement.dataset.action||document.activeElement.tagName,top:window.m.root.scrollTop};},args);
  await mount(args);
  // Fonts are requested by the mounted card. Establish the precondition after

@@ -3,14 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>WalletConnect · ElastOS</title>
+<title>Phone wallet · ElastOS</title>
 <script src="./elastos-theme.js"></script>
 <link rel="stylesheet" href="./elastos-ui.css">
 <link rel="stylesheet" href="./wallet-connection-view.css">
 <link rel="stylesheet" href="./style.css">
 </head>
 <body>
-<div id="wallet-window"></div>
+<div id="wallet-window"><main class="connection-window"><p class="connection-status" role="status">Loading wallet connection…</p><div class="connection-actions"><button type="button" class="el-button connection-quiet" data-connection-loading-cancel>Cancel</button></div></main></div>
+<script type="module" src="./wallet-connection-loading.mjs"></script>
 <script type="module" src="./wallet-walletconnect.js?v=wallet-window-20261117"></script>
 </body>
 </html>

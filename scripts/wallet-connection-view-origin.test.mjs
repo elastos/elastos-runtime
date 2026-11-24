@@ -43,8 +43,8 @@ async function mount(page,{window='metamask',origin=origins[7],long=true,compact
 }
 async function check(page,{paint=true}={}){const o=await observeApproval(page);assertApprovalGeometry(o);if(paint&&o.visible.length)await assertApprovalPaint(page,o);return o;}
 async function sweep(page){
- let o=await check(page);assert.equal(o.scrollTop,0,'opening position is card start');assert(o.topExit&&o.cue==='More below.','visible top dismissal and more cue');
- const top=await page.locator('.connection-card-start').boundingBox();assert(top.y>=0&&top.y+top.height<=o.height,'top exit is reachable before the site');
+ let o=await check(page);assert.equal(o.scrollTop,0,'opening position is card start');assert.equal(await page.locator('.connection-approve-actions [data-action=close-window]').count(),1,'one quiet Cancel shares the action row');
+
  // Measure opening first, then every CSS-pixel scroll position in the range.
  // Only positions with an intersecting approving control require paint captures.
  const samples=await page.evaluate(async ids=>{
@@ -67,7 +67,7 @@ async function activate(page,resize){
  for(const key of ['Enter','Space']){
   await page.evaluate(()=>{document.querySelector('main').scrollTop=0;document.activeElement?.blur();});
   // Native Tab traversal, without a scripted scroll or focus on the approving control.
-  await page.locator('.connection-card-start [data-action="close-window"]').focus();
+  await page.locator('.connection-approve-actions [data-action="close-window"]').focus();
   for(let n=0;n<20;n++){await page.keyboard.press('Tab');if(await button.evaluate(e=>e===document.activeElement))break;}
   assert(await button.evaluate(e=>e===document.activeElement),'Tab reaches approval');await check(page);await page.keyboard.press(key);await check(page,{paint:false});
  }

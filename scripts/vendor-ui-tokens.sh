@@ -132,8 +132,8 @@ done
 
 # Connection windows and Home use the same pure presentation assets.
 for target_dir in wallet-metamask/browser wallet-unisat/browser wallet-walletconnect/browser home/browser; do
-  for asset in wallet-connection-view.mjs wallet-connection-screens.mjs wallet-connection-view.css connection-wallet.png connection-walletconnect.png connection-metamask.png connection-unisat.png; do
-    if [[ "$target_dir" == "home/browser" && "$asset" == "wallet-connection-view.css" ]]; then continue; fi
+  for asset in wallet-connection-loading.mjs wallet-connection-view.mjs wallet-connection-screens.mjs wallet-connection-view.css connection-wallet.png connection-walletconnect.png connection-metamask.png connection-unisat.png; do
+    if [[ "$target_dir" == "home/browser" && ( "$asset" == "wallet-connection-view.css" || "$asset" == "wallet-connection-loading.mjs" ) ]]; then continue; fi
     if [[ "$MODE" == "--check" ]]; then
       if ! cmp -s "capsules/_shared/$asset" "capsules/$target_dir/$asset"; then
         echo "[vendor-ui] DRIFT: capsules/$target_dir/$asset" >&2

@@ -257,7 +257,7 @@ for(const engine of ['chromium','webkit'])test(`guest off and expired window in 
  r.fixture.setPermission('requested');await r.refresh();await r.state('internet-off');await r.capture('internet-off');
  r.fixture.state.guest=true;await r.frame.locator('[data-action=inbox]').click();r.fixture.setPermission('granted');await r.refresh();await r.state('internet-ready');
  r.fixture.setPermission('off');await r.click('connect');await r.state('guest-access');assert.equal(await r.frame.locator('[data-action=back-to-connection]').count(),0,'owner-only recovery offers its real status check');await r.capture('guest-access');
- r.fixture.state.expiredLaunch=true;await r.reopen();await r.state('window-expired');await r.capture('window-expired');assert.equal(await r.frame.locator('button').count(),0,'unavailable N1 Close stays with the shell');
+ r.fixture.state.expiredLaunch=true;await r.reopen();await r.state('window-expired');await r.capture('window-expired');assert.deepEqual(await r.frame.locator('button').allTextContents(),['Close window'],'expired window retains only its exit');
  assert.deepEqual(r.errors,[]);
 });
 
@@ -333,7 +333,7 @@ for(const engine of ['chromium','webkit'])test(`a wallet answer names Home while
  const r=await setup(t,engine);await r.link();await r.approval('checking-response');
  let release,entered;const held=new Promise(resolve=>{release=resolve;}),checking=new Promise(resolve=>{entered=resolve;});t.after(()=>release());
  await r.page.route('**/wallet/approvals/checking-response/complete',async route=>{entered();await held;await route.continue();});
- await r.click('send-request');await checking;await r.frame.getByText('Your wallet has answered. Home is checking the answer.',{exact:true}).waitFor();
+ await r.click('send-request');await checking;await r.frame.getByText('Checking your wallet answer.',{exact:true}).waitFor();
  assert.equal(r.fixture.state.completed,0);assert.equal(await r.frame.getByRole('button',{name:'Stop waiting',exact:true}).count(),1);await r.capture('response-checking');
  release();await r.state('request-done');assert.equal(r.fixture.state.completed,1);assert.deepEqual(r.errors,[]);
 });
@@ -343,7 +343,7 @@ for(const engine of ['chromium','webkit'])test(`proof checking stays bound while
  let release,entered;const held=new Promise(resolve=>{release=resolve;}),checking=new Promise(resolve=>{entered=resolve;});t.after(()=>release());
  await r.page.route('**/api/auth/evm/verify',async route=>{entered();await held;await route.continue();});
  await r.qr();await r.pair();await checking;await r.peer.changeAccount();
- await r.frame.getByText('Your wallet has answered. Home is checking the answer.',{exact:true}).waitFor();
+ await r.frame.getByText('Checking your wallet answer.',{exact:true}).waitFor();
  assert.match(await r.frame.locator('code.connection-address').innerText(),new RegExp(first.slice(0,6),'i'),'the response still belongs to the account that signed');assert.equal(r.fixture.state.verified,0);
  release();await r.state('account-changed');assert.equal(r.fixture.state.verified,1);assert.match(await r.frame.locator('code.connection-address').innerText(),new RegExp(r.peer.address.slice(0,6),'i'),'the changed account is offered for a separate link');
  assert.equal(await r.frame.locator('[data-action=send-message]').count(),1);await r.capture('account-changed-after-proof-response');assert.deepEqual(r.errors,[]);
@@ -409,7 +409,7 @@ for(const engine of ['chromium','webkit'])test(`a blocked first request leaves t
  await r.click('send-request');await r.state('request-next');assert.equal(r.fixture.state.completed,1);assert.equal(r.fixture.state.approvals.find(row=>row.request_id==='valid').status,'completed');assert.deepEqual(r.errors,[]);
 });
 for(const engine of ['chromium','webkit'])test(`picker cannot replace an expired window in ${engine}`,windowTestOptions(engine,60000),async t=>{
- const r=await setup(t,engine);await r.link();await r.approval('one');r.fixture.state.approvals.push({...r.fixture.state.approvals[0],request_id:'two'});await r.refresh();await r.click('view-requests');await r.state('request-list');r.fixture.state.expiredLaunch=true;await r.refresh();await r.state('window-expired');assert.equal(await r.frame.locator('button').count(),0,'expired queue offers no inoperative local picker');await r.capture('expired-window-from-picker');assert.deepEqual(r.errors,[]);
+ const r=await setup(t,engine);await r.link();await r.approval('one');r.fixture.state.approvals.push({...r.fixture.state.approvals[0],request_id:'two'});await r.refresh();await r.click('view-requests');await r.state('request-list');r.fixture.state.expiredLaunch=true;await r.refresh();await r.state('window-expired');assert.deepEqual(await r.frame.locator('button').allTextContents(),['Close window'],'expired window retains only its exit');await r.capture('expired-window-from-picker');assert.deepEqual(r.errors,[]);
 });
 
 for(const engine of ['chromium','webkit'])test(`proof timeout survives relay and session-extension updates in ${engine}`,windowTestOptions(engine,60000),async t=>{
@@ -419,7 +419,7 @@ for(const engine of ['chromium','webkit'])test(`proof timeout survives relay and
 for(const engine of ['chromium','webkit'])for(const cleanupFails of [false,true])test(`a known hash survives stopping Home completion in ${engine}${cleanupFails?' when cleanup fails':''}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);await r.link();await r.approval('hash-before-stop',{intent:'transaction_intent'});
  let release,entered;const held=new Promise(resolve=>{release=resolve;}),checking=new Promise(resolve=>{entered=resolve;});t.after(()=>release());await r.page.route('**/wallet/approvals/hash-before-stop/complete',async route=>{entered();await held;await route.continue();});
- await r.click('send-request');await checking;await r.frame.getByText('Your wallet has answered. Home is checking the answer.',{exact:true}).waitFor();r.fixture.state.deleteFails=cleanupFails;await r.click('stop-waiting');const stopped=cleanupFails?'transaction-wallet-error':'transaction-cancelled';await r.state(stopped);assert.ok((await r.frame.locator('main').innerText()).includes(r.peer.lastTransactionHash));await r.capture(cleanupFails?'known-hash-after-failed-stop':'known-hash-after-stop');release();await until(()=>r.fixture.state.completed===1,'the existing posted completion can finish');await r.state(stopped);assert.deepEqual(r.errors,[]);
+ await r.click('send-request');await checking;await r.frame.getByText('Checking your wallet answer.',{exact:true}).waitFor();r.fixture.state.deleteFails=cleanupFails;await r.click('stop-waiting');const stopped=cleanupFails?'transaction-wallet-error':'transaction-cancelled';await r.state(stopped);assert.ok((await r.frame.locator('main').innerText()).includes(r.peer.lastTransactionHash));await r.capture(cleanupFails?'known-hash-after-failed-stop':'known-hash-after-stop');release();await until(()=>r.fixture.state.completed===1,'the existing posted completion can finish');await r.state(stopped);assert.deepEqual(r.errors,[]);
 });
 for(const engine of ['chromium','webkit'])test(`Send remains bound to its visible request ID in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);await r.link();await r.approval('current');const before=r.fixture.state.calls.filter(row=>row.path.endsWith('/approve')).length;
@@ -529,7 +529,7 @@ for(const engine of ['chromium','webkit'])test(`request picker capability follow
  const r=await setup(t,engine);await r.link();await r.approval('queue-first');r.fixture.state.approvals.push({...r.fixture.state.approvals[0],request_id:'queue-second'});await r.refresh();await r.state('request-multiple');
  r.fixture.setPermission('refused');await r.refresh();await r.state('internet-refused');assert.equal(await r.frame.locator('[data-action=view-requests]').count(),0,'a refused gate cannot open the local picker');await r.capture('refused-queue-no-picker');
  r.fixture.setPermission('granted');await r.refresh();await r.state('request-multiple');await r.click('view-requests');await r.state('request-list');
- r.fixture.state.expiredLaunch=true;await r.refresh();await r.state('window-expired');assert.equal(await r.frame.locator('button').count(),0,'an expired gate cannot open or select a cached request');await r.capture('expired-queue-no-controls');
+ r.fixture.state.expiredLaunch=true;await r.refresh();await r.state('window-expired');assert.deepEqual(await r.frame.locator('button').allTextContents(),['Close window'],'expired window retains only its exit');await r.capture('expired-queue-no-controls');
 });
 
 for(const engine of ['chromium','webkit'])test(`outcome focus returns after a real background redraw in ${engine}`,windowTestOptions(engine,60000),async t=>{
@@ -545,4 +545,29 @@ for(const engine of ['chromium','webkit'])test(`answered request choices follow 
  const r=await setup(t,engine);await r.link();await r.approval('answer-first');r.fixture.state.approvals.push({...r.fixture.state.approvals[0],request_id:'answer-second'});await r.refresh();await r.state('request-multiple');await r.click('send-request');await r.state('request-next');await r.frame.locator('[data-action=select-request]').waitFor();
  r.fixture.setPermission('refused');await r.refresh();await r.frame.locator('[data-action=select-request]').waitFor({state:'detached'});await r.state('request-next');assert.equal(await r.frame.locator('[data-action=view-requests]').count(),0);assert.equal(r.fixture.state.completed,1);assert.equal(r.fixture.state.approvals.find(row=>row.request_id==='answer-second').status,'pending');await r.capture('answered-queue-refused-no-picker');
  r.fixture.setPermission('granted');await r.refresh();await r.frame.locator('[data-action=select-request]').waitFor();await r.click('select-request');await r.state('request-waiting');assert.equal(r.fixture.state.completed,1,'reselection itself never sends a request');
+});
+
+
+for(const engine of ['chromium','webkit'])test(`W2 Stop retires a phone signature before asynchronous cleanup in ${engine}`,windowTestOptions(engine,60000),async t=>{
+ const from='export function createWalletConnectClient(';
+ const to=`export function createWalletConnectClient(options){
+   const real=realCreateWalletConnectClient(options);
+   return {...real,async effect(action){
+     if(action.kind==='signin'){const result=await real.effect(action);window.w2SignatureReady=true;await new Promise(resolve=>window.w2ReleaseSignature=resolve);return result;}
+     if(action.kind==='stop-signin'){await new Promise(resolve=>window.w2ReleaseStop=resolve);return real.effect(action);}
+     return real.effect(action);
+   }};
+ }
+ function realCreateWalletConnectClient(`;
+ const r=await setup(t,engine,{file:'walletconnect-client.mjs',from,to});await r.link();
+ await r.page.evaluate(()=>{window.w2Replies=[];addEventListener('message',e=>{if(e.data?.type==='home:wallet-signin-effect-result')w2Replies.push(e.data);});});
+ const send=(operation,fields={})=>r.page.evaluate(({operation,fields})=>document.querySelector('iframe').contentWindow.postMessage({type:'home:wallet-signin-effect',homeToken:'fixture-wallet',requestId:'w2-'+operation,operation,...fields},'*'),{operation,fields});
+ await send('select');await r.page.waitForFunction(()=>w2Replies.some(row=>row.requestId==='w2-select'));
+ const selection=await r.page.evaluate(()=>w2Replies.find(row=>row.requestId==='w2-select').result);
+ await send('sign',{address:selection.address,chain_id:selection.chain_id,message:'Runtime fixed fixture sentence.',action:'add'});
+ await r.frame.waitForFunction(()=>window.w2SignatureReady===true);
+ await r.frame.getByRole('button',{name:'Stop waiting',exact:true}).click();await r.state('request-cancelled');
+ await r.frame.evaluate(()=>window.w2ReleaseSignature());await r.page.waitForFunction(()=>w2Replies.some(row=>row.requestId==='w2-sign'));
+ assert.deepEqual(await r.page.evaluate(()=>w2Replies.filter(row=>row.requestId==='w2-sign').map(row=>({error:row.error,result:row.result}))),[{error:true,result:undefined}]);
+ await r.frame.evaluate(()=>window.w2ReleaseStop());await r.state('request-cancelled');await r.capture('signin-stopped-before-cleanup');
 });

@@ -13,13 +13,24 @@ export const sendable = (request, now) => request.status === 'pending' && isWall
 export function windowPresentation(state, nowSeconds) {
   const {connection, accounts = [], requests = [], busy, phase, permission, pending, ownerNeeded, expired, outcome, qrData, selectedId, activeRequest} = state;
   const session = connection?.session;
-  const request = activeRequest || requests.find(row => row.request_id === selectedId) || requests.find(row=>sendable(row,nowSeconds));
+  const request = activeRequest || requests.find(row => row.request_id === selectedId) || requests.find(row=>row.request_id===state.dispatchedRequestId) || requests.find(row=>sendable(row,nowSeconds));
   const sent = Boolean(request && (state.dispatchedRequestId === request.request_id || request.status === 'approved' && request.intent === 'transaction_intent'));
   const completed = ['request-done','request-next','transaction-done'].includes(outcome);
   const answered = completed || ['request-declined','transaction-declined'].includes(outcome);
   const linked = sessionLinked(session, accounts) || Boolean(outcome === 'linked' && session && state.proofAccount && sameAccount(session.address,state.proofAccount.address) && session.chain === state.proofAccount.chain);
+  // Once dispatched, a payment owns this window until its answer is known.
+  // QR, launch, access and connection changes cannot turn it into a new send.
+  const unresolvedPayment = request?.intent === 'transaction_intent' && sent && !answered;
   let stage;
-  if (expired) stage = 'window-expired';
+  if (unresolvedPayment) {
+    if (['transaction-cancelled','transaction-timeout','transaction-wallet-error'].includes(outcome)) stage=outcome;
+    else if (state.checking || busy && phase === 'checking') stage='checking-response';
+    else if (connection?.removed) stage='transaction-wallet-removed';
+    else if (expired || state.loading || permission && permission !== 'granted' || connection?.expired) stage='transaction-wallet-error';
+    else if (busy && phase === 'transaction') stage='transaction-phone';
+    else stage='transaction-reopened';
+  }
+  else if (expired) stage = 'window-expired';
   else if (state.loading) stage = outcome==='home-read-unavailable' ? outcome : 'wallet-loading';
   else if (answered) stage=outcome;
   else if (outcome === 'request-unavailable' && !sent && (connection?.removed || connection?.expired || permission && permission !== 'granted')) stage=outcome;
@@ -68,10 +79,10 @@ export function windowPresentation(state, nowSeconds) {
   const currentSelection=session?.address && (state.walletChanged && !linked && stage === 'network-unsupported' || requestAccount && (!sameAccount(session.address,request.address) || session.chain !== request.chain_namespace)) ? {address:session.address,network:networkLabel(session.chain)} : undefined;
   const transactionHash = ['transaction-wallet-error','transaction-cancelled','transaction-timeout','transaction-reopened','transaction-done','checking-response'].includes(stage) && /^0x[0-9a-fA-F]{64}$/.test(state.unrecordedHash || '') ? state.unrecordedHash : undefined;
   const localSafety=Boolean(state.paymentPending || request?.intent === 'transaction_intent' && sent && !answered);
-  const supportedActions=[...baseActions].filter(action=> !['finish','send-message'].includes(action) || session?.address && isWalletConnectNetwork(session.chain));
+  const supportedActions=[...baseActions].filter(action=> (!unresolvedPayment || !['connect','start-over','finish','send-message','send-request','add-account','back-to-connection','view-requests','select-request'].includes(action)) && (!['finish','send-message'].includes(action) || session?.address && isWalletConnectNetwork(session.chain)));
   return {input:{walletResult,window:'walletconnect',stage,account,waitSeconds,qrData:qrData || undefined,homeOrigin:state.homeOrigin,
     localSafety,linkedConnection:Boolean(session),compact:false,targetNetwork:networkLabel(request?.chain_namespace),supportedActions,
-    connectionNotice,currentSelection,transactionHash,localReturn:!expired&&!state.loading&&!['home-read-unavailable','guest-access'].includes(stage)&&!['linked','disconnected','saved-unlinked','account-changed','account-unavailable-unknown','network-unsupported','wallet-removed','connection-expired','internet-off','internet-refused','nothing-saved','internet-ready'].includes(stage),showNextRequests:true},request,otherRequests:requests.filter(row => row.request_id !== request?.request_id)};
+    connectionNotice,currentSelection,transactionHash,localReturn:!unresolvedPayment&&!expired&&!state.loading&&!['home-read-unavailable','guest-access'].includes(stage)&&!['linked','disconnected','saved-unlinked','account-changed','account-unavailable-unknown','network-unsupported','wallet-removed','connection-expired','internet-off','internet-refused','nothing-saved','internet-ready'].includes(stage),showNextRequests:true},request,otherRequests:requests.filter(row => row.request_id !== request?.request_id)};
 }
 
 export function errorStage(error, action, phase) {
@@ -99,7 +110,7 @@ export function errorStage(error, action, phase) {
 }
 
 // Only intents supported by the base controller are exposed. N1 is a separate gate.
-export const baseActions = new Set(['connect','start-over','finish','cancel','stop-waiting','inbox','check-access','check-status','copy-link','copy-address','disconnect','send-request','select-request','view-requests','send-message','refresh-status','back-to-connection','add-account']);
+export const baseActions = new Set(['connect','start-over','finish','cancel','close-window','stop-waiting','inbox','check-access','check-status','copy-link','copy-address','disconnect','send-request','select-request','view-requests','send-message','refresh-status','back-to-connection','add-account']);
 
 // A latent request stays with the controller. Only a request screen receives its
 // identity, so account confirmation can never inherit an earlier request address.

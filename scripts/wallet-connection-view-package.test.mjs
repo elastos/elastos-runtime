@@ -18,7 +18,7 @@ test('real release staging and archives carry identical shared view bytes in all
       assert.equal(result.status,0,result.stderr);
       hashes[name]={};
       for(const asset of walletViewAssets){
-        if(name==='home'&&asset==='wallet-connection-view.css')continue;
+        if(name==='home'&&['wallet-connection-view.css','wallet-connection-loading.mjs'].includes(asset))continue;
         const member=`${name}/browser/${asset}`;
         const unpacked=spawnSync('tar',['-xOf',join(scratch,`${name}.tar.gz`),member],{timeout:10000,maxBuffer:2*1024*1024});
         assert.equal(unpacked.status,0,`${member}: archive member`);
@@ -44,14 +44,14 @@ test('canonical shared assets survive real staging and archives for connectors a
     for(const name of ['wallet-metamask','wallet-unisat','wallet-walletconnect','home']){
       const dir=join(fixture,'capsules',name);mkdirSync(dir,{recursive:true});
       cpSync(`capsules/${name}/capsule.json`,join(dir,'capsule.json'));cpSync(`capsules/${name}/browser`,join(dir,'browser'),{recursive:true});
-      for(const asset of walletViewAssets)if(name!=='home'||asset!=='wallet-connection-view.css')cpSync(`capsules/_shared/${asset}`,join(dir,'browser',asset));
+      for(const asset of walletViewAssets)if(name!=='home'||!['wallet-connection-view.css','wallet-connection-loading.mjs'].includes(asset))cpSync(`capsules/_shared/${asset}`,join(dir,'browser',asset));
     }
     validateWalletViewAssets(fixture);
     for(const name of ['wallet-metamask','wallet-unisat','wallet-walletconnect','home']){
       const result=spawnSync('bash',['-c','source scripts/publish-release.sh\nstage_wasm_capsule "$1" "$2/capsules/$1" "$3/stage/$1"\ncreate_capsule_tar "$3/$1.tar.gz" "$3/stage" "$1"','wallet-view-canonical',name,fixture,scratch],{encoding:'utf8',timeout:30000});
       assert.equal(result.status,0,result.stderr);hashes[name]={};
       for(const asset of walletViewAssets){
-        if(name==='home'&&asset==='wallet-connection-view.css')continue;const member=`${name}/browser/${asset}`,unpacked=spawnSync('tar',['-xOf',join(scratch,`${name}.tar.gz`),member],{timeout:10000,maxBuffer:2*1024*1024});assert.equal(unpacked.status,0);assert.deepEqual(unpacked.stdout,readFileSync(`capsules/_shared/${asset}`));hashes[name][asset]=createHash('sha256').update(unpacked.stdout).digest('hex');}
+        if(name==='home'&&['wallet-connection-view.css','wallet-connection-loading.mjs'].includes(asset))continue;const member=`${name}/browser/${asset}`,unpacked=spawnSync('tar',['-xOf',join(scratch,`${name}.tar.gz`),member],{timeout:10000,maxBuffer:2*1024*1024});assert.equal(unpacked.status,0);assert.deepEqual(unpacked.stdout,readFileSync(`capsules/_shared/${asset}`));hashes[name][asset]=createHash('sha256').update(unpacked.stdout).digest('hex');}
     }
     const receipt=process.env.WALLET_VIEW_PACKAGE_RECEIPT&&process.env.WALLET_VIEW_PACKAGE_RECEIPT.replace(/\.json$/,'-canonical.json');if(receipt)writeFileSync(receipt,JSON.stringify(hashes,null,2)+'\n');
   }finally{temporary.cleanup();}

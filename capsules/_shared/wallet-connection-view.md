@@ -6,7 +6,7 @@ Call reduceConnection(presentation, sources) to derive contract-owned fields. re
 
 The presentation input has window, stage, an already-cleaned account display projection, waitSeconds for window-local waits, an optional local PNG qrData, validated homeOrigin, WalletConnect localSafety, compact, targetNetwork (a canonical requested-network label), previousFocus, and an optional closed transactionDisplay projection (amount, asset, destination, network) computed by Home/Runtime. App-authored reason remains separate. Contract sources are the original provider message, optional current safety message, Runtime summary and other summaries, alternative navigation facts, audience, and an explicit nowSeconds. The reducer preserves exact site origins, request identity and the earliest supplied deadline. It never reads a clock.
 
-Names have bounded isolated text elements. Runtime owns name cleaning; this view validates bounds and uses the returned text. Pre-link extension names are fixed local copy selected by the provider enum. WalletConnect peer marks are generic. Site identity uses only the validated requesting_origin projection; unknown sites are omitted. Request reason remains labelled app content.
+Names have bounded isolated text elements. Runtime owns name cleaning; this view validates bounds and uses the returned text. Pre-link extension names are fixed local copy selected by the provider enum. WalletConnect peer marks are generic. Site identity uses only the validated requesting_origin projection; unknown sites are omitted. The request card shows app-written content in its own text element.
 
 A card opens with Close window focused and scroll at zero when it first appears for a request, or when its window, request ID or stage changes. A redraw of the same request in the same stage preserves the person's focused control and all scroll positions. A timer-only update changes the wait text in place, retaining the focused DOM node for assistive technology. Focusing an approving control scrolls the site's final line into view directly above it. Keyboard activation reveals that same unit again if the person has scrolled away; the site/action unit remains in normal flow.
 
@@ -55,13 +55,13 @@ A window that transfers state between realms transfers the closed input and
 runs the factory in the rendering realm. It owns mounting and effects.
 
 `browser_typed_data_sign` summaries use “Sign typed data”. The Runtime catalog supplies app names; an unnamed app uses “Requesting app” as its label and “the app” in instructions. Request
-content has the visible label “From app:”. The exact ASCII origin wraps in full
+content appears once in the request card. The exact ASCII origin wraps in full
 under “Site reported by Browser”. The approval unit stays in normal card flow; long cards scroll from their start. Wait/outcome recovery retains its own visible exit. The contract-only `request-unavailable`
 stage in each connector retains request identity and provides return to the app.
 The window lanes must produce this stage from a stale request selection as well
 as every window-local stage listed above; the enabling lane supplies render data.
 
-## Approval access and position (Main's proposed sharpening of W:1173)
+## Approval access and position (Main's proposed sharpening of the window contract)
 
 The site and each approving control share one normal-flow unit at the end of
 the card. The site is the last content before those controls; only fixed Home
@@ -85,7 +85,7 @@ Computed transaction display values are supplied as their own bounded fields; th
 
 ## Presentation recovery copy
 
-For unknown-safety busy recovery, H:754 and H:763-780 govern Close and Activity in Wallet. A selected transaction on request-busy says that this transaction may still be waiting in the named wallet, once (H:772-775); it does not attribute that work to another window. Other busy cards describe the unanswered request and uncertainty about transactions in other windows. link-error with unknown safety conservatively withholds Connect pending the contract owner's retry decision. This presentation choice supplies no producer, payment settlement or new authority.
+For unknown-safety busy recovery, the supplied safety result governs Close and Activity in Wallet. A selected transaction on request-busy says that this transaction may still be waiting in the named wallet, once; it does not attribute that work to another window. Other busy cards describe the unanswered request and uncertainty about transactions in other windows. link-error with unknown safety conservatively withholds Connect pending the contract owner's retry decision. This presentation choice supplies no producer, payment settlement or new authority.
 
 
 ## Existing-plumbing inputs
@@ -102,7 +102,7 @@ The window lanes produce `wallet-loading`, `wallet-unavailable`, `home-wallet-re
 
 The request picker keeps every supplied summary (up to 100 other requests plus the selected one); other designed cards keep their short preview and View requests intent. Account cards accept up to 100 supplied rows and scroll; greater input is refused, not truncated. This is a bounded presentation batch, not a claim about Runtime's maximum account count. A producer needing a larger list needs paging and an agreed source bound. The pure summary reducer preserves Runtime's expired status and known request-kind titles; an unknown intent is Review request. Runtime rejected records with an approval time reduce to dismissed; explicit dismissed input remains compatible with legacy callers.
 
-The default site label element is exactly Site reported by Browser. Its following colon and space are separate fixed punctuation. “From app:” labels app-written content. “Requesting app” is a standalone fallback label; instructions use “the app”. WalletConnect recovery says “This request is unavailable here. To try again, go back to {app} and start a new request.”
+The default site label element is exactly Site reported by Browser. Its following colon and space are separate fixed punctuation. “Requesting app” is a standalone fallback label; instructions use “the app”. WalletConnect recovery says “This request is unavailable here. To try again, go back to {app} and start a new request.”
 
 
 `transport-reconnecting` is an additional connectionNotice value: WalletConnect is reconnecting. The window adds/removes it from its existing SDK transport events in idle, wait or result states. A latent request summary never substitutes an account address or request identity on a non-request screen; an expired latent summary does not turn a link screen into an expired request.
@@ -114,7 +114,7 @@ The requesting_app_name catalog field supplies the app label. Its absence uses R
 The required CI origin subset uses the 135-character review host and 512-byte origin at 320×182 and 480×522, effective 100/200% zoom, in both engines. The all-state layout matrix keeps both phone frames, and the stage/style/mutation tests cover all approving stages and intermediate dot-wrap widths. Standalone origin tests keep all 480 scenarios.
 
 
-`checking-response` is a WalletConnect window-local presentation while the existing verify/complete POST is pending. Its selected summary is optional because a link proof can have no app request. It says Your wallet has answered. Home is checking the response. and Stopping here ends this wait. Home may still record the response. Stop waiting keeps its existing local semantics. This stage records or settles nothing.
+`checking-response` is a WalletConnect window-local presentation while the existing verify/complete POST is pending. Its selected summary is optional because a link proof can have no app request. It says Checking your wallet answer. with Stop waiting. Stop waiting keeps its existing local semantics. This stage records or settles nothing.
 
 `network-unknown` and `network-unsupported` are additional fixed connectionNotice values. They can accompany a proof wait without any account projection. `localReturn` and `showNextRequests` are opt-in local display navigation on terminal or blocked cards, including unknown-result cards when the caller permits it. They preserve the exact outcome. Active Cancel/Stop waits and QR cards keep their explicit way out instead. A caller that keeps only Close on an unknown result leaves these flags off. The caller retains all consumed-request/effect guards when it handles local navigation. Queue text uses request for one and requests for several; an opt-in next queue is labelled other requests.
 

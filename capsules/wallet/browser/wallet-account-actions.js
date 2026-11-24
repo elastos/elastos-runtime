@@ -91,16 +91,16 @@ export function createWalletAccountActions({
       );
     }
     rows.push(
-      flowRow("Delete account", "Delete from Wallet", () => confirmDeleteAccount(account)),
+      flowRow("Delete address", "Delete from Wallet", () => confirmDeleteAccount(account)),
     );
-    openFlowModal("Account", account.name, rows);
+    openFlowModal("Address", account.name, rows);
   }
 
   function openRenameAccount(account) {
     const form = document.createElement("form");
     form.className = "wallet-flow-form";
     const field = document.createElement("label");
-    field.append(document.createTextNode("Account name"));
+    field.append(document.createTextNode("Address name"));
     const input = document.createElement("input");
     input.name = "label";
     input.autocomplete = "off";
@@ -112,7 +112,7 @@ export function createWalletAccountActions({
       form.append(
         textNode(
           "p",
-          `This grouped card updates ${groupedAccountRecords(account).length} exact account records that share this address.`,
+          `This grouped card updates ${groupedAccountRecords(account).length} network records that share this address.`,
           "wallet-flow-hint",
         ),
       );
@@ -123,7 +123,7 @@ export function createWalletAccountActions({
         showStatus(String(error.message || error), "error"),
       );
     });
-    openFlowModal("Rename account", account.network, [form], [
+    openFlowModal("Rename address", account.network, [form], [
       modalButton("Cancel", closeModal, true),
       modalButton("Save", () => form.requestSubmit()),
     ]);
@@ -135,7 +135,7 @@ export function createWalletAccountActions({
     const data = new FormData(form);
     const label = readText(data.get("label"));
     if (!label) {
-      showStatus("Enter an account name.", "error");
+      showStatus("Enter an address name.", "error");
       return;
     }
     const button = modalNode.querySelector(
@@ -163,14 +163,14 @@ export function createWalletAccountActions({
   function confirmDeleteAccount(account) {
     const grouped = groupedAccountRecords(account);
     const warningText = grouped.length > 1
-      ? `Delete ${account.name} from this Wallet. This grouped card removes ${grouped.length} exact account records that share this address. Export the recovery key first if you may need them later. Passkey confirmation is required for each record.`
-      : `Delete ${account.name} from this Wallet. Export the recovery key first if this is a built-in account you may need later. Passkey confirmation is required.`;
+      ? `Delete ${account.name} from this Wallet. This grouped card removes ${grouped.length} network records that share this address. Export the recovery key first if you may need them later. Passkey confirmation is required for each record.`
+      : `Delete ${account.name} from this Wallet. Export the recovery key first if this is a built-in address you may need later. Passkey confirmation is required.`;
     const warning = textNode(
       "p",
       warningText,
       "wallet-flow-hint",
     );
-    openFlowModal("Delete account", account.network, [warning], [
+    openFlowModal("Delete address", account.network, [warning], [
       modalButton("Cancel", closeModal, true),
       modalButton("Delete", () => deleteAccount(account), true, true),
     ]);
@@ -207,11 +207,11 @@ export function createWalletAccountActions({
     if (!isPasskeyManagedAccount(account)) {
       openInfoModal(
         "Recovery",
-        "This account is controlled by an external approval method. Recover it from that wallet.",
+        "This address is controlled by an external approval method. Recover it from that wallet.",
       );
       return;
     }
-    openFlowModal("Passkey required", "Confirm with your passkey to view this account recovery key.", [
+    openFlowModal("Passkey required", "Confirm with your passkey to view this address recovery key.", [
       textNode(
         "p",
         "The key is shown only after fresh passkey verification. Store it offline.",
@@ -250,12 +250,12 @@ export function createWalletAccountActions({
     const recoveryKeyText = JSON.stringify(recoveryKey, null, 2);
     const note = textNode(
       "p",
-      "Use the full Wallet recovery key JSON below to restore this built-in account.",
+      "Use the full Wallet recovery key JSON below to restore this built-in address.",
       "wallet-flow-hint",
     );
     const key = textNode("code", recoveryKeyText, "wallet-secret");
     const details = [
-      flowStaticRow("Account", account.name),
+      flowStaticRow("Address", account.name),
       flowStaticRow("Network", account.network),
       flowStaticRow("Address", shortAddress(account.address)),
     ];
