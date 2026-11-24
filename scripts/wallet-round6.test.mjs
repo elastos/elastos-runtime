@@ -54,7 +54,7 @@ for(const engine of ['chromium','webkit'])for(const width of [1280,390])test(`ro
   const request={...args[1].summary,status:'approved'};
   for(const outcome of ['transaction-cancelled',undefined,'transaction-timeout','transaction-wallet-error','checking-response']){
    const p=windowPresentation({accounts:[],requests:[request],permission:'granted',outcome:outcome==='checking-response'?undefined:outcome,checking:outcome==='checking-response'},1800000001);const view=walletConnectView(p);
-   assert.match(viewText(view.status)+' '+viewText(view.notice),/may already have been sent/);if(outcome!=='checking-response'){assert.match(viewText(view.notice),/To pair again, resolve this request in Wallet/);assert(view.actions.some(a=>a.id==='open-wallet'));}assert(!view.actions.some(a=>['connect','start-over','send-request'].includes(a.id)));
+   assert.match(viewText(view.status)+' '+viewText(view.notice),/may already have been sent/);if(outcome!=='checking-response'){assert.match(viewText(view.notice),/dismiss this request in Wallet to pair again/);assert(view.actions.some(a=>a.id==='open-wallet'));}assert(!view.actions.some(a=>['connect','start-over','send-request'].includes(a.id)));
    await f.page.evaluate(async input=>{const m=await import('/capsules/_shared/wallet-connection-view.mjs');window.testMount?.dispose();window.testMount=m.mountConnection(document.querySelector('#mount'),m.connectionView(input));},{...p.input,summary:view.request});
    await shot(f.page,`walletconnect-${outcome||'reopened'}-${engine}-${width}`);
   }

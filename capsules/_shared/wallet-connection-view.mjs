@@ -284,7 +284,7 @@ export function connectionView(input) {
     if(stage==='checking-response'){notice='The transaction may already have been sent; check {{wallet}} and Activity in Wallet before sending again.';safetyNotice=notice;}
     if(!['transaction-phone','checking-response'].includes(stage)){
       outcome=parts('The transaction may already have been sent.');
-      notice='To pair again, resolve this request in Wallet after checking {{wallet}} and Activity.';
+      notice='Check {{wallet}} and Activity, then dismiss this request in Wallet to pair again.';
       actions=[{id:'open-wallet',label:parts('Open Wallet'),primary:true,quiet:false},{id:'close-window',label:parts('Close window'),primary:false,quiet:true}].filter(a=>!supported||supported.includes(a.id));
       safetyNotice=null;
     }
