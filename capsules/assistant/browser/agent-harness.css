@@ -1389,11 +1389,11 @@ body.agent-harness-sidebar-collapsed #agent-harness-search-open-main {
 }
 
 .agent-attach-menu {
-  position: absolute;
-  left: 12px;
-  bottom: calc(100% + 8px);
-  z-index: 40;
-  width: min(320px, calc(100% - 24px));
+  position: fixed;
+  z-index: 200090;
+  box-sizing: border-box;
+  width: min(320px, calc(100vw - 24px));
+  overflow-y: auto;
   padding: 10px;
   border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
   border-radius: 14px;

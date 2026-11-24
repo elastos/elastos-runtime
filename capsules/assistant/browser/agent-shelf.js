@@ -445,10 +445,20 @@ export function openAttachPicker() {
     openDeviceFilePicker();
     return;
   }
-  menu.hidden = !menu.hidden;
   if (!menu.hidden) {
-    hostRenderDesktopAttachOptions?.(menu);
+    closeAttachMenu();
+    return;
   }
+  // The composer faces clip their contents during the Shelf transition.
+  // Keep this viewport menu outside those faces so every item receives clicks.
+  document.body.append(menu);
+  hostRenderDesktopAttachOptions?.(menu);
+  menu.hidden = false;
+  const anchor = document.querySelector(".agent-composer").getBoundingClientRect();
+  menu.style.maxHeight = `${Math.max(80, window.innerHeight - 24)}px`;
+  const bounds = menu.getBoundingClientRect();
+  menu.style.left = `${Math.max(12, Math.min(anchor.left, window.innerWidth - bounds.width - 12))}px`;
+  menu.style.top = `${Math.max(12, Math.min(anchor.top - bounds.height - 8, window.innerHeight - bounds.height - 12))}px`;
 }
 
 /** Filled by harness bind — lists Desktop objects into the attach menu. */
@@ -789,6 +799,16 @@ export function bindAgentShelf() {
     },
     dismiss: () => closePasteEditor(),
   });
+
+  registerEscapeHandler("agent-attach-menu", {
+    priority: 90,
+    isActive: () => Boolean(attachMenuEl() && !attachMenuEl().hidden),
+    dismiss: () => {
+      closeAttachMenu();
+      document.querySelector("#agent-attach-btn")?.focus();
+    },
+  });
+  window.addEventListener("resize", closeAttachMenu);
 
   registerEscapeHandler("agent-shelf", {
     priority: 75,

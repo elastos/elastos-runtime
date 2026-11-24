@@ -12,7 +12,7 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { once } from "node:events";
-import { readFile } from "node:fs/promises";
+import { readFile, mkdir } from "node:fs/promises";
 import { extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "./system-uiux-fixture.mjs";
@@ -302,6 +302,31 @@ try {
 
   stage = "saved conversation";
   let frame = await open(savedRoom);
+  for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    await frame.locator("#agent-attach-btn").click();
+    const choose = frame.getByRole("button", { name: "Choose files on this device…" });
+    if (process.env.PRODUCT_FAULT_PICTURES) {
+      await mkdir(process.env.PRODUCT_FAULT_PICTURES, { recursive: true });
+      await page.screenshot({ path: `${process.env.PRODUCT_FAULT_PICTURES}/10-assistant-menu-${viewport.width}.png` });
+    }
+    const chooserPromise = page.waitForEvent("filechooser", { timeout: 5000 });
+    chooserPromise.catch(() => {});
+    await choose.click({ timeout: 4000 });
+    const chooser = await chooserPromise;
+    assert.equal(chooser.isMultiple(), true, "ordinary pointer click opens the native multiple-file chooser");
+    await chooser.setFiles({ name: "size-check.md", mimeType: "text/markdown", buffer: Buffer.alloc(1_000_000, 97) });
+    await frame.locator("[data-agent-attachments]").getByText("1.0 MB", { exact: false }).waitFor();
+    if (process.env.PRODUCT_FAULT_PICTURES) {
+      await mkdir(process.env.PRODUCT_FAULT_PICTURES, { recursive: true });
+      await page.screenshot({ path: `${process.env.PRODUCT_FAULT_PICTURES}/10-assistant-${viewport.width}.png` });
+    }
+    await frame.locator("[data-attach-remove]").click();
+    await frame.locator("#agent-attach-btn").click();
+    await page.keyboard.press("Escape");
+    await frame.locator("[data-agent-attach-menu]").waitFor({ state: "hidden" });
+  }
+  await page.setViewportSize({ width: 1280, height: 900 });
   let rows = frame.locator(".agent-msg");
   await rows.nth(3).waitFor({ state: "attached" });
   const sent = rows.nth(0), received = rows.nth(1);
