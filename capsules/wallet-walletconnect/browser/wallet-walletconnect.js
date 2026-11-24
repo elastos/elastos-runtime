@@ -154,10 +154,11 @@ function unresolvedPayment() {
 }
 
 function draw() {
+  const canRequestClose=Boolean(frameHomeToken&&homeOrigin&&window.top!==window);
   const shownSignin=signinRequest || signinResult?.request;
   if(shownSignin) {
     const account={name:(connectionState?.session?.name||'your wallet').slice(0,40),mark:'wallet',connection:'WalletConnect',accounts:[{address:shownSignin.address,networks:[shownSignin.chain_namespace==='eip155:20'?'Elastos Smart Chain':'Base']}]};
-    currentView=connectionView({window:'walletconnect',stage:signinResult?.stage||(currentPhase==='checking'?'checking-response':'request-phone'),purpose:'home-signin',signinAction:shownSignin.action,signinComplete:signinResult?.complete,summary:reduceSummary(shownSignin,{connector:CONNECTOR_ID}),account,homeOrigin,supportedActions:['stop-waiting','close-window']});
+    currentView=connectionView({window:'walletconnect',stage:signinResult?.stage||(currentPhase==='checking'?'checking-response':'request-phone'),purpose:'home-signin',signinAction:shownSignin.action,signinComplete:signinResult?.complete,summary:reduceSummary(shownSignin,{connector:CONNECTOR_ID}),account,homeOrigin,supportedActions:canRequestClose?['stop-waiting','close-window']:['stop-waiting']});
     mounted=mountConnection(root,currentView,mounted);renderKey='signin:'+shownSignin.request_id;return;
   }
   if(mounted){const saved=captureConnectionPresentation(mounted.root);if(saved.action)rememberedFocus={key:renderKey,action:document.activeElement?.dataset.action,focusKey:saved.key,outcome:saved.action};}
@@ -179,6 +180,7 @@ function draw() {
   if (connectionNeedsReplacement && ['request-waiting','request-multiple','transaction-waiting'].includes(presentation.input.stage) && !hostEffectInFlight) presentation.input.stage='request-new-connection';
   const canChooseRequests=Boolean(!payment&&accountsLoaded&&requests.length&&!hostEffectInFlight&&!launchExpired&&permissionStatus==='granted'&&!homeReadFailed);
   presentation.input.supportedActions=presentation.input.supportedActions.filter(action=>!['view-requests','select-request'].includes(action)||canChooseRequests);
+  if(!canRequestClose)presentation.input.supportedActions=presentation.input.supportedActions.filter(action=>action!=='close-window');
   presentation.input.showNextRequests=canChooseRequests;
   if (showPicker && canChooseRequests) {
     presentation.input.stage='request-list';presentation.input.transactionHash=undefined;presentation.input.walletResult=undefined;presentation.request=requests.find(row=>row.request_id===selectedId)||requests[0];
