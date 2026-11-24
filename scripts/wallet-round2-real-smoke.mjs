@@ -22,18 +22,19 @@ async function shot(page,name,caption){
   return true;
 }
 const extensionIds={metamask:'fahggfellgfmaipmbahaikhklihepmdg',unisat:'ojipfahngkjpkiggjokmcladcfhfefnp'};
+const metamaskPopup=JSON.parse(await readFile(join(extensions,'metamask','manifest.json'),'utf8')).action.default_popup;
 async function prompt(context,kind){
   const until=Date.now()+25000;
   while(Date.now()<until){
     const pages=context.pages().filter(p=>!p.isClosed()&&p.url().includes(extensionIds[kind]));
-    const page=pages.findLast(p=>p.url().includes('notification'))||pages.findLast(p=>p.url().includes('home.html'));
+    const page=pages.findLast(p=>p.url().includes('notification'))||pages.findLast(p=>p.url().includes('popup'))||pages.findLast(p=>p.url().includes('home.html'));
     if(page)return page;
     await new Promise(resolve=>setTimeout(resolve,100));
   }
   throw Error(kind+' did not open a test prompt');
 }
 async function answer(context,kind,name,{reject=false}={}){
-  const end=Date.now()+30000;
+  const end=Date.now()+30000;let openedPopup=false;
   while(Date.now()<end){
     const page=await prompt(context,kind);await page.bringToFront();
     const unlock=kind==='metamask'?page.getByRole('button',{name:'Unlock',exact:true}):page.getByText('Unlock',{exact:true});
@@ -45,6 +46,10 @@ async function answer(context,kind,name,{reject=false}={}){
     if(await accept.isVisible().catch(()=>false)){
       if(!await shot(page,name+'-prompt',kind+(reject?' refusal':' signature')+' in the real extension.'))continue;
       await (reject?decline:accept).click().catch(error=>{if(!page.isClosed())throw error;});return;
+    }
+    if(kind==='metamask'&&!openedPopup&&page.url().includes('/home.html')&&Date.now()>end-28000){
+      // Open the toolbar surface named by the installed extension's manifest.
+      openedPopup=true;const popup=await context.newPage();await popup.goto('chrome-extension://'+extensionIds.metamask+'/'+metamaskPopup);continue;
     }
     await new Promise(resolve=>setTimeout(resolve,100));
   }
@@ -110,7 +115,9 @@ try{
       await answer(context,kind,'real-'+kind+'-cancel-prompt',{reject:true});
       await f.state('request-declined');
       await request('ordinary-close');await f.action('send-request').click();
-      await (await prompt(context,kind)).close();await f.state('request-declined');
+      const closing=await prompt(context,kind),toolbar=kind==='metamask'&&closing.url().includes('popup');await closing.close();
+      if(toolbar){await f.action('stop-waiting').click();await f.state('request-cancelled');const popup=await context.newPage();await popup.goto('chrome-extension://'+extensionIds.metamask+'/'+metamaskPopup);await answer(context,kind,'real-'+kind+'-closed-toolbar-refusal',{reject:true});}
+      await f.state('request-declined');
       await shot(f.top,'real-'+kind+'-closed-prompt',kind+' closed extension prompt is shown as a declined request.');
       await request('ordinary-expiry');
       await f.top.evaluate(()=>testState.requests[0].expires_at=Math.floor(Date.now()/1000)-1);await f.frame.evaluate(()=>window.dispatchEvent(new Event('focus')));await f.state('request-expired');
