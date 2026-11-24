@@ -151,6 +151,31 @@ for (const mode of ["studio", "chat"]) {
 }
 
 for (const mode of ["studio", "chat"]) {
+  test(`${mode} reports an unknown outcome after a lost Stop response on an unfinished run`, async t => {
+    const poll = defer(), pollStarted = defer();
+    const f = await fixture(t, {
+      mode,
+      create: async () => response({ status: "ok", data: {
+        schema: "elastos.model.run/v1", run_id: runId, status: "running", sequence_cursor: 0,
+      } }),
+      readEvents: () => { pollStarted.resolve(); return poll.promise; },
+      cancel: async () => { throw new TypeError("Stop response lost after dispatch"); },
+    });
+    f.app.setDraft("Keep the unfinished run");
+    assert.equal(await f.app.sendDraft(), true);
+    await pollStarted.promise;
+    assert.equal(f.app.snapshot().activeRun.status, "running");
+    assert.equal(f.app.snapshot().activeRun.terminal, false);
+    assert.equal(await f.app.stopRun(), false);
+    const view = f.app.snapshot();
+    assert.equal(view.activeRun.status, "settlement_unknown");
+    assert.equal(view.activeRun.terminal, false);
+    assert.equal(view.statusMessage, "The stop response was lost. The run outcome is unknown.");
+    if (mode === "studio") assert.equal(view.studioHistory[0].status, "settlement_unknown");
+  });
+}
+
+for (const mode of ["studio", "chat"]) {
   for (const request of ["Stop", "poll"]) {
     test(`${mode} keeps existing ${request} error-reply behavior for an unfinished run`, async t => {
       const poll = defer(), pollStarted = defer();
