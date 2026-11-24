@@ -94,9 +94,9 @@ impl BeginLimiter {
         }
         let window = &mut self.clients.entry(key).or_default()[kind.index()];
         let mut retry = Duration::ZERO;
-        let (short_begins, pending_starts) = kind.limits();
-        if window.len() >= pending_starts {
-            let start = window[window.len() - pending_starts];
+        let (short_begins, long_begins) = kind.limits();
+        if window.len() >= long_begins {
+            let start = window[window.len() - long_begins];
             retry = CHALLENGE_WINDOW.saturating_sub(now.saturating_duration_since(start));
         }
         if let Some(start) = window.iter().rev().nth(short_begins - 1) {

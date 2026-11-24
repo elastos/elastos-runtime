@@ -1190,6 +1190,16 @@ fn extract_cbor_bytes(value: &ciborium::Value, key: &str) -> anyhow::Result<Vec<
     anyhow::bail!("Missing CBOR field: {}", key)
 }
 
+/// Signed-out IPv6 peers share a /64 budget; mapped IPv4 uses its IPv4 budget.
+/// Loopback addresses share one local budget.
+pub fn signin_peer_network(peer: Option<IpAddr>) -> Option<IpAddr> {
+    peer.map(|ip| match ip.to_canonical() {
+        ip if ip.is_loopback() => IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+        IpAddr::V6(ip) => IpAddr::V6(std::net::Ipv6Addr::from(u128::from(ip) & (u128::MAX << 64))),
+        ip => ip,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2128,13 +2138,4 @@ mod tests {
 
         assert!(err.contains("Credential clone detected"));
     }
-}
-
-/// A signed-out IPv6 peer owns one /64 budget; mapped IPv4 uses its IPv4 budget.
-pub fn signin_peer_network(peer: Option<IpAddr>) -> Option<IpAddr> {
-    peer.map(|ip| match ip.to_canonical() {
-        ip if ip.is_loopback() => IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
-        IpAddr::V6(ip) => IpAddr::V6(std::net::Ipv6Addr::from(u128::from(ip) & (u128::MAX << 64))),
-        ip => ip,
-    })
 }
