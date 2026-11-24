@@ -49,3 +49,19 @@ test('Desktop focuses the exact admitted connector window without opening anothe
     assert.deepEqual(result,{missing:false,matched:true,active:'connector',count:2});
   }finally{await browser.close();await fixture.close();}
 });
+
+test('a declined extension signature keeps the wallet refusal instead of a disconnect error',async()=>{
+  const fixture=await signinFixture(),{chromium}=requireProductSmokePlaywright(),browser=await chromium.launch({headless:true});
+  const context=await browser.newContext();await context.addInitScript(installSigninProviders,{evmAddress,bitcoinAddress,theme:'light'});
+  const page=await context.newPage();page.setDefaultTimeout(10000);
+  try{
+    fixture.state.methods=[];
+    await page.goto(fixture.origin+'/home/');await page.waitForFunction(()=>window.fixtureReady);await page.evaluate(()=>window.showFixtureApps());
+    const system=page.frameLocator('iframe[title=system]');await system.getByRole('button',{name:'Add wallet',exact:true}).click();
+    await page.locator('.signin-dialog[data-state=options] .connection-option').filter({hasText:'MetaMask'}).click();
+    await page.evaluate(()=>window.walletFixture.mode='rejected');
+    await page.frameLocator('iframe[title=wallet-metamask]').locator('[data-action=send-request]').click();
+    const error=page.locator('.signin-dialog[data-state=error]');await error.waitFor();
+    assert.match(await error.innerText(),/Your wallet declined the request/);assert.equal(fixture.state.methods.length,0);
+  }finally{await context.close();await browser.close();await fixture.close();}
+});

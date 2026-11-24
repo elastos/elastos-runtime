@@ -398,7 +398,7 @@ export function startExtensionWindow(kind, homeClipboard) {
     if(!hasExactKeys(data,keys))return;
     const reply=result=>window.top.postMessage({type:'home:wallet-signin-effect-result',homeToken:frameHomeToken,requestId:data.requestId,...result},homeOrigin);
     if(data.operation!=='review'){
-      if(data.operation==='stop')signinReply?.({error:true});signinReply=null;signinRequest=null;signinSent=false;draw();reply({result:{}});return;
+      if(data.operation==='stop'&&!signinSent)signinReply?.({error:true});signinReply=null;signinRequest=null;signinSent=false;draw();reply({result:{}});return;
     }
     if(operation||signinRequest||!validAddress(data.address)||!Number.isSafeInteger(data.chain_id)||typeof data.message!=='string'||!data.message||data.message.length>32768||typeof data.name!=='string'||data.name.length>80||data.network!==(kind==='unisat'?'bitcoin':''))return reply({error:true});
     signinRequest=data;signinReply=reply;signinSent=false;draw();
