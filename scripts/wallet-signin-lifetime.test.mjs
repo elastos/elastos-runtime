@@ -14,7 +14,7 @@ test('Add wallet releases Home and System after list failure, close, or the mana
     await page.goto(fixture.origin+'/home/');await page.waitForFunction(()=>window.fixtureReady);await page.evaluate(()=>window.showFixtureApps());
     const system=page.frameLocator('iframe[title=system]'),wallet=page.frameLocator('iframe[title=wallet]'),add=system.getByRole('button',{name:'Add wallet',exact:true});
     await add.waitFor();failSummary=true;await add.click();await wallet.locator('#wallet-signers[data-signin=list-error]').waitFor();
-    failSummary=false;await wallet.getByRole('button',{name:'Choose wallet',exact:true}).click();await wallet.locator('#wallet-signers[data-signin=options]').waitFor();
+    failSummary=false;await wallet.getByRole('button',{name:'Try again',exact:true}).click();await wallet.locator('#wallet-signers[data-signin=options]').waitFor();
     await wallet.getByRole('button',{name:'Cancel',exact:true}).click();await add.waitFor();
     await page.clock.install();await add.click();await wallet.locator('#wallet-signers[data-signin=options]').waitFor();
     assert(await system.locator('#wallet-signin-add').isEnabled(),'a second click can focus the active journey');
@@ -75,5 +75,21 @@ test('phone sign-in returns from QR to its waiting row in the same sheet',async(
     assert.equal(await sheet.locator('.connection-option').filter({hasText:'Waiting for Phone wallet…'}).count(),1);
     assert.equal(await sheet.locator('details,summary,pre').count(),0);assert.equal(await page.locator('#fixture-desktop iframe').count(),0);
     await sheet.getByRole('button',{name:'Cancel',exact:true}).click();
+  }finally{await context.close();await browser.close();await fixture.close();}
+});
+
+test('a connection retried after its first expiry still continues the same Add wallet',async()=>{
+  const fixture=await signinFixture(),browser=await requireProductSmokePlaywright().chromium.launch({headless:true});
+  const context=await browser.newContext();await context.addInitScript(installSigninProviders,{evmAddress,bitcoinAddress,theme:'light'});
+  const page=await context.newPage();page.setDefaultTimeout(10000);
+  try {
+    fixture.state.methods=[];fixture.state.connected=[];
+    await page.goto(fixture.origin+'/home/');await page.waitForFunction(()=>window.fixtureReady);await page.evaluate(()=>window.showFixtureApps());
+    await page.clock.install();const system=page.frameLocator('iframe[title=system]'),wallet=page.frameLocator('iframe[title=wallet]');
+    await system.getByRole('button',{name:'Add wallet',exact:true}).click();await wallet.locator('#wallet-signers[data-signin=options]').waitFor();
+    await wallet.locator('.wallet-method-head').filter({hasText:'MetaMask'}).getByRole('button',{name:'Choose',exact:true}).click();
+    const connector=page.frameLocator('iframe[title=wallet-metamask]');await connector.getByRole('button',{name:'Connect wallet',exact:true}).waitFor();
+    await page.clock.fastForward(180001);fixture.state.clockOffsetMs=180001;await connector.getByRole('button',{name:'Connect wallet',exact:true}).click();
+    await connector.locator('[data-action=send-request]').click();await system.locator('[data-wallet-method]').waitFor();assert.equal(fixture.state.methods.length,1);
   }finally{await context.close();await browser.close();await fixture.close();}
 });

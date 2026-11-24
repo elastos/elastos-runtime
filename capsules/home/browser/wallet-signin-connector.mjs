@@ -1,6 +1,6 @@
 // Home talks only to its admitted WalletConnect window. Proof stays in memory.
-export async function selectConnectedWalletConnect({signal,method},{open,current,listen=window}) {
-  const context=await open();signal.throwIfAborted();
+export async function selectConnectedWalletConnect({signal,method,opened},{open,current,listen=window}) {
+  const context=await open();signal.throwIfAborted();opened?.(context.focus);
   const pending=new Map();let sequence=0,monitor,closed=false;
   const prefix=crypto.randomUUID();
   const valid=()=>!closed&&!signal.aborted&&current(context);
@@ -27,7 +27,7 @@ export async function selectConnectedWalletConnect({signal,method},{open,current
     if(!wallet||wallet.connector!=='walletconnect'||!/^0x[0-9a-fA-F]{40}$/.test(wallet.address)||!Number.isSafeInteger(wallet.chain_id)||wallet.chain_id<=0||wallet.network!=='')throw new Error('Invalid wallet identity');
     if(![20,8453].includes(wallet.chain_id))throw Object.assign(new Error('Unsupported sign-in network'),{code:'network'});
     if(method&&(method.address.toLowerCase()!==wallet.address.toLowerCase()||method.chain_id!==wallet.chain_id))throw Object.assign(new Error('Wallet changed'),{code:'changed'});
-    return {...wallet,check:()=>send('check',{address:wallet.address,chain_id:wallet.chain_id}),
+    return {...wallet,focus:context.focus,check:()=>send('check',{address:wallet.address,chain_id:wallet.chain_id}),
       async sign(message){
         const proof=await send('sign',{address:wallet.address,chain_id:wallet.chain_id,message});
         if(typeof proof?.signature!=='string'||!proof.signature||proof.signature.length>16384||proof.signature_type!=='personal_sign'||proof.public_key!=='')throw new Error('Invalid wallet proof');
@@ -39,7 +39,7 @@ export async function selectConnectedWalletConnect({signal,method},{open,current
 
 // Extension providers live in Home; their admitted connector owns request review.
 export async function selectConnectedExtension(connector, options, {open,current,select,listen=window}) {
-  const context=await open(connector);options.signal.throwIfAborted();
+  const context=await open(connector);options.signal.throwIfAborted();options.opened?.(context.focus);
   const signer=await select(connector,options);
   let closed=false,monitor,reviewId;const pending=new Map(),prefix=crypto.randomUUID();let sequence=0;
   const valid=()=>!closed&&!options.signal.aborted&&current(context);
@@ -62,7 +62,7 @@ export async function selectConnectedExtension(connector, options, {open,current
   listen.addEventListener('message',receive);options.signal.addEventListener('abort',close,{once:true});
   monitor=setInterval(()=>{if(!current(context)||context.source.closed){close();options.changed('disconnected');}},250);
   if(options.signal.aborted){close();options.signal.throwIfAborted();}
-  return {...signer,close,async sign(message){
+  return {...signer,focus:context.focus,close,async sign(message){
     const result=await send('review',{address:signer.address,chain_id:signer.chain_id,network:signer.network,name:signer.name||'',message});
     if(result?.approved!==true)throw new Error('Wallet did not approve the request');
     await signer.check();

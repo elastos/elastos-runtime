@@ -250,7 +250,7 @@ async function openSigninConnector(target) {
   })) {
     throw new Error("Home GUI did not accept the Wallet connector attachment");
   }
-  const token=homeLaunchTokenFromRoute(launched.route);return {isOpen:()=>launchedAppContexts.has(token)};
+  const token=homeLaunchTokenFromRoute(launched.route);return {isOpen:()=>launchedAppContexts.has(token),focus:()=>postToActiveShell({type:'home:gui-command',command:'focus-window',homeToken:token})};
 }
 
 async function signinConnectorWindow(connector='walletconnect') {
@@ -261,7 +261,7 @@ async function signinConnectorWindow(connector='walletconnect') {
   const opened=!prior?await openSigninConnector(target):null;
   const deadline=Date.now()+15000;
   while(!existing()) {if(opened?.isOpen()===false)throw new Error('Wallet window closed');if(Date.now()>deadline)throw new Error('Wallet window did not open');await new Promise(resolve=>setTimeout(resolve,50));}
-  const [homeToken,context]=existing();return {homeToken,source:context.source};
+  const [homeToken,context]=existing();return {homeToken,source:context.source,focus:()=>postToActiveShell({type:'home:gui-command',command:'focus-window',homeToken})};
 }
 function currentSigninConnector(context) {
   const active=launchedAppContexts.get(context.homeToken);return active?.source===context.source&&active.expiresAt>Date.now()&&!context.source.closed;
@@ -1758,7 +1758,6 @@ window.addEventListener("message", (event) => {
       ? fetchJson(path, {headers:{"x-elastos-home-token":token}}) : walletSigninApi(path, body, token),
     manage: manageWalletSignin,
     openConnector: openSigninConnector,
-    focusConnector: connector=>{const entry=[...launchedAppContexts.entries()].find(([,c])=>c.targetId===`wallet-${connector}`&&c.source&&c.expiresAt>Date.now());if(entry)postToActiveShell({type:'home:gui-command',command:'focus-window',homeToken:entry[0]});},
     openChooser: onAction=>openWalletSigninChooser({open:openSigninConnector,current:currentSigninConnector,focus:homeToken=>postToActiveShell({type:"home:gui-command",command:"focus-window",homeToken}),onAction}),
     focusCaller: ()=>postToActiveShell({type:"home:gui-command",command:"focus-window",homeToken:context.homeToken}),
     selectExtension: (connector,options)=>selectConnectedExtension(connector,options,{open:signinConnectorWindow,current:currentSigninConnector,select:selectSigninWallet}),

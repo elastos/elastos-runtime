@@ -20,7 +20,7 @@ export async function signinFixture() {
         const body=raw?JSON.parse(raw):undefined;
         // Keep secrets and signatures out of the evidence. Assertions use memory only.
         call={path,body,headers:req.headers};state.calls.push(call);
-        const now=Date.now()/1000;
+        const now=(Date.now()+(state.clockOffsetMs||0))/1000;
         if((path.startsWith('/api/auth/wallet-methods')||path==='/api/auth/passkeys') && !['fixture-home','fixture-system'].includes(req.headers['x-elastos-home-token']))return json({},403);
         if(path.startsWith('/api/auth/wallet')&&req.headers.authorization)return json({},403);
         const passkeys=()=>[...Array.from({length:state.passkeyCount},(_,index)=>({proof_binding_id:`passkey:${index}`,principal_id:'principal:alex',display_name:'Alex',added_from:index?'Security key':'Safari on Mac',role:state.role,current:index===0&&!state.walletSession,created_at:Math.floor(Date.parse('2026-11-20T15:00:00Z')/1000),last_used_at:Math.floor(Date.parse('2026-11-21T15:00:00Z')/1000)})),...(state.otherAdmin?[{proof_binding_id:'passkey:other',principal_id:'principal:morgan',display_name:'Morgan',added_from:'Security key',role:state.otherRole||'admin',current:false,created_at:Math.floor(Date.parse('2026-11-20T15:00:00Z')/1000)}]:[])];
@@ -158,7 +158,7 @@ const contexts=new WeakMap();
 async function openFixtureConnector(target) {
   let frame=document.querySelector('iframe[data-target='+target+']');
   if(!frame){frame=document.createElement('iframe');frame.dataset.target=target;frame.title=target;frame.style.cssText='position:fixed;inset:0;width:100%;height:100vh;border:0;z-index:20;background:var(--el-surface)';frame.setAttribute('sandbox','allow-scripts allow-forms');frame.src='/apps/'+target+'/?home_origin='+encodeURIComponent(location.origin)+'#home_token=fixture-'+target;document.querySelector('#fixture-desktop').append(frame);await new Promise(resolve=>frame.onload=resolve);}
-  document.querySelectorAll('#fixture-desktop iframe').forEach(f=>f.hidden=f!==frame);frame.hidden=false;if(target==='wallet')frame.contentWindow.postMessage({type:'elastos.wallet.connect-entry/v1'},'*');return {isOpen:()=>frame.isConnected,homeToken:'fixture-'+target,source:frame.contentWindow};
+  document.querySelectorAll('#fixture-desktop iframe').forEach(f=>f.hidden=f!==frame);frame.hidden=false;if(target==='wallet')frame.contentWindow.postMessage({type:'elastos.wallet.connect-entry/v1'},'*');return {isOpen:()=>frame.isConnected,homeToken:'fixture-'+target,source:frame.contentWindow,focus:()=>{document.querySelectorAll('#fixture-desktop iframe').forEach(f=>f.hidden=f!==frame);}};
 }
 async function openConnector(target) {
  if(target!=='wallet')return openFixtureConnector(target);
@@ -201,7 +201,7 @@ addEventListener('message',event=>{
  if(event.data?.type==='home:open-target'&&frame.dataset.target==='wallet'&&event.data.homeToken==='fixture-wallet'&&['wallet-metamask','wallet-unisat','wallet-walletconnect'].includes(event.data.target)){void openConnector(event.data.target);return;}
  const context=contexts.get(frame)||{kind:'app-frame',targetId:frame.dataset.target,source:event.source,homeToken:'fixture-'+frame.dataset.target,walletEffectState:{inFlight:false,requestIds:new Set()}};contexts.set(frame,context);
  if(handleHomeWalletConnectorEffect(event,context,event.data))return;
- handleWalletSigninRequest(event,context,{authorityToken:()=> 'fixture-home',api:(path,body,token)=>walletSigninApi(path,body,token),manage:manageWalletSignin,focusConnector:connector=>{for(const f of document.querySelectorAll('#fixture-desktop iframe'))f.hidden=f.dataset.target!=='wallet-'+connector;},openChooser:onAction=>openWalletSigninChooser({open:openConnector,current:c=>[...document.querySelectorAll("#fixture-desktop iframe")].some(f=>f.isConnected&&f.contentWindow===c.source),focus:token=>{for(const f of document.querySelectorAll("#fixture-desktop iframe"))f.hidden=token!=="fixture-"+f.dataset.target;},onAction}),openConnector,selectWalletConnect,selectExtension,focusCaller:()=>{for(const f of document.querySelectorAll('#fixture-desktop iframe'))f.hidden=f.dataset.target!==frame.dataset.target;},current:()=>frame.isConnected,changed:()=>{for(const f of document.querySelectorAll('#fixture-desktop iframe'))f.contentWindow.postMessage({type:'home:wallet-signin-changed'},'*');}});
+ handleWalletSigninRequest(event,context,{authorityToken:()=> 'fixture-home',api:(path,body,token)=>walletSigninApi(path,body,token),manage:manageWalletSignin,openChooser:onAction=>openWalletSigninChooser({open:openConnector,current:c=>[...document.querySelectorAll("#fixture-desktop iframe")].some(f=>f.isConnected&&f.contentWindow===c.source),focus:token=>{for(const f of document.querySelectorAll("#fixture-desktop iframe"))f.hidden=token!=="fixture-"+f.dataset.target;},onAction}),openConnector,selectWalletConnect,selectExtension,focusCaller:()=>{for(const f of document.querySelectorAll('#fixture-desktop iframe'))f.hidden=f.dataset.target!==frame.dataset.target;},current:()=>frame.isConnected,changed:()=>{for(const f of document.querySelectorAll('#fixture-desktop iframe'))f.contentWindow.postMessage({type:'home:wallet-signin-changed'},'*');}});
 });
 window.fixtureReady=true;
 `);return;

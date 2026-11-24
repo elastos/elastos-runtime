@@ -41,3 +41,18 @@ test('Wallet chooser accepts only its admitted source, origin, token and request
     chooser.close();assert.equal(sent.at(-1).state.stage,'closed');emit({...message,action:'cancel'});assert.deepEqual(actions,['metamask']);
   }finally{chooser.close();}
 });
+
+test('a used MetaMask account does not disable another current connected account of that connector',async()=>{
+  const fixture=await signinFixture(),browser=await requireProductSmokePlaywright().chromium.launch({headless:true});
+  const context=await browser.newContext();await context.addInitScript(installSigninProviders,{evmAddress,bitcoinAddress,theme:'light'});
+  const page=await context.newPage();page.setDefaultTimeout(10000);
+  try {
+    fixture.state.methods=fixture.state.methods.filter(m=>m.connector==='metamask').map(m=>({...m,address:'0x'+'34'.repeat(20)}));
+    await page.goto(fixture.origin+'/home/');await page.waitForFunction(()=>window.fixtureReady);await page.evaluate(()=>window.showFixtureApps());
+    const system=page.frameLocator('iframe[title=system]'),wallet=page.frameLocator('iframe[title=wallet]');
+    await system.getByRole('button',{name:'Add wallet',exact:true}).click();await wallet.locator('#wallet-signers[data-signin=options]').waitFor();
+    const choice=wallet.locator('.wallet-method-head').filter({hasText:'MetaMask'});assert.match(await choice.innerText(),/Connected/);assert(await choice.getByRole('button',{name:'Choose',exact:true}).isEnabled());
+    await choice.getByRole('button',{name:'Choose',exact:true}).click();await page.frameLocator('iframe[title=wallet-metamask]').locator('[data-action=send-request]').click();
+    await system.locator('[data-wallet-method]').nth(1).waitFor();assert.equal(fixture.state.methods.length,2);assert.equal(fixture.state.methods[1].address,evmAddress);
+  }finally{await context.close();await browser.close();await fixture.close();}
+});

@@ -107,3 +107,21 @@ function selectWalletConnect({signal,transport,pairing,changed}) {
     if(signal.aborted)abort();
   });
 }
+
+// Reading an extension's selected account never requests a connection or signature.
+export async function currentConnectedSigninMethods(methods,{providers=signinBrowserWallets(),unisat=window.unisat,timeoutMs=1000}={}) {
+  const matches=(row,address,chain,network)=>typeof address==='string'&&row.chain_id===chain&&row.network===network&&(row.connector==='unisat'?row.address===address:row.address.toLowerCase()===address.toLowerCase());
+  async function read(connector,probe) {
+    let timer;
+    try {
+      const [accounts,chain,network]=await Promise.race([probe(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(fault('missing')),timeoutMs);})]);
+      return methods.filter(row=>row.connector===connector&&matches(row,accounts?.[0],chain,network));
+    }catch{return [];}finally{clearTimeout(timer);}
+  }
+  const [evmRows,bitcoin]=await Promise.all([
+    Promise.all(providers.map(entry=>read('metamask',async()=>{const [accounts,chain]=await Promise.all([entry.provider.request({method:'eth_accounts'}),entry.provider.request({method:'eth_chainId'})]);return [accounts,Number(chain),''];}).then(rows=>rows.map(row=>({...row,providerId:entry.rdns||row.providerId}))))),
+    read('unisat',async()=>{if(!unisat)throw fault('missing');const [accounts,network]=await Promise.all([unisat.getAccounts(),unisat.getNetwork()]);return [accounts,0,network==='livenet'?'bitcoin':network];}),
+  ]);
+  const evm=evmRows.flat();
+  return [...evm,...bitcoin,...methods.filter(row=>row.connector==='walletconnect')];
+}

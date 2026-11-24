@@ -84,8 +84,8 @@ export function createWalletPreferences({
         const row=document.createElement('article');row.className='wallet-method wallet-method-head';
         row.append(methodMark(mark,METHOD_MONOGRAMS[mark],true,''));
         const copy=document.createElement('div');copy.append(textNode('strong',label));
-        const used=method?.sign_in_enabled===true;
-        copy.append(textNode('span',used?'Used for sign-in':method?'Connected':'Connect'));
+        const used=method?.used===true;
+        copy.append(textNode('span',used?'Used for sign-in':method?.connected?'Connected':'Connect'));
         row.append(copy);
         const button=actionButton('Choose','walletSigninChoose',connector,true);
         button.disabled=used||signin.stage!=='options';

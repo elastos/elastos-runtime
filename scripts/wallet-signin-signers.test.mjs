@@ -4,7 +4,7 @@ const events=new EventTarget();
 globalThis.window=events;
 globalThis.location=new URL('http://127.0.0.1/home/');
 globalThis.document={querySelector:()=>null,querySelectorAll:()=>[]};
-const {selectSigninWallet}=await import('../capsules/home/browser/wallet-signin-signers.mjs');
+const {selectSigninWallet,currentConnectedSigninMethods}=await import('../capsules/home/browser/wallet-signin-signers.mjs');
 const address='0x'+'12'.repeat(20),bitcoin='bc1q'+'a'.repeat(38),legacy='1'+'a'.repeat(33);
 function provider() {
   const calls=[],listeners=new Map();
@@ -115,4 +115,15 @@ test('the signed-out option binds its selected extension without a cached addres
  window.addEventListener('eip6963:requestProvider',announce);
  try {const wallet=await selectSigninWallet('metamask',{...options(),providerId:'com.brave.wallet'});await wallet.sign('Home sign-in');wallet.close();assert.equal(brave.calls.filter(c=>c.method==='personal_sign').length,1);assert.equal(rabby.calls.length,0);}
  finally {window.removeEventListener('eip6963:requestProvider',announce);}
+});
+
+test('chooser resolves the current external account rather than the first used method of its connector',async()=>{
+  const address='0x'+'34'.repeat(20),old='0x'+'12'.repeat(20);
+  const rows=[{connector:'metamask',address:old,chain_id:20,network:'',sign_in_enabled:true},{connector:'metamask',address,chain_id:8453,network:'',sign_in_enabled:false}];
+  const calls=[],provider={request:async({method})=>{calls.push(method);return method==='eth_accounts'?[address]:'0x2105';}};
+  const selected=await currentConnectedSigninMethods(rows,{providers:[{provider,rdns:'io.metamask'}],unisat:null});
+  assert.equal(selected.length,1);assert.equal(selected[0].address,address);assert.equal(selected[0].sign_in_enabled,false);
+  assert.deepEqual(calls.sort(),['eth_accounts','eth_chainId']);
+  const absent=await currentConnectedSigninMethods(rows,{providers:[{provider:{request:async({method})=>method==='eth_accounts'?['0x'+'56'.repeat(20)]:'0x2105'}}],unisat:null});
+  assert.deepEqual(absent,[],'a new active account can connect instead of inheriting a different account sign-in flag');
 });

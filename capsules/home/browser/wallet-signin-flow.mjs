@@ -12,6 +12,7 @@ export const walletNetwork = wallet => wallet.connector === 'unisat'
   : ({20:'Elastos Smart Chain',8453:'Base',1:'Ethereum',11155111:'Sepolia'})[wallet.chain_id] || `Network ${wallet.chain_id}`;
 export const shortWalletAddress = value => value.length > 16 ? `${value.slice(0,6)}…${value.slice(-4)}` : value;
 export function walletSigninError(error, action) {
+  if(error?.code === 'already-added')return 'This wallet already signs in to this Home. Choose a different account in your wallet.';
   if(error?.code === 'expired') return 'This request expired. Close the old request in your wallet, then try again.';
   if(error?.code === 'changed') return 'Your wallet is using a different account or network. Try again.';
   if(error?.code === 'wallet-unavailable') return 'Open the wallet with this account, then try again.';
