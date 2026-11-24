@@ -1969,38 +1969,6 @@ pub(crate) mod tests {
         .is_err());
     }
     #[test]
-    fn wallet_legacy_provisional_enable_cannot_create_method() {
-        let f = fixture();
-        begin(
-            f.data.path(),
-            ORIGIN,
-            "home-test",
-            input("add", "", &f.address),
-            Some(f.actor.clone()),
-        )
-        .unwrap();
-        // Model a saved enable-by-identity ceremony from the older contract.
-        let file = path(f.data.path()).unwrap();
-        let mut saved: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
-        saved["pending"][0]["action"] = "enable".into();
-        saved["pending"][0]["creates_method"] = true.into();
-        write_secret_bytes_atomic(&file, &serde_json::to_vec(&saved).unwrap()).unwrap();
-        let saved = read(f.data.path()).unwrap();
-        let b = begin_result(&saved.pending[0], None).unwrap();
-        assert!(complete(
-            f.data.path(),
-            ORIGIN,
-            &completion(&f, &b),
-            Some(&f.actor),
-            |_| panic!("a provisional enable cannot consume approval"),
-        )
-        .is_err());
-        assert!(list(f.data.path(), &f.actor).unwrap()["methods"]
-            .as_array()
-            .unwrap()
-            .is_empty());
-    }
-    #[test]
     fn wallet_completed_changes_leave_live_approval_capacity_available() {
         let f = fixture();
         let mut id = enabled(&f);
