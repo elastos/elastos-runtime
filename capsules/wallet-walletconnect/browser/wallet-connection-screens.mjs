@@ -11,7 +11,7 @@ const definitions = {
       }
     },
     "internet-pending": {
-      "status": "Allow WalletConnect to use the internet?",
+      "status": "Allow Phone wallet to use the internet?",
       "notice": "Answer in Inbox to get your QR code.",
       "primary": {
         "id": "inbox",
@@ -27,7 +27,7 @@ const definitions = {
       ]
     },
     "internet-refused": {
-      "status": "Internet access for WalletConnect is off.",
+      "status": "Internet access for Phone wallet is off.",
       "notice": "Connect a wallet to ask Home for internet access again.",
       "primary": {
         "id": "connect",
@@ -36,7 +36,7 @@ const definitions = {
       }
     },
     "internet-off": {
-      "status": "Internet access for WalletConnect is off.",
+      "status": "Internet access for Phone wallet is off.",
       "notice": "Connect again to ask for internet access, then answer in Inbox.",
       "primary": {
         "id": "connect",
@@ -62,7 +62,7 @@ const definitions = {
       "focus": "inbox"
     },
     "internet-clearing": {
-      "status": "Internet access for WalletConnect is off.",
+      "status": "Internet access for Phone wallet is off.",
       "notice": "Finish removing the saved connection in Inbox.",
       "primary": {
         "id": "inbox",
@@ -318,7 +318,7 @@ const definitions = {
       ]
     },
     "request-unsendable": {
-      "status": "This request cannot be sent from WalletConnect. Reject it in Wallet.",
+      "status": "This request cannot be sent from Phone wallet. Reject it in Wallet.",
       "account": true,
       "request": true,
       "outcome": true,
@@ -670,7 +670,7 @@ const definitions = {
       ]
     },
     "request-internet-off": {
-      "status": "Internet access for WalletConnect is off.",
+      "status": "Internet access for Phone wallet is off.",
       "notice": "Choose Back to connection and connect again to ask for internet access. Allow it in Inbox, then return to this request and send it.",
       "account": true,
       "request": true,
@@ -681,7 +681,7 @@ const definitions = {
       }
     },
     "request-internet-pending": {
-      "status": "Allow WalletConnect to use the internet?",
+      "status": "Allow Phone wallet to use the internet?",
       "notice": "Allow internet access in Inbox to continue with this request.",
       "account": true,
       "request": true,
@@ -723,7 +723,7 @@ const definitions = {
       "focus": "close-window"
     },
     "guest-access": {
-      "status": "You cannot turn on internet access for WalletConnect.",
+      "status": "You cannot turn on internet access for Phone wallet.",
       "notice": "Ask an admin of this Home to open Phone wallet, choose Connect wallet, then allow internet access in Inbox.",
       "primary": {
         "id": "check-status",

@@ -647,6 +647,15 @@ export function focusHomeGuiWindowForToken(homeToken) {
   return true;
 }
 
+export function setHomeGuiWalletSigninStage(homeToken, stage) {
+  const entry = homeGuiWindowEntryForToken(homeToken);
+  if (!entry || entry.targetId !== "wallet") return false;
+  entry.walletSigninStage = stage;
+  const close = entry.node.querySelector('[data-action="close"]');
+  if (close) close.disabled = ["completing", "unknown"].includes(stage);
+  return true;
+}
+
 export function closeHomeGuiWindowForToken(homeToken) {
   const entry = homeGuiWindowEntryForToken(homeToken);
   if (!entry) {

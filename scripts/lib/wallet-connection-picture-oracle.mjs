@@ -10,7 +10,7 @@ export function contractCopy(expected, row, view) {
   const raw={...seed,...(!row.summary?row.provisionalSummary:{})};
   const app=raw?.requesting_app_name||({browser:'Browser',notes:'Notes'}[raw?.capsule_id])||'Browser',site=raw?.requesting_origin||'the requesting site';
   const network=row.provisionalInput?.targetNetwork||row.local.account?.accounts[0].networks[0]||'the requested network';
-  const replace=text=>text.replaceAll('’',"'").replaceAll('MetaMask',name).replaceAll('UniSat',name).replaceAll('Browser',app).replaceAll('Notes',app).replaceAll('example.org',site)
+  const replace=text=>text.replaceAll('’',"'").replaceAll('WalletConnect','Phone wallet').replaceAll('MetaMask',name).replaceAll('UniSat',name).replaceAll('Browser',app).replaceAll('Notes',app).replaceAll('example.org',site)
     .replace(/You declined this (transaction|message) in ([^.]+)\./g,'$2 did not approve this $1.')
     .replaceAll(`return to ${site} in ${app}`,`return to ${app}`).replaceAll(`Start it again on ${site} in ${app}`,`Start it again in ${app}`)
     .replace(/^your wallet/,'Your wallet').replaceAll('Wallet activity','Activity in Wallet')
@@ -33,21 +33,21 @@ export function contractCopy(expected, row, view) {
   if(row.window==='walletconnect'){
     const copy={
       'internet-off':{notice:'Connect again to ask for internet access, then answer in Inbox.'},
-      'internet-refused':{status:'Internet access for WalletConnect is off.'},
-      'internet-clearing':{status:'Internet access for WalletConnect is off.'},
+      'internet-refused':{status:'Internet access for Phone wallet is off.'},
+      'internet-clearing':{status:'Internet access for Phone wallet is off.'},
       'link-wait':{status:`Open ${name} and sign the message to confirm this account is yours.`,notice:''},
       'link-declined':{status:'Your wallet declined to sign the message.',notice:'Send another message to confirm this account.'},
       'request-phone':{status:`Continue in ${name}.`,notice:''},
       'transaction-phone':{notice:`Check the transaction in ${name}. If you stop waiting, Home disconnects from ${name}. The transaction may still be waiting there or may already have been sent.`},
       'transaction-deadline':{notice:`Start a new transaction in ${app}.`},
       'transaction-declined':{notice:`To try again, go back to ${app}. In Wallet, choose Dismiss to clear this request.`},
-      'request-internet-off':{status:'Internet access for WalletConnect is off.',notice:'Choose Back to connection and connect again to ask for internet access. Allow it in Inbox, then return to this request and send it.'},
+      'request-internet-off':{status:'Internet access for Phone wallet is off.',notice:'Choose Back to connection and connect again to ask for internet access. Allow it in Inbox, then return to this request and send it.'},
       'request-internet-pending':{notice:'Allow internet access in Inbox to continue with this request.'},
-      'guest-access':{status:'You cannot turn on internet access for WalletConnect.',notice:'Ask an admin of this Home to open WalletConnect, choose Connect wallet, then allow internet access in Inbox.'},
+      'guest-access':{status:'You cannot turn on internet access for Phone wallet.',notice:'Ask an admin of this Home to open WalletConnect, choose Connect wallet, then allow internet access in Inbox.'},
       'request-unavailable':{status:`This request is unavailable here. To try again, go back to ${app} and start a new request.`},
     }[row.stage];
     Object.assign(result,copy);
-    result.status=result.status.replace('Internet access is off for WalletConnect.','Internet access for WalletConnect is off.').replace('Transaction result unknown.','Home could not confirm the transaction result.').replace('You stopped waiting. Result unknown.','You stopped waiting. The transaction may have been sent.');
+    result.status=result.status.replace('Internet access is off for Phone wallet.','Internet access for Phone wallet is off.').replace('Transaction result unknown.','Home could not confirm the transaction result.').replace('You stopped waiting. Result unknown.','You stopped waiting. The transaction may have been sent.');
     if(['transaction-timeout','transaction-cancelled','transaction-wallet-error','transaction-reopened','transaction-wallet-removed'].includes(row.stage))result.notice=`Before you send again, check ${name} and Activity in Wallet.`;
     if(result.notice===`To try again, return to ${app}.`)result.notice=`To try again, go back to ${app} and start a new request.`;
   }

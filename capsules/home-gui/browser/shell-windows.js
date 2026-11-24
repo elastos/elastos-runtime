@@ -2308,6 +2308,7 @@ export function closeWindow(id) {
   if (!entry) {
     return false;
   }
+  if (entry.targetId === "wallet" && ["completing", "unknown"].includes(entry.walletSigninStage)) return false;
   if (entry.targetId === "browser") {
     return requestBrowserWindowClose(entry);
   }

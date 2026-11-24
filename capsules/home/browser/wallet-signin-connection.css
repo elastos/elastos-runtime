@@ -172,8 +172,6 @@ h2 { font-size: var(--el-text-lg); font-weight: 600; }
 .connection-approval-window > .connection-content { display:block; overflow:visible; }
 .connection-approval-window .connection-request { display:block; overflow:visible; }
 .connection-approval-window .connection-identity { overflow:visible; max-height:none; }
-.connection-card-start { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; }
-.connection-more { color:var(--el-muted); font-size:var(--el-text-md); }
 .connection-approval-unit { display:block; margin-top:8px; }
 .connection-approval-unit > .connection-site-row { display:block; margin:0 0 4px; }
 .connection-approve-actions { margin:0 !important; }
@@ -183,10 +181,8 @@ h2 { font-size: var(--el-text-lg); font-weight: 600; }
 @media(max-width:280px) { body { min-width:0; } }
 .connection-approval-window { padding:16px 20px; }
 .connection-approval-window .connection-card { padding:12px; }
-.connection-approval-window .connection-card-start .el-button { min-height:28px; }
 .connection-compact.connection-approval-window { padding:6px 8px; }
 .connection-compact.connection-approval-window .connection-card { padding:8px; }
-.connection-compact.connection-approval-window .connection-card-start .el-button { min-height:24px; padding:2px 6px; font-size:12px; }
 .connection-site-row .connection-site { display:inline; }
 
 .connection-host-end-text { display:block; }
@@ -196,7 +192,6 @@ h2 { font-size: var(--el-text-lg); font-weight: 600; }
 /* Each dot stays with the preceding label; only an oversized label can wrap inside. */
 .connection-host-label-last { display:inline-block; white-space:nowrap; }
 /* Reserve this short line so toggling the cue cannot change the scroll range. */
-.connection-more { visibility:hidden; }
 
 /* A long picker/account list keeps its last row reachable in this window. */
 .connection-picker > .connection-content { overflow:auto; overscroll-behavior:contain; }
@@ -214,4 +209,42 @@ h2 { font-size: var(--el-text-lg); font-weight: 600; }
 .connection-wallet-choice { width:100%; display:flex; align-items:center; justify-content:flex-start; gap:12px; margin-top:8px; padding:12px 16px; text-align:start; }
 .connection-wallet-choice + .connection-actions { margin-top:16px; }
 .connection-wallet-choice img { width:32px; height:32px; object-fit:contain; }
+
+/* Each connection state stays in the same centered, readable column. */
+.connection-window:not(.connection-panel):not(.connection-compact) {
+  display:flex;
+  height:100svh;
+  min-height:0;
+  overflow:auto;
+  width:min(100%, 480px);
+  padding:24px 20px;
+  justify-content:safe center;
+}
+.connection-window .connection-actions {
+  display:flex;
+  flex-direction:row;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:8px;
+}
+.connection-window .connection-actions > button { width:auto; }
+.connection-window .connection-approve-actions > button { width:auto; }
+.connection-approval-unit > .connection-actions { margin-top:0 !important; }
+.connection-request-account { flex-wrap:nowrap; }
+.connection-request-account > span { min-width:0; display:flex; align-items:baseline; gap:4px; white-space:nowrap; overflow:hidden; }
+.connection-request-account .connection-address { flex-shrink:0; }
+.connection-request-account .connection-wallet { max-width:9em; flex-shrink:0; }
+.connection-window .connection-request > .connection-actions { margin-top:16px; }
+
+.connection-window:not(.connection-compact) > .connection-content { flex-shrink:0; }
+
+.connection-home-origin { margin-top:8px; }
+.connection-home-origin .connection-home { display:block; max-width:100%; white-space:normal; overflow-wrap:anywhere; }
+.connection-home-origin .connection-isolated-text { white-space:normal; overflow:visible; }
+
+/* At short zoomed sizes, keep the decision beside its last site line. */
+.connection-compact .connection-approve-actions { flex-wrap:nowrap; align-items:flex-start; }
+.connection-compact .connection-approve-actions .el-button { flex:0 1 auto; min-width:0; }
+
+.connection-compact .connection-approve-actions:has([data-focus="dismissal"]) { flex-wrap:wrap; }
 }

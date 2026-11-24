@@ -16,6 +16,9 @@ test('Accounts Add wallet uses Wallet chooser and a second click returns to the 
     assert.equal(await page.locator('.signin-dialog').count(),0);
     assert.equal(await wallet.locator('#wallet-methods .wallet-method-head').count(),3);
     assert.match(await wallet.locator('#wallet-methods').innerText(),/Connected/);
+    const states=await wallet.locator('.wallet-method-head > div > span').allTextContents();
+    assert(states.includes('Connected'));assert(states.includes('Not connected'));
+    assert(states.every(word=>['Connected','Not connected','Already signs in'].includes(word)));
     assert.doesNotMatch(await wallet.locator('#wallet-signers').innerText(),/New wallet|Connect another|Built-in/);
     await page.evaluate(()=>document.querySelector('#show-system').click());
     await system.getByRole('button',{name:'Add wallet',exact:true}).click();

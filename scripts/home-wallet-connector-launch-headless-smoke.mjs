@@ -44,7 +44,7 @@ const connectorTokens = Object.freeze({
 const connectorTitles = Object.freeze({
   "wallet-metamask": "MetaMask",
   "wallet-unisat": "UniSat",
-  "wallet-walletconnect": "WalletConnect",
+  "wallet-walletconnect": "Phone wallet",
 });
 const issuedLaunchTokens = new Map();
 const state = {
@@ -1078,14 +1078,14 @@ try {
       assert(state.walletSummaryReads === readsBeforeSibling, "a sibling connector cannot forward Home GUI events");
       await notify();
       try {
-        await wallet.waitForFunction(() => document.querySelector("#wallet-account-state")?.textContent.trim() === "1 account", null, {timeout:4000});
+        await wallet.waitForFunction(() => document.querySelector("#wallet-account-state")?.textContent.trim() === "1 address", null, {timeout:4000});
       } catch (cause) {
         const frames = await Promise.all([page.mainFrame(),homeGui,wallet].map(frame=>frame.evaluate(()=>({hints:window.fixtureAccountHints,label:document.querySelector("#wallet-account-state")?.textContent,status:document.querySelector("#wallet-status")?.textContent}))));
         throw new Error("Account refresh failed: "+JSON.stringify({readsBefore:readsBeforeSibling,readsAfter:state.walletSummaryReads,frames}),{cause});
       }
       state.walletAccounts = [];
       await notify();
-      await wallet.waitForFunction(() => document.querySelector("#wallet-account-state")?.textContent.trim() === "0 accounts", null, {timeout:4000});
+      await wallet.waitForFunction(() => document.querySelector("#wallet-account-state")?.textContent.trim() === "0 addresses", null, {timeout:4000});
     }
 
     const connectorClose = homeGui.locator(

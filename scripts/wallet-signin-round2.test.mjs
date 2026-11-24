@@ -10,8 +10,9 @@ for(const width of [1280,390])test(`connected Add and uncertain save keep their 
   fixture.state.methods=fixture.state.methods.filter(m=>m.connector!=='metamask');
   const context=await browser.newContext({viewport:{width,height:900},locale:'en-US'});
   await context.addInitScript(installSigninProviders,{evmAddress,bitcoinAddress,theme:'light'});
-  const page=await context.newPage();page.setDefaultTimeout(10000);let dispatched=false,loseRead=true;
-  await page.route('**/api/auth/wallet-methods/complete',async route=>{await route.fetch();dispatched=true;await route.abort('failed');});
+  const page=await context.newPage();page.setDefaultTimeout(10000);let dispatched=false,loseRead=true,releaseComplete,acknowledgeComplete;
+  const completeHeld=new Promise(resolve=>acknowledgeComplete=resolve);
+  await page.route('**/api/auth/wallet-methods/complete',async route=>{await route.fetch();dispatched=true;await new Promise(resolve=>{releaseComplete=resolve;acknowledgeComplete();});await route.abort('failed');});
   await page.route('**/api/auth/wallet-methods',route=>dispatched&&loseRead?route.abort('failed'):route.continue());
   const capture=async name=>{if(process.env.SIGNIN_SCREENSHOT_DIR){const target=['busy','saved'].includes(name)?'system':'wallet';if(!await page.locator('iframe[title='+target+']').isVisible())await page.locator('#show-'+target).evaluate(el=>el.click());await page.locator('iframe[title='+target+']').waitFor({state:'visible'});await page.waitForTimeout(200);await mkdir(process.env.SIGNIN_SCREENSHOT_DIR,{recursive:true});await page.screenshot({path:join(process.env.SIGNIN_SCREENSHOT_DIR,`round2-${width}-${name}.png`),fullPage:true,animations:'disabled'});}};
   try {
@@ -31,7 +32,16 @@ for(const width of [1280,390])test(`connected Add and uncertain save keep their 
     await page.evaluate(()=>{window.walletFixture.signaturePending=false;for(const p of window.walletFixture.pending.splice(0))p.resolve(p.result);});
     await wallet.locator('#wallet-signers[data-signin=passkey]').waitFor();await capture('passkey');
     await page.evaluate(()=>{window.walletFixture.passkeyMode='normal';for(const p of window.walletFixture.pending.splice(0))p.resolve(p.result);});
-    await wallet.locator('#wallet-signers[data-signin=unknown]').waitFor();await capture('unknown');
+    await wallet.locator('#wallet-signers[data-signin=completing]').waitFor();
+    assert.equal(await wallet.getByRole('button',{name:'Cancel',exact:true}).count(),0,'completing add hides Cancel');
+    await wallet.locator('body').press('Escape');
+    assert.equal(await wallet.locator('#wallet-signers').getAttribute('data-signin'),'completing');
+    await completeHeld;releaseComplete();
+    await wallet.locator('#wallet-signers[data-signin=unknown]').waitFor();
+    assert.equal(await wallet.getByRole('button',{name:'Cancel',exact:true}).count(),0,'uncertain add hides Cancel');
+    await wallet.locator('body').press('Escape');
+    assert.equal(await wallet.locator('#wallet-signers').getAttribute('data-signin'),'unknown','Escape preserves unknown');
+    await capture('unknown');
     const completeCount=fixture.state.calls.filter(c=>c.path.endsWith('/wallet-methods/complete')).length;
     assert.equal(completeCount,1);assert(fixture.state.methods.some(m=>m.connector==='metamask'));
     // Check again reads the authority list and never resends the proof.
@@ -44,5 +54,5 @@ for(const width of [1280,390])test(`connected Add and uncertain save keep their 
     assert(!fixture.state.calls.some(c=>c.path.endsWith('/wallet/cancel')));
     assert.equal(await page.locator('details,summary').count(),0);
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
-  } finally {await context.close();await browser.close();await fixture.close();}
+  } finally {releaseComplete?.();await context.close();await browser.close();await fixture.close();}
 });

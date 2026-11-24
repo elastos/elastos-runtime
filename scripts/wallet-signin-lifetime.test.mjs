@@ -91,3 +91,28 @@ test('a connection retried after its first expiry still continues the same Add w
     await page.clock.fastForward(180001);fixture.state.clockOffsetMs=180001;await connector.getByRole('button',{name:'Connect wallet',exact:true}).click();await system.locator('[data-wallet-method]').waitFor();assert.equal(fixture.state.methods.length,1);
   }finally{await context.close();await browser.close();await fixture.close();}
 });
+
+
+test('Desktop keeps the Wallet chooser open while save is completing or unknown',async()=>{
+  const fixture=await signinFixture(),browser=await requireProductSmokePlaywright().chromium.launch({headless:true});
+  const page=await browser.newPage();
+  try {
+    await page.goto(fixture.origin+'/apps/home-gui/');
+    const result=await page.evaluate(async()=>{
+      const {shellState}=await import('/apps/home-gui/shell-core.js?v=home-20261101d');
+      const {setHomeGuiWalletSigninStage}=await import('/apps/home-gui/home-gui.js?v=home-20261101d');
+      const {closeWindow}=await import('/apps/home-gui/shell-windows.js?v=home-20261101d');
+      const node=document.createElement('section');node.innerHTML='<button data-action="close">Close</button><iframe class="window-frame"></iframe>';
+      node.querySelector('iframe').dataset.route='/apps/wallet/#home_token=chooser-token';document.body.append(node);
+      shellState.windows.set('chooser',{id:'chooser',targetId:'wallet',node,kind:'browser'});
+      const missing=setHomeGuiWalletSigninStage('wrong-token','unknown'),checks=[];
+      for(const stage of ['completing','unknown']) {
+        const updated=setHomeGuiWalletSigninStage('chooser-token',stage);
+        checks.push({updated,closed:closeWindow('chooser'),present:shellState.windows.has('chooser'),disabled:node.querySelector('button').disabled});
+      }
+      setHomeGuiWalletSigninStage('chooser-token','error');
+      return {missing,checks,enabled:!node.querySelector('button').disabled};
+    });
+    assert.deepEqual(result,{missing:false,checks:[{updated:true,closed:false,present:true,disabled:true},{updated:true,closed:false,present:true,disabled:true}],enabled:true});
+  } finally {await browser.close();await fixture.close();}
+});

@@ -141,7 +141,7 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
       const applied=state.action==='add'?method?.sign_in_enabled===true:!method;
       if(applied) {
         const result={status:state.action==='remove'?'removed':'complete',method_id:request.method_id,sign_in_enabled:state.action==='add'};
-        current.effect='done';clearTimeout(timer);run=null;stopLocal(current);
+        current.effect='done';void current.wallet?.complete?.().catch(()=>{});clearTimeout(timer);run=null;stopLocal(current);
         show('done',{result});await onComplete(result,state.action);
       } else if(Array.isArray(list.open_changes) && list.open_changes.length<=64
         && list.open_changes.every(id=>typeof id==='string'&&id.length<=256)
@@ -159,7 +159,7 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
       if(!live(current))return;
       if(state.action!=='signin') {current.effect='unknown';await reconcile(current);return;}
       if(!result?.app_token || !result?.session_id || !result?.principal_id || !result?.proof_binding_id) throw fault('invalid');
-      clearTimeout(timer);run=null;stopLocal(current);
+      void current.wallet?.complete?.().catch(()=>{});clearTimeout(timer);run=null;stopLocal(current);
       // Runtime retires the transport. Cancel would revoke the confirmed session.
       show('done',{result});await onComplete(result,state.action);
     } catch(error) {

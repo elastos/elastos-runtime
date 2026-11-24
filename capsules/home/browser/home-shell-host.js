@@ -98,7 +98,7 @@ const HOME_GUI_AUTHORIZED_ATTACHMENT_SCHEMA =
 const WALLET_CONNECTOR_TARGET_TITLES = Object.freeze({
   "wallet-metamask": "MetaMask",
   "wallet-unisat": "UniSat",
-  "wallet-walletconnect": "WalletConnect",
+  "wallet-walletconnect": "Phone wallet",
 });
 const WALLET_CONNECTOR_TARGETS = new Set(
   Object.keys(WALLET_CONNECTOR_TARGET_TITLES),
@@ -1764,7 +1764,7 @@ window.addEventListener("message", (event) => {
       ? fetchJson(path, {headers:{"x-elastos-home-token":token}}) : walletSigninApi(path, body, token),
     manage: manageWalletSignin,
     openConnector: openSigninConnector,
-    openChooser: onAction=>openWalletSigninChooser({open:openSigninConnector,current:currentSigninConnector,focus:homeToken=>postToActiveShell({type:"home:gui-command",command:"focus-window",homeToken}),onAction}),
+    openChooser: onAction=>openWalletSigninChooser({open:openSigninConnector,current:currentSigninConnector,focus:homeToken=>postToActiveShell({type:"home:gui-command",command:"focus-window",homeToken}),setStage:(homeToken,stage)=>postToActiveShell({type:"home:gui-command",command:"wallet-signin-state",homeToken,stage}),onAction}),
     focusCaller: ()=>postToActiveShell({type:"home:gui-command",command:"focus-window",homeToken:context.homeToken}),
     selectExtension: (connector,options)=>selectConnectedExtension(connector,options,{open:signinConnectorWindow,current:currentSigninConnector,select:selectSigninWallet}),
     selectWalletConnect: options=>selectConnectedWalletConnect(options,{open:()=>signinConnectorWindow(),current:currentSigninConnector}),

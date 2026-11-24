@@ -4,6 +4,7 @@ import {
   attachAuthorizedHomeGuiTarget,
   closeHomeGuiWindowForToken,
   focusHomeGuiWindowForToken,
+  setHomeGuiWalletSigninStage,
   openHomeGuiTarget,
   relaunchHomeGuiWindowForToken,
   renewHomeGuiBrowserWindowAuthority,
@@ -52,7 +53,7 @@ const BROWSER_AUTHORITY_RENEWAL_RESULT_TYPE =
 const AUTHORIZED_ATTACHMENT_TARGET_TITLES = Object.freeze({
   "wallet-metamask": "MetaMask",
   "wallet-unisat": "UniSat",
-  "wallet-walletconnect": "WalletConnect",
+  "wallet-walletconnect": "Phone wallet",
 });
 let currentSummary = null;
 let sessionRestore = null;
@@ -192,6 +193,10 @@ function handleGuiCommand(message) {
   if(command==="focus-window"){
     if(!hasExactKeys(message,["type","command","homeToken"])||typeof message.homeToken!=="string"||!message.homeToken||message.homeToken.length>4096)return false;
     return focusHomeGuiWindowForToken(message.homeToken);
+  }
+  if (command === "wallet-signin-state") {
+    if (!hasExactKeys(message, ["type", "command", "homeToken", "stage"]) || typeof message.homeToken !== "string" || message.homeToken.length > 4096 || typeof message.stage !== "string" || message.stage.length > 64) return false;
+    return setHomeGuiWalletSigninStage(message.homeToken, message.stage);
   }
   if (command === "close-window") {
     return closeHomeGuiWindowForToken(message.homeToken);

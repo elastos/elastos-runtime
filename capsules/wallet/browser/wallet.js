@@ -437,6 +437,7 @@ function onSigninChooserCommand(event) {
   window.top.postMessage({type:'home:wallet-signin-chooser-action',homeToken:activeHomeToken,requestId:data.requestId,action:'ready'},homeParentOrigin);
   if(state.stage==='closed'){leaveSigninChooser();return;}
   signinChooser={...state,methods:state.methods||signinChooser?.methods||[],requestId:data.requestId,act:action=>{
+    if(action==='cancel'&&['completing','unknown'].includes(signinChooser?.stage))return;
     window.top.postMessage({type:'home:wallet-signin-chooser-action',homeToken:activeHomeToken,requestId:data.requestId,action},homeParentOrigin);
     if(action==='cancel')leaveSigninChooser();
   }};
@@ -446,7 +447,7 @@ function onSigninChooserCommand(event) {
   const actions=document.createElement('div');actions.id='wallet-signin-actions';actions.className='wallet-modal-actions';
   const status=textNode('p',state.message||({loading:'Loading wallets…',connecting:'Continue in the connection window.',signing:'Continue in your wallet.',passkey:'Confirm with your passkey.',completing:'Saving change…'}[state.stage]||''),'wallet-state');status.setAttribute('role','status');actions.append(status);
   for(const [action,label] of state.stage==='approval'?[['approve','Use passkey']]:state.stage==='unknown'?[['check','Check again']]:['error','list-error'].includes(state.stage)?[['retry','Try again']]:[])actions.append(modalButton(label,()=>signinChooser?.act(action)));
-  actions.append(modalButton('Cancel',()=>signinChooser?.act('cancel'),true));signersSection.append(actions);
+  if(!['completing','unknown'].includes(state.stage))actions.append(modalButton('Cancel',()=>signinChooser?.act('cancel'),true));signersSection.append(actions);
   renderMethods(buildViewAccounts(),currentApprovalMethods);
 }
 

@@ -5,16 +5,9 @@
     "phone_source": "scripts/lib/walletconnect-phone-wallet.mjs:27",
     "method": "account.signMessage({message:{raw:hexUtf8Message}})",
     "key": "Disposable existing test key: 32 bytes each 0x07; never a Home or production key",
-    "note": "EIP examples retain their published address; their signatures recover the disposable signer, not that address. They test EIP-191 recovery. The original phone vector retains a retired account-creation message for recovery checks only. The phone-signin vector uses the Runtime resource scheme and tests the complete Home sign-in proof."
+    "note": "EIP examples retain their published address; their signatures recover the disposable signer, not that address. They test EIP-191 recovery. The phone-signin vector uses the Runtime resource scheme and tests the complete Home sign-in proof."
   },
   "vectors": [
-    {
-      "name": "phone",
-      "message": "https://home.example wants you to sign in with your Ethereum account:\n0x4a62316623ad457F02cDC5D997deD67a383EC569\n\nCreate an account on this Home.\n\nURI: https://home.example/login\nVersion: 1\nChain ID: 8453\nNonce: 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b\nIssued At: 2027-01-15T08:00:00Z\nExpiration Time: 2027-01-15T08:05:00Z\nResources:\n- urn:elastos:home:686f6d652d31\n- urn:elastos:ceremony:bac4b8122fed6187e1b493a932761b8f5e720a439bf85730cf31869ea30ced4e",
-      "signature": "0x010a0271b3d70153bb5738bc3024e0ab071d2826f9b6a3dc1deceb8cd39489201dc84c80bfbf19f07f634be27c224b754cb1bf1cd1745c17bce2317e0af1a86e1b",
-      "hash": "0xfc6ac24d017546104e36cdb261f55bdab7940c60dd2c3a91da34fc14c7ee00b9",
-      "signer": "0x4a62316623ad457F02cDC5D997deD67a383EC569"
-    },
     {
       "name": "eip4361-0",
       "message": "example.com wants you to sign in with your Ethereum account:\n0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2\n\nI accept the ExampleOrg Terms of Service: https://example.com/tos\n\nURI: https://example.com/login\nVersion: 1\nChain ID: 1\nNonce: 32891756\nIssued At: 2021-09-30T16:25:24Z\nResources:\n- ipfs://bafybeiemxf5abjwjbikoz4mc3a3dla6ual3jsgpdr4cjr3oz3evfyavhwq/\n- https://example.com/my-web2-claim.json",
