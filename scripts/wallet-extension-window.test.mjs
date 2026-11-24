@@ -233,6 +233,7 @@ test('both extension packages carry one presenter and existing v1 actions only',
   const mm = await readFile('capsules/wallet-metamask/browser/extension-window.mjs', 'utf8');
   assert.equal(mm, await readFile('capsules/wallet-unisat/browser/extension-window.mjs', 'utf8'));
   assert.match(mm, /postMessage\(\{type:'home:open-target',target:'wallet',homeToken:frameHomeToken\},homeOrigin\)/);
+  assert.equal((mm.match(/home:open-target/g)||[]).length,1,'one fixed Wallet recovery message');
   assert.match(mm, /mountConnection\(mount, view, presentation\)/);
   assert.doesNotMatch(mm, /localStorage|sessionStorage|eth_requestAccounts|eth_sendTransaction|wallet-connector\/.*\/v2/);
 });
