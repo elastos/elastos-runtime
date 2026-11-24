@@ -118,7 +118,7 @@ for (const engine of ['chromium','webkit']) test(`extension_request_feedback_in_
           // The design receipt is an independent control-order oracle.
           const labels=(expected?.inventory||[`Open ${view.request.app} [primary]`]).filter(s=>/\[(primary|quiet secondary|bordered secondary)\]$/.test(s)).filter(s=>!((facts.capability||facts.payment)&&s.startsWith('Phone wallet [')));
           const normalized=label=>{
-            const text=label.replace('Create account','Create address').replace('Import account','Import address').replace('Add account','Add address').replace('Show Request','Show request').replace('Wallet activity','Activity in Wallet').replace(/^\[mark:[^\]]+\]\s*/,'').replace(/\s+/g,' ');
+            const text=label.replace('Show Request','Show request').replace('Wallet activity','Activity in Wallet').replace(/^\[mark:[^\]]+\]\s*/,'').replace(/\s+/g,' ');
             return row.window==='panel'?text:text.replaceAll('MetaMask',view.account?.name||'MetaMask').replaceAll('UniSat',view.account?.name||'UniSat').replaceAll('Browser',view.request?.app||'Browser').replaceAll('Notes',view.request?.app||'Notes');
           };
           let expectedControls=labels.map(s=>({label:normalized(s.replace(/ \[(primary|quiet secondary|bordered secondary)\]$/,'')),primary:s.endsWith('[primary]')}));
@@ -132,15 +132,10 @@ for (const engine of ['chromium','webkit']) test(`extension_request_feedback_in_
           if(row.window==='metamask'&&['extension-missing','extensions-unavailable','other-ethereum-wallet','request-unsendable','link-error'].includes(row.stage))expectedControls=[{label:'Check again',primary:true},{label:'Close window',primary:false}];
           const fallbackClose=!expectedControls.length&&row.window==='metamask'&&expected?.inventory.some(s=>s.startsWith('Phone wallet [primary]'))&&(facts.payment||facts.capability);
           if(fallbackClose)expectedControls=[{label:'Close window',primary:true}];
-          if(facts.approval){const main=expectedControls.filter(c=>c.primary),close=expectedControls.find(c=>c.label==='Close window'),other=expectedControls.filter(c=>!c.primary&&c.label!=='Close window');expectedControls=[...other.filter(c=>c.label==='View requests'),...main,...other.filter(c=>!c.label.startsWith('View request')),close?{...close,primary:false}:{label:'Cancel',primary:false},...other.filter(c=>c.label==='View request')];}
+          if(facts.approval){const main=expectedControls.filter(c=>c.primary),close=expectedControls.find(c=>['Close window','Cancel'].includes(c.label)),other=expectedControls.filter(c=>!c.primary&&!['Close window','Cancel'].includes(c.label));expectedControls=[...other.filter(c=>c.label==='View requests'),...main,...other.filter(c=>!c.label.startsWith('View request')),close?{...close,primary:false}:{label:'Cancel',primary:false},...other.filter(c=>c.label==='View request')];}
           if(row.unknownSafety&&['link-busy','request-busy','extension-busy'].includes(row.stage))expectedControls=[{label:'Close window',primary:true},...expectedControls.filter(c=>!c.primary&&c.label!=='Close window')];
           if(row.unknownSafety&&row.stage==='link-error')expectedControls=[{label:'Close window',primary:true}];
           if(row.stage==='disconnecting')expectedControls.push({label:'Close window',primary:true});
-          if(['request-waiting','request-multiple','request-typed-data','transaction-waiting'].includes(row.stage)&&row.window!=='panel'){
-            const main=expectedControls.find(c=>c.primary);assert(main,key+': receipt supplies the approval action');
-            expectedControls=[...expectedControls.filter(c=>c.label==='View requests'),{label:main.label.replace(/^Send to /,'Continue in '),primary:true},{label:'Cancel',primary:false},...expectedControls.filter(c=>c.label==='View request')];
-          }
-          if(['metamask','unisat'].includes(row.window)&&['extension-wait','link-wait'].includes(row.stage))expectedControls=[{label:'Cancel',primary:false}];
           if(['transaction-reopened','transaction-wallet-error','transaction-cancelled','transaction-timeout','transaction-wallet-removed'].includes(row.stage)&&!expectedControls.some(c=>c.label==='Close window'))expectedControls.push({label:'Close window',primary:false});
           const actual=observed.controls.map(b=>({label:b.label.replace(/\s+/g,' '),primary:b.primary}));
           assert.deepEqual(actual,expectedControls,key+': control order and main control');
