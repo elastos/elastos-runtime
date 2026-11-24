@@ -1106,7 +1106,7 @@ export function createAssistantApp({
       stopPollingUnavailable(run, "Connection lost. The run outcome is unknown. Check its status before starting another run.");
       return;
     }
-    if (disposed) return;
+    if (disposed || run.terminal) return;
     if (!response.ok || payload?.status === "error") {
       run.pollErrorCount += 1;
       if (
@@ -1304,6 +1304,7 @@ export function createAssistantApp({
       notify();
       return false;
     }
+    if (run.terminal) return false;
     if (!response.ok || payload?.status === "error") {
       state.statusMessage = readStatusMessage(payload, "Model provider unavailable.");
       notify();

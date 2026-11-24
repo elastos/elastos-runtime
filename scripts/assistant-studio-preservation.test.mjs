@@ -86,52 +86,100 @@ async function fixture(t, { mode = "studio", studioState = {}, beforeCreate = as
 
 for (const mode of ["studio", "chat"]) {
   for (const lateRequest of ["Stop", "poll"]) {
-    test(`${mode} preserves completed output and history after a late ${lateRequest} transport failure`, async t => {
-      const poll = defer(), stop = defer();
-      const pollStarted = defer(), stopStarted = defer();
-      const result = mode === "studio" ? output
-        : { schema: "elastos.model.output.text/v1", text: "Completed answer" };
+    for (const failure of ["transport failure", "error reply"]) {
+      test(`${mode} preserves completed output and history after a late ${lateRequest} ${failure}`, async t => {
+        const poll = defer(), stop = defer();
+        const pollStarted = defer(), stopStarted = defer();
+        const result = mode === "studio" ? output
+          : { schema: "elastos.model.output.text/v1", text: "Completed answer" };
+        const f = await fixture(t, {
+          mode,
+          create: async () => response({ status: "ok", data: {
+            schema: "elastos.model.run/v1", run_id: runId, status: "running", sequence_cursor: 0,
+          } }),
+          readEvents: () => { pollStarted.resolve(); return poll.promise; },
+          cancel: () => { stopStarted.resolve(); return stop.promise; },
+        });
+        f.app.setDraft("Keep the confirmed result");
+        assert.equal(await f.app.sendDraft(), true);
+        await pollStarted.promise;
+        const stopping = f.app.stopRun();
+        await stopStarted.promise;
+        if (lateRequest === "Stop") {
+          poll.resolve(events(1, result));
+          await flush();
+        } else {
+          stop.resolve(completed(result));
+          assert.equal(await stopping, true);
+        }
+        const settled = clone(f.app.snapshot());
+        assert.equal(settled.activeRun.mode, mode);
+        assert.equal(settled.activeRun.terminal, true);
+        assert.equal(settled.activeRun.status, "completed");
+        assert.deepEqual(settled.activeRun.output, result);
+        assert.equal(settled.statusMessage, "");
+        if (mode === "studio") {
+          assert.equal(settled.studioResult.resourceId, output.resource_id);
+          assert.equal(settled.studioHistory[0].status, "completed");
+        } else {
+          assert.equal(settled.currentSession.messages.at(-1).content, result.text);
+        }
+        const notificationCount = f.snapshots.length;
+        const timerCount = f.timers.size;
+        if (lateRequest === "Stop") {
+          if (failure === "transport failure") {
+            stop.reject(new TypeError("Stop transport failed after completion"));
+          } else {
+            stop.resolve({ ok: false, status: 503, json: async () => ({ status: "error", message: "busy" }) });
+          }
+          assert.equal(await stopping, false);
+        } else {
+          if (failure === "transport failure") {
+            poll.reject(new TypeError("poll transport failed after Stop settled"));
+          } else {
+            poll.resolve({ ok: false, status: 503, json: async () => ({ status: "error", message: "busy" }) });
+          }
+          await flush();
+        }
+        assert.equal(f.app.snapshot().activeRun.status, "completed");
+        assert.deepEqual(f.app.snapshot(), settled);
+        assert.equal(f.snapshots.length, notificationCount);
+        assert.equal(f.timers.size, timerCount);
+      });
+    }
+  }
+}
+
+for (const mode of ["studio", "chat"]) {
+  for (const request of ["Stop", "poll"]) {
+    test(`${mode} keeps existing ${request} error-reply behavior for an unfinished run`, async t => {
+      const poll = defer(), pollStarted = defer();
+      const errorReply = { ok: false, status: 503,
+        json: async () => ({ status: "error", message: "busy" }) };
       const f = await fixture(t, {
         mode,
         create: async () => response({ status: "ok", data: {
           schema: "elastos.model.run/v1", run_id: runId, status: "running", sequence_cursor: 0,
         } }),
         readEvents: () => { pollStarted.resolve(); return poll.promise; },
-        cancel: () => { stopStarted.resolve(); return stop.promise; },
+        cancel: async () => errorReply,
       });
-      f.app.setDraft("Keep the confirmed result");
+      f.app.setDraft("Keep the unfinished run");
       assert.equal(await f.app.sendDraft(), true);
       await pollStarted.promise;
-      const stopping = f.app.stopRun();
-      await stopStarted.promise;
-      if (lateRequest === "Stop") {
-        poll.resolve(events(1, result));
-        await flush();
+      const timerCount = f.timers.size;
+      if (request === "Stop") {
+        assert.equal(await f.app.stopRun(), false);
       } else {
-        stop.resolve(completed(result));
-        assert.equal(await stopping, true);
-      }
-      const settled = clone(f.app.snapshot());
-      assert.equal(settled.activeRun.mode, mode);
-      assert.equal(settled.activeRun.terminal, true);
-      assert.equal(settled.activeRun.status, "completed");
-      assert.deepEqual(settled.activeRun.output, result);
-      assert.equal(settled.statusMessage, "");
-      if (mode === "studio") {
-        assert.equal(settled.studioResult.resourceId, output.resource_id);
-        assert.equal(settled.studioHistory[0].status, "completed");
-      } else {
-        assert.equal(settled.currentSession.messages.at(-1).content, result.text);
-      }
-      if (lateRequest === "Stop") {
-        stop.reject(new TypeError("Stop transport failed after completion"));
-        assert.equal(await stopping, false);
-      } else {
-        poll.reject(new TypeError("poll transport failed after Stop settled"));
+        poll.resolve(errorReply);
         await flush();
       }
-      assert.equal(f.app.snapshot().activeRun.status, "completed");
-      assert.deepEqual(f.app.snapshot(), settled);
+      const view = f.app.snapshot();
+      assert.equal(view.activeRun.terminal, false);
+      assert.equal(view.activeRun.status, "running");
+      assert.equal(view.statusMessage, "busy");
+      assert.equal(f.timers.size, timerCount + (request === "poll" ? 1 : 0));
+      if (mode === "studio") assert.equal(view.studioHistory[0].status, "running");
     });
   }
 }
