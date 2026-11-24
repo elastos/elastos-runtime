@@ -89,7 +89,7 @@ async function exercise(engine,width,theme) {
     await capture('06-shared-qr');
     await dialog().getByRole('button',{name:'Copy link',exact:true}).click();await dialog().getByRole('button',{name:'Link copied.',exact:true}).waitFor();
     await page.locator('iframe[title=WalletConnect]').evaluate(f=>{f.contentWindow.postMessage('fixture-sign-pending','*');f.contentWindow.postMessage('fixture-pair','*');});
-    await state('signing');assert.equal(await dialog().getByText('Continue in your phone wallet',{exact:true}).count(),1);await capture('07-phone-signature');
+    await state('signing');assert.equal(await dialog().getByText('Waiting for Phone wallet…',{exact:true}).count(),1);await capture('07-phone-signature');
     await page.locator('iframe[title=WalletConnect]').evaluate(f=>f.contentWindow.postMessage('fixture-release-signature','*'));
     await page.waitForFunction(()=>window.openedPrincipal==='principal:alex');
     assert(fixture.state.calls.filter(c=>c.path==='/api/fixture-sdk'&&c.body.method==='personal_sign').length>0);

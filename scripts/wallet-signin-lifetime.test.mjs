@@ -65,3 +65,19 @@ test('a declined extension signature keeps the wallet refusal instead of a disco
     assert.match(await error.innerText(),/Your wallet declined the request/);assert.equal(fixture.state.methods.length,0);
   }finally{await context.close();await browser.close();await fixture.close();}
 });
+
+test('phone sign-in returns from QR to its waiting row in the same sheet',async()=>{
+  const fixture=await signinFixture(),{chromium}=requireProductSmokePlaywright(),browser=await chromium.launch({headless:true});
+  const context=await browser.newContext();await context.addInitScript(installSigninProviders,{evmAddress,bitcoinAddress,theme:'light'});
+  const page=await context.newPage();page.setDefaultTimeout(10000);
+  try{
+    await page.goto(fixture.origin+'/home/?desktop-app');await page.waitForFunction(()=>window.fixtureReady);
+    await page.getByRole('button',{name:'Sign in',exact:true}).click();await page.locator('.signin-dialog[data-state=options] .connection-option').filter({hasText:'Phone wallet'}).click();
+    await page.locator('.signin-dialog[data-state=pairing]').waitFor();
+    await page.locator('iframe[title=WalletConnect]').evaluate(f=>{f.contentWindow.postMessage('fixture-sign-pending','*');f.contentWindow.postMessage('fixture-pair','*');});
+    const sheet=page.locator('.signin-dialog[data-state=signing]');await sheet.waitFor();
+    assert.equal(await sheet.locator('.connection-option').filter({hasText:'Waiting for Phone wallet…'}).count(),1);
+    assert.equal(await sheet.locator('details,summary,pre').count(),0);assert.equal(await page.locator('#fixture-desktop iframe').count(),0);
+    await sheet.getByRole('button',{name:'Cancel',exact:true}).click();
+  }finally{await context.close();await browser.close();await fixture.close();}
+});
