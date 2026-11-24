@@ -20,7 +20,6 @@
 .signin-dialog .connection-window:not(.connection-panel) { height: auto; min-height: 0; padding: 0; }
 .signin-dialog .connection-dialog { width: 100%; max-height: none; border: 0; padding: 0; box-shadow: none; }
 .signin-dialog pre { font: 12px/1.6 var(--el-font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
-.signin-dialog summary { min-height: 44px; cursor: pointer; color: var(--el-muted); }
 .signin-remember { display: flex; align-items: center; gap: 8px; min-height: 44px; color: var(--el-muted); }
 .signin-remember input { width: 18px; height: 18px; accent-color: var(--el-accent); }
 .signin-dialog .signin-presence { margin-top: 16px; font-size: 12px; }

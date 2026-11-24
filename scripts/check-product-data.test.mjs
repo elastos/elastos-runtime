@@ -1,3 +1,4 @@
+import {validateConnectionDisclosures} from './check-product-data.mjs';
 import assert from "node:assert/strict";
 import test from "node:test";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -379,3 +380,20 @@ for (const [name, path, type, message] of [
     }
   });
 }
+
+
+test('Home, System and connector text stays visible', () => validateConnectionDisclosures(root));
+test('connection disclosure guard rejects markup, generated elements and custom toggles', () => {
+  const dir = mkdtempSync(join(tmpdir(),'connection-text-'));
+  try {
+    for (const name of ['home','system','wallet-metamask','wallet-unisat','wallet-walletconnect']) mkdirSync(join(dir,'capsules',name,'browser'),{recursive:true});
+    for (const name of ['home','system','wallet-metamask','wallet-unisat','wallet-walletconnect']) {
+      const folder=join(dir,'capsules',name,'browser');mkdirSync(folder,{recursive:true});
+      const path=join(folder,'view.mjs');
+      for (const source of ['<details>','<summary>','document.createElement("details")',"node('summary')",'Message details','<button aria-expanded="false">Show details</button>','<button data-toggle="details">More</button>']) {
+        writeFileSync(path,source);assert.throws(()=>validateConnectionDisclosures(dir),/connection text stays visible/);
+      }
+      writeFileSync(path,'<p>Request for Home</p>');validateConnectionDisclosures(dir);
+    }
+  } finally { rmSync(dir,{recursive:true,force:true}); }
+});

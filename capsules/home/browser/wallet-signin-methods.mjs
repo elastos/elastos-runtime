@@ -48,7 +48,7 @@ export function connectedWalletSigninMethods(accounts,methods) {
   const result=[...methods];
   for(const account of accounts) {
     const connector=({'wallet-metamask':'metamask','wallet-walletconnect':'walletconnect','wallet-unisat':'unisat'})[account.connector_id];
-    if(!connector || typeof account.address!=='string')continue;
+    if(!connector || typeof account.address!=='string' || ['managed_evm','managed_btc_p2wpkh'].includes(account.proof_type))continue;
     const chain_id=connector==='unisat'?0:Number(account.chain_namespace?.split(':')[1]);
     if(connector!=='unisat' && (!Number.isSafeInteger(chain_id)||chain_id<=0))continue;
     const network=connector==='unisat'?'bitcoin':'';

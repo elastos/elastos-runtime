@@ -40,6 +40,7 @@ async function exercise(engine,width,theme) {
     pictures.push({engine,width,theme,state:name,file,sha256:createHash('sha256').update(await readFile(join(output,file))).digest('hex')});
   }
   const release=()=>page.evaluate(()=>{const jobs=window.walletFixture.pending.splice(0);for(const job of jobs)job.resolve(job.result);});
+  const approveExtension=async(kind='metamask')=>{const frame=page.frameLocator('iframe[title=wallet-'+kind+']');await frame.locator('[data-action=send-request]').click();return frame;};
   const option=kind=>dialog().locator('.connection-option').filter({hasText:kind});
   async function startSignin(kind) {await page.getByRole('button',{name:'Sign in',exact:true}).click();await state('options');await option(kind).click();}
   async function apps() {await page.evaluate(()=>window.showFixtureApps());const system=page.frameLocator('iframe[title=system]');await system.locator('#wallet-signin-add').waitFor();return system;}
@@ -58,26 +59,18 @@ async function exercise(engine,width,theme) {
     await dialog().getByLabel('Remember my choice').check();
     fixture.state.longSigningMessage=true;
     await page.evaluate(()=>{window.walletFixture.mode='pending';window.walletFixture.signaturePending=true;});await option('MetaMask').click();await state('connecting');
-    assert.equal(await dialog().getByText('Continue in MetaMask',{exact:true}).count(),1,'connection handoff names the selected wallet before it returns an account');
+    assert.equal(await dialog().getByText('Waiting for MetaMask…',{exact:true}).count(),1,'connection handoff names the selected wallet before it returns an account');
     await capture('02b-extension-connection');await page.evaluate(()=>window.walletFixture.mode='normal');await release();await state('signing');await capture('03-extension-signature');
-    assert.equal(await dialog().getByText('Continue in MetaMask',{exact:true}).count(),1);
-    await dialog().getByText('Message details',{exact:true}).click();
-    const detailLayout=await dialog().evaluate(el=>{
-      const cancel=[...el.querySelectorAll('button')].find(button=>button.textContent==='Cancel'),box=cancel.getBoundingClientRect();
-      const body=el.querySelector('.signin-body');
-      return {footerVisible:box.top>=0&&box.bottom<=innerHeight,bodyScrolls:body&&body.scrollHeight>body.clientHeight};
-    });
-    assert.equal(detailLayout.footerVisible,true,'Cancel remains visible with long message details open');
-    assert.equal(detailLayout.bodyScrolls,true,'long message details scroll inside the body');
-    await capture('03b-message-details');fixture.state.longSigningMessage=false;
-    assert.equal(await page.getByText('Continue only if you started this sign-in in this browser.',{exact:true}).count(),1);
+    assert.equal(await dialog().getByText('Waiting for MetaMask…',{exact:true}).count(),1);
+    assert.equal(await dialog().locator('details,summary').count(),0);
+    assert.equal(await option('Waiting for MetaMask…').count(),1,'selected row stays in the Sign in sheet');
     await release();await page.waitForFunction(()=>window.openedPrincipal==='principal:alex');
     await home();await page.evaluate(()=>window.walletFixture.signaturePending=true);
     await page.getByRole('button',{name:'Sign in',exact:true}).click();await state('signing');
-    assert.equal(await dialog().locator('.connection-option').count(),0,'remembered wallet goes straight to signing');await cancel();
+    assert.equal(await option('Waiting for MetaMask…').count(),1,'remembered wallet keeps its waiting row');await cancel();
     await page.getByRole('button',{name:'Other options',exact:true}).click();await state('options');await capture('04-other-options');
     await dialog().getByLabel('Remember my choice').uncheck();await cancel();
-    await home();await page.evaluate(()=>window.walletFixture.signaturePending=true);await startSignin('UniSat');await state('signing');assert.equal(await dialog().getByText('Continue in UniSat',{exact:true}).count(),1);await release();await page.waitForFunction(()=>window.openedPrincipal==='principal:alex');
+    await home();await page.evaluate(()=>window.walletFixture.signaturePending=true);await startSignin('UniSat');await state('signing');assert.equal(await dialog().getByText('Waiting for UniSat…',{exact:true}).count(),1);await release();await page.waitForFunction(()=>window.openedPrincipal==='principal:alex');
     await page.goto(fixture.origin+'/home/?no-passkeys',{waitUntil:'domcontentloaded'});await page.waitForFunction(()=>window.fixtureReady);
     await page.getByRole('button',{name:'Sign in',exact:true}).click();await state('options');assert(await option('Passkey').isDisabled());await option('MetaMask').click();await page.waitForFunction(()=>window.openedPrincipal==='principal:alex');
     checks.push(`${engine}/${width}/${theme}: single Sign in, passkey fallback, enabled wallet list, extension and UniSat signing, remember, Other options and wallets without browser passkey support`);
@@ -112,12 +105,12 @@ async function exercise(engine,width,theme) {
     checks.push(`${engine}/${width}/${theme}: fresh desktop hides extension wallets and signs in through configured WalletConnect without browser-local hints; a refused signature retries through consent`);
 
     fixture.state.methods=[];fixture.state.signed=true;await home();await page.getByRole('button',{name:'Sign in',exact:true}).click();await page.waitForFunction(()=>window.openedPrincipal==='principal:alex');assert.equal(await dialog().count(),0,'passkey-only Home goes straight to its passkey');let system=await apps();
-    await system.getByRole('button',{name:'Add wallet',exact:true}).click();await state('options');await capture('08-connected-wallets');assert.equal(await option('New wallet').count(),1,'connected wallets retain the New wallet action');
-    assert.equal(await dialog().locator('.connection-option').count(),2,'connected wallet plus New wallet');
+    await system.getByRole('button',{name:'Add wallet',exact:true}).click();await state('options');await capture('08-connected-wallets');assert.equal(await option('Connect another wallet').count(),1,'connected wallets retain the Connect another wallet action');
+    assert.equal(await dialog().locator('.connection-option').count(),2,'connected wallet plus Connect another wallet');
     await page.evaluate(()=>{window.walletFixture.signaturePending=true;window.walletFixture.passkeyMode='pending';});
     const callsBefore=await page.evaluate(()=>window.walletFixture.calls.length);
-    await option('MetaMask').click();await state('signing');await capture('09-add-signature');
-    await release();await state('passkey');await capture('10-one-passkey');await release();await dialog().waitFor({state:'detached'});
+    await option('MetaMask').click();const extension=await approveExtension();await extension.locator('[data-state=request-extension]').waitFor();assert.equal(await dialog().isVisible(),false,'Home adds no signature dialog');await capture('09-add-signature');
+    await release();await page.waitForFunction(()=>window.walletFixture.calls.some(c=>c.method==='passkey'));assert.equal(await dialog().isVisible(),false);await capture('10-one-passkey');await release();await dialog().waitFor({state:'detached'});
     await system.locator('[data-wallet-method]').getByRole('button',{name:'Remove',exact:true}).waitFor();await capture('11-signs-in');
     const counts=await page.evaluate(start=>window.walletFixture.calls.slice(start).map(c=>c.method),callsBefore);
     assert.equal(counts.filter(m=>m==='personal_sign').length,1);assert.equal(counts.filter(m=>m==='passkey').length,1);
@@ -130,13 +123,15 @@ async function exercise(engine,width,theme) {
     await page.evaluate(()=>window.walletFixture.passkeyMode='normal');
     checks.push(`${engine}/${width}/${theme}: connected wallet adds with one signature and one passkey; one Remove retires the method`);
 
+    await page.locator('iframe[title=wallet-metamask]').evaluate(f=>f.remove());
     fixture.state.methods=[];fixture.state.connected=[];await refreshSystem();await system.locator('[data-wallet-method]').waitFor({state:'detached'});
-    await system.getByRole('button',{name:'Add wallet',exact:true}).click();await page.waitForFunction(()=>window.fixtureWindowChoice==='visible-wallet');assert.equal(await dialog().isVisible(),false,'an empty wallet list opens the connection app directly');await capture('13-new-wallet-only');const walletConnect=page.frameLocator('iframe[title=wallet]');
-    await walletConnect.getByRole('region',{name:'MetaMask',exact:true}).getByRole('button',{name:'Connect',exact:true}).waitFor();await capture('14-wallet-connect-entry');
-    await walletConnect.getByRole('region',{name:'MetaMask',exact:true}).getByRole('button',{name:'Connect',exact:true}).click();const extension=page.frameLocator('iframe[title=wallet-metamask]');await extension.getByRole('button',{name:'Connect wallet',exact:true}).waitFor();await capture('15-existing-connector');
-    await extension.getByRole('button',{name:'Connect wallet',exact:true}).click();await state('options');await option('MetaMask').waitFor();await capture('16-connected-return');
-    await page.locator('iframe[title=wallet-metamask]').evaluate(f=>f.remove());await option('MetaMask').click();await dialog().waitFor({state:'detached'});assert.equal(fixture.state.methods[0].sign_in_enabled,true);
-    checks.push(`${engine}/${width}/${theme}: empty wallet list directly launches the real MetaMask connector and returns its saved account to Add wallet`);
+    await system.getByRole('button',{name:'Add wallet',exact:true}).click();await state('connect');
+    assert.equal(await dialog().locator('.connection-option').count(),3,'external connection step directly offers the three connectors');await capture('13-connect-wallet');
+    await option('MetaMask').click();const newExtension=page.frameLocator('iframe[title=wallet-metamask]');
+    await newExtension.getByRole('button',{name:'Connect wallet',exact:true}).click();
+    await newExtension.locator('[data-action=send-request]').waitFor();assert.equal(await dialog().isVisible(),false);await capture('14-connected-signin-request');
+    await approveExtension();await dialog().waitFor({state:'detached'});assert.equal(fixture.state.methods[0].sign_in_enabled,true);
+    checks.push(`${engine}/${width}/${theme}: empty list opens external connectors; connection continues directly to connector request, wallet signature, passkey and Accounts`);
 
     fixture.state.methods=[];fixture.state.connected=[{account_id:'phone',connector_id:'wallet-walletconnect',address:walletconnectAddress,chain_namespace:'eip155:20',proof_type:'siwe'}];await refreshSystem();await system.locator('[data-wallet-method]').waitFor({state:'detached'});
     await system.getByRole('button',{name:'Add wallet',exact:true}).click();await state('options');
@@ -160,13 +155,11 @@ async function exercise(engine,width,theme) {
     checks.push(`${engine}/${width}/${theme}: connected WalletConnect signs once per attempt through its real controller; Home stop and native Stop waiting preserve payments and a new sign-in succeeds`);
 
     fixture.state.methods=[];fixture.state.connected=[{account_id:'retry',connector_id:'wallet-metamask',address:evmAddress,chain_namespace:'eip155:20',proof_type:'siwe'}];await refreshSystem();await system.locator('[data-wallet-method]').waitFor({state:'detached'});
-    fixture.state.scenario='unknown';await system.getByRole('button',{name:'Add wallet',exact:true}).click();await state('options');await option('MetaMask').click();await state('unknown');await capture('18-check-again');
+    fixture.state.scenario='unknown';await system.getByRole('button',{name:'Add wallet',exact:true}).click();await state('options');await option('MetaMask').click();await approveExtension();await state('unknown');await capture('18-check-again');
     await dialog().getByRole('button',{name:'Check again',exact:true}).click();await dialog().waitFor({state:'detached'});assert.equal(fixture.state.methods[0].sign_in_enabled,true);
     fixture.state.scenario='normal';fixture.state.methods=[];await refreshSystem();await system.locator('[data-wallet-method]').waitFor({state:'detached'});
-    fixture.state.longSigningMessage=true;await page.evaluate(()=>window.walletFixture.passkeyMode='cancelled');await system.getByRole('button',{name:'Add wallet',exact:true}).click();await state('options');await option('MetaMask').click();await state('approval');await capture('19-passkey-retry');
-    await dialog().getByText('Message details',{exact:true}).click();
-    assert.equal(await dialog().getByRole('button').evaluateAll(buttons=>buttons.every(button=>{const box=button.getBoundingClientRect();return box.top>=0&&box.bottom<=innerHeight;})),true,'retry and Cancel remain visible with details open');
-    await capture('19b-passkey-retry-details');fixture.state.longSigningMessage=false;await cancel();assert.equal(fixture.state.methods.length,0);
+    fixture.state.longSigningMessage=true;await page.evaluate(()=>window.walletFixture.passkeyMode='cancelled');await system.getByRole('button',{name:'Add wallet',exact:true}).click();await state('options');await option('MetaMask').click();await approveExtension();await state('approval');await capture('19-passkey-retry');
+    assert.equal(await dialog().locator('details,summary').count(),0);fixture.state.longSigningMessage=false;await cancel();assert.equal(fixture.state.methods.length,0);
     await page.evaluate(()=>window.walletFixture.passkeyMode='normal');
     checks.push(`${engine}/${width}/${theme}: lost completion reconciles the same request; cancelled approval leaves the method unchanged`);
     await page.locator('#show-wallet').evaluate(el=>el.click());const wallet=page.frameLocator('iframe[title=wallet]');

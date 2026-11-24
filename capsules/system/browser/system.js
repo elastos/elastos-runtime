@@ -1056,11 +1056,10 @@ function configureAiProvider() {
     keyInput.focus();
     setBusy(false);
   };
-  // Rebuilding the list keeps the disclosures the person opened and the control they focused.
+  // Rebuilding the list keeps the control the person focused.
   const controlKey = (node) => [node.closest(".ai-provider-instance")?.dataset.offerId, node.tagName, node.textContent].join("\n");
   const renderInstances = (status) => {
     const connections = status && Array.isArray(status.connections) ? status.connections : [];
-    const opened = new Set([...instancesNode.querySelectorAll("details[open]")].map((node) => node.parentElement?.dataset.offerId));
     const focused = instancesNode.contains(document.activeElement) ? controlKey(document.activeElement) : "";
     instancesNode.replaceChildren();
     for (const connection of connections) {
@@ -1120,10 +1119,9 @@ function configureAiProvider() {
         : connection.egress_state === "paused" ? "External HTTPS paused"
         : "";
       if (state.textContent) title.append(state);
-      const more = document.createElement("details");
+      const more = document.createElement("div");
       more.className = "ai-provider-details";
-      more.open = opened.has(connection.id);
-      const summary = document.createElement("summary");
+      const summary = document.createElement("p");
       summary.textContent = "Details and access";
       const secondary = document.createElement("div");
       secondary.className = "system-inline-row";
@@ -1198,7 +1196,7 @@ function configureAiProvider() {
       instancesNode.append(card);
     }
     if (focused) {
-      [...instancesNode.querySelectorAll("button, summary")].find((node) => controlKey(node) === focused)?.focus({ preventScroll: true });
+      [...instancesNode.querySelectorAll("button")].find((node) => controlKey(node) === focused)?.focus({ preventScroll: true });
     }
   };
   const applyStatus = (status) => {
@@ -1439,11 +1437,9 @@ function configureTechnicalDetails() {
     return;
   }
   technicalInspectRefreshButton.disabled = !hasShellAccess();
-  technicalDetailsNode.addEventListener("toggle", () => {
-    if (technicalDetailsNode.open && technicalInspectEntries.length === 0 && hasShellAccess()) {
-      refreshTechnicalDetails().catch(onTechnicalDetailsError);
-    }
-  });
+  if (technicalInspectEntries.length === 0 && hasShellAccess()) {
+    refreshTechnicalDetails().catch(onTechnicalDetailsError);
+  }
   technicalInspectRefreshButton?.addEventListener("click", () => {
     refreshTechnicalDetails().catch(onTechnicalDetailsError);
   });
@@ -2520,6 +2516,9 @@ function joinWords(values) {
 }
 
 async function changeWalletSignin(action, methodId = "") {
+  const button=action==="add"?document.querySelector("#wallet-signin-add"):null;
+  if(button?.disabled)return;
+  if(button){button.disabled=true;button.setAttribute("aria-busy","true");}
   try {
     const result = await requestWalletSigninChange({action, methodId, token:apiHomeToken, origin:homeParentOrigin,loadConnected:async()=>{
       const summary=await fetchJson('/api/apps/system/summary',{headers:shellHeaders()});
@@ -2529,6 +2528,7 @@ async function changeWalletSignin(action, methodId = "") {
     await refreshAccountList();
     if (["failed", "changed", "busy"].includes(result?.status)) throw new Error("Refresh the sign-in methods and try again.");
   } catch (error) { showError(error.message); }
+  finally {if(button){button.disabled=false;button.removeAttribute("aria-busy");}}
 }
 
 function showSigninListFailure(message) {

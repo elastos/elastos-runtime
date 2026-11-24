@@ -363,7 +363,31 @@ export function validateProductWording(repoRoot = root) {
   assert.equal(findings.length, 0, findings.join("\n"));
 }
 
+export function validateConnectionDisclosures(repoRoot = root) {
+  const findings = [];
+  const patterns = [/<\/?(?:details|summary)\b/i, /(?:createElement|node)\(\s*['"](?:details|summary)['"]/i,
+    /(?:message\s+details|(?:show|hide|toggle)\s+(?:message\s+)?details)/i,
+    /(?:aria-expanded|data-(?:toggle|collapse))[^\n]{0,160}details|details[^\n]{0,160}(?:aria-expanded|data-(?:toggle|collapse))/i];
+  function walk(directory) {
+    for (const entry of readdirSync(resolve(repoRoot, directory), {withFileTypes:true})) {
+      if (['vendor','target','node_modules'].includes(entry.name)) continue;
+      const path = `${directory}/${entry.name}`;
+      if (entry.isDirectory()) walk(path);
+      else if (entry.isFile() && /\.(?:html|[cm]?js|tsx?)$/.test(entry.name)) {
+        const source = readFileSync(resolve(repoRoot,path),'utf8');
+        for (const pattern of patterns) {
+          const match = pattern.exec(source);
+          if (match) findings.push(`${path}:${source.slice(0,match.index).split('\n').length}: connection text stays visible`);
+        }
+      }
+    }
+  }
+  for (const name of ['home','system','wallet-metamask','wallet-unisat','wallet-walletconnect']) walk(`capsules/${name}`);
+  assert.equal(findings.length,0,findings.join('\n'));
+}
+
 export function checkProductData(repoRoot = root) {
+  validateConnectionDisclosures(repoRoot);
   validateProductWording(repoRoot);
   const json = (path) => JSON.parse(readFileSync(resolve(repoRoot, path), "utf8"));
   const manifests = {};

@@ -25,7 +25,7 @@ export function startExtensionWindow(kind, homeClipboard) {
   let operationWallet = null;
   let walletEventAddress = null;
   const requestNetworks = new Map();
-  let presentation = null;
+  let presentation = null, signinRequest, signinReply, signinSent=false;
   const mount = document.querySelector('#connection-root');
 
   function validAddress(value) {
@@ -151,6 +151,11 @@ export function startExtensionWindow(kind, homeClipboard) {
 
   function draw() {
     if (disposed) return;
+    if(signinRequest){
+      const summary=reduceSummary({connector_id:CONNECTOR_ID,request_id:signinRequest.requestId,capsule_id:'home',requesting_app_name:'Home',intent:'auth_challenge',address:signinRequest.address,chain_namespace:kind==='unisat'?'bip122:000000000019d6689c085ae165831e93':`eip155:${signinRequest.chain_id}`,status:'pending',reason:`Add this wallet to sign in to ${homeOrigin}.`,expires_at:Math.floor(Date.now()/1000)+180},{connector:CONNECTOR_ID});
+      presentation=mountConnection(mount,connectionView({window:kind,stage:signinSent?'request-extension':'request-waiting',purpose:'home-signin',summary,account:{name:signinRequest.name||(kind==='unisat'?'UniSat':'MetaMask'),mark:kind,accounts:[{address:signinRequest.address,networks:[kind==='unisat'?'Bitcoin':networkName(`eip155:${signinRequest.chain_id}`)]}]},homeOrigin,supportedActions:['send-request','stop-waiting']}),presentation);
+      return;
+    }
     const changedDuringRequest = selected && (disconnected || accountEvent && !sameAccount(accountEvent[0], selected.address));
     const provider = buildProviderSnapshot();
     const walletChoices = stage === 'extension-choose-wallet' ? walletChoicesFromHome : [];
@@ -345,6 +350,11 @@ export function startExtensionWindow(kind, homeClipboard) {
     const button = event.target.closest('[data-action]');
     if (!button || button.disabled) return;
     const action = button.dataset.action;
+    if(signinRequest){
+      if(action==='send-request'&&!signinSent){signinSent=true;signinReply?.({result:{approved:true}});draw();}
+      else if(action==='stop-waiting'){signinReply?.({error:true});signinReply=null;signinRequest=null;signinSent=false;draw();}
+      return;
+    }
     if (action === 'close-window') window.top.postMessage({ type: 'home:close-self', homeToken: frameHomeToken }, homeOrigin);
     else if (action === 'stop-waiting' && operation) {
       stage = operation.action.kind === 'link' ? 'extension-cancelled' : selected?.transaction ? 'transaction-cancelled' : 'request-cancelled';
@@ -379,6 +389,21 @@ export function startExtensionWindow(kind, homeClipboard) {
       stage = chooseStage(); draw();
     }
   }
+
+  function onHomeSignin(event) {
+    const data=event.data;
+    if(event.source!==window.top||event.origin!==homeOrigin||data?.type!=='home:wallet-signin-effect'||data.homeToken!==frameHomeToken)return;
+    if(typeof data.requestId!=='string'||!data.requestId||data.requestId.length>128||!['review','finish','stop'].includes(data.operation))return;
+    const keys=['type','homeToken','requestId','operation',...(data.operation==='review'?['address','chain_id','network','name','message']:[])];
+    if(!hasExactKeys(data,keys))return;
+    const reply=result=>window.top.postMessage({type:'home:wallet-signin-effect-result',homeToken:frameHomeToken,requestId:data.requestId,...result},homeOrigin);
+    if(data.operation!=='review'){
+      if(data.operation==='stop')signinReply?.({error:true});signinReply=null;signinRequest=null;signinSent=false;draw();reply({result:{}});return;
+    }
+    if(operation||signinRequest||!validAddress(data.address)||!Number.isSafeInteger(data.chain_id)||typeof data.message!=='string'||!data.message||data.message.length>32768||typeof data.name!=='string'||data.name.length>80||data.network!==(kind==='unisat'?'bitcoin':''))return reply({error:true});
+    signinRequest=data;signinReply=reply;signinSent=false;draw();
+  }
+  window.addEventListener('message',onHomeSignin);
 
   function onWalletEvent(event) {
     const data = event.data;
@@ -418,6 +443,7 @@ export function startExtensionWindow(kind, homeClipboard) {
   }, 1000);
   window.addEventListener('pagehide', () => {
     disposed = true; presentation?.dispose(); window.clearInterval(tick); homeClipboard.teardown();
+    signinReply?.({error:true});window.removeEventListener('message',onHomeSignin);
     window.removeEventListener('message', onWalletEvent); window.removeEventListener('focus', refresh);
   }, { once: true });
   draw(); void refresh();
