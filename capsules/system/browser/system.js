@@ -3057,7 +3057,11 @@ async function onRecoveryDownload(options = {}) {
       recoveryPasswordInput.value = "";
     }
     showRecoveryStatus("", "success");
-    const peopleIdentity = bundle && bundle.included && bundle.included.people_identity;
+    const peopleIdentity = bundle?.included?.people_identity === true;
+    await refreshSystemSummary().catch(() => {});
+    if (peopleIdentity) {
+      renderRecoveryProfileSetup({ profile_readiness: { schema: "elastos.profile.readiness/v1", status: "ready" } });
+    }
     showRecoveryNote(
       peopleIdentity
         ? `Recovery Kit downloaded as ${fileName}. Store it offline. It includes your Profile.`
@@ -3066,9 +3070,6 @@ async function onRecoveryDownload(options = {}) {
     );
     setRecoveryButton("Download Recovery Kit", false);
     notifyHomeSummaryChanged();
-    await refreshSystemSummary().catch(() => {
-      showRecoveryNote(`Recovery Kit downloaded as ${fileName}. Store it offline. Refresh System to update setup status.`, "success");
-    });
     return true;
   } catch (error) {
     showRecoveryStatus("Not set", "error");

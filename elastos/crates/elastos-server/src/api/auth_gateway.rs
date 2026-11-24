@@ -3308,6 +3308,12 @@ fn password_protected_full_recovery_bundle(
         "localhost_root": localhost_root,
         "bundle_id": bundle_id,
         "created_at": created_at,
+        // Display-only coverage from the exact verified bundle we encrypted.
+        // Recovery import continues to trust only the decrypted inner bundle.
+        "included": {
+            "people_identity": bundle.pointer("/included/people_identity")
+                .and_then(Value::as_bool).unwrap_or(false)
+        },
         "protection": {
             "cipher": "aes-256-gcm",
             "kdf": "argon2id",
@@ -5377,6 +5383,39 @@ mod tests {
     use axum::http::HeaderValue;
     use elastos_runtime::provider::{Provider, ProviderError, ResourceRequest, ResourceResponse};
     use std::sync::Arc;
+
+    #[test]
+    fn password_recovery_package_preserves_exact_profile_inclusion() {
+        for included in [false, true] {
+            let bundle = json!({
+                "schema": FULL_RECOVERY_BUNDLE_SCHEMA,
+                "principal_id": "person:fixture",
+                "localhost_root": "localhost://fixture",
+                "bundle_id": "bundle:fixture",
+                "created_at": 123,
+                "data_kit": {
+                    "schema": elastos_runtime::auth::RECOVERY_KIT_SCHEMA,
+                    "principal_id": "person:fixture",
+                    "localhost_root": "localhost://fixture"
+                },
+                "wallet_recovery_keys": [],
+                "included": {"data_kit": true, "wallet_recovery_key_count": 0, "people_identity": included}
+            });
+            let package =
+                password_protected_full_recovery_bundle(&bundle, "fixture password").unwrap();
+            assert_eq!(package["included"], json!({"people_identity": included}));
+            let restored =
+                full_recovery_bundle_from_password_package(&package, "fixture password").unwrap();
+            assert_eq!(restored, bundle);
+            // Import trusts the decrypted content, even if outer display metadata changes.
+            let mut changed = package;
+            changed["included"]["people_identity"] = json!(!included);
+            assert_eq!(
+                full_recovery_bundle_from_password_package(&changed, "fixture password").unwrap(),
+                bundle
+            );
+        }
+    }
 
     #[test]
     fn full_recovery_semantic_digest_canonicalizes_objects_and_binds_nested_content() {
