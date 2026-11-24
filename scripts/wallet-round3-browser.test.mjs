@@ -61,12 +61,12 @@ for(const width of [480,390])for(const kind of ['metamask','unisat'])test(`round
  try{await f.top.setViewportSize({width,height:560});await f.top.locator('iframe').evaluate((frame,width)=>frame.style.width=width+'px',width);await f.state('request-waiting');await f.top.evaluate(()=>testState.mode='decline');await f.action('send-request').click();await f.state('request-declined');assert.match(await f.frame.locator('main').innerText(),/declined|did not approve/);await shot(f.top,`${kind}-declined-${width}`);}
  finally{await f.close();await browser.close();}
 });
-for(const width of [480,390])test(`round3 locked first-use UniSat offers unlock and a working retry at ${width}`,{timeout:30000},async()=>{
+for(const width of [480,390])for(const method of ['requestAccounts','signMessage'])test(`round3 locked first-use UniSat at ${method} offers unlock and a working retry at ${width}`,{timeout:30000},async()=>{
  const browser=await requireProductSmokePlaywright().chromium.launch({headless:true,...productSmokeLaunchOptions()});
  const f=await extensionFixture(browser,'unisat',{pictures:false});
  try{
-  await f.top.setViewportSize({width,height:560});await f.top.locator('iframe').evaluate((frame,width)=>frame.style.width=width+'px',width);await f.state('ready');await f.top.evaluate(()=>{window.sizeHints=[];addEventListener('message',e=>{if(e.data?.type==='home:wallet-content-size')sizeHints.push(e.data);});testState.requestError={method:'requestAccounts',message:'Wallet is locked'};});
-  await f.action('connect').click();await f.state('wallet-locked');await f.top.waitForFunction(()=>sizeHints.length>0);assert((await f.top.evaluate(()=>sizeHints)).every(h=>Number.isSafeInteger(h.width)&&h.width>=280&&h.width<=480&&h.height>=100&&h.height<=4000));assert.match(await f.frame.locator('main').innerText(),/Unlock UniSat, then select Try again/);await shot(f.top,`unisat-locked-${width}`);
+  await f.top.setViewportSize({width,height:560});await f.top.locator('iframe').evaluate((frame,width)=>frame.style.width=width+'px',width);await f.state('ready');await f.top.evaluate(method=>{window.sizeHints=[];addEventListener('message',e=>{if(e.data?.type==='home:wallet-content-size')sizeHints.push(e.data);});testState.requestError={method,message:'Wallet is locked'};},method);
+  await f.action('connect').click();await f.state('wallet-locked');await f.top.waitForFunction(()=>sizeHints.length>0);assert((await f.top.evaluate(()=>sizeHints)).every(h=>Number.isSafeInteger(h.width)&&h.width>=280&&h.width<=480&&h.height>=100&&h.height<=4000));assert.match(await f.frame.locator('main').innerText(),/Unlock UniSat, then select Try again/);await shot(f.top,`unisat-locked-${method}-${width}`);
   await f.top.evaluate(()=>testState.requestError=null);await f.action('connect').click();await f.state('linked');assert.equal(await f.top.evaluate(()=>testState.receipts.length),1);await shot(f.top,`unisat-unlocked-connected-${width}`);
  }finally{await f.close();await browser.close();}
 });

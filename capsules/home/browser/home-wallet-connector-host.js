@@ -143,7 +143,10 @@ export function handleHomeWalletConnectorEffect(event, context, data) {
         requestId,
         connectorId,
         null,
-        Number(error?.code) === 4001 ? "Your wallet declined the request." : error instanceof Error ? error.message : "Wallet request failed.",
+        Number(error?.code) === 4001 ? "Your wallet declined the request."
+          : connectorId === UNISAT_CONNECTOR_ID && /locked|unlock/i.test(String(error?.message || error))
+            ? "Unlock UniSat, then select Try again."
+            : error instanceof Error ? error.message : "Wallet request failed.",
         error instanceof WalletChoiceRequired ? error.walletChoices : undefined,
       );
     })
@@ -674,13 +677,7 @@ function requireUniSatProvider() {
 }
 
 async function requestUniSatAccount(provider) {
-  let accounts;
-  try { accounts=await provider.requestAccounts(); }
-  catch(error) {
-    if(/locked|unlock/i.test(String(error?.message||error)))throw new Error("Unlock UniSat, then select Try again.");
-    throw error;
-  }
-  const account = accountFromProvider(accounts);
+  const account = accountFromProvider(await provider.requestAccounts());
   await requireUniSatMainnet(provider);
   return account;
 }
