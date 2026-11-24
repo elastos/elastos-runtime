@@ -76,6 +76,12 @@ try{
       }
       for(const page of context.pages())await page.close();
       f=await fixture({newContext:async()=>context},kind,{realExtension:true,pictures:false});
+      await f.top.evaluate(()=>{
+        testState.rpc=[];const seen=new WeakSet();
+        const watch=(provider,method)=>{const call=provider?.[method];if(typeof call!=='function')return;provider[method]=async function(...args){const name=method==='request'?args[0]?.method:method;testState.rpc.push({method:name,phase:'start'});try{const result=await call.apply(this,args);testState.rpc.push({method:name,phase:'done'});return result;}catch(error){testState.rpc.push({method:name,phase:'error',code:error?.code});throw error;}};};
+        addEventListener('eip6963:announceProvider',event=>{if(seen.has(event.detail.provider))return;seen.add(event.detail.provider);watch(event.detail.provider,'request');});dispatchEvent(new Event('eip6963:requestProvider'));
+        for(const method of ['requestAccounts','getAccounts','getNetwork','signMessage'])watch(window.unisat,method);
+      });
       await shot(f.top,'real-'+kind+'-ready',kind+' is ready to connect to Wallet.');
       await f.action('connect').click();
       await shot(f.top,'real-'+kind+'-connecting',kind+' waits for the real extension.');
@@ -111,7 +117,7 @@ try{
       await shot(f.top,'real-'+kind+'-expired',kind+' expired request keeps a clear exit.');
       results.push({kind,result:'PASS',remaining:'Installed Runtime and Home acceptance stays with the release walk.',extensionDiagnostics:f.extensionDiagnostics,boundary:'Real extension, scripted Runtime receipts, harmless messages; no payment broadcast'});
       console.log(kind+': ordinary connect, signature, refusal recovery, stop, prompt close and expiry walked; refusals are classified');
-    }catch(error){console.error((kind+': '+error.stack).replaceAll(password,'[test secret]'));console.error(JSON.stringify({pages:context.pages().map(p=>{const u=new URL(p.url());return u.protocol+'//'+u.host+u.pathname;}),stage:await f?.frame.locator('main').getAttribute('data-state').catch(()=>null)}));throw error;}finally{if(f)await f.close();else await context.close();}
+    }catch(error){console.error((kind+': '+error.stack).replaceAll(password,'[test secret]'));console.error(JSON.stringify({pages:context.pages().map(p=>{const u=new URL(p.url());return u.protocol+'//'+u.host+u.pathname;}),stage:await f?.frame.locator('main').getAttribute('data-state').catch(()=>null),rpc:await f?.top.evaluate(()=>testState.rpc?.slice(-32)).catch(()=>null)}));throw error;}finally{if(f)await f.close();else await context.close();}
   }
 }finally{
   await writeFile(join(pictures,'real-results.json'),JSON.stringify(results,null,2));
