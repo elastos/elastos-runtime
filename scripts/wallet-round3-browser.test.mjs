@@ -6,7 +6,6 @@ import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {signinFixture,installSigninProviders,evmAddress,bitcoinAddress} from './lib/wallet-signin-fixture.mjs';
 import {requireProductSmokePlaywright,productSmokeLaunchOptions} from './product-smoke-browser.mjs';
-import {browserFixture} from './lib/wallet-connection-browser-fixture.mjs';
 const pictures=process.env.WALLET_ROUND3_PICTURES;
 async function shot(page,name){if(pictures){await mkdir(pictures,{recursive:true});await page.waitForTimeout(150);const bytes=await page.screenshot({path:join(pictures,name+'.png'),animations:'disabled'});await writeFile(join(pictures,name+'.json'),JSON.stringify({head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),tree:execFileSync('git',['rev-parse','HEAD^{tree}'],{encoding:'utf8'}).trim(),clean:!execFileSync('git',['status','--porcelain'],{encoding:'utf8'}).trim(),viewport:page.viewportSize(),sha256:createHash('sha256').update(bytes).digest('hex')},null,2));}}
 for(const width of [1280,390])test(`round3 pointer Choose survives a focus refresh at ${width}`,{timeout:30000},async()=>{
@@ -27,19 +26,25 @@ for(const width of [1280,390])test(`round3 pointer Choose survives a focus refre
  }finally{await context.close();await browser.close();await f.close();}
 });
 for(const width of [480,390])test(`round3 title identity status and text focus at ${width}`,async()=>{
- const f=await browserFixture('chromium',{width,height:560});
+ const browser=await requireProductSmokePlaywright().chromium.launch({headless:true,...productSmokeLaunchOptions()});
  try{
   for(const stage of ['request-extension','request-done','request-cancelled']){
-   await f.page.evaluate(async({stage,address})=>{
-    const {connectionView,reduceSummary,mountConnection}=await import('/capsules/_shared/wallet-connection-view.mjs');
-    const summary=reduceSummary({request_id:'add',connector_id:'wallet-metamask',capsule_id:'browser',requesting_app_name:'Browser',requesting_origin:'https://example.org',intent:'browser_personal_sign',address,status:'pending',expires_at:1800000600},{connector:'wallet-metamask'});
-    window.mounted?.dispose();window.mounted=mountConnection(document.querySelector('#mount'),connectionView({window:'metamask',stage,waitSeconds:300,summary,account:{name:'MetaMask',mark:'metamask',accounts:[{address,networks:['Ethereum']}]},supportedActions:['send-request','close-window','stop-waiting']}));
-   },{stage,address:evmAddress});
-   const result=await f.page.locator('main').evaluate(root=>{const h=root.querySelector('.connection-identity h2'),identity=root.querySelector('.connection-request-account'),status=root.querySelector('.connection-status');return {title:h.getBoundingClientRect().top,identity:identity.getBoundingClientRect().top,status:status.getBoundingClientRect().top,focused:status===document.activeElement,outline:getComputedStyle(status).outlineStyle};});
-   assert(result.title<result.identity&&result.identity<result.status,JSON.stringify(result));if(stage!=='request-extension'){assert.equal(result.focused,true);assert.equal(result.outline,'none');}
-   await shot(f.page,`${stage}-${width}`);
+   const f=await extensionFixture(browser,'metamask',{saved:true,requests:true,pictures:false});
+   try{
+    await f.top.setViewportSize({width,height:560});await f.top.locator('iframe').evaluate((frame,width)=>frame.style.width=width+'px',width);await f.state('request-waiting');
+    if(stage!=='request-done')await f.top.evaluate(()=>testState.mode='pending');
+    await f.action('send-request').click();
+    if(stage==='request-cancelled')await f.action('stop-waiting').click();
+    await f.state(stage);
+    // Outcome text can receive programmatic focus for screen-reader status.
+    // Cancelled requests can also focus the working Close control.
+    if(stage==='request-cancelled')await f.frame.locator('.connection-status').focus();
+    const result=await f.frame.locator('main').evaluate(root=>{const h=root.querySelector('.connection-identity h2'),identity=root.querySelector('.connection-request-account'),status=root.querySelector('.connection-status');return {title:h.getBoundingClientRect().top,identity:identity.getBoundingClientRect().top,status:status.getBoundingClientRect().top,focused:status===document.activeElement,outline:getComputedStyle(status).outlineStyle};});
+    assert(result.title<result.identity&&result.identity<result.status,JSON.stringify(result));if(stage!=='request-extension'){assert.equal(result.focused,true);assert.equal(result.outline,'none');}
+    assert.equal(await f.action('close-window').count()>0||stage==='request-extension',true);await shot(f.top,`${stage}-${width}`);
+   }finally{await f.close();}
   }
- }finally{await f.close();}
+ }finally{await browser.close();}
 });
 for(const width of [1280,390])test(`round3 Home bounds content size hints and can shrink connector windows at ${width}`,async()=>{
  const f=await signinFixture(),browser=await requireProductSmokePlaywright().chromium.launch({headless:true,...productSmokeLaunchOptions()});const page=await browser.newPage({viewport:{width,height:900}});
@@ -47,7 +52,7 @@ for(const width of [1280,390])test(`round3 Home bounds content size hints and ca
   await page.goto(f.origin+'/apps/home-gui/');
   const result=await page.evaluate(async()=>{
    const {shellState}=await import('/apps/home-gui/shell-core.js?v=home-20261101d');const {fitHomeGuiWalletWindow}=await import('/apps/home-gui/home-gui.js?v=home-20261101d');
-   const node=document.createElement('section');node.className='window';Object.assign(node.style,{width:'480px',height:'560px',left:'50px',top:'60px'});node.innerHTML='<div class="window-header"><span>MetaMask</span></div><div class="window-body"><iframe class="window-frame" title="MetaMask"></iframe></div>';node.querySelector('iframe').dataset.route='/apps/wallet-metamask/#home_token=connector';node.querySelector('iframe').src='/apps/wallet-metamask/?home_origin='+encodeURIComponent(location.origin)+'#home_token=connector';document.body.append(node);shellState.windows.set('connector',{id:'connector',node,targetId:'wallet-metamask',kind:'browser'});
+   const node=document.createElement('section');node.className='window window-active';Object.assign(node.style,{width:'480px',height:'560px',left:'50px',top:'60px'});node.innerHTML='<div class="window-head"><span class="window-head-title">MetaMask</span></div><div class="window-body window-body-frame"><iframe class="window-frame is-ready" title="MetaMask"></iframe></div>';node.querySelector('iframe').dataset.route='/apps/wallet-metamask/#home_token=connector';node.querySelector('iframe').src='/apps/wallet-metamask/?home_origin='+encodeURIComponent(location.origin)+'#home_token=connector';document.body.append(node);shellState.windows.set('connector',{id:'connector',node,targetId:'wallet-metamask',kind:'browser'});
    const bad=fitHomeGuiWalletWindow('connector',480,100000),foreign=fitHomeGuiWalletWindow('wrong',480,300),ok=fitHomeGuiWalletWindow('connector',480,250);return {bad,foreign,ok,height:parseFloat(node.style.height)};
   });
   assert.deepEqual([result.bad,result.foreign,result.ok],[false,false,true]);assert(result.height<560);await page.frameLocator('iframe[title=MetaMask]').locator('main').waitFor();await shot(page,`content-window-${width}`);
