@@ -38,7 +38,7 @@ async function exercise(engine,width,theme) {
     await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
     const file=`${engine}-${width}-${theme}-${name}.png`;
     await page.waitForFunction(()=>[...document.querySelectorAll('.signin-dialog img')].every(img=>img.complete&&img.naturalWidth>0),null,{timeout:5000});
-    await page.screenshot({path:join(output,file),fullPage:true});
+    await page.screenshot({path:join(output,file),fullPage:true,animations:'disabled'});
     const overflow=await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth);
     assert.equal(overflow,false,`horizontal overflow at ${name}`);
     pictures.push({engine,width,theme,state:name,file,sha256:createHash('sha256').update(await readFile(join(output,file))).digest('hex')});
