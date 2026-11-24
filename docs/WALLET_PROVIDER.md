@@ -570,7 +570,7 @@ N7 changes no N1 destination. Home's ownership proof and an app's signing
 request remain distinct purposes; a fixture cannot turn one into the other.
 
 **Today.** Handoff changes pending to approved before the outside answer.
-The admitted connector records an outside refusal through the completion route with `declined: true`, the exact payload hash and signer. Runtime stores a terminal rejection with `Declined by wallet`; Browser status and Wallet summaries expose `wallet_outcome: declined` separately from the retained owner approval time. Consumed message requests
+The admitted connector records an outside refusal through the completion route with `declined: true`, the exact payload hash and signer. Runtime stores a terminal rejection with `Declined by wallet`; Browser status and Wallet summaries expose `wallet_outcome: declined` separately from the retained owner approval time. The refusal view opens Wallet to review that result. Consumed message requests
 leave the pending feed; approved WalletConnect transactions remain in Wallet
 with Dismiss under [the existing receipt rules](#first-shippable-slice).
 

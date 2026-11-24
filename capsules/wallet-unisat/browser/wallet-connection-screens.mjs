@@ -470,23 +470,23 @@ const definitions = {
     },
     "transaction-declined": {
       "status": "{{wallet}} did not approve this transaction.",
-      "notice": "To try again, dismiss this request in Wallet, then return to {{app}}.",
+      "notice": "Review this request in Wallet.",
       "account": true,
       "request": true,
       "outcome": true,
       "primary": {
-        "id": "open-request-app",
-        "label": "Open {{app}}",
+        "id": "open-wallet",
+        "label": "Open Wallet",
         "quiet": false
       },
       "secondary": [
         {
-          "id": "open-wallet",
-          "label": "Dismiss in Wallet",
+          "id": "close-window",
+          "label": "Close window",
           "quiet": true
         }
       ],
-      "focus": "open-request-app"
+      "focus": "open-wallet"
     },
     "transaction-timeout": {
       "status": "Home could not confirm the transaction result.",

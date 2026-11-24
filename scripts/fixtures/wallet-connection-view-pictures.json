@@ -779,19 +779,15 @@
       "inventory": [
         "[mark: walletconnect.png]",
         "WalletConnect",
-        "You declined this transaction in MetaMask.",
-        "Browser · example.org",
-        "Send transaction",
-        "0.01 ETH to 0x8bC4…391a · Base",
-        "[mark: metamask.png] MetaMask · 0x71C7…976F · Base",
-        "Dismiss in Wallet clears this request. To try again, return to example.org in Browser.",
-        "Open Browser [primary]",
-        "Dismiss in Wallet [quiet secondary]"
+        "MetaMask did not approve this transaction.",
+        "Review this request in Wallet.",
+        "Open Wallet [primary]",
+        "Close window [quiet secondary]"
       ],
-      "focus": "open-request-app",
+      "focus": "open-wallet",
       "copy": {
-        "status": "You declined this transaction in MetaMask.",
-        "notice": "Dismiss in Wallet clears this request. To try again, return to example.org in Browser.",
+        "status": "MetaMask did not approve this transaction.",
+        "notice": "Review this request in Wallet.",
         "afterNote": ""
       },
       "wait": null

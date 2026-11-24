@@ -40,7 +40,7 @@ export function contractCopy(expected, row, view) {
       'request-phone':{status:`Continue in ${name}.`,notice:''},
       'transaction-phone':{status:`The transaction may still be waiting in ${name} or may already have been sent.`,notice:'Home disconnects when you stop waiting; check your wallet and Activity in Wallet.'},
       'transaction-deadline':{notice:`Start a new transaction in ${app}.`},
-      'transaction-declined':{notice:`To try again, dismiss this request in Wallet, then return to ${app}.`},
+      'transaction-declined':{notice:'Review this request in Wallet.'},
       'request-internet-off':{status:'Internet access for WalletConnect is off.',notice:'Choose Back to connection and connect again to ask for internet access. Allow it in Inbox, then return to this request and send it.'},
       'request-internet-pending':{notice:'Allow internet access in Inbox to continue with this request.'},
       'guest-access':{status:'You cannot turn on internet access for WalletConnect.',notice:'Ask an admin of this Home to open WalletConnect, choose Connect wallet, then allow internet access in Inbox.'},
