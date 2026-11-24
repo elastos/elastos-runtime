@@ -150,15 +150,14 @@ async function exercise(engine,width,theme) {
     await page.locator('iframe[title=wallet-walletconnect]').evaluate(f=>f.contentWindow.postMessage({type:'home:wallet-signin-effect',homeToken:'fixture-wallet-walletconnect',requestId:'fixture-stop',operation:'stop'},'*'));
     await addState('error');await capture('17b-phone-stopped');await cancelAdd();assert.equal(fixture.state.methods.length,0);
     await page.locator('#show-system').evaluate(el=>el.click());
-    await page.locator('iframe[title=wallet-walletconnect]').evaluate(f=>f.contentWindow.postMessage('fixture-release-signature','*'));fixture.state.holdSignature=false;
-    await page.locator('iframe[title=wallet-walletconnect]').evaluate(f=>f.contentWindow.postMessage('fixture-sign-pending','*'));
+    await page.locator('iframe[title=wallet-walletconnect]').waitFor({state:'detached'});
     await startAdd();await choose('Phone wallet').click();
     await phone.getByRole('button',{name:'Stop waiting',exact:true}).click();await addState('error');await cancelAdd();assert.equal(fixture.state.methods.length,0);
-    await page.locator('iframe[title=wallet-walletconnect]').evaluate(f=>f.contentWindow.postMessage('fixture-release-signature','*'));
+    await page.locator('iframe[title=wallet-walletconnect]').waitFor({state:'detached'});fixture.state.holdSignature=false;
     await startAdd();await choose('Phone wallet').click();await addDone();
     await system.locator('[data-wallet-method]').getByRole('button',{name:'Remove',exact:true}).waitFor();assert.equal(fixture.state.methods[0].sign_in_enabled,true);
     assert.equal(fixture.state.calls.filter(c=>c.path==='/api/fixture-sdk'&&c.body.method==='personal_sign').length-sdkBefore,3);
-    assert.equal(await page.locator('iframe[title="Phone wallet"]').count(),0);await page.locator('iframe[title=wallet-walletconnect]').evaluate(f=>f.remove());
+    assert.equal(await page.locator('iframe[title="Phone wallet"]').count(),0);await page.locator('iframe[title=wallet-walletconnect]').waitFor({state:'detached'});
     checks.push(`${engine}/${width}/${theme}: connected phone uses connector; Home stop and Stop waiting preserve payment connection; new attempt succeeds`);
 
     fixture.state.methods=[];fixture.state.connected=[{account_id:'retry',connector_id:'wallet-metamask',address:evmAddress,chain_namespace:'eip155:20',proof_type:'siwe'}];await refreshSystem();await system.locator('[data-wallet-method]').waitFor({state:'detached'});
