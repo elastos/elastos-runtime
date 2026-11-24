@@ -93,11 +93,12 @@ connections and their Inbox permissions keep their separate lifecycle.
 Begin returns:
 
 ```json
-{"ceremony_id":"ceremony:…","message":"Home-built message, empty for remove","expires_at":1800000180,"approval":{"operation":"auth.wallet.method","request":{"ceremony_id":"ceremony:…","account_id":"person:local:…","action":"add","method_id":"proof:signin-wallet:…","connector":"metamask","address":"0x…","chain_id":20,"network":"","authorizes_short_public_walletconnect":false},"notice":"Confirm this wallet sign-in method change with your passkey."},"instance_id":"…","storage_revision":0}
+{"ceremony_id":"ceremony:…","message":"Home-built message, empty for remove","expires_at":1800000180,"approval":{"operation":"auth.wallet.method","request":{"ceremony_id":"ceremony:…","account_id":"person:local:…","action":"add","method_id":"proof:signin-wallet:…","connector":"metamask","address":"0x…","chain_id":20,"network":"","authorizes_short_public_walletconnect":false},"notice":""},"instance_id":"…","storage_revision":0}
 ```
 
-The selected wallet shows the exact message and its fields before it signs. Home shows each control once. Show Runtime's
-`approval.notice` before passkey approval. Home echoes the complete Runtime-bound
+The selected wallet shows the exact message and its fields before it signs. Home shows each control once. Home owns the
+passkey instruction. Runtime's `approval.notice` is empty for ordinary method changes and supplies the relay warning for
+WalletConnect enrollment. Show a supplied notice before passkey approval. Home echoes the complete Runtime-bound
 approval request unchanged. For `add`, sign the exact message with personal_sign
 (EVM) or UniSat signMessage (Bitcoin), then use
 `POST /api/auth/passkey-step-up/begin` with its existing schema, app_token and

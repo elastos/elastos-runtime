@@ -629,7 +629,7 @@ fn begin_result(p: &Pending, token: Option<String>) -> anyhow::Result<BeginResul
         approval: p
             .actor
             .as_ref()
-            .map(|_| serde_json::json!({"operation":OPERATION,"request":approval(p),"notice":if p.action == "add" && compatible_relay_method(&p.method) {RELAY_NOTICE} else {"Confirm this wallet sign-in method change with your passkey."}})),
+            .map(|_| serde_json::json!({"operation":OPERATION,"request":approval(p),"notice":if p.action == "add" && compatible_relay_method(&p.method) {RELAY_NOTICE} else {""}})),
         attempt_token: token,
         instance_id: p.instance_id.clone(),
         storage_revision: 0,
