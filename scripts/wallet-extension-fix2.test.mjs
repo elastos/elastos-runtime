@@ -16,7 +16,9 @@ for(const engine of ['chromium','webkit']) {
       await f.action('send-request').click();await f.state('transaction-declined');
       assert.match(await f.frame.locator('body').innerText(),/did not approve this transaction/);
       assert.equal(await f.top.evaluate(()=>testState.calls.filter(c=>c.method==='eth_sendTransaction').length),0);
-      assert.equal(await f.top.evaluate(()=>testState.requests[0].status),'approved');
+      assert.equal(await f.top.evaluate(()=>testState.requests[0].status),'rejected');
+      assert.equal(await f.top.evaluate(()=>testState.declines[0].declined),true);
+      assert.equal(await f.top.evaluate(()=>testState.declines.length),1);
       assert.equal(await f.action('send-request').count(),0);await f.assertShared();
     }finally{await f.close();}}finally{await browser.close();}
   });

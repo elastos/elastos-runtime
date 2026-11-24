@@ -33,12 +33,16 @@ for(const engine of ['chromium','webkit']){
   assert.equal(await r.frame.getByRole('button',{name:'Manage in Inbox',exact:true}).count(),0);await r.click('Add address');await r.state('add-account');
   await r.click('Back to connection');await r.state('linked');assert.equal(await r.frame.getByRole('button',{name:'Disconnect',exact:true}).isVisible(),true);
   r.request('transaction',{intent:'transaction_intent'});await r.choose('transaction');await r.state('request-multiple');assert.equal(await r.frame.locator('main').getAttribute('data-request-id'),'transaction');assert.match(await r.frame.locator('main').innerText(),/Send transaction/);r.peer.choose({request:'reject'});await r.frame.getByRole('button',{name:/^Continue in /}).click();await r.state('transaction-declined');
-  assert.equal(r.fixture.state.approvals.find(row=>row.request_id==='transaction').status,'approved');
-  await r.click('Back to connection');await r.state('linked');await r.choose('transaction');await r.state('transaction-declined');
-  await r.reopen();await r.state('transaction-reopened');
-  assert.match(await r.frame.locator('main').innerText(),/Activity in Wallet/,'reopening keeps the unresolved Runtime payment visible');
-  assert.equal(await r.frame.locator('[data-action=send-request],[data-action=connect],[data-action=view-requests]').count(),0);
-  assert.equal(await r.frame.getByRole('button',{name:'Close window',exact:true}).count(),1);
+  const declined=r.fixture.state.approvals.find(row=>row.request_id==='transaction');
+  assert.equal(declined.status,'rejected');assert.equal(declined.wallet_outcome,'declined');
+  await r.click('Back to connection');await r.state('linked');
+  await r.click('View requests');await r.state('request-list');assert.equal(await r.frame.locator('[data-focus-key="select-request:transaction"]').count(),0,'a recorded decline leaves the waiting feed');
+  await r.frame.locator('[data-focus-key="select-request:typed"]').click();await r.state('request-unsendable');
+  await r.click('Back to connection');await r.state('linked');
+  await r.reopen();await r.state('linked');
+  assert.equal(await r.frame.locator('main[data-state="transaction-reopened"]').count(),0,'a known decline cannot become an unknown payment on reopen');
+  assert.equal(declined.status,'rejected');assert.equal(declined.wallet_outcome,'declined');
+  assert.equal(await r.frame.getByRole('button',{name:'Disconnect',exact:true}).isVisible(),true);
  });
  for(const ending of ['refused','failed'])test(`next waiting request is reachable after ${ending} through visible controls in ${engine}`,windowTestOptions(engine,60000),async t=>{
   const r=await setup(t,engine);await r.link();r.request('first');r.request('second');await r.refresh();await r.state('request-multiple');
