@@ -2134,9 +2134,7 @@ mod tests {
 pub fn signin_peer_network(peer: Option<IpAddr>) -> Option<IpAddr> {
     peer.map(|ip| match ip.to_canonical() {
         ip if ip.is_loopback() => IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
-        IpAddr::V6(ip) => {
-            IpAddr::V6(std::net::Ipv6Addr::from(u128::from(ip) & (u128::MAX << 64)))
-        }
+        IpAddr::V6(ip) => IpAddr::V6(std::net::Ipv6Addr::from(u128::from(ip) & (u128::MAX << 64))),
         ip => ip,
     })
 }
