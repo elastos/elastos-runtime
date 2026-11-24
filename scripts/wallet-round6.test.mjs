@@ -41,6 +41,7 @@ for(const engine of ['chromium','webkit'])for(const name of ['Rabby Wallet','Bra
 });
 for(const engine of ['chromium','webkit'])for(const width of [1280,390])test(`round6 app outcomes and sent-payment recovery in ${engine} at ${width}`,windowTestOptions(engine,30000),async()=>{
  const f=await browserFixture(engine,{width,height:900});
+ if(process.env.WALLET_ROUND6_BASELINE)for(const asset of ['wallet-connection-view.mjs','wallet-connection-screens.mjs'])await f.context.route('**/capsules/_shared/'+asset+'*',r=>r.fulfill({contentType:'text/javascript',body:execFileSync('git',['show','72af9c4ff:capsules/_shared/'+asset],{encoding:'utf8'})}));
  try{
   for(const window of ['metamask','unisat','walletconnect'])for(const stage of window==='walletconnect'?['request-phone','request-done','request-declined','transaction-phone','transaction-done','transaction-declined']:['request-extension','request-done','request-declined']){
    const args=fixtureArguments(states.find(r=>r.window===window&&r.stage===stage));
