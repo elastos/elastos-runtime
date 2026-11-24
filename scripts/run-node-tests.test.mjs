@@ -165,3 +165,18 @@ test("synchronous test starts refresh the deadline while reporter events are buf
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /pass 16/);
 });
+
+test('runner limits simultaneous files so Browser processes have a fixed memory bound', t => {
+  const directory=mkdtempSync(join(tmpdir(),'node-runner-concurrency-'));
+  t.after(()=>rmSync(directory,{recursive:true,force:true}));
+  const log=join(directory,'events.jsonl');
+  const files=[0,1,2].map(i=>{
+    const file=join(directory,`case-${i}.mjs`);
+    writeFileSync(file,`import test from 'node:test';import {appendFileSync} from 'node:fs';test('bounded file ${i}',async()=>{appendFileSync(${JSON.stringify(log)},JSON.stringify({kind:'start'})+'\\n');await new Promise(r=>setTimeout(r,200));appendFileSync(${JSON.stringify(log)},JSON.stringify({kind:'end'})+'\\n');});`);
+    return file;
+  });
+  const result=spawnSync(process.execPath,[join(scripts,'run-node-tests.mjs'),...files],{encoding:'utf8',timeout:30000});
+  assert.ifError(result.error);assert.equal(result.status,0,result.stderr);
+  let active=0,max=0;for(const line of readFileSync(log,'utf8').trim().split('\n')){active+=JSON.parse(line).kind==='start'?1:-1;max=Math.max(max,active);}
+  assert.equal(max,1);assert.equal(active,0);
+});

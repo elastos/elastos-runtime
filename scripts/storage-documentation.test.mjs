@@ -281,6 +281,7 @@ test("Security storage path parts occur in source literals (not a write or encry
   const server = "elastos/crates/elastos-server/src/";
   const sources = [
     ["Home recovery authority", "auth.rs"],
+    ["Wallet sign-in authority", "auth/wallet_signin.rs"],
     ["Assistant conversations", "api/gateway_assistant_workspace_v2.rs"],
     ["Direct messages", "collaboration_direct_messages.rs"],
     ["Community history", "collaboration_core.rs"],

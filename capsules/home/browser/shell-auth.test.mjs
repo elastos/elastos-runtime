@@ -55,6 +55,7 @@ globalThis.window = {
   clearInterval() {},
   addEventListener() {},
   dispatchEvent() { return true; },
+  dispatchEvent() { return true; },
   atob,
   btoa,
 };

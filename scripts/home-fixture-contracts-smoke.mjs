@@ -120,6 +120,7 @@ test("product data refuses missing input and missing declared install assets", (
     assert.throws(() => checkProductData(fixture), /ENOENT/);
     const capsuleRoot = join(fixture, "capsules/assistant");
     mkdirSync(join(capsuleRoot, "browser"), { recursive: true });
+    for(const name of ['home','system','wallet','wallet-metamask','wallet-unisat','wallet-walletconnect'])mkdirSync(join(fixture,'capsules',name,'browser'),{recursive:true});
     mkdirSync(join(fixture, "elastos/capsules"), { recursive: true });
     mkdirSync(join(fixture, "docs"));
     mkdirSync(join(fixture, "scripts/walletconnect"), { recursive: true });

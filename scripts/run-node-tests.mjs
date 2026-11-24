@@ -35,7 +35,7 @@ writeFileSync(starts, "", { mode: 0o600 });
 const env = { ...process.env, NODE_TEST_GUARD_STARTS: starts };
 delete env.NODE_TEST_CONTEXT;
 const worker = spawnOwnedTestWorker([
-  "--test", `--import=${reporter}`, `--test-timeout=${timeout}`, "--test-reporter=spec", "--test-reporter-destination=stdout",
+  "--test", "--test-concurrency=1", `--import=${reporter}`, `--test-timeout=${timeout}`, "--test-reporter=spec", "--test-reporter-destination=stdout",
   `--test-reporter=${reporter}`, "--test-reporter-destination=stderr", ...args,
 ], { env, stdio: ["ignore", "inherit", "inherit", "pipe"] });
 const { child } = worker;
