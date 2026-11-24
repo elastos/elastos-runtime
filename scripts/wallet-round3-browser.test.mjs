@@ -1,13 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdir,readFile} from 'node:fs/promises';
+import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {execFileSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
 import {signinFixture,installSigninProviders,evmAddress,bitcoinAddress} from './lib/wallet-signin-fixture.mjs';
 import {requireProductSmokePlaywright,productSmokeLaunchOptions} from './product-smoke-browser.mjs';
 import {browserFixture} from './lib/wallet-connection-browser-fixture.mjs';
 const pictures=process.env.WALLET_ROUND3_PICTURES;
-async function shot(page,name){if(pictures){await mkdir(pictures,{recursive:true});await page.screenshot({path:join(pictures,name+'.png'),animations:'disabled'});}}
+async function shot(page,name){if(pictures){await mkdir(pictures,{recursive:true});await page.waitForTimeout(150);const bytes=await page.screenshot({path:join(pictures,name+'.png'),animations:'disabled'});await writeFile(join(pictures,name+'.json'),JSON.stringify({head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),tree:execFileSync('git',['rev-parse','HEAD^{tree}'],{encoding:'utf8'}).trim(),clean:!execFileSync('git',['status','--porcelain'],{encoding:'utf8'}).trim(),viewport:page.viewportSize(),sha256:createHash('sha256').update(bytes).digest('hex')},null,2));}}
 for(const width of [1280,390])test(`round3 pointer Choose survives a focus refresh at ${width}`,{timeout:30000},async()=>{
  const f=await signinFixture(),browser=await requireProductSmokePlaywright().chromium.launch({headless:true,...productSmokeLaunchOptions()});
  const context=await browser.newContext({viewport:{width,height:900}});await context.addInitScript(installSigninProviders,{evmAddress,bitcoinAddress,theme:'light'});
@@ -54,19 +55,19 @@ for(const width of [1280,390])test(`round3 Home bounds content size hints and ca
 });
 
 import {fixture as extensionFixture} from './lib/wallet-extension-window-fixture.mjs';
-for(const kind of ['metamask','unisat'])test(`round3 ${kind} refusal names the wallet decision`,{timeout:30000},async()=>{
+for(const width of [480,390])for(const kind of ['metamask','unisat'])test(`round3 ${kind} refusal names the wallet decision at ${width}`,{timeout:30000},async()=>{
  const browser=await requireProductSmokePlaywright().chromium.launch({headless:true,...productSmokeLaunchOptions()});
  const f=await extensionFixture(browser,kind,{saved:true,requests:true,pictures:false,...(process.env.WALLET_ROUND3_BASELINE?{hostSource:execFileSync('git',['show','61ed90494:capsules/home/browser/home-wallet-connector-host.js'],{encoding:'utf8'})}:{})});
- try{await f.state('request-waiting');await f.top.evaluate(()=>testState.mode='decline');await f.action('send-request').click();await f.state('request-declined');assert.match(await f.frame.locator('main').innerText(),/declined|did not approve/);await shot(f.top,kind+'-declined');}
+ try{await f.top.setViewportSize({width,height:560});await f.top.locator('iframe').evaluate((frame,width)=>frame.style.width=width+'px',width);await f.state('request-waiting');await f.top.evaluate(()=>testState.mode='decline');await f.action('send-request').click();await f.state('request-declined');assert.match(await f.frame.locator('main').innerText(),/declined|did not approve/);await shot(f.top,`${kind}-declined-${width}`);}
  finally{await f.close();await browser.close();}
 });
-test('round3 locked first-use UniSat offers unlock and a working retry',{timeout:30000},async()=>{
+for(const width of [480,390])test(`round3 locked first-use UniSat offers unlock and a working retry at ${width}`,{timeout:30000},async()=>{
  const browser=await requireProductSmokePlaywright().chromium.launch({headless:true,...productSmokeLaunchOptions()});
  const f=await extensionFixture(browser,'unisat',{pictures:false});
  try{
-  await f.state('ready');await f.top.evaluate(()=>{window.sizeHints=[];addEventListener('message',e=>{if(e.data?.type==='home:wallet-content-size')sizeHints.push(e.data);});testState.requestError={method:'requestAccounts',message:'Wallet is locked'};});
-  await f.action('connect').click();await f.state('wallet-locked');await f.top.waitForFunction(()=>sizeHints.length>0);assert((await f.top.evaluate(()=>sizeHints)).every(h=>Number.isSafeInteger(h.width)&&h.width>=280&&h.width<=480&&h.height>=100&&h.height<=4000));assert.match(await f.frame.locator('main').innerText(),/Unlock UniSat, then select Try again/);await shot(f.top,'unisat-locked');
-  await f.top.evaluate(()=>testState.requestError=null);await f.action('connect').click();await f.state('linked');assert.equal(await f.top.evaluate(()=>testState.receipts.length),1);await shot(f.top,'unisat-unlocked-connected');
+  await f.top.setViewportSize({width,height:560});await f.top.locator('iframe').evaluate((frame,width)=>frame.style.width=width+'px',width);await f.state('ready');await f.top.evaluate(()=>{window.sizeHints=[];addEventListener('message',e=>{if(e.data?.type==='home:wallet-content-size')sizeHints.push(e.data);});testState.requestError={method:'requestAccounts',message:'Wallet is locked'};});
+  await f.action('connect').click();await f.state('wallet-locked');await f.top.waitForFunction(()=>sizeHints.length>0);assert((await f.top.evaluate(()=>sizeHints)).every(h=>Number.isSafeInteger(h.width)&&h.width>=280&&h.width<=480&&h.height>=100&&h.height<=4000));assert.match(await f.frame.locator('main').innerText(),/Unlock UniSat, then select Try again/);await shot(f.top,`unisat-locked-${width}`);
+  await f.top.evaluate(()=>testState.requestError=null);await f.action('connect').click();await f.state('linked');assert.equal(await f.top.evaluate(()=>testState.receipts.length),1);await shot(f.top,`unisat-unlocked-connected-${width}`);
  }finally{await f.close();await browser.close();}
 });
 
@@ -89,4 +90,12 @@ for(const width of [1280,390])test(`round3 a second Add brings the unknown chang
   await system.getByRole('button',{name:'Add wallet',exact:true}).click();await wallet.locator('#wallet-signers[data-signin=options]').waitFor();await wallet.locator('.wallet-method-head').filter({hasText:'MetaMask'}).getByRole('button',{name:'Choose',exact:true}).click();await wallet.locator('#wallet-signers[data-signin=unknown]').waitFor();
   await page.locator('iframe[title=wallet]').evaluate(frame=>frame.remove());await page.locator('#show-system').evaluate(el=>el.click());await system.getByRole('button',{name:'Add wallet',exact:true}).click();await wallet.getByRole('button',{name:'Check again',exact:true}).waitFor();assert.equal(await page.locator('iframe[title=wallet]').isVisible(),true);assert.equal(f.state.calls.filter(c=>c.path.endsWith('/wallet-methods/complete')).length,0,'lost transport sends no replacement proof');await shot(page,`unknown-second-add-${width}`);
  }finally{await context.close();await browser.close();await f.close();}
+});
+
+for(const width of [1280,390])test(`round3 Wallet shows account access plainly at ${width}`,{timeout:30000},async()=>{
+ const f=await signinFixture(),browser=await requireProductSmokePlaywright().chromium.launch({headless:true,...productSmokeLaunchOptions()});const page=await browser.newPage({viewport:{width,height:900}});page.setDefaultTimeout(5000);
+ const request={request_id:'account-access',status:'pending',intent:'browser_account_access',capsule_id:'browser',requesting_origin:'https://example.org',reason:'Share this address with example.org',account_id:'payment:one',address:evmAddress,proof_type:'managed_evm',created_at:Math.floor(Date.now()/1000),expires_at:Math.floor(Date.now()/1000)+600,review:{kind:'account_access',permission:'eth_accounts',origin:'https://example.org',account_id:'payment:one',requested_chain_namespace:'eip155:20',chain_namespaces:['eip155:20'],address:evmAddress,grant_expires_at:Math.floor(Date.now()/1000)+600}};
+ await page.route('**/api/apps/wallet/wallet/summary',route=>route.fulfill({json:{wallet_accounts:{accounts:f.state.connected},wallet_approvals:{approval_requests:[request]},approval_methods:{walletconnect:{available:true}}}}));
+ try{await page.goto(f.origin+'/apps/wallet/?home_origin='+encodeURIComponent(f.origin)+'#home_token=fixture-wallet');await page.getByRole('heading',{name:'Account access',exact:true}).waitFor();assert.equal(await page.locator('details,summary').count(),0);assert.equal(await page.getByRole('button',{name:'Allow',exact:true}).isVisible(),true);await shot(page,`wallet-account-access-${width}`);}
+ finally{await browser.close();await f.close();}
 });
