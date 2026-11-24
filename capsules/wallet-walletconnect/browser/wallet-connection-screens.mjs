@@ -454,8 +454,8 @@ const definitions = {
       "focus": "open-request-app"
     },
     "transaction-phone": {
-      "status": "Waiting for {{wallet}}.",
-      "notice": "Check the transaction in {{wallet}}. If you stop waiting, Home disconnects from {{wallet}}. The transaction may still be waiting there or may already have been sent.",
+      "status": "The transaction may still be waiting in {{wallet}} or may already have been sent.",
+      "notice": "Home disconnects when you stop waiting; check your wallet and Activity in Wallet.",
       "account": true,
       "request": true,
       "wait": true,
@@ -1741,7 +1741,7 @@ const definitions = {
     },
     "transaction-extension": {
       "status": "Waiting for {{wallet}}.",
-      "notice": "Check the transaction in {{wallet}}. Stopping here does not cancel the request in {{wallet}}.",
+      "notice": "Check {{wallet}}; your wallet may still send the transaction after you stop waiting here.",
       "account": true,
       "request": true,
       "wait": true,

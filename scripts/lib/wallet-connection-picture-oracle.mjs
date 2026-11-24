@@ -38,7 +38,7 @@ export function contractCopy(expected, row, view) {
       'link-wait':{status:`Open ${name} and sign the message to confirm this account is yours.`,notice:''},
       'link-declined':{status:'Your wallet declined to sign the message.',notice:'Send another message to confirm this account.'},
       'request-phone':{status:`Continue in ${name}.`,notice:''},
-      'transaction-phone':{notice:`Check the transaction in ${name}. If you stop waiting, Home disconnects from ${name}. The transaction may still be waiting there or may already have been sent.`},
+      'transaction-phone':{status:`The transaction may still be waiting in ${name} or may already have been sent.`,notice:'Home disconnects when you stop waiting; check your wallet and Activity in Wallet.'},
       'transaction-deadline':{notice:`Start a new transaction in ${app}.`},
       'transaction-declined':{notice:`To try again, go back to ${app}. In Wallet, choose Dismiss to clear this request.`},
       'request-internet-off':{status:'Internet access for WalletConnect is off.',notice:'Choose Back to connection and connect again to ask for internet access. Allow it in Inbox, then return to this request and send it.'},
@@ -66,7 +66,7 @@ export function contractCopy(expected, row, view) {
     if(metamask){
       if(row.stage==='linked'){result.afterNote='';result.status='Account saved in Wallet.';result.notice=`To stop sharing, remove this Home's connection in ${name}. Your account stays in Wallet.`;}
       if(row.stage==='request-network-declined')result.status=`Home could not confirm the requested network in ${name}.`;
-      if(row.stage==='transaction-extension')result.notice=`Check the transaction in ${name}. Stopping here does not cancel the request in ${name}.`;
+      if(row.stage==='transaction-extension')result.notice=`Check ${name}; your wallet may still send the transaction after you stop waiting here.`;
       if(['transaction-timeout','transaction-wallet-error'].includes(row.stage))result.status='Home does not know if the transaction was sent.';
       if(row.stage==='transaction-cancelled')result.status='You stopped waiting. The transaction may have been sent.';
       if(['transaction-timeout','transaction-cancelled','transaction-wallet-error'].includes(row.stage))result.notice=`Before you send again, check ${name}, then open Wallet from Home and check Activity. Closing this window does not cancel the request in ${name}.`;

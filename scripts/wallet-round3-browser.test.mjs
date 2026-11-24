@@ -6,7 +6,7 @@ import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {signinFixture,installSigninProviders,evmAddress,bitcoinAddress} from './lib/wallet-signin-fixture.mjs';
 import {requireProductSmokePlaywright,productSmokeLaunchOptions} from './product-smoke-browser.mjs';
-import {fixtureView,states} from './wallet-connection-view-fixtures.mjs';
+import {fixtureView,states,fixtureArguments} from './wallet-connection-view-fixtures.mjs';
 import {windowTestOptions} from './lib/walletconnect-window-resources.mjs';
 const pictures=process.env.WALLET_ROUND3_PICTURES;
 async function shot(page,name){if(pictures){await mkdir(pictures,{recursive:true});await page.waitForTimeout(150);const bytes=await page.screenshot({path:join(pictures,name+'.png'),animations:'disabled'});await writeFile(join(pictures,name+'.json'),JSON.stringify({head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),tree:execFileSync('git',['rev-parse','HEAD^{tree}'],{encoding:'utf8'}).trim(),clean:!execFileSync('git',['status','--porcelain'],{encoding:'utf8'}).trim(),viewport:page.viewportSize(),sha256:createHash('sha256').update(bytes).digest('hex')},null,2));}}
@@ -124,4 +124,16 @@ for(const width of [1280,390])test(`round3 Wallet shows account access plainly a
  await page.route('**/api/apps/wallet/wallet/summary',route=>route.fulfill({json:{wallet_accounts:{accounts:f.state.connected},wallet_approvals:{approval_requests:[request]},approval_methods:{walletconnect:{available:true}}}}));
  try{await page.goto(f.origin+'/apps/wallet/?home_origin='+encodeURIComponent(f.origin)+'#home_token=fixture-wallet');await page.getByRole('heading',{name:'Account access',exact:true}).waitFor();assert.equal(await page.locator('details,summary').count(),0);const copy=await page.locator('.wallet-request-review').innerText();assert.doesNotMatch(copy,/eth_accounts|eip155:|payment:one|Access expires/);assert.match(copy,/Your wallet address/);assert.match(copy,/Elastos Smart Chain/);assert.match(copy,/Access until/);assert.equal(await page.getByRole('button',{name:'Allow',exact:true}).isVisible(),true);await shot(page,`wallet-account-access-${width}`);}
  finally{await browser.close();await f.close();}
+});
+
+import {browserFixture} from './lib/wallet-connection-browser-fixture.mjs';
+for(const width of [1280,390])for(const [window,stage] of [['metamask','transaction-extension'],['walletconnect','transaction-phone']])test(`round5 payment wait keeps two safety sentences in ${window} at ${width}`,async()=>{
+ const f=await browserFixture('chromium',{width,height:900});
+ try{
+  const args=fixtureArguments(states.find(row=>row.window===window&&row.stage===stage));
+  await f.page.evaluate(async args=>{const m=await import('/capsules/_shared/wallet-connection-view.mjs');m.mountConnection(document.querySelector('#mount'),m.reduceConnection(...args));},args);
+  const text=(await f.page.locator('.connection-status,.connection-notice').allTextContents()).join(' ');
+  assert((text.match(/[.!?](?:\s|$)/g)||[]).length<=2);assert.match(text,/transaction/);assert.match(text,/stop waiting/);
+  await shot(f.page,`payment-wait-${window}-${width}`);
+ }finally{await f.close();}
 });

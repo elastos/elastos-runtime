@@ -261,3 +261,13 @@ test('the shared selected-account view names Sepolia',()=>{
  const view=reduceConnection({window:'metamask',stage:'link-wait',waitSeconds:300},{message});
  assert.deepEqual(view.account.accounts[0].networks,['Sepolia']);
 });
+
+test('canonical waiting screens have at most two instruction sentences',async()=>{
+ const {screens}=process.env.WALLET_WAIT_COPY_BASELINE
+   ? await import('data:text/javascript;base64,'+Buffer.from(spawnSync('git',['show','fe768a68c:capsules/_shared/wallet-connection-screens.mjs'],{encoding:'utf8'}).stdout).toString('base64'))
+   : await import('../capsules/_shared/wallet-connection-screens.mjs');
+ for(const [window,rows] of Object.entries(screens))for(const [stage,screen] of Object.entries(rows))if(screen.wait){
+  const text=[screen.status,screen.notice].filter(Boolean).join(' ');
+  assert((text.match(/[.!?](?:\s|$)/g)||[]).length<=2,window+'/'+stage+': '+text);
+ }
+});
