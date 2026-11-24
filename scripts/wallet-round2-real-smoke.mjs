@@ -33,7 +33,7 @@ async function prompt(context,kind){
   }
   throw Error(kind+' did not open a test prompt');
 }
-async function answer(context,kind,name,{reject=false}={}){
+async function answer(context,kind,name,{reject=false,close=false}={}){
   const end=Date.now()+30000;let openedPopup=false;
   while(Date.now()<end){
     const page=await prompt(context,kind);await page.bringToFront();
@@ -45,7 +45,9 @@ async function answer(context,kind,name,{reject=false}={}){
     const decline=kind==='metamask'?page.getByRole('button',{name:'Cancel',exact:true}):page.getByText('Reject',{exact:true});
     if(await accept.isVisible().catch(()=>false)){
       if(!await shot(page,name+'-prompt',kind+(reject?' refusal':' signature')+' in the real extension.'))continue;
-      await (reject?decline:accept).click().catch(error=>{if(!page.isClosed())throw error;});return;
+      if(close){const toolbar=kind==='metamask'&&page.url().includes('popup');await page.close();return {toolbar};}
+      await (reject?decline:accept).click().catch(error=>{if(!page.isClosed())throw error;});
+      await accept.waitFor({state:'hidden',timeout:5000}).catch(error=>{if(!page.isClosed())throw error;});return;
     }
     if(kind==='metamask'&&!openedPopup&&page.url().includes('/home.html')&&Date.now()>end-28000){
       // Open the toolbar surface named by the installed extension's manifest.
@@ -115,8 +117,9 @@ try{
       await answer(context,kind,'real-'+kind+'-cancel-prompt',{reject:true});
       await f.state('request-declined');
       await request('ordinary-close');await f.action('send-request').click();
-      const closing=await prompt(context,kind),toolbar=kind==='metamask'&&closing.url().includes('popup');await closing.close();
-      if(toolbar){await f.action('stop-waiting').click();await f.state('request-cancelled');const popup=await context.newPage();await popup.goto('chrome-extension://'+extensionIds.metamask+'/'+metamaskPopup);await answer(context,kind,'real-'+kind+'-closed-toolbar-refusal',{reject:true});}
+      const {toolbar}=await answer(context,kind,'real-'+kind+'-before-close',{close:true});
+      await f.top.waitForTimeout(150);
+      if(toolbar&&await f.frame.locator('main').getAttribute('data-state')!=='request-declined'){await f.action('stop-waiting').click();await f.state('request-cancelled');const popup=await context.newPage();await popup.goto('chrome-extension://'+extensionIds.metamask+'/'+metamaskPopup);await answer(context,kind,'real-'+kind+'-closed-toolbar-refusal',{reject:true});}
       await f.state('request-declined');
       await shot(f.top,'real-'+kind+'-closed-prompt',kind+' closed extension prompt is shown as a declined request.');
       await request('ordinary-expiry');
