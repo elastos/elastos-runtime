@@ -912,7 +912,7 @@ async function main() {
     );
 
     // An Inbox decision reaches the open System: Home forwards the Runtime's
-    // inbox event, or System is shown again. The open disclosure and focus stay.
+    // inbox event, or System is shown again. Access controls stay visible and focus stays.
     const veniceStatus = (fields) => ({
       hosted_external_https: "consent_required",
       connections: [{
@@ -929,10 +929,10 @@ async function main() {
     const veniceAccess = () => frame.evaluate(() => {
       const card = [...document.querySelectorAll("#ai-provider-instances .ai-provider-instance")]
         .find((node) => node.textContent.includes("VeniceQwen3.8F"));
-      const details = card?.querySelector("details");
+      const details = card?.querySelector(".ai-provider-details");
       return {
         state: card?.querySelector(".ai-provider-state")?.textContent?.trim() ?? "",
-        open: details?.open ?? null,
+        visible: Boolean(details && getComputedStyle(details).display!=="none"),
         controls: [...(details?.querySelectorAll("button") ?? [])].map((node) => node.textContent),
         focused: card?.contains(document.activeElement) ? document.activeElement.textContent : "",
       };
@@ -941,7 +941,7 @@ async function main() {
     await postHomeEvents(inboxChanged);
     await frame.waitForFunction(() => document.querySelector("#ai-provider-instances .ai-provider-state")
       ?.textContent?.trim() === "Needs Inbox review");
-    await frame.click("#ai-provider-instances .ai-provider-instance summary");
+    await frame.locator("#ai-provider-instances .ai-provider-instance .ai-provider-details button").filter({hasText:"Disconnect"}).focus();
     hostedStatus = veniceStatus({ egress_state: "ready", egress_approval_state: "approved" });
     const readsBeforeUnrelated = hostedReads;
     await postHomeEvents([{ scope: "chat-room", kind: "chat-room.changed" }, { scope: "people", kind: "people.changed" }]);
@@ -953,17 +953,17 @@ async function main() {
       { hostedReads, readsBeforeUnrelated, afterUnrelated },
     );
     await postHomeEvents(inboxChanged);
-    await frame.waitForFunction(() => [...document.querySelectorAll("#ai-provider-instances details button")]
+    await frame.waitForFunction(() => [...document.querySelectorAll("#ai-provider-instances .ai-provider-details button")]
       .some((node) => node.textContent === "End hosted approval"));
     const afterApproval = await veniceAccess();
     assert(
-      afterApproval.open === true && afterApproval.focused === "Details and access" && afterApproval.state === "",
-      "System lost the open disclosure or focus when Inbox approval refreshed the card",
+      afterApproval.visible === true && afterApproval.focused === "Disconnect" && afterApproval.state === "",
+      "System lost visible access controls or focus when Inbox approval refreshed the card",
       afterApproval,
     );
     hostedStatus = veniceStatus({ egress_state: "consent_required", egress_approval_state: "none" });
     await frame.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
-    await frame.waitForFunction(() => ![...document.querySelectorAll("#ai-provider-instances details button")]
+    await frame.waitForFunction(() => ![...document.querySelectorAll("#ai-provider-instances .ai-provider-details button")]
       .some((node) => node.textContent === "End hosted approval"));
 
     // The Add form keeps typed input while an Inbox decision arrives; closing it catches up.
@@ -983,7 +983,7 @@ async function main() {
       { underForm, hostedReads, readsBeforeForm },
     );
     await frame.click("#ai-provider-cancel");
-    await frame.waitForFunction(() => [...document.querySelectorAll("#ai-provider-instances details button")]
+    await frame.waitForFunction(() => [...document.querySelectorAll("#ai-provider-instances .ai-provider-details button")]
       .some((node) => node.textContent === "End hosted approval"));
 
     // A key the provider rejects is not left staged; the form stays open with Cancel.
@@ -1012,7 +1012,7 @@ async function main() {
     await frame.waitForFunction(() => document.querySelector('[data-field="ai-provider-state"]')?.textContent === "Staged key removed.");
     hostedStatus = { ...veniceStatus({ egress_state: "ready", egress_approval_state: "approved" }), staged_connections: [] };
     await postHomeEvents(inboxChanged);
-    await frame.waitForFunction(() => [...document.querySelectorAll("#ai-provider-instances details button")]
+    await frame.waitForFunction(() => [...document.querySelectorAll("#ai-provider-instances .ai-provider-details button")]
       .some((node) => node.textContent === "End hosted approval")
       && document.querySelector('[data-field="ai-provider-state"]')?.textContent === "");
 

@@ -1,3 +1,5 @@
+// Home ends management before the requesting capsule stops waiting.
+export const walletSigninRequestTimeoutMs=420000;
 export async function readWalletSigninMethods(token,{origin}={}) {
   if(origin) {
     const result=await requestWalletSigninChange({action:'list',token,origin});
@@ -14,7 +16,7 @@ export function requestWalletSigninChange({action,methodId='',token,origin,loadC
   if(window.top===window || !token || !origin)return Promise.reject(new Error('Open this app from Home to change wallet sign-in.'));
   const requestId=crypto.randomUUID();
   return new Promise((resolve,reject)=>{
-    const timeout=setTimeout(()=>{window.removeEventListener('message',receive);reject(new Error('Home stopped waiting. Refresh the sign-in methods before trying again.'));},200000);
+    const timeout=setTimeout(()=>{window.removeEventListener('message',receive);reject(new Error('Home stopped waiting. Refresh the sign-in methods before trying again.'));},walletSigninRequestTimeoutMs);
     const receive=event=>{
       if(event.source!==window.top||event.origin!==origin||event.data?.requestId!==requestId)return;
       if(event.data.type==='home:wallet-signin-accounts-request' && action==='add' && typeof loadConnected==='function'

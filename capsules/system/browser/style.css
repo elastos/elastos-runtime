@@ -2010,7 +2010,3 @@ input[type="file"].visually-hidden {
 :root[data-el-form-factor="phone"] .settings-content .pc2-input {
   font-size: 16px;
 }
-
-:root[data-el-form-factor="phone"] [data-settings="models"] summary {
-  line-height: var(--el-touch-target);
-}

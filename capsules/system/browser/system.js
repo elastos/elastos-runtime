@@ -1437,8 +1437,8 @@ function configureTechnicalDetails() {
     return;
   }
   technicalInspectRefreshButton.disabled = !hasShellAccess();
-  if (technicalInspectEntries.length === 0 && hasShellAccess()) {
-    refreshTechnicalDetails().catch(onTechnicalDetailsError);
+  if (technicalInspectEntries.length === 0) {
+    showTechnicalInspectStatus("Select Refresh to load component details.", "");
   }
   technicalInspectRefreshButton?.addEventListener("click", () => {
     refreshTechnicalDetails().catch(onTechnicalDetailsError);

@@ -640,6 +640,13 @@ function homeGuiWindowEntryForToken(homeToken) {
   return null;
 }
 
+export function focusHomeGuiWindowForToken(homeToken) {
+  const entry=homeGuiWindowEntryForToken(homeToken);
+  if(!entry)return false;
+  focusWindow(entry.id);
+  return true;
+}
+
 export function closeHomeGuiWindowForToken(homeToken) {
   const entry = homeGuiWindowEntryForToken(homeToken);
   if (!entry) {

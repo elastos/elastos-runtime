@@ -33,7 +33,7 @@ export function handleWalletSigninRequest(event,context,{api,manage,current,chan
           return existing?{...row,...existing,connector:row.connector,paymentOnly:false}:row;
         }).filter(row=>!row.sign_in_enabled);
       }});
-      reply(result);changed();if(result?.status==='complete'&&active())focusCaller();
+      reply(result);changed();if(active())focusCaller();
     }).catch(()=>reply({status:'failed'}));
   return true;
 }

@@ -94,7 +94,7 @@ function visibleHtml(path, { stripTechnicalDetails = false } = {}) {
     .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
     .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ");
   if (stripTechnicalDetails) {
-    html = html.replace(/<details\b[^>]*id=["']technical-details["'][^>]*>[\s\S]*?<\/details>/gi, " ");
+    html = html.replace(/<section\b[^>]*aria-labelledby=["']technical-title["'][^>]*>[\s\S]*?<\/section>/gi, " ");
   }
   return html
     .replace(/<[^>]+>/g, " ")
@@ -180,9 +180,9 @@ assert(
 const systemHtml = read("capsules/system/browser/index.html");
 const systemJs = read("capsules/system/browser/system.js");
 assert(
-  systemHtml.includes('<details id="technical-details"')
-    && !systemHtml.includes('<details id="technical-details" open'),
-  "System Technical Details must exist and stay closed by default",
+  systemHtml.includes('<div id="technical-details"')
+    && !/<(?:details|summary)\b/i.test(systemHtml),
+  "System Technical Details stays visible without a disclosure",
 );
 assert(
   !systemHtml.includes("Capsules and providers")

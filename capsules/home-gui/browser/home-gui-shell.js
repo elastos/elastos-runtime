@@ -3,6 +3,7 @@ import {
   bindHomeGuiInteractions,
   attachAuthorizedHomeGuiTarget,
   closeHomeGuiWindowForToken,
+  focusHomeGuiWindowForToken,
   openHomeGuiTarget,
   relaunchHomeGuiWindowForToken,
   renewHomeGuiBrowserWindowAuthority,
@@ -188,6 +189,10 @@ function acceptShellContext(browserContextId) {
 
 function handleGuiCommand(message) {
   const command = message?.command;
+  if(command==="focus-window"){
+    if(!hasExactKeys(message,["type","command","homeToken"])||typeof message.homeToken!=="string"||!message.homeToken||message.homeToken.length>4096)return false;
+    return focusHomeGuiWindowForToken(message.homeToken);
+  }
   if (command === "close-window") {
     return closeHomeGuiWindowForToken(message.homeToken);
   }

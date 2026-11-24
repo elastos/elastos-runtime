@@ -232,7 +232,7 @@ async function systemState(tabId) {
       recoveryImportLabel: document.querySelector('label[for="recovery-import"]')?.textContent?.trim() || '',
       catalogPresent: !!document.querySelector('#capsule-catalog, [data-settings="catalog"]'),
       technicalDetailsPresent: !!document.querySelector('#technical-details'),
-      technicalDetailsOpen: document.querySelector('#technical-details')?.open ?? null,
+      technicalDetailsDisclosure: document.querySelector('#technical-details')?.tagName === 'DETAILS',
       technicalDetailsLabels: [...document.querySelectorAll('.technical-section-title')].map((node) => node.textContent?.trim() || ''),
       selectedTechnicalId: document.querySelector('.technical-inspect-row.active')?.dataset.technicalInspectId || '',
       technicalOperationCount: document.querySelectorAll('.technical-operation option:not([value=""])').length,
@@ -322,7 +322,7 @@ async function main() {
     assert(state.recoveryImportLabel === "Import Recovery Kit", "Recovery Kit import label drifted", state);
     assert(state.catalogPresent === false, "System page still has Apps & Services; Marketplace and Technical Details list apps", state);
     assert(state.technicalDetailsPresent === true, "System Security must expose Technical Details", state);
-    assert(state.technicalDetailsOpen === false, "System Technical Details must be closed by default", state);
+    assert(state.technicalDetailsDisclosure === false, "System Technical Details stays visible", state);
     assert(state.legacyInspectorPresent === false, "System page still exposes the old Capsule Inspector", state);
     assert(state.runtimeEventsPresent === false, "System should not render an untrusted runtime activity panel", state);
     assert(!BANNED_PUBLIC_COPY.test(state.ordinaryText), "System ordinary views expose internal narration", state);
@@ -334,7 +334,7 @@ async function main() {
     assert(!state.bodyText.includes("Nothing to show yet."), "System still renders placeholder runtime-event copy", state);
     await evaluate(tabId, `(() => {
       const details = document.querySelector('#technical-details');
-      if (details) details.open = true;
+      document.querySelector('#technical-inspect-refresh')?.click();
       return Boolean(details);
     })()`);
     const technicalLoaded = await waitFor(async () => {
