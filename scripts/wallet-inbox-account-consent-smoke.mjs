@@ -96,7 +96,7 @@ assert(!rendered.some((node) => ["DETAILS","SUMMARY"].includes(node.tagName)));
 assert(rendered.some((node) => node.textContent === "dapp.example"));
 assert(rendered.some((node) => node.textContent === " in Browser"));
 assert(!rendered.some((node) => node.textContent === "https://dapp.example/connect"));
-assert(rendered.some((node) => node.textContent === "eip155:20, eip155:8453"));
+assert(rendered.some((node) => node.textContent === "Elastos Smart Chain, Base"));
 assert(rendered.some((node) => node.tagName === "BUTTON" && node.textContent === "Allow"));
 
 walletRequests.renderRequests([{ ...request, review: null }]);

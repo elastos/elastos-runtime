@@ -2,6 +2,7 @@
 import { createWalletConnectClient } from './walletconnect-client.mjs';
 const keys = Object.create(null);
 window.requests = [];
+window.declines = [];
 let approvalStatus='pending';
 const api = async (path, input) => {
   if (path === 'wallet/config') return {walletconnect:{project_id:'fixture-project',storage_revision:'"0"'}};
@@ -14,6 +15,12 @@ const api = async (path, input) => {
   }
   if (path === 'wallet/approvals') return {approval_requests:approvalStatus==='pending'?[{request_id:'fixture-sign',status:approvalStatus,address:'0x'+'12'.repeat(20),chain_namespace:'eip155:8453',intent:'browser_personal_sign',expires_at:Math.floor(Date.now()/1000)+600}]:[]};
   if (path.endsWith('/approve')) {if(approvalStatus!=='pending')throw new Error('request consumed');approvalStatus='approved';return {handoff:{request_id:'fixture-sign',payload_hash:'0x'+'34'.repeat(32),signer:'0x'+'12'.repeat(20),intent:'browser_personal_sign',signature_type:'personal_sign',message:'Fixture signing request'},binding:{payload_hash:'0x'+'34'.repeat(32),chain_namespace:'eip155:8453',expires_at:Math.floor(Date.now()/1000)+600}};}
+  if (path === 'wallet/approvals/fixture-sign/complete' && input?.method === 'POST') {
+    const body = JSON.parse(input.body);
+    if (approvalStatus !== 'approved' || body.declined !== true || body.payload_hash !== '0x'+'34'.repeat(32) || body.signer !== '0x'+'12'.repeat(20) || Object.keys(body).sort().join(',') !== 'declined,payload_hash,signer') throw new Error('Invalid fixture decline');
+    approvalStatus = 'rejected'; window.declines.push(body);
+    return {receipt_status:'declined'};
+  }
   if (path.endsWith('/challenge')) { window.challenge = JSON.parse(input.body); return {message:'Test Home ownership',expires_at:Math.floor(Date.now()/1000)+600}; }
   if (path.endsWith('/verify')) return {};
   throw new Error('Unexpected fixture resource');

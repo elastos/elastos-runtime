@@ -6,13 +6,15 @@ import {importProductSmokePlaywright,productSmokeLaunchOptions} from './product-
 import {walletConnectRelayFixture,walletConnectFixtureRequire} from './lib/walletconnect-relay-fixture.mjs';
 const {SignClient} = walletConnectFixtureRequire('@walletconnect/sign-client');
 import {execFileSync} from 'node:child_process';
+import {windowTestOptions} from './lib/walletconnect-window-resources.mjs';
+const engine=process.env.WALLETCONNECT_TEST_ENGINE || 'chromium';
 import {walletConnectMessages as messages} from '../capsules/wallet-walletconnect/browser/walletconnect-client.mjs';
 const chains = ['eip155:1','eip155:20','eip155:8453','eip155:11155111'];
 const unsupported = 'Your wallet did not approve a network this Home supports. Select Connect wallet and choose Ethereum, Elastos Smart Chain, Base or Sepolia in your wallet.';
 const expiryReplies=['ownership','signature'].map(scope=>[`${scope} wallet expiry-text reply`,['eip155:8453'],{scope,code:6,message:'Request expired. Please try again.',expected:scope==='ownership'?'linkError':'signatureError'}]);
 const declines = [4001,5000].flatMap(code => ['proposal','signature'].map(scope => [`${scope} decline ${code}`,['eip155:8453'],{scope,code}]));
 for (const [name,approved,rejection] of [['Base only',['eip155:8453']],['unsupported only',['eip155:137']],['all four',chains],...declines,...expiryReplies]) {
-  test(`real pinned SDK ${rejection ? name : 'links with '+name}`,{timeout:45000},async () => {
+  test(`real pinned SDK ${rejection ? name : 'links with '+name}`,windowTestOptions(engine,45000),async () => {
     const files = new Map([
       ['/fixture.mjs','scripts/lib/walletconnect-session-fixture.mjs'],
       ['/walletconnect-client.mjs','capsules/wallet-walletconnect/browser/walletconnect-client.mjs'],
@@ -35,14 +37,14 @@ for (const [name,approved,rejection] of [['Base only',['eip155:8453']],['unsuppo
         await wallet.approve({id:event.id,namespaces:{eip155:{chains:approved,accounts:approved.map(chain=>`${chain}:0x${'12'.repeat(20)}`),methods:['personal_sign','eth_sendTransaction'],events:['accountsChanged','chainChanged']}}});
       });
       wallet.on('session_request',async event=>{requests.push(event.params);await wallet.respond({topic:event.topic,response:{jsonrpc:'2.0',id:event.id,...(rejection ? {error:{code:rejection.code,message:rejection.message||'User rejected.'}} : {result:`0x${'ab'.repeat(65)}`})}});});
-      const engine=process.env.WALLETCONNECT_TEST_ENGINE || 'chromium',engines=await importProductSmokePlaywright();browser=await engines[engine].launch({headless:true,...(engine==='chromium'?productSmokeLaunchOptions():{})});
+      const engines=await importProductSmokePlaywright();browser=await engines[engine].launch({headless:true,...(engine==='chromium'?productSmokeLaunchOptions():{})});
       page=await browser.newPage();
       await page.route('**/*',route=>new URL(route.request().url()).origin===origin?route.continue():route.abort());
       await page.exposeBinding('pairTestWallet',(_source,uri)=>wallet.core.pairing.pair({uri}));
       await page.goto(origin+(rejection?.scope==='signature'?'?action=approve':''));
       try { await page.waitForFunction(()=>window.result||window.error,null,{timeout:25000}); } catch(error) { console.log({methods,proposal:!!proposal,state:await page.evaluate(()=>({paired:window.pairingSent,error:window.error,dialog:!!document.querySelector('dialog')}))});throw error; }
       const state=await page.evaluate(()=>({result:window.result,error:window.error,challenge:window.challenge}));
-      if (rejection) {assert.equal(state.error,messages[rejection.expected||`${rejection.scope}Declined`]);assert.equal(await page.evaluate(()=>window.errorTone),'muted');assert.equal(requests.length,rejection.scope==='proposal'?0:1);if(rejection.scope==='signature'){assert.equal(await page.evaluate(()=>window.provider.connected),true,'declining a signing request keeps the connection');assert.equal(await page.evaluate(()=>window.reviewAgain()),messages.consumed);assert.equal(requests.length,1,'the real SDK receives no second signing request');}}
+      if (rejection) {assert.equal(state.error,messages[rejection.expected||`${rejection.scope}Declined`]);assert.equal(await page.evaluate(()=>window.errorTone),'muted');assert.equal(requests.length,rejection.scope==='proposal'?0:1);if(rejection.scope==='signature'){assert.equal(await page.evaluate(()=>window.provider.connected),true,'declining a signing request keeps the connection');if(!rejection.expected)assert.equal(await page.evaluate(()=>window.declines.length),1,'the fixture records one bound refusal');assert.equal(await page.evaluate(()=>window.reviewAgain()),messages.consumed);assert.equal(requests.length,1,'the real SDK receives no second signing request');}}
       else if(name==='unsupported only') {assert.equal(state.error,unsupported);assert.equal(requests.length,0);}
       else {assert.equal(state.error,undefined);assert.equal(state.result.status,'linked');assert.equal(requests.length,1);assert.ok(approved.includes(requests[0].chainId));assert.equal(state.challenge.chain_id,Number(approved[0].split(':')[1]));}
       console.log(`${name}: link expectation PASS; ${requests.length} wallet request(s)`);

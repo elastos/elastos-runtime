@@ -115,7 +115,7 @@ for(const [ending,extra,expected] of [
  const row={...request,intent:'transaction_intent',status:'approved',expires_at:now-1};
  const view=walletConnectView(windowPresentation({...initial,...extra,selectedId:'request-1',requests:[row]},now));
  assert.equal(view.stage,expected);assert.ok(view.actions.every(action=>!['send-request','start-over','connect'].includes(action.id)));
- assert.match(view.notice.map(part=>part.text).join(''),/Before you send again, check .*wallet/);
+ assert.match(view.notice.map(part=>part.text).join(''),/^Check (?:Scripted wallet|your wallet) and Activity in Wallet, then choose Dismiss there to pair again\.$/);
 });
 
 test('wallet removal after dispatch keeps the sent-message removal state',()=>{
