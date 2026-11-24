@@ -47,7 +47,7 @@ for(const engine of ['chromium','webkit'])for(const width of [1280,390])test(`ro
    args[1].summary.reason=window==='unisat'?'':stage.startsWith('transaction')?'Browser asks you to send a payment on Elastos Smart Chain.':'Browser asks you to sign a message.';
    args[0].supportedActions=['stop-waiting','close-window','open-wallet'];
    await f.page.evaluate(async args=>{const m=await import('/capsules/_shared/wallet-connection-view.mjs');window.testMount?.dispose();window.testMount=m.mountConnection(document.querySelector('#mount'),m.reduceConnection(...args));},args);
-   const text=(await f.page.locator('.connection-reason,.connection-status,.connection-notice').allTextContents()).join(' ');
+   const text=(await f.page.locator('.connection-detail,.connection-status,.connection-notice').allTextContents()).join(' ');
    assert((text.match(/[.!?](?:\s|$)/g)||[]).length<=2,text);await shot(f.page,`${window}-${stage}-${engine}-${width}`);
   }
   const args=fixtureArguments(states.find(r=>r.window==='walletconnect'&&r.stage==='transaction-reopened'));
