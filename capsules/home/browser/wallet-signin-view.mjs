@@ -61,7 +61,7 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
   async function restart() {if(initial.action==='signin'&&!dialog?.querySelector('.connection-options-list'))options(initial.signinMethods);const config=initial;await flow.start(config);if(config.chooseConnector)await flow.choose(config.chooseConnector);}
   function options(methods) {render({stage:'options',action:initial.action,methods});}
   async function chooseAdd(kind) {
-    const request=epoch;
+    const request=++epoch;
     initial={...initial,method:null,chooseConnector:kind,focusCurrent:null};
     render({stage:'loading',action:'add'});
     try {
@@ -80,6 +80,7 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
         if(request!==epoch)return;
         if(!method){await connected();chooser?.focus();return;}
       }
+      render({stage:'loading',action:'add',methods});
       initial={...initial,method:null,chooseConnector:kind,providerId:method?.providerId||'',delegateWalletConnect:true};
       await restart();
     }catch{if(request===epoch)render({stage:'list-error',action:'add',message:'Home could not load your wallets.'});}
@@ -101,7 +102,7 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
     if(state.action==='signin'&&['review','signing','completing'].includes(state.stage)&&!dialog?.querySelector('.connection-options-list')&&initial.signinMethods)options(initial.signinMethods);
     if(state.stage==='closed'){close();return;}
     currentState=state;
-    if(state.action==='add'&&chooser){if(state.message||['error','list-error','unknown'].includes(state.stage))chooser.focus();chooser.render({stage:state.stage,message:state.message||'',methods:state.stage==='options'?['metamask','unisat','walletconnect'].map(connector=>{const rows=state.methods.filter(m=>m.connector===connector);return {connector,connected:rows.length>0,used:rows.length>0&&rows.every(m=>m.sign_in_enabled)};}):undefined});return;}
+    if(state.action==='add'&&chooser){if(state.message||['error','list-error','unknown'].includes(state.stage))chooser.focus();chooser.render({stage:state.stage,message:state.message||'',methods:Array.isArray(state.methods)?['metamask','unisat','walletconnect'].map(connector=>{const rows=state.methods.filter(m=>m.connector===connector);return {connector,connected:rows.length>0,used:rows.length>0&&rows.every(m=>m.sign_in_enabled)};}):undefined});return;}
     if(state.action==='signin'&&['choice','connecting','review','signing','completing'].includes(state.stage)&&dialog?.querySelector('.connection-options-list')){
       dialog.dataset.state=state.stage;
       for(const row of dialog.querySelectorAll('.connection-option')){row.disabled=true;const label=row.querySelector('.connection-option-label');if(label&&row.dataset.choice===initial.waitingId){label.dataset.waiting='true';label.textContent=`Waiting for ${initial.waitingLabel}…`;}}

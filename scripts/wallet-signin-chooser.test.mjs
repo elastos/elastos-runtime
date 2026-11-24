@@ -77,3 +77,20 @@ test('a focus refresh that finishes after Choose preserves the active connector 
     assert.equal(await page.locator('iframe[title=wallet-metamask]').count(),1);
   }finally{release?.();await context.close();await browser.close();await fixture.close();}
 });
+
+test('a newly connected wallet stays marked Connected when its add signature is refused',async()=>{
+  const fixture=await signinFixture(),browser=await requireProductSmokePlaywright().chromium.launch({headless:true});
+  const context=await browser.newContext();await context.addInitScript(installSigninProviders,{evmAddress,bitcoinAddress,theme:'light'});
+  const page=await context.newPage();page.setDefaultTimeout(10000);
+  try {
+    fixture.state.methods=[];fixture.state.connected=[];
+    await page.goto(fixture.origin+'/home/');await page.waitForFunction(()=>window.fixtureReady);await page.evaluate(()=>window.showFixtureApps());
+    const system=page.frameLocator('iframe[title=system]'),wallet=page.frameLocator('iframe[title=wallet]');
+    await system.getByRole('button',{name:'Add wallet',exact:true}).click();await wallet.locator('#wallet-signers[data-signin=options]').waitFor();
+    await wallet.locator('.wallet-method-head').filter({hasText:'MetaMask'}).getByRole('button',{name:'Choose',exact:true}).click();
+    const connector=page.frameLocator('iframe[title=wallet-metamask]');await connector.getByRole('button',{name:'Connect wallet',exact:true}).click();await connector.locator('[data-action=send-request]').waitFor();
+    await page.evaluate(()=>window.walletFixture.mode='rejected');await connector.locator('[data-action=send-request]').click();
+    await wallet.locator('#wallet-signers[data-signin=error]').waitFor();assert.match(await wallet.locator('.wallet-method-head').filter({hasText:'MetaMask'}).innerText(),/Connected/);
+    assert.equal(fixture.state.methods.length,0);assert.equal(fixture.state.connected.length,1);
+  }finally{await context.close();await browser.close();await fixture.close();}
+});
