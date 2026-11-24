@@ -260,20 +260,19 @@ async fn wallet_one_state_http_remove_ends_pairing_and_preserves_payment_permiss
 }
 
 #[tokio::test]
-async fn wallet_creation_recovery_approval_refused_at_both_routes() {
+async fn wallet_creation_recovery_approval_have_no_routes() {
     let f = wallet_fixture::fixture();
     let app = gateway_router(test_state(f.data.path()));
     for operation in ["register", "recover", "approve"] {
         for phase in ["begin", "complete"] {
-            let (status, out) = call(
+            let (status, _) = call(
                 &app,
                 &format!("/api/auth/wallet/{operation}/{phase}"),
                 None,
                 Some(json!({})),
             )
             .await;
-            assert_eq!(status, StatusCode::FORBIDDEN);
-            assert_eq!(out["error"], "passkey_required");
+            assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
         }
     }
 }

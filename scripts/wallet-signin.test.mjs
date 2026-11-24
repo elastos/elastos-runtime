@@ -7,13 +7,14 @@ afterEach(async()=>{await Promise.all([...activeFlows].map(flow=>flow.cancel()))
 
 const method = {method_id:'wallet:one',connector:'metamask',address:'0x'+'12'.repeat(20),chain_id:20,network:'',sign_in_enabled:true};
 function fixture({lost=false,passkeyRetry=false}={}) {
-  const calls=[], states=[]; let completeCalls=0,approvalCalls=0,lastAction,notifyChange;
+  const calls=[], states=[]; let completeCalls=0,approvalCalls=0,lastAction,notifyChange,committed=false,reads=0;
   const flow=createWalletSigninFlow({
     randomSecret:()=> 'a'.repeat(64),
     api:async(path,body)=>{
       calls.push({path,body:structuredClone(body)});
       if(path.endsWith('/begin')) {lastAction=body.action;return {ceremony_id:'ceremony',message:'exact Home message',expires_at:Date.now()/1000+120,approval:{operation:'auth.wallet.method',request:{ceremony_id:'ceremony',action:body.action,account_id:'principal:alex',method_id:method.method_id}}};}
-      if(path.endsWith('/complete')) { if(lost && completeCalls++===0) throw new TypeError('lost reply'); return {status:lastAction==='remove'?'removed':'complete',method_id:method.method_id,sign_in_enabled:lastAction==='add'}; }
+      if(path==='/api/auth/wallet-methods') {reads++;if(lost&&reads===1)throw new TypeError('lost status');return {account_id:'principal:alex',methods:committed&&lastAction!=='remove'?[method]:[]};}
+      if(path.endsWith('/complete')) { committed=true;if(lost && completeCalls++===0) throw new TypeError('lost reply'); return {status:lastAction==='remove'?'removed':'complete',method_id:method.method_id,sign_in_enabled:lastAction==='add'}; }
       return {};
     },
     select:async(_connector,options)=>{notifyChange=options.changed;return {...method,check:async()=>{},sign:async message=>{calls.push({sign:message});return {signature:'proof',signature_type:'personal_sign',public_key:''};},close(){}};},
@@ -33,10 +34,10 @@ test('add reviews before signature, then requests exact passkey approval',async(
   assert(!f.calls.some(c=>c.path?.endsWith('/cancel')),'confirmed completion preserves its result');
   await f.flow.cancel();assert(!f.calls.some(c=>c.path?.endsWith('/cancel')),'closing a confirmed result preserves it');
 });
-test('uncertain completion retries identical proof without signing or approving again',async()=>{
+test('uncertain completion reads methods without signing or approving again',async()=>{
   const f=fixture({lost:true});await f.flow.start({action:'add',method});await f.flow.confirm();await f.flow.approve();
   assert.equal(f.states.at(-1).stage,'unknown');await f.flow.retry();
-  const sent=f.calls.filter(c=>c.path?.endsWith('/complete'));assert.equal(sent.length,2);assert.deepEqual(sent[0],sent[1]);
+  const sent=f.calls.filter(c=>c.path?.endsWith('/complete'));assert.equal(sent.length,1);assert(f.calls.some(c=>c.path==='/api/auth/wallet-methods'));
   assert.equal(f.calls.filter(c=>c.sign).length,1);assert.equal(f.calls.filter(c=>c.approve).length,1);assert.equal(f.states.at(-1).message,'');
 });
 
@@ -166,7 +167,7 @@ test('an account change after dispatch keeps the uncertain result retryable',asy
   const f=fixture({lost:true});await f.flow.start({action:'add',method});await f.flow.confirm();await f.flow.approve();
   assert.equal(f.states.at(-1).stage,'unknown');f.change('changed');assert.equal(f.states.at(-1).stage,'unknown');await f.flow.retry();
   assert.equal(f.states.at(-1).stage,'done');
-  const sent=f.calls.filter(c=>c.path?.endsWith('/complete'));assert.deepEqual(sent[0].body,sent[1].body);assert.equal(f.calls.filter(c=>c.sign).length,1);
+  const sent=f.calls.filter(c=>c.path?.endsWith('/complete'));assert.equal(sent.length,1);assert.equal(f.calls.filter(c=>c.sign).length,1);
 });
 
 test('System reads its own method list through Home authority',async()=>{
@@ -311,13 +312,14 @@ const {createWalletSigninFlow}=await import(process.env.SIGNIN_FLOW_MODULE||'../
 const wallet={connector:'metamask',address:'0x'+'12'.repeat(20),chain_id:20,network:'',paymentOnly:true};
 const flows=[];afterEach(async()=>{for(const flow of flows)await flow.cancel();flows.length=0;});
 function ceremony({lost=false,change=false,connector='metamask'}={}) {
-  const calls=[],states=[];let completes=0;
+  const calls=[],states=[];let completes=0,reads=0;
   const method={...wallet,connector};
   const flow=createWalletSigninFlow({
     randomSecret:()=> 'a'.repeat(64),
     api:async(path,body)=>{
       calls.push({path,body});
       if(path.endsWith('/begin'))return {ceremony_id:'one',message:'Use this wallet to sign in to this Home for Alex',expires_at:Date.now()/1000+120,approval:{operation:'auth.wallet.method',request:{ceremony_id:'one',action:body.action,account_id:'alex',method_id:'new-method'}}};
+      if(path==='/api/auth/wallet-methods'){if(lost&&reads++===0)throw new TypeError('lost status');return {account_id:'alex',methods:[{method_id:'new-method',sign_in_enabled:true}]};}
       if(path.endsWith('/complete')){if(lost&&completes++===0)throw new TypeError('lost reply');return {status:'complete',method_id:'new-method',sign_in_enabled:true};}
       return {};
     },
@@ -333,10 +335,10 @@ test('a connected wallet adds sign-in with one signature and one passkey approva
   assert.equal(f.calls.find(c=>c.approval).approval.request.action,'add');
   assert(!f.calls.some(c=>c.path?.endsWith('/cancel')));
 });
-test('a lost add reply retries the same proof and approval',async()=>{
+test('a lost add reply checks the saved method without another proof or approval',async()=>{
   const f=ceremony({lost:true});await f.flow.start({action:'add',method:f.method,automatic:true});
   assert.equal(f.states.at(-1).stage,'unknown');await f.flow.retry();assert.equal(f.states.at(-1).stage,'done');
-  assert.deepEqual(f.calls.filter(c=>c.path?.endsWith('/complete')).map(c=>c.body),Array(2).fill(f.calls.find(c=>c.path?.endsWith('/complete')).body));
+  assert.equal(f.calls.filter(c=>c.path?.endsWith('/complete')).length,1);
   assert.equal(f.calls.filter(c=>c.signature).length,1);assert.equal(f.calls.filter(c=>c.approval).length,1);
 });
 test('wallet changes stop the new automatic flow before signing or passkey approval',async()=>{
@@ -431,11 +433,10 @@ test('Runtime connector choices work in a fresh browser and on a desktop surface
   assert.deepEqual(availableSigninOptions(runtime,{walletconnectAvailable:true}).map(m=>m.connector),['walletconnect']);
   assert.deepEqual(availableSigninOptions(['metamask'],{walletconnectAvailable:true}),[]);
 });
-test('the browser stores only a closed remembered connector choice and clears trial identities',()=>{
- const values=new Map([['elastos.signin.options.v1','private wallet identities']]);
+test('the browser stores only a closed remembered connector choice',()=>{
+ const values=new Map();
  const storage={getItem:k=>values.get(k),setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)};
  saveSigninChoice('metamask',storage);assert.equal(readSigninChoice(storage),'metamask');
- assert.equal(values.has('elastos.signin.options.v1'),false);
  saveSigninChoice('metamask:com.brave.wallet',storage);assert.equal(readSigninChoice(storage),'metamask:com.brave.wallet');
  saveSigninChoice('0x'+'12'.repeat(20),storage);assert.equal(readSigninChoice(storage),'');
 });
@@ -478,15 +479,16 @@ test('Home-managed EVM and Bitcoin accounts are excluded even with an external c
 
 const {selectConnectedExtension}=await import('../capsules/home/browser/wallet-signin-connector.mjs');
 test('extension sign-in waits for its bound connector review and then signs the Runtime message once',async()=>{
-  const listen=new EventTarget(),controller=new AbortController(),sent=[],signed=[];let reply,stops=0;
+  const listen=new EventTarget(),controller=new AbortController(),sent=[],signed=[];let reply,stops=0,changed=0;
   const emit=(data,source,origin='null')=>listen.dispatchEvent(Object.assign(new Event('message'),{data,source,origin}));
   const source={postMessage(data){sent.push(data);if(data.operation==='review')reply=()=>emit({type:'home:wallet-signin-effect-result',homeToken:'connector',requestId:data.requestId,result:{approved:true}},source);else if(data.operation==='finish')queueMicrotask(()=>emit({type:'home:wallet-signin-effect-result',homeToken:'connector',requestId:data.requestId,result:{}},source));}};
-  const signer=await selectConnectedExtension('metamask',{signal:controller.signal,changed(){}},{listen,open:async()=>({homeToken:'connector',source}),current:()=>true,select:async()=>({...method,name:'MetaMask',check:async()=>{},sign:async message=>{signed.push(message);return {signature:'proof'};},close(){stops++;}})});
+  const signer=await selectConnectedExtension('metamask',{signal:controller.signal,changed(){changed++;}},{listen,open:async()=>({homeToken:'connector',source}),current:()=>true,select:async()=>({...method,name:'MetaMask',check:async()=>{},sign:async message=>{signed.push(message);return {signature:'proof'};},close(){stops++;}})});
   try {
     const pending=signer.sign('Runtime exact message');await Promise.resolve();assert.deepEqual(signed,[]);
     const data={type:'home:wallet-signin-effect-result',homeToken:'connector',requestId:sent[0].requestId,result:{approved:true}};
     emit(data,{});emit(data,source,'https://foreign.example');emit({...data,homeToken:'other'},source);emit({...data,requestId:'other'},source);await Promise.resolve();assert.deepEqual(signed,[]);
     reply();assert.deepEqual(await pending,{signature:'proof'});assert.deepEqual(signed,['Runtime exact message']);
+    emit({...data,error:true},source);assert.equal(changed,0,'a second answer to a consumed review has no authority');assert.equal(stops,0);
     assert.deepEqual(sent.map(x=>x.operation),['review','finish']);assert(!sent.some(x=>'browser_secret' in x||'step_up_token' in x));
   }finally{controller.abort();assert.equal(stops,1);}
 });

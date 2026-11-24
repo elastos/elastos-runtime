@@ -117,6 +117,7 @@ readable on disk.
 
 | Data and storage path | Encrypted on disk? | Key location | Recovery Kit restores |
 |---|---|---|---|
+| Wallet sign-in authority: `ElastOS/System/Auth/wallet-signin.json` | Plain JSON | None | Wallet sign-in authority is cleared by account recovery; add the wallets again |
 | Home recovery authority: `ElastOS/System/Auth/auth-state.json` | Recovery material only; other auth state is plain | `recovery-archive.key` in the same Auth folder | Home recovery authority and data key (not passkeys or sessions) |
 | Assistant conversations and drafts: `Users/<person>/.AppData/ElastOS/Assistant/workspace-v2.json` and legacy `workspace.json` | Yes; answers also appear in model run records | Person's data key | Data key; files separate |
 | Direct messages: `Users/<person>/.AppData/ElastOS/Chat/direct-messages.json` | Yes for a Chat service write. A copied plain file at this path stays plain, and Home still starts. | Person's data key | Data key; files separate |
@@ -137,7 +138,8 @@ shared Home files, outside each person's private folder.
 The Runtime account, software running as that host account, root, and the
 hosting operator can read stored data, Wallet keys, and recovery material at any
 time, including while Home is locked.
-Passkeys control sign-in. An unlocked self-hosted Home trusts its owner and
+Passkeys and added wallets control sign-in; passkeys approve changes. An unlocked
+self-hosted Home trusts its owner and
 their host software. Protection against
 hosted operators and root belongs to [hosted protection (#209)](https://github.com/elastos/elastos-runtime/issues/209);
 protection against other software or OS users while a self-hosted Home is locked

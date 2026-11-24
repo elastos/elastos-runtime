@@ -54,9 +54,8 @@ test('a declined extension signature keeps the wallet refusal instead of a disco
     fixture.state.methods=[];
     await page.goto(fixture.origin+'/home/');await page.waitForFunction(()=>window.fixtureReady);await page.evaluate(()=>window.showFixtureApps());
     const system=page.frameLocator('iframe[title=system]');await system.getByRole('button',{name:'Add wallet',exact:true}).click();
-    await page.frameLocator('iframe[title=wallet]').locator('.wallet-method-head').filter({hasText:'MetaMask'}).getByRole('button',{name:'Choose',exact:true}).click();
     await page.evaluate(()=>window.walletFixture.mode='rejected');
-    await page.frameLocator('iframe[title=wallet-metamask]').locator('[data-action=send-request]').click();
+    await page.frameLocator('iframe[title=wallet]').locator('.wallet-method-head').filter({hasText:'MetaMask'}).getByRole('button',{name:'Choose',exact:true}).click();
     const error=page.frameLocator('iframe[title=wallet]').locator('#wallet-signers[data-signin=error]');await error.waitFor();
     assert.match(await error.innerText(),/Your wallet declined the request/);assert.equal(fixture.state.methods.length,0);
   }finally{await context.close();await browser.close();await fixture.close();}
@@ -70,7 +69,7 @@ test('phone sign-in returns from QR to its waiting row in the same sheet',async(
     await page.goto(fixture.origin+'/home/?desktop-app');await page.waitForFunction(()=>window.fixtureReady);
     await page.getByRole('button',{name:'Sign in',exact:true}).click();await page.locator('.signin-dialog[data-state=options] .connection-option').filter({hasText:'Phone wallet'}).click();
     await page.locator('.signin-dialog[data-state=pairing]').waitFor();
-    await page.locator('iframe[title=WalletConnect]').evaluate(f=>{f.contentWindow.postMessage('fixture-sign-pending','*');f.contentWindow.postMessage('fixture-pair','*');});
+    await page.locator('iframe[title="Phone wallet"]').evaluate(f=>{f.contentWindow.postMessage('fixture-sign-pending','*');f.contentWindow.postMessage('fixture-pair','*');});
     const sheet=page.locator('.signin-dialog[data-state=signing]');await sheet.waitFor();
     assert.equal(await sheet.locator('.connection-option').filter({hasText:'Waiting for Phone wallet…'}).count(),1);
     assert.equal(await sheet.locator('details,summary,pre').count(),0);assert.equal(await page.locator('#fixture-desktop iframe').count(),0);
@@ -89,7 +88,6 @@ test('a connection retried after its first expiry still continues the same Add w
     await system.getByRole('button',{name:'Add wallet',exact:true}).click();await wallet.locator('#wallet-signers[data-signin=options]').waitFor();
     await wallet.locator('.wallet-method-head').filter({hasText:'MetaMask'}).getByRole('button',{name:'Choose',exact:true}).click();
     const connector=page.frameLocator('iframe[title=wallet-metamask]');await connector.getByRole('button',{name:'Connect wallet',exact:true}).waitFor();
-    await page.clock.fastForward(180001);fixture.state.clockOffsetMs=180001;await connector.getByRole('button',{name:'Connect wallet',exact:true}).click();
-    await connector.locator('[data-action=send-request]').click();await system.locator('[data-wallet-method]').waitFor();assert.equal(fixture.state.methods.length,1);
+    await page.clock.fastForward(180001);fixture.state.clockOffsetMs=180001;await connector.getByRole('button',{name:'Connect wallet',exact:true}).click();await system.locator('[data-wallet-method]').waitFor();assert.equal(fixture.state.methods.length,1);
   }finally{await context.close();await browser.close();await fixture.close();}
 });

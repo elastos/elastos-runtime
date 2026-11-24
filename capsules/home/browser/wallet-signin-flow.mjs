@@ -6,27 +6,28 @@ export function walletSigninOriginAllowed(value) {
   const url=new URL(value),host=url.hostname;
   return url.protocol==='https:' || url.protocol==='http:' && (host==='localhost' || host==='[::1]' || /^127\.(?:\d{1,3}\.){2}\d{1,3}$/.test(host));
 }
-export const connectorName = id => ({metamask:'MetaMask',walletconnect:'WalletConnect',unisat:'UniSat'})[id] || 'Wallet';
+export const connectorName = id => ({metamask:'MetaMask',walletconnect:'Phone wallet',unisat:'UniSat'})[id] || 'Wallet';
 export const walletNetwork = wallet => wallet.connector === 'unisat'
   ? (wallet.network === 'bitcoin' ? 'Bitcoin' : `Bitcoin ${wallet.network}`)
   : ({20:'Elastos Smart Chain',8453:'Base',1:'Ethereum',11155111:'Sepolia'})[wallet.chain_id] || `Network ${wallet.chain_id}`;
 export const shortWalletAddress = value => value.length > 16 ? `${value.slice(0,6)}…${value.slice(-4)}` : value;
 export function walletSigninError(error, action) {
-  if(error?.code === 'already-added')return 'This wallet already signs in to this Home. Choose a different account in your wallet.';
-  if(error?.code === 'expired') return 'This request expired. Close the old request in your wallet, then try again.';
-  if(error?.code === 'changed') return 'Your wallet is using a different account or network. Try again.';
+  if(error?.code === 'status-unavailable')return 'Home could not check wallet sign-in; check the connection, then try again.';
+  if(error?.code === 'already-added')return 'Choose another account because this wallet already signs in to this Home.';
+  if(error?.code === 'expired') return 'Close the expired request in your wallet, then select Try again.';
+  if(error?.code === 'changed') return 'Your wallet is using a different account or network; select Try again.';
   if(error?.code === 'wallet-unavailable') return 'Open the wallet with this account, then try again.';
-  if(error?.code === 'permission') return 'Allow WalletConnect internet access in Inbox, then try again.';
-  if(error?.code === 'missing') return 'Home could not find this wallet. Open a browser with the wallet installed, or choose another wallet.';
-  if(error?.code === 'network') return 'Use Elastos Smart Chain or Base with WalletConnect.';
+  if(error?.code === 'permission') return 'Allow phone wallet internet access in Inbox, then try again.';
+  if(error?.code === 'missing') return 'Choose another wallet or use a browser with this wallet installed.';
+  if(error?.code === 'network') return 'Use Elastos Smart Chain or Base with your phone wallet.';
   if(error?.code === 'bitcoin-network') return 'Switch UniSat to Bitcoin mainnet, then try again.';
-  if(error?.code === 'disconnected') return 'The connection to your wallet ended. Try again.';
-  if([4001,5000,5001,5002,5003].includes(Number(error?.code))) return 'Your wallet declined the request. Try again or choose another wallet.';
-  if(error?.status === 429) return 'Home is busy. Try again in a moment.';
-  if(error?.status === 409) return action === 'signin' ? 'This wallet cannot sign in to this Home. Use your passkey or choose another wallet.' : 'Home could not make this change. Choose your wallet again.';
-  if(error?.status === 403) return action === 'signin' ? 'This wallet cannot sign in to this Home. Use your passkey or choose another wallet.' : 'Home could not approve this change. Use your own passkey and try again.';
-  if(error?.status === 503) return 'The wallet connection is unavailable. Try again.';
-  return action === 'signin' ? 'Home could not sign you in. Check the connection to Home, then try again.' : 'Home could not change this wallet. Check the connection to Home, then try again.';
+  if(error?.code === 'disconnected') return 'The connection to your wallet ended; select Try again.';
+  if([4001,5000,5001,5002,5003].includes(Number(error?.code))) return 'Your wallet declined the request; select Try again or choose another wallet.';
+  if(error?.status === 429) return 'Home is busy; select Try again in a moment.';
+  if(error?.status === 409) return action === 'signin' ? 'Use your passkey or choose another wallet because this wallet cannot sign in to this Home.' : 'Home could not make this change; choose your wallet again.';
+  if(error?.status === 403) return action === 'signin' ? 'Use your passkey or choose another wallet because this wallet cannot sign in to this Home.' : 'Home could not approve this change; use your own passkey and try again.';
+  if(error?.status === 503) return 'The wallet connection is unavailable; select Try again.';
+  return action === 'signin' ? 'Check the connection to Home, then select Try again to sign in.' : 'Check the connection to Home, then select Try again to change this wallet.';
 }
 const fault = code => Object.assign(new Error(code),{code});
 export function createWalletSigninFlow({api,select,approve,render,onComplete=()=>{},randomSecret=walletBrowserSecret,now=()=>Date.now()/1000}) {
@@ -35,7 +36,7 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
   function live(current) { return run===current && !current.controller.signal.aborted; }
   function assertLive(current) {
     if(!live(current)) throw fault('cancelled');
-    if(now()>=current.deadline) throw fault('expired');
+    if((current.effect==='open'||state.action==='signin') && now()>=current.deadline) throw fault('expired');
   }
   function stopLocal(current) { current.controller.abort();current.wallet?.close?.(); }
   async function clear(current) {
@@ -48,6 +49,10 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
     current.deadline=Math.min(current.deadline,expires);clearTimeout(timer);
     timer=setTimeout(()=>{
       if(!live(current))return;
+      if(state.action!=='signin' && current.effect!=='open') {
+        if(current.effect==='unknown')void reconcile(current);
+        return;
+      }
       show('error',{message:walletSigninError(fault('expired'),state.action)});
       run=null;void clear(current);
     },Math.max(0,(current.deadline-now())*1000));
@@ -120,33 +125,62 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
     show('error',{message:walletSigninError(error,state.action),refresh:error?.status===409 && state.action!=='signin'});
     run=null;clearTimeout(timer);void clear(current);
   }
+  function unknown(current) {
+    current.effect='unknown';if(state.action!=='signin')clearTimeout(timer);
+    show('unknown',{message:state.action==='signin'?'Home has not confirmed sign-in; select Check again.':'Home has not confirmed the change; select Check again.'});
+  }
+  async function reconcile(current) {
+    if(!live(current) || current.effect==='dispatched' || current.reading)return;
+    current.reading=true;
+    try {
+      const list=await api('/api/auth/wallet-methods');
+      if(!live(current))return;
+      const request=current.ceremony.approval.request;
+      if(list?.account_id!==request.account_id || !Array.isArray(list.methods) || list.methods.length>256)throw fault('invalid');
+      const method=list.methods.find(m=>m.method_id===request.method_id);
+      const applied=state.action==='add'?method?.sign_in_enabled===true:!method;
+      if(applied) {
+        const result={status:state.action==='remove'?'removed':'complete',method_id:request.method_id,sign_in_enabled:state.action==='add'};
+        current.effect='done';clearTimeout(timer);run=null;stopLocal(current);
+        show('done',{result});await onComplete(result,state.action);
+      } else if(Array.isArray(list.open_changes) && list.open_changes.length<=64
+        && list.open_changes.every(id=>typeof id==='string'&&id.length<=256)
+        && !list.open_changes.includes(current.ceremony.ceremony_id)) {
+        current.effect='not-applied';clearTimeout(timer);run=null;stopLocal(current);
+        show('error',{message:'Home did not save this change.'});
+      } else unknown(current);
+    } catch { if(live(current))unknown(current); }
+    finally {current.reading=false;}
+  }
   async function complete(current) {
-    assertLive(current);show('completing');
+    assertLive(current);show('completing');current.effect='dispatched';
     try {
       const result=await api(state.action==='signin'?'/api/auth/wallet/signin/complete':'/api/auth/wallet-methods/complete',JSON.parse(current.completion));
       if(!live(current))return;
-      if(state.action==='signin' ? !result?.app_token || !result?.session_id || !result?.principal_id || !result?.proof_binding_id
-        : result?.status!==(state.action==='remove'?'removed':'complete') || result?.method_id!==current.ceremony.approval.request.method_id
-          || state.action!=='remove' && result.sign_in_enabled!==(state.action==='add')) throw fault('invalid');
+      if(state.action!=='signin') {current.effect='unknown';await reconcile(current);return;}
+      if(!result?.app_token || !result?.session_id || !result?.principal_id || !result?.proof_binding_id) throw fault('invalid');
       clearTimeout(timer);run=null;stopLocal(current);
       // Runtime retires the transport. Cancel would revoke the confirmed session.
       show('done',{result});await onComplete(result,state.action);
     } catch(error) {
       if(!live(current))return;
-      if(error?.status && error.status<500)fail(current,error);
-      else show('unknown',{message:state.action==='signin'?'Home has not confirmed sign-in. Check again with this same request.':'Home has not confirmed the change. Check again before starting another request.'});
+      if(state.action!=='signin') {
+        current.effect='unknown';await reconcile(current);
+      } else if(error?.status && error.status<500)fail(current,error);
+      else unknown(current);
     }
   }
   return controls={
     get state(){return state;},
     async start({action='signin',method=null,account='',accountId='',token='',automatic=false,delegateWalletConnect=false,providerId='' }={}) {
       if(!['signin','add','remove'].includes(action))throw fault('invalid');
+      if(run && run.effect!=='open' && state.action!=='signin')throw fault('busy');
       const previous=run;run=null;clearTimeout(timer);void clear(previous);
-      const current=run={secret:randomSecret(),controller:new AbortController(),ceremonies:new Map(),deadline:now()+180};
+      const current=run={secret:randomSecret(),controller:new AbortController(),ceremonies:new Map(),deadline:now()+180,effect:'open'};
       state={stage:'choice',action,method,account,accountId,token,automatic,delegateWalletConnect,providerId,walletconnectAvailable:action==='signin'?null:true};show('choice');deadline(current,current.deadline);
       if(action==='signin') {
-        let available=false;
-        try {available=(await api('/api/auth/passkey/status')).walletconnect_signin_available===true;}catch{}
+        let available=null;
+        try {const status=await api('/api/auth/passkey/status');available=typeof status?.walletconnect_signin_available==='boolean'?status.walletconnect_signin_available:null;}catch{}
         if(!live(current))return;
         state={...state,walletconnectAvailable:available};
         if(state.stage==='choice')show('choice');
@@ -156,7 +190,7 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
     async choose(connector) {
       if(!run || state.stage!=='choice' || !['metamask','walletconnect','unisat'].includes(connector))return;
       if(connector==='walletconnect') {
-        if(state.walletconnectAvailable!==true){fail(run,{status:403});return;}
+        if(state.walletconnectAvailable!==true){fail(run,state.walletconnectAvailable===null?fault('status-unavailable'):{status:403});return;}
         await prepare(run,connector);
       } else await prepare(run,connector);
     },
@@ -171,12 +205,12 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
         if(state.action==='signin') {
           current.completion=JSON.stringify({ceremony_id:current.ceremony.ceremony_id,browser_secret:current.secret,...current.proof});
           await complete(current);
-        } else if(state.action==='remove') await this.approve();
+        } else if(state.action==='remove') {show('approval');await this.approve();}
         else {show('approval');if(state.automatic)await controls.approve();}
       } catch(error) { fail(current,error); }
     },
     async approve() {
-      const current=run;if(!current || !['review','signing','approval'].includes(state.stage))return;
+      const current=run;if(!current || state.stage!=='approval')return;
       try {
         assertLive(current);show('passkey');
         const step_up_token=await approve(current.ceremony.approval,{signal:current.controller.signal});assertLive(current);
@@ -189,10 +223,10 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
       } catch(error) {
         if(!live(current))return;
         if(error?.code==='expired')fail(current,error);
-        else show('approval',{message:'Home could not confirm your passkey. Use passkey to try again, or cancel.'});
+        else show('approval',{message:'Home could not confirm your passkey; select Use passkey or Cancel.'});
       }
     },
-    async retry() { if(run && state.stage==='unknown')try{await complete(run);}catch(error){fail(run,error);} },
-    async cancel() { const current=run;run=null;clearTimeout(timer);show('closed');await clear(current); },
+    async retry() { if(run && state.stage==='unknown')try{if(state.action==='signin')await complete(run);else await reconcile(run);}catch(error){fail(run,error);} },
+    async cancel() { if(run && state.action!=='signin' && run.effect!=='open')return;const current=run;run=null;clearTimeout(timer);show('closed');await clear(current); },
   };
 }

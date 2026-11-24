@@ -13,7 +13,7 @@ pub(super) const REVOKE: &str = "walletconnect.internet.revoke";
 const CONSENT: &str = "WalletConnect needs internet access for payment connections. Its relay service can see this computer's internet address. Your keys stay in your wallet. You can turn payment connections off here. Wallet sign-in uses separate, short connections when Sign in is on for a compatible wallet.";
 const MAX_BYTES: usize = 1024 * 1024;
 const MAX_SOCKETS: usize = 2;
-const RESOURCE: &str = "elastos://walletconnect/internet";
+const RESOURCE: &str = "elastos://wallet/walletconnect/internet";
 #[path = "gateway_walletconnect_attempts.rs"]
 mod attempts;
 pub(in crate::api) use attempts::{
@@ -176,7 +176,7 @@ fn request(c: &Consent) -> anyhow::Result<serde_json::Value> {
         return Err(ConsentConflict.into());
     }
     Ok(
-        json!({"resource":"elastos://walletconnect/internet", "id":c.id, "issued_at":c.at,
+        json!({"resource":"elastos://wallet/walletconnect/internet", "id":c.id, "issued_at":c.at,
         "text":if c.status == "granted" { "Stop WalletConnect payment connections. Enabled wallet sign-in methods use separate short connections." } else { CONSENT }}),
     )
 }

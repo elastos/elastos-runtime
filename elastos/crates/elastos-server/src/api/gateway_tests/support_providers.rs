@@ -5337,7 +5337,8 @@ impl MockWalletProvider {
                 resources[0] = format!("elastos://auth/bitcoin-challenge/{challenge_id}");
                 let now = crate::auth::now_ts();
                 let message = format!(
-                    "{domain} wants you to prove Bitcoin account ownership:\n{address}\n\nURI: {uri}\nVersion: 1\nNetwork: {network}\nNonce: bitcoin-nonce\nIssued At: {now}\nExpiration Time: {expires_at}\nResources:\n{resources}",
+                    "{domain} wants you to prove Bitcoin account ownership:\n{address}\n\n{statement}\n\nURI: {uri}\nVersion: 1\nNetwork: {network}\nNonce: bitcoin-nonce\nIssued At: {now}\nExpiration Time: {expires_at}\nResources:\n{resources}",
+                    statement = elastos_runtime::auth::WALLET_LINK_STATEMENT,
                     expires_at = now + 300,
                     resources = resources
                         .iter()

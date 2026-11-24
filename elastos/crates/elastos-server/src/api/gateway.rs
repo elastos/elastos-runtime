@@ -738,30 +738,6 @@ fn gateway_router_with_api_url(state: GatewayState, gateway_api_url: String) -> 
             post(gateway_wallet_signin::cancel).layer(DefaultBodyLimit::max(96 * 1024)),
         )
         .route(
-            "/api/auth/wallet/register/begin",
-            post(gateway_wallet_signin::disabled),
-        )
-        .route(
-            "/api/auth/wallet/register/complete",
-            post(gateway_wallet_signin::disabled),
-        )
-        .route(
-            "/api/auth/wallet/recover/begin",
-            post(gateway_wallet_signin::disabled),
-        )
-        .route(
-            "/api/auth/wallet/recover/complete",
-            post(gateway_wallet_signin::disabled),
-        )
-        .route(
-            "/api/auth/wallet/approve/begin",
-            post(gateway_wallet_signin::disabled),
-        )
-        .route(
-            "/api/auth/wallet/approve/complete",
-            post(gateway_wallet_signin::disabled),
-        )
-        .route(
             "/api/auth/passkey-step-up/begin",
             post(passkey_step_up_begin).layer(DefaultBodyLimit::max(96 * 1024)),
         )

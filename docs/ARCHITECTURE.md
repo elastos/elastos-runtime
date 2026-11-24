@@ -20,7 +20,8 @@ host developer mode and closed guest registration are required to enable it.
 An enabled Terminal runs commands with the host user's rights.
 
 The seed operator can read hosted data, wallet keys and recovery material.
-Passkeys control sign-in; stored data and keys remain accessible to the Runtime
+Passkeys and added wallets control sign-in; passkeys approve changes. Stored data
+and keys remain accessible to the Runtime
 account and root while Home is locked. Protection against hosted operators and
 root, and against other software or OS users while a self-hosted Home is locked,
 is the target of [hosted protection](https://github.com/elastos/elastos-runtime/issues/209)

@@ -452,7 +452,7 @@ for (const journey of ['A','B']) test(`round18 ${journey}: the open window recov
   let status='granted', revision=journey==='A'?11:12, keys={}, requestId='installed-request', polls=0;
   const failures=[];let holdStatus=false,releaseStatus,statusHeld;
   const consent=()=>({status,request:['requested','granted'].includes(status)?{
-    id:requestId,issued_at:Math.floor(Date.now()/1000),resource:'elastos://walletconnect/internet',
+    id:requestId,issued_at:Math.floor(Date.now()/1000),resource:'elastos://wallet/walletconnect/internet',
     text:status==='granted'?'Stop WalletConnect relay access on this computer.':
       readFileSync('elastos/crates/elastos-server/src/api/gateway_walletconnect.rs','utf8').match(/const CONSENT: &str = "([^"]+)"/)[1],
   }:null});

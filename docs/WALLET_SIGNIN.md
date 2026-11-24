@@ -9,7 +9,7 @@ sign-in. Account IDs, roots, Profiles and passkey added-from labels stay unchang
 An Admin adds his own wallet methods with one wallet signature and one fresh
 passkey approval for the exact action. Each added method can sign in. Each
 account can remove its own methods with fresh passkey approval, including after
-demotion to Guest. Wallet owns payment links and their separate permissions;
+demotion to Guest. Wallet owns payment connections and their separate permissions;
 Runtime adds sign-in authority only through the explicit `add` operation.
 Wallet sessions can use Home; passkeys approve sensitive actions.
 Ordinary passkey removal keeps every account's final active passkey, including
@@ -20,12 +20,11 @@ Removal ends the wallet's sessions and pending sign-in attempts. Concurrent chan
 serialized. Recovery Kit recovery keeps the passkey recovery flow and clears the
 recovered account's wallets.
 
-Supported signers are passkey, WalletConnect, MetaMask-compatible ordinary EVM keys
+Supported signers are passkeys, phone wallets through WalletConnect, MetaMask-compatible ordinary EVM keys
 and UniSat Bitcoin mainnet proofs. Unsupported Bitcoin networks are refused before
 a ceremony starts. WalletConnect supports Elastos Smart Chain (20) and Base
 (8453). Contract-wallet signatures require a separate contract and are refused.
-Wallet account creation, wallet-target recovery and wallet approval are disabled
-at both begin and completion routes.
+Passkeys own account creation, recovery and approval. Wallet sign-in has no routes for these actions.
 
 ## Transport and errors
 
@@ -46,14 +45,14 @@ transport. JSON is `{"error":"wallet_signin_refused"}` for unknown wallet, wrong
 browser, expired/replayed proof and removed method. Signed-out responses disclose
 no account names or ownership. A refused completion grants no session. A lost
 completion response may be retried with identical input while the ceremony is
-live; it returns the same result. After expiry, start again. Cancel is idempotent.
+live; it returns the same result. A committed sign-in can return its saved result until the session expires. Cancel revokes a committed sign-in session; transport expiry keeps its saved result. Before a change is sent, Cancel ends the open ceremony. After an add or remove is sent, Home reads the method list to learn the result.
 
 ## List and manage methods
 
 `GET /api/auth/wallet-methods` returns the caller's account only:
 
 ```json
-{"account_id":"principal:…","methods":[{"method_id":"wallet:…","connector":"metamask","address":"0x…","chain_id":20,"network":"","sign_in_enabled":true,"created_at":1800000000,"last_used_at":null}]}
+{"account_id":"person:local:…","methods":[{"method_id":"proof:signin-wallet:…","connector":"metamask","address":"0x…","chain_id":20,"network":"","sign_in_enabled":true,"created_at":1800000000,"last_used_at":null}]}
 ```
 
 Passkeys remain available from the existing passkey list API, with existing
@@ -69,8 +68,7 @@ Bitcoin ownership is network and address.
 
 Runtime supports two method actions: `add` and `remove`. An added wallet can
 sign in to its account. `add` requires a live Admin at begin, passkey approval
-and completion. The wallet message says that this wallet can sign in to this
-Home for this account. The `AddSignInMethod` proof purpose and the approval's
+and completion. The wallet signs "Add this wallet as a way to sign in to this Home." The `AddSignInMethod` proof purpose and the approval's
 `action: "add"` bind that effect. Runtime saves the method and current ownership
 witnesses in one transaction after wallet verification and exact passkey approval.
 
@@ -95,11 +93,10 @@ connections and their Inbox permissions keep their separate lifecycle.
 Begin returns:
 
 ```json
-{"ceremony_id":"wallet:…","message":"Home-built message, empty for remove","expires_at":1800000180,"approval":{"operation":"auth.wallet.method","request":{"ceremony_id":"wallet:…","account_id":"principal:…","action":"add","method_id":"wallet:…","connector":"metamask","address":"0x…","chain_id":20,"network":"","authorizes_short_public_walletconnect":false},"notice":"Confirm this wallet sign-in method change with your passkey."},"instance_id":"…","storage_revision":0}
+{"ceremony_id":"ceremony:…","message":"Home-built message, empty for remove","expires_at":1800000180,"approval":{"operation":"auth.wallet.method","request":{"ceremony_id":"ceremony:…","account_id":"person:local:…","action":"add","method_id":"proof:signin-wallet:…","connector":"metamask","address":"0x…","chain_id":20,"network":"","authorizes_short_public_walletconnect":false},"notice":"Confirm this wallet sign-in method change with your passkey."},"instance_id":"…","storage_revision":0}
 ```
 
-Show the account, Home origin, full wallet address, network, exact message and
-effect before requesting the signature or passkey. Show Runtime's
+The selected wallet shows the exact message and its fields before it signs. Home shows each control once. Show Runtime's
 `approval.notice` before passkey approval. Home echoes the complete Runtime-bound
 approval request unchanged. For `add`, sign the exact message with personal_sign
 (EVM) or UniSat signMessage (Bitcoin), then use
@@ -110,7 +107,7 @@ returned approval operation/request. Complete WebAuthn through
 `POST /api/auth/wallet-methods/complete`:
 
 ```json
-{"ceremony_id":"wallet:…","browser_secret":"<same secret>","signature":"0x…","signature_type":"personal_sign","public_key":"","step_up_token":"…"}
+{"ceremony_id":"ceremony:…","browser_secret":"<same secret>","signature":"0x…","signature_type":"personal_sign","public_key":"","step_up_token":"…"}
 ```
 
 `signature`, `signature_type` and `public_key` are optional for `remove`.
@@ -118,10 +115,10 @@ Bitcoin uses `bip322_simple` or `bitcoin_signed_message`; public_key is supplied
 where that proof mode needs it. The `add` response is:
 
 ```json
-{"status":"complete","method_id":"wallet:…","sign_in_enabled":true}
+{"status":"complete","method_id":"proof:signin-wallet:…","sign_in_enabled":true}
 ```
 
-Removal returns `{"status":"removed","method_id":"wallet:…","sign_in_enabled":false}`.
+Removal returns `{"status":"removed","method_id":"proof:signin-wallet:…","sign_in_enabled":false}`.
 The list and completion retain the `sign_in_enabled` field for callers; every
 listed method has the value `true`. Each new method change needs new approval.
 An identical completion retry returns its saved result while the ceremony and
@@ -144,10 +141,9 @@ current method and ownership, then issues the existing Home authentication resul
 cookie. Home opens the same account directly. Runtime binds the proof to the
 sign-in purpose, Home origin and ceremony; the browser secret binds completion
 to the requester. A wallet signature proves control of the wallet, not that the
-signer is at this browser. The review shows the Home origin, full address,
-network and exact message, with this line: "Continue only if you started this
-sign-in in this browser." The review uses these details without a separate
-comparison code.
+signer is at this browser. The wallet shows the Home origin, full address,
+network and exact message. Home shows this line: "Continue only if you started this
+sign-in in this browser." Home keeps its sign-in options visible while the wallet signs.
 
 `POST /api/auth/wallet/cancel` accepts ceremony_id and browser_secret and returns
 `{"status":"cancelled"}`. It clears the ceremony's temporary transport authority.
@@ -167,25 +163,19 @@ MetaMask and UniSat use the selected extension to sign; they receive no Runtime
 network authority. Wallet rejection, missing extension and account change return
 to the signer choice; a fresh attempt uses a fresh browser secret.
 
-## Disabled routes and approval prompts
+## Approval prompts
 
-`POST /api/auth/wallet/register/begin`, `/register/complete`, `/recover/begin`,
-`/recover/complete`, `/approve/begin` and `/approve/complete` (all below
-`/api/auth/wallet`) return HTTP 403 `{"error":"passkey_required"}`.
-Existing passkey creation and recovery routes keep their contracts. Existing
-passkey step-up remains the sole approval issuer. A wallet session asks for a
-passkey from the same account; it cannot approve by signing with a wallet.
+Passkeys own account creation, recovery and approval. A wallet session asks for a
+passkey from the same account to approve a change. Existing passkey routes keep
+their contracts.
 
 ## Update and Undo
 
 Wallet records use a separate additive file under the Runtime auth root. The old
 binary reads its unchanged auth state and preserves the wallet file. On forward
 update Runtime checks every wallet against current passkey account state.
-Runtime deletes stored disabled methods from trial Homes on load and logs the
-number deleted. Each retained method already has sign-in authority. Saved
-ceremonies from the earlier contract are invalid, including saved completions;
-the caller starts a fresh ceremony. Earlier unbound enrollment proofs cannot
-complete the current bound enrollment. Account
+Each stored method has sign-in authority. A ceremony uses the current signed-text
+contract; a proof with a different sentence or resource binding is refused. Account
 removal or replacement recovery invalidates the old wallet generation. New wallet
 sessions use an additive session store which the old binary ignores. Undo keeps
 passkey access and forward update retains eligible wallet records.
@@ -195,8 +185,11 @@ passkey access and forward update retains eligible wallet records.
 Add wallet (`add`): select signer → pair/select address → review → wallet
 signature → passkey approval → added. Remove: review effect → passkey approval
 → complete. Sign-in: signer choice → pair/select → review → sign → Home. Every
-pending state has Cancel and an expiry path. An uncertain response is retried
-with the same ceremony; a refused or expired ceremony starts from signer choice.
+open state has Cancel and an expiry path. After add or remove is sent, Home shows
+Saving change or Check again and reads `/api/auth/wallet-methods`. It reports Done
+when the target method state exists, or NotApplied when that state is absent and
+Runtime has retired the ceremony. A failed read keeps the result unknown. The
+`open_changes` list in that snapshot binds this decision to Runtime time and state.
 
 ## Account actions from a wallet session
 
@@ -289,12 +282,12 @@ Home has one Sign in button. It offers the passkey when one exists, browser wall
 when their extensions are present, and Phone wallet when Runtime reports a
 compatible WalletConnect method. A fresh browser and the desktop app use the same
 Runtime list. Signed-out choices show the wallet name and icon. The browser stores
-only the remembered choice (passkey or connector kind), and clears trial identity
+only the remembered choice (passkey or connector kind), with no wallet identity
 hints. Other options opens the list again.
 
-Accounts groups sign-in methods under each person. Add wallet lists connected
-wallets and New wallet. New wallet opens Wallet's existing connection controls;
-Wallet opens the selected connector. Home waits for Wallet's saved account summary.
+Accounts groups sign-in methods under each person. Add wallet uses Wallet's
+chooser with a Connected, Not connected or Already signs in state for each
+connector. A choice with no connected wallet opens its existing connection window. Home waits for Wallet's saved account summary.
 Choosing a connected wallet signs the Runtime `add` message once, then requests one
 passkey approval. Runtime adds the sign-in method atomically and Home closes the
 request. Each wallet row has one Remove action. Wallet owns payment connections.
@@ -361,3 +354,21 @@ Inbox uses it to ask Home for `inbox.approve` with the exact `action_id` before
 a positive permission decision. Runtime checks the live session and consumes
 the approval when it saves the decision. Passkey sessions keep their existing
 action-specific approval flow.
+
+## Signed text and proof count
+
+Runtime chooses one fixed sentence for each signed action: "Sign in to this Home.",
+"Add this wallet as a way to sign in to this Home.", and "Connect this wallet to
+Wallet on this Home." Removal uses a passkey approval and asks for zero wallet
+signatures. MetaMask, the phone wallet and UniSat use the same sentence per action.
+Home, ceremony, browser commitment and intent use `elastos://auth/home/<id>`,
+`elastos://auth/ceremony/<id>`, `elastos://auth/browser/<commitment>` and
+`elastos://auth/intent/<intent>`. The Home ID is the same literal ID for all
+signers. Add intent includes the account ID and the method digest. Sign-in binds
+the ceremony without an Account field. Origin, address, network, nonce and time
+limits remain bound in the message fields. Runtime verifies the exact message.
+
+A wallet already connected in Wallet signs once for Add, followed by one passkey
+approval. A new wallet first signs the separate Wallet connection proof, then
+signs Add. Connection creates a Wallet record with its own permissions; Add
+creates sign-in authority. Runtime keeps those effects separate.

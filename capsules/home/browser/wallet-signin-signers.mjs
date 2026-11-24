@@ -79,7 +79,7 @@ export async function selectSigninWallet(connector,options) {
 
 function selectWalletConnect({signal,transport,pairing,changed}) {
   return new Promise((resolve,reject)=>{
-    const frame=document.createElement('iframe');frame.hidden=true;frame.setAttribute('sandbox','allow-scripts');frame.title='WalletConnect';
+    const frame=document.createElement('iframe');frame.hidden=true;frame.setAttribute('sandbox','allow-scripts');frame.title='Phone wallet';
     const origin=location.origin;
     frame.src=`/apps/wallet-walletconnect/signin-transport.html?home_origin=${encodeURIComponent(origin)}`;
     let selected=false,sequence=0;const pending=new Map();

@@ -37,7 +37,7 @@ export async function runtimeView(t, app, state = {}) {
   state.cleanup ??= state.permission === "cleanup";
   state.question ||= "consent:current";
   state.issuedAt ||= Math.floor(Date.now() / 1000);
-  const question = () => ({ id: state.question, resource: "elastos://walletconnect/internet", issued_at: state.issuedAt,
+  const question = () => ({ id: state.question, resource: "elastos://wallet/walletconnect/internet", issued_at: state.issuedAt,
     text: state.permission === "granted" ? "Stop WalletConnect relay access on this computer." : consentText });
   await context.route("https://runtime.test/**", async route => {
     const request = route.request(), url = new URL(request.url());

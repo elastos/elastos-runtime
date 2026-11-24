@@ -45,6 +45,31 @@ identities for a principal, not replacements for the principal itself.
 A person using Home, that person's local principal, their signed Profile, and a
 delivery Device DID remain separate identities and authority subjects.
 
+## Home
+
+The Runtime environment where a person opens apps and uses an account. Runtime
+owns its sign-in methods, sessions and authority decisions.
+
+## Account
+
+A local person record in one Home, identified by `person:local:<id>`. An account
+owns its sign-in methods and role. A Wallet account is a separate app record for
+a blockchain address.
+
+## Sign-in method
+
+A passkey or an added wallet that Runtime accepts to sign in to an account.
+Passkeys approve changes to these methods.
+
+## Wallet
+
+The app that manages payment accounts and wallet connections. Connecting a wallet
+to Wallet creates an app record. Adding it for sign-in grants separate Home access.
+
+## Phone wallet
+
+A wallet app on a phone that connects through the WalletConnect protocol.
+
 ## Passkey
 
 The default human proof for Home. A passkey proves control of a local account to
