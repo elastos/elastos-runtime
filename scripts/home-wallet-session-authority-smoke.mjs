@@ -1,7 +1,7 @@
 // Real installed Runtime regression. Uses disposable Home credentials, never API fixtures.
 import assert from 'node:assert/strict';
 import {readFile,writeFile,mkdir} from 'node:fs/promises';
-const {requireProductSmokePlaywright}=await import('./product-smoke-browser.mjs');
+import {requireProductSmokePlaywright} from './product-smoke-browser.mjs';
 const {chromium}=requireProductSmokePlaywright();
 const origin=process.env.HOME_AUTH_ORIGIN;
 const credentialFile=process.env.HOME_AUTH_PASSKEY;

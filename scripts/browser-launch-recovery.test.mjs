@@ -77,6 +77,21 @@ for (const [form, acquisition] of [
     assert.doesNotThrow(() => checkLaunchCoverage(directory));
   }
 });
+test("coverage guard accepts the wallet smoke helper and rejects a raw replacement", t => {
+  const root = mkdtempSync(join(tmpdir(), "browser-launch-coverage-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const path = join(root, "wallet-smoke.mjs");
+  const source = readFileSync(new URL("./home-wallet-session-authority-smoke.mjs", import.meta.url), "utf8");
+  writeFileSync(path, source);
+  assert.doesNotThrow(() => checkLaunchCoverage(pathToFileURL(root + "/")));
+  const broken = source.replace(
+    "import {requireProductSmokePlaywright} from './product-smoke-browser.mjs';",
+    "import {chromium} from 'playwright';",
+  ).replace("const {chromium}=requireProductSmokePlaywright();", "");
+  assert.notEqual(broken, source);
+  writeFileSync(path, broken);
+  assert.throws(() => checkLaunchCoverage(pathToFileURL(root + "/")), /wallet-smoke\.mjs/);
+});
 test("coverage guard catches a second raw Playwright import beside a wrapped import", t => {
   const root = mkdtempSync(join(tmpdir(), "browser-launch-coverage-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
