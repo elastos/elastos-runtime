@@ -1103,7 +1103,6 @@ export function createAssistantApp({
         after_sequence: run.afterSequence,
       }));
     } catch {
-      run.status = "settlement_unknown";
       stopPollingUnavailable(run, "Connection lost. The run outcome is unknown. Check its status before starting another run.");
       return;
     }
@@ -1299,6 +1298,7 @@ export function createAssistantApp({
       request_id: cryptoRef.randomUUID(),
       }));
     } catch {
+      if (run.terminal) return false;
       run.status = "settlement_unknown";
       state.statusMessage = "The stop response was lost. The run outcome is unknown.";
       notify();

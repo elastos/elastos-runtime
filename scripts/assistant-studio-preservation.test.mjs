@@ -19,13 +19,13 @@ const output = { schema: "elastos.model.output.content/v1", resource_id: "elasto
 const offer = { id: "studio-fixture", title: "Fixture video", operation: "video.generate",
   input_modalities: ["application/json"], output_modalities: ["application/json"] };
 const response = data => ({ ok: true, status: 200, json: async () => clone(data) });
-const completed = () => response({ status: "ok", data: {
+const completed = (result = output) => response({ status: "ok", data: {
   schema: "elastos.model.run/v1", run_id: runId, status: "completed", sequence_cursor: 1,
-  terminal: { output },
+  terminal: { output: result },
 } });
-const events = (cursor = 8) => response({ status: "ok", data: {
+const events = (cursor = 8, result = output) => response({ status: "ok", data: {
   schema: "elastos.model.run-events/v1", run_id: runId, next_cursor: cursor, has_more: false,
-  events: [{ sequence: cursor, kind: "output", terminal: true, data: output }],
+  events: [{ sequence: cursor, kind: "output", terminal: true, data: result }],
 } });
 const defer = () => {
   let resolve, reject;
@@ -34,12 +34,13 @@ const defer = () => {
 };
 const flush = () => new Promise(setImmediate);
 
-async function fixture(t, { studioState = {}, beforeCreate = async () => true,
-  create = async () => completed(), readEvents = async () => events() } = {}) {
+async function fixture(t, { mode = "studio", studioState = {}, beforeCreate = async () => true,
+  create = async () => completed(), readEvents = async () => events(),
+  cancel = async () => completed() } = {}) {
   const calls = [], savedBeforeCreate = [], snapshots = [], timers = new Map();
   let ordinal = 0, timerId = 0;
   const app = createAssistantApp({
-    studioOnly: true, studioSessionId: "studio-session", studioState,
+    studioOnly: mode === "studio", studioSessionId: "studio-session", studioState,
     homeToken: "fixture-token", homeOrigin: "https://home.example",
     cryptoRef: { randomUUID: () => `fixture-request-${++ordinal}` },
     nowFn: () => 1000,
@@ -57,15 +58,23 @@ async function fixture(t, { studioState = {}, beforeCreate = async () => true,
       assert.equal(init.headers["x-elastos-home-token"], "fixture-token");
       const body = init.body ? JSON.parse(init.body) : null;
       calls.push({ url, body });
-      if (url === "/api/provider/model/offers_list") return response({ offers: [offer] });
+      if (url === "/api/provider/model/offers_list") return response({ offers: [mode === "chat"
+        ? { id: "chat-fixture", title: "Fixture text", operation: "text.generate",
+          input_modalities: ["text/plain"], output_modalities: ["text/plain"] } : offer] });
+      if (url === "/api/apps/assistant/workspace" && init.method === "GET") {
+        return response({ schema: "elastos.assistant.workspace/v1", revision: 0, sessions: [], draft: "" });
+      }
       if (url === "/api/capsules/catalog") return response({ capsules: [] });
       if (url === "/api/provider/model/runs_create") {
-        assert.ok(savedBeforeCreate.length, "create requires a prior persistence callback");
-        assert.equal(body.request_id, savedBeforeCreate.at(-1).pending.createRequestId);
-        assert.equal(savedBeforeCreate.at(-1).view.activeRun.createRequestId, body.request_id);
+        if (mode === "studio") {
+          assert.ok(savedBeforeCreate.length, "create requires a prior persistence callback");
+          assert.equal(body.request_id, savedBeforeCreate.at(-1).pending.createRequestId);
+          assert.equal(savedBeforeCreate.at(-1).view.activeRun.createRequestId, body.request_id);
+        }
         return create(body);
       }
       if (url === "/api/provider/model/runs_events") return readEvents(body);
+      if (url === "/api/provider/model/runs_cancel") return cancel(body);
       throw new Error(`Unexpected request: ${url}`);
     },
   });
@@ -73,6 +82,58 @@ async function fixture(t, { studioState = {}, beforeCreate = async () => true,
   await app.initialize();
   return { app, calls, savedBeforeCreate, snapshots, timers,
     operations: () => calls.filter(call => call.url.includes("/runs_")) };
+}
+
+for (const mode of ["studio", "chat"]) {
+  for (const lateRequest of ["Stop", "poll"]) {
+    test(`${mode} preserves completed output and history after a late ${lateRequest} transport failure`, async t => {
+      const poll = defer(), stop = defer();
+      const pollStarted = defer(), stopStarted = defer();
+      const result = mode === "studio" ? output
+        : { schema: "elastos.model.output.text/v1", text: "Completed answer" };
+      const f = await fixture(t, {
+        mode,
+        create: async () => response({ status: "ok", data: {
+          schema: "elastos.model.run/v1", run_id: runId, status: "running", sequence_cursor: 0,
+        } }),
+        readEvents: () => { pollStarted.resolve(); return poll.promise; },
+        cancel: () => { stopStarted.resolve(); return stop.promise; },
+      });
+      f.app.setDraft("Keep the confirmed result");
+      assert.equal(await f.app.sendDraft(), true);
+      await pollStarted.promise;
+      const stopping = f.app.stopRun();
+      await stopStarted.promise;
+      if (lateRequest === "Stop") {
+        poll.resolve(events(1, result));
+        await flush();
+      } else {
+        stop.resolve(completed(result));
+        assert.equal(await stopping, true);
+      }
+      const settled = clone(f.app.snapshot());
+      assert.equal(settled.activeRun.mode, mode);
+      assert.equal(settled.activeRun.terminal, true);
+      assert.equal(settled.activeRun.status, "completed");
+      assert.deepEqual(settled.activeRun.output, result);
+      assert.equal(settled.statusMessage, "");
+      if (mode === "studio") {
+        assert.equal(settled.studioResult.resourceId, output.resource_id);
+        assert.equal(settled.studioHistory[0].status, "completed");
+      } else {
+        assert.equal(settled.currentSession.messages.at(-1).content, result.text);
+      }
+      if (lateRequest === "Stop") {
+        stop.reject(new TypeError("Stop transport failed after completion"));
+        assert.equal(await stopping, false);
+      } else {
+        poll.reject(new TypeError("poll transport failed after Stop settled"));
+        await flush();
+      }
+      assert.equal(f.app.snapshot().activeRun.status, "completed");
+      assert.deepEqual(f.app.snapshot(), settled);
+    });
+  }
 }
 
 for (const failure of ["refused", "throws"]) {
