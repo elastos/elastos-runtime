@@ -3905,6 +3905,29 @@
         "afterNote": ""
       },
       "wait": null
+    },
+    {
+      "window": "walletconnect",
+      "stage": "add-link-cancelled",
+      "designLine": 278,
+      "picture": "walletconnect-add-link-cancelled-{dark,light}-{window,390,1280}.png",
+      "inventory": [
+        "[mark: walletconnect.png]",
+        "WalletConnect",
+        "Home disconnected from MetaMask.",
+        "Account to confirm",
+        "0x71C7…976F",
+        "Base",
+        "The message may still be waiting there; get a new QR code to connect again.",
+        "Get new QR code [primary]"
+      ],
+      "focus": "start-over",
+      "copy": {
+        "status": "Home disconnected from MetaMask.",
+        "notice": "The message may still be waiting there; get a new QR code to connect again.",
+        "afterNote": ""
+      },
+      "wait": null
     }
   ],
   "viewports": {

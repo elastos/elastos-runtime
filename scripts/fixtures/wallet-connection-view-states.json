@@ -6347,6 +6347,12 @@
       "fixture": "unisat/request-unavailable",
       "safety": "state-payment-none",
       "contract": "H:754-779; only identified busy recovery stages replace their notice"
+    },
+    {
+      "id": "walletconnect/add-link-cancelled/unknown-safety",
+      "fixture": "walletconnect/add-link-cancelled",
+      "safety": "state-payment-none",
+      "contract": "H:754-779; only identified busy recovery stages replace their notice"
     }
   ]
 }

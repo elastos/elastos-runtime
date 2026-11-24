@@ -280,11 +280,12 @@ export function connectionView(input) {
     if(!signinScreen&&!actions.some(a=>a.primary)&&!screen.qr&&!screen.walletPicker){let next=actions.find(a=>a.id==='close-window');if(!next&&!actions.length&&supported.includes('close-window')){next={id:'close-window',label:parts('Close window'),primary:true,quiet:false};actions.push(next);}if(next){next.primary=true;next.quiet=false;}}
   }
   // A dispatched payment keeps its warning and a working route to resolution.
-  if(window==='walletconnect'&&summary?.transaction&&!knownNotSent&&!answered&&input.localSafety===true){
+  const paymentRecovery=window==='walletconnect'&&summary?.transaction&&!knownNotSent&&!answered&&input.localSafety===true;
+  if(paymentRecovery){
     if(stage==='checking-response'){notice='The transaction may already have been sent; check {{wallet}} and Activity in Wallet before sending again.';safetyNotice=notice;}
     if(!['transaction-phone','checking-response'].includes(stage)){
       outcome=parts('The transaction may already have been sent.');
-      notice='Check {{wallet}} and Activity, then dismiss this request in Wallet to pair again.';
+      notice='Check {{wallet}} and Activity in Wallet, then choose Dismiss there to pair again.';
       actions=[{id:'open-wallet',label:parts('Open Wallet'),primary:true,quiet:false},{id:'close-window',label:parts('Close window'),primary:false,quiet:true}].filter(a=>!supported||supported.includes(a.id));
       safetyNotice=null;
     }
@@ -295,7 +296,7 @@ export function connectionView(input) {
   }
   const approvalSite = !screen.requestPicker && !screen.walletPicker && (summary?.site||context?.site) && actions.some(a=>approves(a.id));
   if(approvalSite&&(!supported||supported.includes('close-window'))&&!actions.some(a=>a.id==='close-window'))actions.push({id:'close-window',label:parts('Cancel'),primary:false,quiet:true});
-  let focus = approvalSite || unknownRecovery || unknownLinkRecovery || screen.requiresSafeRetry&&safety!==false ? 'close-window' : screen.focusOutcome || answered ? 'outcome' : screen.returnFocus ? 'accounts' : screen.qr ? 'copy-link' : screen.walletPicker ? 'select-wallet' : screen.requestPicker ? 'select-request' : actions.some(a => a.id === screen.focus) ? screen.focus : screen.focus&&actions.find(a=>a.primary&&a.id==='close-window')?.id||null;
+  let focus = paymentRecovery&&!['transaction-phone','checking-response'].includes(stage)?'open-wallet':approvalSite || unknownRecovery || unknownLinkRecovery || screen.requiresSafeRetry&&safety!==false ? 'close-window' : screen.focusOutcome || answered ? 'outcome' : screen.returnFocus ? 'accounts' : screen.qr ? 'copy-link' : screen.walletPicker ? 'select-wallet' : screen.requestPicker ? 'select-request' : actions.some(a => a.id === screen.focus) ? screen.focus : screen.focus&&actions.find(a=>a.primary&&a.id==='close-window')?.id||null;
   if(consumedSend)focus='outcome';
   if(approvalSite&&supported&&!supported.includes('close-window'))focus='dismissal';
   if(focus&&!['outcome','accounts','dismissal'].includes(focus)&&!actions.some(a=>a.id===focus)&&!( ['select-request','select-wallet','copy-address'].includes(focus)&&(!supported||supported.includes(focus))))focus=actions.find(a=>a.primary)?.id||actions[0]?.id|| (outcome.length?'outcome':null);

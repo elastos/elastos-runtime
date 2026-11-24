@@ -40,7 +40,7 @@ export function contractCopy(expected, row, view) {
       'request-phone':{status:`Continue in ${name}.`,notice:''},
       'transaction-phone':{status:`The transaction may still be waiting in ${name} or may already have been sent.`,notice:'Home disconnects when you stop waiting; check your wallet and Activity in Wallet.'},
       'transaction-deadline':{notice:`Start a new transaction in ${app}.`},
-      'transaction-declined':{notice:`To try again, go back to ${app}. In Wallet, choose Dismiss to clear this request.`},
+      'transaction-declined':{notice:`To try again, dismiss this request in Wallet, then return to ${app}.`},
       'request-internet-off':{status:'Internet access for WalletConnect is off.',notice:'Choose Back to connection and connect again to ask for internet access. Allow it in Inbox, then return to this request and send it.'},
       'request-internet-pending':{notice:'Allow internet access in Inbox to continue with this request.'},
       'guest-access':{status:'You cannot turn on internet access for WalletConnect.',notice:'Ask an admin of this Home to open WalletConnect, choose Connect wallet, then allow internet access in Inbox.'},
@@ -88,5 +88,6 @@ export function contractCopy(expected, row, view) {
   if(['extension-cancelled','link-cancelled'].includes(row.stage))result.notice=`Check ${name} before connecting again; the request may still be waiting there.`;
   if(row.stage==='transaction-cancelled'){result.status='The transaction may have been sent.';result.notice=`Check ${name} and Activity in Wallet before sending again.`;}
   if(row.stage==='add-link-cancelled'){result.status=`Home disconnected from ${name}.`;result.notice='The message may still be waiting there; get a new QR code to connect again.';}
+  if(row.window==='walletconnect'&&row.local.paymentPending===true&&['transaction-timeout','transaction-cancelled','transaction-wallet-error','transaction-reopened','transaction-wallet-removed'].includes(row.stage)){result.status='The transaction may already have been sent.';result.notice=`Check ${name} and Activity in Wallet, then choose Dismiss there to pair again.`;}
   return result;
 }
