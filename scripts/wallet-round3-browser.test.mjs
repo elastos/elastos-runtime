@@ -53,9 +53,10 @@ for(const width of [1280,390])test(`round3 Home bounds content size hints and ca
   const result=await page.evaluate(async()=>{
    const {shellState}=await import('/apps/home-gui/shell-core.js?v=home-20261101d');const {fitHomeGuiWalletWindow}=await import('/apps/home-gui/home-gui.js?v=home-20261101d');
    const node=document.createElement('section');node.className='window window-active';Object.assign(node.style,{width:'480px',height:'560px',left:'50px',top:'60px'});node.innerHTML='<div class="window-head"><span class="window-head-title">MetaMask</span></div><div class="window-body window-body-frame"><iframe class="window-frame is-ready" title="MetaMask"></iframe></div>';node.querySelector('iframe').dataset.route='/apps/wallet-metamask/#home_token=connector';node.querySelector('iframe').src='/apps/wallet-metamask/?home_origin='+encodeURIComponent(location.origin)+'#home_token=connector';document.body.append(node);shellState.windows.set('connector',{id:'connector',node,targetId:'wallet-metamask',kind:'browser'});
+   window.walletFitHints=[];addEventListener('message',event=>{if(event.source===node.querySelector('iframe').contentWindow&&event.data?.type==='home:wallet-content-size'&&event.data.homeToken==='connector'){walletFitHints.push(event.data);fitHomeGuiWalletWindow('connector',event.data.width,event.data.height);}});
    const bad=fitHomeGuiWalletWindow('connector',480,100000),foreign=fitHomeGuiWalletWindow('wrong',480,300),ok=fitHomeGuiWalletWindow('connector',480,250);return {bad,foreign,ok,height:parseFloat(node.style.height)};
   });
-  assert.deepEqual([result.bad,result.foreign,result.ok],[false,false,true]);assert(result.height<560);await page.frameLocator('iframe[title=MetaMask]').locator('main').waitFor();await shot(page,`content-window-${width}`);
+  assert.deepEqual([result.bad,result.foreign,result.ok],[false,false,true]);assert(result.height<560);await page.frameLocator('iframe[title=MetaMask]').locator('main').waitFor();await page.waitForFunction(()=>walletFitHints.length>0);const hint=await page.evaluate(()=>walletFitHints.at(-1));assert(hint.height>=100&&hint.height<1000);await shot(page,`content-window-${width}`);
  }finally{await browser.close();await f.close();}
 });
 
