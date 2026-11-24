@@ -44,6 +44,8 @@ struct Pending {
     origin: String,
     home: String,
     browser: [u8; 32],
+    #[serde(default)]
+    peer: Option<std::net::IpAddr>,
     nonce: [u8; 32],
     proof_secret: [u8; 32],
     issued_at: u64,
@@ -639,9 +641,21 @@ pub(crate) fn begin(
     data: &Path,
     origin: &str,
     home: &str,
-    mut input: Begin,
+    input: Begin,
     actor: Option<AuthSessionGrantV1>,
 ) -> anyhow::Result<BeginResult> {
+    begin_for_peer(data, origin, home, input, actor, None)
+}
+
+pub(crate) fn begin_for_peer(
+    data: &Path,
+    origin: &str,
+    home: &str,
+    mut input: Begin,
+    actor: Option<AuthSessionGrantV1>,
+    peer: Option<std::net::IpAddr>,
+) -> anyhow::Result<BeginResult> {
+    let peer = elastos_identity::webauthn::signin_peer_network(peer);
     let browser = digest(&hex::encode(secret(&input.browser_secret)?));
     if actor.is_none() {
         input.action = "signin".into();
@@ -675,11 +689,26 @@ pub(crate) fn begin(
         {
             return Err(Capacity.into());
         }
-        if store.pending.iter().filter(|p| p.expires_at > now).count() >= MAX_PENDING
+        if actor.is_none()
+            && store
+                .pending
+                .iter()
+                .filter(|p| p.actor.is_none() && p.open() && p.expires_at > now && p.peer == peer)
+                .count()
+                >= 8
+        {
+            return Err(Capacity.into());
+        }
+        if store
+            .pending
+            .iter()
+            .filter(|p| p.open() && p.expires_at > now)
+            .count()
+            >= MAX_PENDING
             || store
                 .pending
                 .iter()
-                .filter(|p| p.expires_at > now && (actor.is_none() || p.open()))
+                .filter(|p| p.expires_at > now && p.open())
                 .filter(|p| match (&p.actor, &actor) {
                     (None, None) => true,
                     (Some(a), Some(b)) => a.session_id == b.session_id,
@@ -762,6 +791,7 @@ pub(crate) fn begin(
             origin: origin.into(),
             home: home.into(),
             browser,
+            peer,
             nonce: [0; 32],
             proof_secret: [0; 32],
             issued_at: now,

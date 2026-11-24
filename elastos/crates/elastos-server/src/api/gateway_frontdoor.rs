@@ -127,6 +127,7 @@ fn sign_in_route(path: &str, method: &Method) -> bool {
                     | "/api/auth/passkey/register/complete"
                     | "/api/auth/passkey/authenticate/begin"
                     | "/api/auth/passkey/authenticate/complete"
+                    | "/api/auth/passkey/authenticate/cancel"
                     | "/api/auth/wallet/signin/begin"
                     | "/api/auth/wallet/signin/select"
                     | "/api/auth/wallet/signin/complete"

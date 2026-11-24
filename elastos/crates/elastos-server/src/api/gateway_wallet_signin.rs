@@ -166,12 +166,13 @@ pub(super) async fn signin_begin(
         if input.connector == "walletconnect" {
             gateway_walletconnect::preflight(&state, local, None, None, source).await?;
         }
-        let result = auth::begin(
+        let result = auth::begin_for_peer(
             &home_launch_auth_data_dir(&state.data_dir),
             &origin(&headers)?,
             &load_existing_gateway_runtime_did(&state.data_dir).ok_or(auth::Refused)?,
             input,
             None,
+            source,
         )?;
         if result.attempt_token.is_some() {
             gateway_walletconnect::install_attempt(&state, &result, local, source).await?;

@@ -129,7 +129,14 @@ Begin leaves wallet authority unchanged. Runtime limits begins in a 60-second wi
 The gateway gives wallet sign-in and passkey sign-in separate budgets: each socket
 peer can start 32 requests per minute and 64 per five minutes for each mechanism.
 Account creation and recovery retain their separate 4-per-minute, 8-per-five-minute
-budget. Wallet retries leave the passkey budget available.
+budget. IPv6 peers share a /64 budget. Each peer can hold at most eight pending
+signed-out wallet ceremonies and eight pending passkey sign-in challenges. The
+Home retains its limits of 32 live signed-out wallet ceremonies and 64 pending
+passkey challenges (including step-up). Cancel releases the item created by this
+browser: wallet cancellation checks the ceremony, origin and browser secret;
+passkey cancellation checks the challenge and its origin-bound browser secret.
+Cancelled starts retain their rate debit. Ten quick cancel/retries fit the start
+budgets; wallet starts leave the separate passkey start budget available.
 Signed-out WalletConnect transport setup allows 32 starts per minute on
 loopback and 64 for remote callers, with at most 32 per remote address budget (IPv6 /64). Cancelled
 starts still count. Live transport slots remain limited to three anonymous

@@ -693,9 +693,10 @@ pub async fn passkey_register_complete(
 
 pub async fn passkey_authenticate_begin(
     State(state): State<GatewayState>,
+    peer: Option<ConnectInfo<SocketAddr>>,
     headers: HeaderMap,
 ) -> Response {
-    match passkey_authenticate_begin_inner(&state, &headers).await {
+    match passkey_authenticate_begin_for_peer(&state, &headers, peer.map(|p| p.0.ip())).await {
         Ok(response) => Json(response).into_response(),
         Err(err) => auth_error_response(err),
     }
@@ -4316,15 +4317,57 @@ async fn passkey_register_complete_inner(
     passkey_response_for_grant(state, grant)
 }
 
-async fn passkey_authenticate_begin_inner(
+fn passkey_cancel_binding(headers: &HeaderMap, secret: &str) -> anyhow::Result<[u8; 32]> {
+    anyhow::ensure!(
+        secret.len() == 64 && secret.bytes().all(|b| b.is_ascii_hexdigit()),
+        "Invalid browser secret"
+    );
+    let rp = super::handlers::identity::derive_rp(headers)?;
+    Ok(Sha256::digest(format!("{}:{secret}", rp.origin).as_bytes()).into())
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PasskeyCancelRequest {
+    ceremony_id: String,
+    browser_secret: String,
+}
+
+pub async fn passkey_authenticate_cancel(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Json(input): Json<PasskeyCancelRequest>,
+) -> Response {
+    let result = async {
+        let binding = passkey_cancel_binding(&headers, &input.browser_secret)?;
+        state
+            .identity_manager()?
+            .lock()
+            .await
+            .cancel_authentication_owned(&input.ceremony_id, binding)?;
+        Ok::<_, anyhow::Error>(json!({"status":"cancelled"}))
+    }
+    .await;
+    match result {
+        Ok(value) => Json(value).into_response(),
+        Err(error) => auth_error_response(error),
+    }
+}
+
+async fn passkey_authenticate_begin_for_peer(
     state: &GatewayState,
     headers: &HeaderMap,
+    peer: Option<IpAddr>,
 ) -> anyhow::Result<PasskeyBeginResponse<RequestOptions>> {
     let ceremony_id = format!("passkey:authenticate:{}", random_hex(16));
     let rp = super::handlers::identity::derive_rp(headers)?;
     let manager = state.identity_manager()?;
     let mut manager = manager.lock().await;
-    let options = manager.begin_authentication(&ceremony_id, &rp.id)?;
+    let binding = headers
+        .get("x-elastos-passkey-secret")
+        .map(|value| passkey_cancel_binding(headers, value.to_str()?))
+        .transpose()?;
+    let options = manager.begin_authentication_for_peer(&ceremony_id, &rp.id, peer, binding)?;
     Ok(PasskeyBeginResponse {
         schema: "elastos.auth.passkey.authenticate.begin/v1".to_string(),
         ceremony_id,

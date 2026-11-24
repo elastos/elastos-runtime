@@ -4,6 +4,7 @@
 //! without OpenSSL dependencies. Supports ES256 and RS256 passkeys.
 
 use std::collections::HashMap;
+use std::net::IpAddr;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -43,6 +44,7 @@ enum ChallengeType {
 
 struct PendingChallenge {
     challenge: Vec<u8>,
+    authentication_owner: Option<(Option<IpAddr>, Option<[u8; 32]>)>,
     registration_binding: Option<[u8; 32]>,
     challenge_type: ChallengeType,
     created: Instant,
@@ -503,6 +505,7 @@ impl IdentityManager {
             session_token.to_string(),
             PendingChallenge {
                 challenge,
+                authentication_owner: None,
                 registration_binding,
                 challenge_type: ChallengeType::Registration {
                     rp_id: rp_id.to_string(),
@@ -681,7 +684,44 @@ impl IdentityManager {
         session_token: &str,
         rp_id: &str,
     ) -> anyhow::Result<RequestOptions> {
+        self.begin_authentication_owned(session_token, rp_id, None, None, false)
+    }
+
+    /// Signed-out admission counts live challenges per socket peer, independent of start rates.
+    pub fn begin_authentication_for_peer(
+        &mut self,
+        session_token: &str,
+        rp_id: &str,
+        peer: Option<IpAddr>,
+        binding: Option<[u8; 32]>,
+    ) -> anyhow::Result<RequestOptions> {
+        self.begin_authentication_owned(session_token, rp_id, peer, binding, true)
+    }
+
+    fn begin_authentication_owned(
+        &mut self,
+        session_token: &str,
+        rp_id: &str,
+        peer: Option<IpAddr>,
+        binding: Option<[u8; 32]>,
+        scoped: bool,
+    ) -> anyhow::Result<RequestOptions> {
         self.admit_challenge(session_token, rp_id, None)?;
+        let peer = signin_peer_network(peer);
+        if scoped
+            && self
+                .challenges
+                .values()
+                .filter(|p| {
+                    p.authentication_owner
+                        .as_ref()
+                        .is_some_and(|(owner, _)| *owner == peer)
+                })
+                .count()
+                >= 8
+        {
+            return Err(CeremonyCapacityExceeded.into());
+        }
         if self
             .challenges
             .values()
@@ -714,6 +754,7 @@ impl IdentityManager {
             session_token.to_string(),
             PendingChallenge {
                 challenge,
+                authentication_owner: scoped.then_some((peer, binding)),
                 challenge_type: ChallengeType::Authentication,
                 registration_binding: None,
                 created: Instant::now(),
@@ -721,6 +762,29 @@ impl IdentityManager {
         );
 
         Ok(options)
+    }
+
+    /// Cancellation requires the browser's secret and the admitted origin binding.
+    pub fn cancel_authentication_owned(
+        &mut self,
+        id: &str,
+        binding: [u8; 32],
+    ) -> anyhow::Result<()> {
+        let pending = self
+            .challenges
+            .get(id)
+            .ok_or_else(|| anyhow::anyhow!("Unknown challenge"))?;
+        let stored = pending
+            .authentication_owner
+            .as_ref()
+            .and_then(|(_, b)| *b)
+            .ok_or_else(|| anyhow::anyhow!("Challenge has no cancellation binding"))?;
+        anyhow::ensure!(
+            aws_lc_rs::constant_time::verify_slices_are_equal(&stored, &binding).is_ok(),
+            "Challenge ownership mismatch"
+        );
+        self.challenges.remove(id);
+        Ok(())
     }
 
     /// Cancel a pending registration or authentication challenge.
@@ -1533,6 +1597,69 @@ mod tests {
     }
 
     #[test]
+    fn signed_out_peer_owns_eight_pending_challenges_and_cancel_requires_its_binding() {
+        let mut manager = manager_with_credential(0);
+        let peer = Some("2001:db8:1::1".parse().unwrap());
+        for index in 0..8 {
+            manager
+                .begin_authentication_for_peer(
+                    &format!("peer-{index}"),
+                    "localhost",
+                    peer,
+                    Some([1; 32]),
+                )
+                .unwrap();
+        }
+        assert!(manager
+            .begin_authentication_for_peer(
+                "overflow",
+                "localhost",
+                Some("2001:db8:1::2".parse().unwrap()),
+                Some([2; 32])
+            )
+            .unwrap_err()
+            .is::<CeremonyCapacityExceeded>());
+        assert!(manager
+            .cancel_authentication_owned("peer-0", [2; 32])
+            .is_err());
+        assert!(manager.challenges.contains_key("peer-0"));
+        manager
+            .begin_authentication_for_peer(
+                "other",
+                "localhost",
+                Some("2001:db8:2::1".parse().unwrap()),
+                None,
+            )
+            .unwrap();
+        manager
+            .begin_authentication("step-up", "localhost")
+            .unwrap();
+        manager
+            .cancel_authentication_owned("peer-0", [1; 32])
+            .unwrap();
+        for index in 0..10 {
+            let id = format!("retry-{index}");
+            manager
+                .begin_authentication_for_peer(&id, "localhost", peer, Some([3; 32]))
+                .unwrap();
+            manager.cancel_authentication_owned(&id, [3; 32]).unwrap();
+            assert_eq!(manager.challenges.len(), 9);
+        }
+        manager.expire_challenge_for_test("peer-1");
+        manager
+            .begin_authentication_for_peer("after-expiry", "localhost", peer, None)
+            .unwrap();
+        assert_eq!(
+            signin_peer_network(Some("::1".parse().unwrap())),
+            Some("127.0.0.1".parse().unwrap())
+        );
+        assert_eq!(
+            signin_peer_network(Some("::ffff:192.0.2.1".parse().unwrap())),
+            Some("192.0.2.1".parse().unwrap())
+        );
+    }
+
+    #[test]
     fn authentication_options_require_user_verification() {
         let temp = tempfile::tempdir().unwrap();
         let mut manager = IdentityManager::new(temp.path().to_path_buf()).unwrap();
@@ -2001,4 +2128,15 @@ mod tests {
 
         assert!(err.contains("Credential clone detected"));
     }
+}
+
+/// A signed-out IPv6 peer owns one /64 budget; mapped IPv4 uses its IPv4 budget.
+pub fn signin_peer_network(peer: Option<IpAddr>) -> Option<IpAddr> {
+    peer.map(|ip| match ip.to_canonical() {
+        ip if ip.is_loopback() => IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+        IpAddr::V6(ip) => {
+            IpAddr::V6(std::net::Ipv6Addr::from(u128::from(ip) & (u128::MAX << 64)))
+        }
+        ip => ip,
+    })
 }

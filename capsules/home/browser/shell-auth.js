@@ -983,9 +983,13 @@ async function runPasskeySignIn({signal}={}) {
   busy = true;
   setButtonsDisabled(true);
   setUnlockStatus("Choose your passkey.", "muted");
-  let stage = "start";
+  let stage = "start", ceremonyId = "";
+  const browserSecret = Array.from(crypto.getRandomValues(new Uint8Array(32)), byte => byte.toString(16).padStart(2, "0")).join("");
   try {
-    const begin = await fetchJson("/api/auth/passkey/authenticate/begin", { method: "POST", signal });
+    // Keep the begin response observable so a Cancel during begin can release it.
+    const begin = await fetchJson("/api/auth/passkey/authenticate/begin", { method: "POST", headers: {"x-elastos-passkey-secret": browserSecret} });
+    ceremonyId = begin.ceremony_id;
+    signal?.throwIfAborted();
     const request = toRequestOptions(begin.options);
     stage = "passkey";
     const credential = await navigator.credentials.get({...request,signal});
@@ -1001,6 +1005,7 @@ async function runPasskeySignIn({signal}={}) {
         response: serializeAssertionCredential(credential),
       }),
     });
+    ceremonyId = "";
     signal?.throwIfAborted();
     setHomeAuthorityToken(response?.home_token, response);
     stage = "open";
@@ -1009,6 +1014,9 @@ async function runPasskeySignIn({signal}={}) {
     if (signal?.aborted && stage !== "open") { setUnlockStatus("", "muted"); return; }
     throw signInFailure(stage, error);
   } finally {
+    if (ceremonyId) await fetchJson("/api/auth/passkey/authenticate/cancel", {
+      method: "POST", body: JSON.stringify({ceremony_id: ceremonyId, browser_secret: browserSecret}),
+    }).catch(() => {});
     busy = false;
     setButtonsDisabled(false);
   }

@@ -1589,3 +1589,175 @@ async fn wallet_guest_lists_its_own_passkeys_without_exposing_other_accounts() {
         }
     }
 }
+
+// Exercise the real signed-out routes, stores and front-door peer identity.
+#[tokio::test]
+async fn round9_pending_caps_and_owned_cancel_keep_other_peers_available() {
+    let f = wallet_fixture::fixture();
+    install_real_approver(f.data.path(), &f.actor.principal_id, b"round9-passkey");
+    let app = gateway_router(test_state(f.data.path()));
+    for path in [
+        "/api/auth/passkey/authenticate/begin",
+        "/api/auth/wallet/signin/begin",
+    ] {
+        let mut first = Value::Null;
+        for index in 0..9 {
+            let input = if path.contains("wallet") {
+                json!({"connector":"metamask","address":&f.address,"chain_id":1,"browser_secret":BROWSER})
+            } else {
+                json!({})
+            };
+            let request = Request::builder()
+                .uri(path)
+                .method("POST")
+                .header(HOST, "localhost:61180")
+                .header("origin", ORIGIN)
+                .header(CONTENT_TYPE, "application/json")
+                .header("x-elastos-passkey-secret", BROWSER)
+                .extension(axum::extract::ConnectInfo(
+                    format!("[2001:db8:1::{}]:1234", index + 1)
+                        .parse::<std::net::SocketAddr>()
+                        .unwrap(),
+                ))
+                .body(Body::from(input.to_string()))
+                .unwrap();
+            let response = app.clone().oneshot(request).await.unwrap();
+            let status = response.status();
+            let bytes = axum::body::to_bytes(response.into_body(), 8192)
+                .await
+                .unwrap();
+            assert_eq!(
+                status,
+                if index < 8 {
+                    StatusCode::OK
+                } else {
+                    StatusCode::TOO_MANY_REQUESTS
+                },
+                "{path} start {index}: {}",
+                String::from_utf8_lossy(&bytes)
+            );
+            if index == 0 {
+                first = serde_json::from_slice(&bytes).unwrap();
+            }
+        }
+        // Other peers remain admitted while the first peer still holds all eight items.
+        for peer in ["203.0.113.45:1234", "127.0.0.1:1234"] {
+            let input = if path.contains("wallet") {
+                json!({"connector":"metamask","address":&f.address,"chain_id":1,"browser_secret":BROWSER})
+            } else {
+                json!({})
+            };
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(path)
+                        .method("POST")
+                        .header(HOST, "localhost:61180")
+                        .header("origin", ORIGIN)
+                        .header(CONTENT_TYPE, "application/json")
+                        .extension(axum::extract::ConnectInfo(
+                            peer.parse::<std::net::SocketAddr>().unwrap(),
+                        ))
+                        .body(Body::from(input.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                StatusCode::OK,
+                "{path} peer {peer} while attacker is capped"
+            );
+        }
+        let cancel = if path.contains("wallet") {
+            "/api/auth/wallet/cancel"
+        } else {
+            "/api/auth/passkey/authenticate/cancel"
+        };
+        let (wrong, _) = call(
+            &app,
+            cancel,
+            None,
+            Some(json!({"ceremony_id":first["ceremony_id"],"browser_secret":"22".repeat(32)})),
+        )
+        .await;
+        assert_eq!(wrong, StatusCode::FORBIDDEN);
+        let (status, result) = call(
+            &app,
+            cancel,
+            None,
+            Some(json!({"ceremony_id":first["ceremony_id"],"browser_secret":BROWSER})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "cancel {path}: {result}");
+        for peer in [
+            "[2001:db8:1::99]:1234",
+            "[2001:db8:2::1]:1234",
+            "127.0.0.1:1234",
+        ] {
+            let input = if path.contains("wallet") {
+                json!({"connector":"metamask","address":&f.address,"chain_id":1,"browser_secret":BROWSER})
+            } else {
+                json!({})
+            };
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(path)
+                        .method("POST")
+                        .header(HOST, "localhost:61180")
+                        .header("origin", ORIGIN)
+                        .header(CONTENT_TYPE, "application/json")
+                        .header("x-elastos-passkey-secret", BROWSER)
+                        .extension(axum::extract::ConnectInfo(
+                            peer.parse::<std::net::SocketAddr>().unwrap(),
+                        ))
+                        .body(Body::from(input.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                StatusCode::OK,
+                "{path} peer {peer} after cancel"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn round9_ten_cancelled_passkeys_release_pending_capacity() {
+    let f = wallet_fixture::fixture();
+    install_real_approver(f.data.path(), &f.actor.principal_id, b"round9-passkey");
+    let app = gateway_router(test_state(f.data.path()));
+    for _ in 0..10 {
+        let request = Request::builder()
+            .uri("/api/auth/passkey/authenticate/begin")
+            .method("POST")
+            .header(HOST, "localhost:61180")
+            .header("origin", ORIGIN)
+            .header("x-elastos-passkey-secret", BROWSER)
+            .extension(axum::extract::ConnectInfo(
+                "203.0.113.44:1234".parse::<std::net::SocketAddr>().unwrap(),
+            ))
+            .body(Body::empty())
+            .unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), 8192)
+            .await
+            .unwrap();
+        let begin: Value = serde_json::from_slice(&bytes).unwrap();
+        let (status, result) = call(
+            &app,
+            "/api/auth/passkey/authenticate/cancel",
+            None,
+            Some(json!({"ceremony_id":begin["ceremony_id"],"browser_secret":BROWSER})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{result}");
+    }
+}

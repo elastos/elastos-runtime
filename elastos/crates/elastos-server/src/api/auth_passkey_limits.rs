@@ -11,8 +11,8 @@ const MAX_CLIENTS: usize = 256;
 const SHORT_WINDOW: Duration = Duration::from_secs(60);
 const CHALLENGE_WINDOW: Duration = Duration::from_secs(300);
 const MAX_SHORT_BEGINS: usize = 4;
-// Count starts for the complete challenge lifetime. Even a client that changes
-// its registration cookie can own at most this many pending starts per kind.
+// Registration starts cover the challenge lifetime. Sign-in uses separate rate
+// budgets; its stores enforce at most eight live pending items per peer.
 const MAX_PENDING_STARTS: usize = 8;
 
 #[derive(Clone, Copy)]
@@ -74,8 +74,14 @@ impl BeginLimiter {
             }
             starts.iter().any(|window| !window.is_empty())
         });
-        let key = (root.to_path_buf(), peer.map(|ip| ip.to_canonical()));
-        if !self.clients.contains_key(&key) && self.clients.len() >= MAX_CLIENTS {
+        let key = (
+            root.to_path_buf(),
+            elastos_identity::webauthn::signin_peer_network(peer),
+        );
+        if !self.clients.contains_key(&key)
+            && !key.1.is_some_and(|peer| peer.is_loopback())
+            && self.clients.len() >= MAX_CLIENTS
+        {
             // An entry leaves the table when its last start expires in every pool.
             let retry = self
                 .clients
@@ -430,6 +436,51 @@ mod tests {
                 format!("Too many {action} attempts. Try again in 181 seconds.")
             );
         }
+    }
+
+    #[test]
+    fn ipv6_network_and_loopback_reservation_bound_the_caller_table() {
+        let mut limiter = BeginLimiter::default();
+        let root = Path::new("home");
+        let now = Instant::now();
+        for index in 1..=32 {
+            assert!(limiter
+                .admit(
+                    root,
+                    Some(format!("2001:db8:1::{index:x}").parse().unwrap()),
+                    CeremonyKind::Authentication,
+                    now
+                )
+                .is_ok());
+        }
+        assert!(limiter
+            .admit(
+                root,
+                Some("2001:db8:1::ffff".parse().unwrap()),
+                CeremonyKind::Authentication,
+                now
+            )
+            .is_err());
+        for client in 0..MAX_CLIENTS - 1 {
+            assert!(limiter
+                .admit(
+                    root,
+                    Some(IpAddr::V4(std::net::Ipv4Addr::from(
+                        0xc000_0200u32 + client as u32
+                    ))),
+                    CeremonyKind::Authentication,
+                    now
+                )
+                .is_ok());
+        }
+        assert!(limiter
+            .admit(
+                root,
+                Some("127.0.0.1".parse().unwrap()),
+                CeremonyKind::Authentication,
+                now
+            )
+            .is_ok());
     }
 
     #[test]
