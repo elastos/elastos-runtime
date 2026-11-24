@@ -79,6 +79,6 @@ export function contractCopy(expected, row, view) {
   if(!['linked','linked-multiple'].includes(row.stage)&&view.actions.some(a=>a.primary&&a.id==='close-window')&&!/close (this )?window/i.test(`${result.status} ${result.notice}`))result.notice=`Close this window. ${result.notice}`.trim();
   if(row.stage==='request-next')result.status='Message signed.';
   if(row.stage==='disconnecting')result.notice='Disconnecting continues after you close this window.';
-  for(const key of Object.keys(result))result[key]=result[key].replaceAll('wallet app','phone wallet').replaceAll('Account saved in Wallet.','Address saved in Wallet.').replaceAll('Your account stays in Wallet.','Your address stays in Wallet.');
+  for(const key of Object.keys(result))result[key]=result[key].replaceAll('wallet app','phone wallet').replaceAll('Account saved in Wallet.','Address saved in Wallet.').replaceAll('Your account stays in Wallet.','Your address stays in Wallet.').replaceAll('choose WalletConnect in Wallet.','choose Phone wallet in Wallet.').replaceAll('open WalletConnect, choose','open Phone wallet, choose');
   return result;
 }

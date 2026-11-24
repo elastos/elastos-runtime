@@ -91,6 +91,7 @@ root.addEventListener('click', async event => {
   if (action === 'inbox') return showInternetRequest();
   if (action === 'add-account') {addingAccount=true;connectionPage='add-account';showPicker=false;activeRequest=undefined;selectedId=undefined;outcome=undefined;draw();return;}
   if (action === 'back-to-connection') {
+    if(activeRequest?.request_id===dispatchedRequestId&&['transaction-done','transaction-declined'].includes(outcome))dispatchedRequestId=undefined;
     addingAccount=false;connectionPage='overview';showPicker=false;activeRequest=undefined;selectedId=undefined;outcome=undefined;draw();return;
   }
   if (action === 'check-access' || action === 'check-status' || action === 'refresh-status') {

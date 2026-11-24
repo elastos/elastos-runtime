@@ -92,7 +92,7 @@ For unknown-safety busy recovery, the supplied safety result governs Close and A
 
 These optional closed presentation inputs describe what the current window can show. They add no effect, route, permission or Home message.
 
-- `supportedActions`: a unique subset of `connectionActionIds`. Omit it for the design's full controls. A supplied list only removes controls, including account Copy/Disconnect, picker and panel controls and QR keyboard intents. It cannot add a connector or grant an effect. The factory replaces instructions for removed Check controls with fixed recovery copy. Missing navigation uses manual Home/app steps. When this window cannot close itself, Home's frame controls provide dismissal; an approving card puts that instruction at the top and initially focuses it.
+- `supportedActions`: a unique subset of `connectionActionIds`. Omit it for the design's full controls. A supplied list only removes controls, including account Copy/Disconnect, picker and panel controls and QR keyboard intents. It cannot add a connector or grant an effect. The factory replaces instructions for removed Check controls with fixed recovery copy. Missing navigation uses manual Home/app steps. When this window cannot close itself, Home's frame controls provide dismissal; an approving card puts that instruction in its action row and initially focuses it.
 - `copyFeedback`: `link-copied`, `address-copied`, or `copy-failed`. The window supplies its real Clipboard result. Fixed local text appears in an announced status element, including the QR card.
 - `connectionNotice`: `account-changed`, `network-changed`, `transport-unavailable`, `connection-removed`, `connection-expired`, or `provider-unavailable`. This is a secondary fixed notice; it preserves the current wait, transaction hash/result, request and receipt. It never converts a provider disconnect into a wallet refusal or access-removal claim.
 - `currentSelection`: exactly `{address,network}`, with bounds 128 and 80 characters. It is shown separately as isolated text. A differing selection labels the request's account Required account. The window supplies the request-bound address and network together in the account projection, and the live wallet selection here; a missing network must not be guessed from the wallet's new selection.
@@ -160,6 +160,18 @@ the 64 KiB cap admits those marks and bounds each image.
 When a same-card redraw removes the focused action, the mount uses the new view's focus target. A consumed approval focuses its outcome. Its card keeps the existing scroll surface; the outcome stays visible, and a small presentation spacer retains an offset that would otherwise disappear as controls are removed. A new request or stage discards this presentation state. Callers using their own mount logic must apply the same fallback and scroll rule.
 
 ## Headings and dismissal text
+
+The caller marks a Runtime Home sign-in request with `purpose: 'home-signin'`.
+`signinAction: 'add'` gives the heading Add {wallet} as a way to sign in;
+`signinAction: 'signin'` gives Sign in with {wallet}. An absent action gives
+Review wallet request. The view validates the Home actor separately from the
+heading. A connection proof keeps its connection screen.
+
+`signinComplete` belongs only to the completed request screen. A completed add
+says {wallet} can now sign in to this Home. The controller accepts completion
+only for the matching review request ID. A wallet answer alone says Your wallet
+has answered. Phone wallet is the visible connector name; WalletConnect names
+the protocol. Wallet panels call a wallet address an address.
 
 Request headings follow the names table: Review sign-in request, Review access request,
 Sign a credential, Review publishing request, Send transaction, Share your wallet

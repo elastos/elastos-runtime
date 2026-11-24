@@ -714,7 +714,7 @@ const definitions = {
     },
     "window-expired": {
       "status": "This window is no longer active.",
-      "notice": "{{closeThen}} choose WalletConnect in Wallet.",
+      "notice": "{{closeThen}} choose Phone wallet in Wallet.",
       "primary": {
         "id": "close-window",
         "label": "Close window",
@@ -724,7 +724,7 @@ const definitions = {
     },
     "guest-access": {
       "status": "You cannot turn on internet access for WalletConnect.",
-      "notice": "Ask an admin of this Home to open WalletConnect, choose Connect wallet, then allow internet access in Inbox.",
+      "notice": "Ask an admin of this Home to open Phone wallet, choose Connect wallet, then allow internet access in Inbox.",
       "primary": {
         "id": "check-status",
         "label": "Check again",
@@ -1320,7 +1320,7 @@ const definitions = {
         },
         {
           "id": "use-walletconnect",
-          "label": "WalletConnect",
+          "label": "Phone wallet",
           "quiet": true
         }
       ],
@@ -1342,7 +1342,7 @@ const definitions = {
         },
         {
           "id": "use-walletconnect",
-          "label": "WalletConnect",
+          "label": "Phone wallet",
           "quiet": true
         }
       ],
@@ -1399,7 +1399,7 @@ const definitions = {
         },
         {
           "id": "use-walletconnect",
-          "label": "WalletConnect",
+          "label": "Phone wallet",
           "quiet": true
         }
       ],
@@ -1422,7 +1422,7 @@ const definitions = {
         },
         {
           "id": "use-walletconnect",
-          "label": "WalletConnect",
+          "label": "Phone wallet",
           "quiet": true
         }
       ],
@@ -1483,7 +1483,7 @@ const definitions = {
         },
         {
           "id": "use-walletconnect",
-          "label": "WalletConnect",
+          "label": "Phone wallet",
           "quiet": true
         }
       ],
@@ -2013,7 +2013,7 @@ const definitions = {
         },
         {
           "id": "use-walletconnect",
-          "label": "WalletConnect",
+          "label": "Phone wallet",
           "quiet": true
         }
       ],
@@ -2055,7 +2055,7 @@ const definitions = {
         },
         {
           "id": "use-walletconnect",
-          "label": "WalletConnect",
+          "label": "Phone wallet",
           "quiet": true
         }
       ],

@@ -378,7 +378,7 @@ export function renderConnection(document, view) {
   const content = el('div', null, 'connection-content');content.dataset.scrollKey='content';
   const feedback = el('section', null, 'connection-feedback');
   const controls = el('div', null, 'connection-actions');
-  for (const a of view.actions) controls.append(button(a));
+  for (const a of [...view.actions].sort((a,b)=>Number(b.primary)-Number(a.primary))) controls.append(button(a));
   const wait = view.wait ? el('p',view.wait,'connection-note connection-wait') : null;
   const notice = view.notice.length ? el('p',view.notice,'connection-note connection-notice') : null;
   function accountCard(account, selected = false) {
