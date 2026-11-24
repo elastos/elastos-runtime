@@ -281,6 +281,7 @@ export function connectionView(input) {
   }
   // A dispatched payment keeps its warning and a working route to resolution.
   if(window==='walletconnect'&&summary?.transaction&&!knownNotSent&&!answered&&input.localSafety===true){
+    if(stage==='checking-response'){notice='The transaction may already have been sent; check {{wallet}} and Activity in Wallet before sending again.';safetyNotice=notice;}
     if(!['transaction-phone','checking-response'].includes(stage)){
       outcome=parts('The transaction may already have been sent.');
       notice='To pair again, resolve this request in Wallet after checking {{wallet}} and Activity.';
