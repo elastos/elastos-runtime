@@ -26,9 +26,14 @@ for(const engine of ['chromium','webkit'])for(const name of ['Rabby Wallet','Bra
   assert.equal(await wallet.locator('.wallet-method-head').filter({hasText:'Rabby Wallet'}).count(),1);assert.equal(await wallet.locator('.wallet-method-head').filter({hasText:'Brave Wallet'}).count(),1);
   assert.equal(await wallet.locator('.wallet-method-head .wallet-method-metamask').count(),0);
   await shot(page,`chooser-${engine}-${name.split(' ')[0]}-1280`);await page.setViewportSize({width:390,height:900});await shot(page,`chooser-${engine}-${name.split(' ')[0]}-390`);
+  await page.evaluate(()=>walletFixture.mode='pending');
   await wallet.locator('.wallet-method-head').filter({hasText:name}).getByRole('button',{name:'Choose',exact:true}).click();
+  await wallet.locator('#wallet-signers[data-signin=connecting]').waitFor();assert.match(await wallet.locator('#wallet-signin-actions').innerText(),/Continue in your wallet/);
+  await shot(page,`connecting-${engine}-${name.split(' ')[0]}-390`);await page.setViewportSize({width:1280,height:900});await shot(page,`connecting-${engine}-${name.split(' ')[0]}-1280`);await page.setViewportSize({width:390,height:900});
+  await page.waitForFunction(()=>walletFixture.pending.length>0);await page.evaluate(()=>{walletFixture.mode='normal';for(const job of walletFixture.pending.splice(0))job.resolve(job.result);});
   await wallet.locator('#wallet-signers[data-signin=passkey]').waitFor();assert.equal(await page.evaluate(()=>walletFixture.calls.filter(c=>c.method==='personal_sign').length),1);assert.equal(f.state.connected.length,0);
-  await shot(page,`passkey-${engine}-${name.split(' ')[0]}-390`);
+  assert.equal((await wallet.locator('#wallet-signin-actions').innerText()).match(/passkey/g)?.length,1);
+  await shot(page,`passkey-${engine}-${name.split(' ')[0]}-390`);await page.setViewportSize({width:1280,height:900});await shot(page,`passkey-${engine}-${name.split(' ')[0]}-1280`);
   await page.evaluate(()=>{walletFixture.passkeyMode='normal';for(const job of walletFixture.pending.splice(0))job.resolve(job.result);});
   await page.frameLocator('iframe[title=system]').locator('[data-wallet-method]').waitFor();assert.equal(f.state.methods.length,1);
  }finally{await context.close();await browser.close();await f.close();}
