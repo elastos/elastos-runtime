@@ -1096,12 +1096,12 @@ try {
     // Recovery opens the admitted Wallet only; queries and payload handoffs stay separate.
     await homeGui.evaluate(()=>{window.round5WalletOpens=[];addEventListener('message',event=>{if(event.data?.type==='home:gui-command'&&event.data.command==='open-target'&&event.data.target==='wallet')round5WalletOpens.push(event.data);});});
     await connector.evaluate(()=>{const homeToken=new URLSearchParams(location.hash.slice(1)).get('home_token'),origin=new URLSearchParams(location.search).get('home_origin');for(const message of [{type:'home:open-target',target:'wallet',query:{}},{type:'home:open-target-with-payload',target:'wallet',payload:{type:'elastos.wallet.connect/v1',target:'wallet-metamask'}}])top.postMessage({...message,homeToken},origin);});
-    await page.waitForTimeout(150);assert.equal(await homeGui.evaluate(()=>round5WalletOpens.length),0,'connector recovery rejects queries and payloads');
+    await page.waitForTimeout(150);assert(await homeGui.evaluate(()=>round5WalletOpens.length)===0,'connector recovery rejects queries and payloads');
     const beforeRecovery=state.launches.wallet;
     await connector.evaluate(()=>top.postMessage({type:'home:open-target',target:'wallet',homeToken:new URLSearchParams(location.hash.slice(1)).get('home_token')},new URLSearchParams(location.search).get('home_origin')));
     await homeGui.waitForFunction(()=>document.querySelector('.window[data-target="wallet"]')?.classList.contains('window-active'));
     walletRecoveryLaunches+=state.launches.wallet-beforeRecovery;
-    assert.equal((await homeWindowSnapshot(homeGui,'wallet')).id,walletWindowBeforeConnectors.id,'recovery keeps the same Wallet');
+    assert((await homeWindowSnapshot(homeGui,'wallet')).id===walletWindowBeforeConnectors.id,'recovery keeps the same Wallet');
     await homeGui.locator(`.window[data-target="${target}"] .window-head`).click({position:{x:80,y:14}});
 
     const connectorClose = homeGui.locator(
