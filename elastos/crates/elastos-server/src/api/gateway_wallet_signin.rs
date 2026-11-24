@@ -276,10 +276,3 @@ pub(super) async fn cancel(
     .await;
     response(result)
 }
-pub(super) async fn disabled() -> Response {
-    (
-        StatusCode::FORBIDDEN,
-        Json(json!({"error":"passkey_required"})),
-    )
-        .into_response()
-}

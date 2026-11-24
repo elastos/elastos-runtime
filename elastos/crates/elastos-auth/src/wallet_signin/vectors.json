@@ -5,7 +5,7 @@
     "phone_source": "scripts/lib/walletconnect-phone-wallet.mjs:27",
     "method": "account.signMessage({message:{raw:hexUtf8Message}})",
     "key": "Disposable existing test key: 32 bytes each 0x07; never a Home or production key",
-    "note": "EIP examples retain their published address; their signatures recover the disposable signer, not that address. They test EIP-191 recovery. The original phone vector retains the reserved account-creation purpose. The phone-signin vector tests the complete Home sign-in proof."
+    "note": "EIP examples retain their published address; their signatures recover the disposable signer, not that address. They test EIP-191 recovery. The original phone vector retains a retired account-creation message for recovery checks only. The phone-signin vector uses the Runtime resource scheme and tests the complete Home sign-in proof."
   },
   "vectors": [
     {
@@ -38,9 +38,9 @@
     },
     {
       "name": "phone-signin",
-      "message": "https://home.example wants you to sign in with your Ethereum account:\n0x4a62316623ad457F02cDC5D997deD67a383EC569\n\nSign in for account account-1 on this Home.\n\nURI: https://home.example/login\nVersion: 1\nChain ID: 8453\nNonce: 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b\nIssued At: 2027-01-15T08:00:00Z\nExpiration Time: 2027-01-15T08:05:00Z\nResources:\n- urn:elastos:home:686f6d652d31\n- urn:elastos:ceremony:bac4b8122fed6187e1b493a932761b8f5e720a439bf85730cf31869ea30ced4e",
-      "signature": "0xda593280279885a7d51f262e478fdc81294de0522489c163ce268bffa01616fc5890617d17499ac4085e9b5264c6d48c7bd800f60b7096174f8196e2bee4e7211c",
-      "hash": "0x617732499e56b9422cb2676127ec1e60df06d61545073422be7af330a87056d3",
+      "message": "https://home.example wants you to sign in with your Ethereum account:\n0x4a62316623ad457F02cDC5D997deD67a383EC569\n\nSign in to this Home.\n\nURI: https://home.example/login\nVersion: 1\nChain ID: 8453\nNonce: 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b\nIssued At: 2027-01-15T08:00:00Z\nExpiration Time: 2027-01-15T08:05:00Z\nResources:\n- elastos://auth/home/home-1\n- elastos://auth/ceremony/ceremony:1\n- elastos://auth/browser/bac4b8122fed6187e1b493a932761b8f5e720a439bf85730cf31869ea30ced4e\n- elastos://auth/intent/signin",
+      "signature": "0x8dfefb4b4cdb314f9405fb3f7062fdee411e0b4f4d02f672f69b3a69bfcd12d32d2c4c02b5a7b1040f857ab387743efd2b1f3ccd45f9050bb6d047a895b757821c",
+      "hash": "0xb6f6eae68cdfdc04d061ac737653e114d215faa11383c9ff45d85665288a1b0e",
       "signer": "0x4a62316623ad457F02cDC5D997deD67a383EC569"
     }
   ]

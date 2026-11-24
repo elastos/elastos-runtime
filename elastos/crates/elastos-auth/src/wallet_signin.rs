@@ -15,30 +15,17 @@ use k256::ecdsa::Signature;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+pub const SIGNIN_STATEMENT: &str = "Sign in to this Home.";
+pub const ADD_SIGNIN_STATEMENT: &str = "Add this wallet as a way to sign in to this Home.";
+
 pub const MAX_WALLET_PROOF_BYTES: usize = 8 * 1024;
 pub const DEFAULT_WALLET_PROOF_TTL_SECS: u64 = 300;
 
 /// A proof has exactly one purpose. Method-management policy belongs to the caller.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WalletProofPurpose {
-    CreateAccount,
-    SignIn {
-        account_id: String,
-    },
-    ConfirmOperation {
-        account_id: String,
-        operation: String,
-        digest: [u8; 32],
-    },
-    AddMethod {
-        account_id: String,
-        method_digest: [u8; 32],
-    },
+    SignIn,
     AddSignInMethod {
-        account_id: String,
-        method_digest: [u8; 32],
-    },
-    AddMethodDuringRecovery {
         account_id: String,
         method_digest: [u8; 32],
     },
@@ -50,6 +37,7 @@ pub struct WalletProofInput {
     pub origin: String,
     pub uri: String,
     pub home_id: String,
+    pub ceremony_id: String,
     pub chain_id: u64,
     /// A 0x prefix with an unchecked uniform-case body, or a valid EIP-55 checksum.
     pub address: String,
@@ -103,15 +91,6 @@ impl WalletProofChallenge {
         ceremony_secret: &[u8; 32],
     ) -> Result<Self, WalletProofError> {
         use WalletProofError::InvalidInput;
-        // Runtime issues wallet proofs only for sign-in and method management.
-        if matches!(
-            input.purpose,
-            WalletProofPurpose::CreateAccount
-                | WalletProofPurpose::ConfirmOperation { .. }
-                | WalletProofPurpose::AddMethodDuringRecovery { .. }
-        ) {
-            return Err(InvalidInput);
-        }
         if [
             input.origin.len(),
             input.uri.len(),
@@ -134,6 +113,7 @@ impl WalletProofChallenge {
             // Preserve one exact configured spelling for wallet origin checks.
             || input.origin.bytes().any(|b| b.is_ascii_uppercase())
             || !token(&input.home_id)
+            || !token(&input.ceremony_id)
             || input.address.len() != 42
             || input.chain_id == 0
             || input.nonce == [0; 32]
@@ -177,10 +157,11 @@ impl WalletProofChallenge {
             nonce: hex::encode(input.nonce),
             issued_at: input.issued_at,
             expires_at,
-            resources: vec![
-                format!("urn:elastos:home:{}", hex::encode(input.home_id.as_bytes())),
-                format!("urn:elastos:ceremony:{}", hex::encode(ceremony_commitment)),
-            ],
+            resources: input.purpose.resources(
+                &input.home_id,
+                &input.ceremony_id,
+                ceremony_secret,
+            )?,
         };
         let message = challenge.siwe_message();
         if message.len() > MAX_WALLET_PROOF_BYTES {
@@ -298,7 +279,7 @@ impl WalletProofUse {
 /// use elastos_auth::{ProofBinding, wallet_signin::{WalletProofResult, WalletProofPurpose}};
 /// let forged = WalletProofResult {
 ///     binding: ProofBinding::evm_account(8453, "0x0000000000000000000000000000000000000001", 0),
-///     purpose: WalletProofPurpose::SignIn { account_id: "victim".into() },
+///     purpose: WalletProofPurpose::SignIn,
 ///     message_hash: [0; 32],
 /// };
 /// ```
@@ -429,62 +410,53 @@ fn token(value: &str) -> bool {
 }
 
 impl WalletProofPurpose {
-    fn statement(&self) -> Result<String, WalletProofError> {
-        use WalletProofPurpose::*;
-        let (account_id, action) = match self {
-            CreateAccount => return Ok("Create an account on this Home.".to_string()),
-            SignIn { account_id } => (account_id, "Sign in".to_string()),
-            ConfirmOperation {
-                account_id,
-                operation,
-                digest,
-            } => {
-                if !token(operation) {
-                    return Err(WalletProofError::InvalidInput);
-                }
-                (
-                    account_id,
-                    format!(
-                        "Confirm operation {operation}; SHA-256: {}",
-                        hex::encode(digest)
-                    ),
-                )
-            }
-            AddMethod {
-                account_id,
-                method_digest,
-            } => (
-                account_id,
-                format!(
-                    "Add a sign-in method; SHA-256: {}",
-                    hex::encode(method_digest)
-                ),
-            ),
-            AddSignInMethod {
-                account_id,
-                method_digest,
-            } => (
-                account_id,
-                format!(
-                    "Add this wallet so it can sign in; SHA-256: {}",
-                    hex::encode(method_digest)
-                ),
-            ),
-            AddMethodDuringRecovery {
-                account_id,
-                method_digest,
-            } => (
-                account_id,
-                format!(
-                    "Add a sign-in method during recovery; SHA-256: {}",
-                    hex::encode(method_digest)
-                ),
-            ),
-        };
-        if !token(account_id) {
+    /// Runtime uses the same resource meanings for EVM and Bitcoin proofs.
+    pub fn resources(
+        &self,
+        home_id: &str,
+        ceremony_id: &str,
+        secret: &[u8; 32],
+    ) -> Result<Vec<String>, WalletProofError> {
+        if !token(home_id) || !token(ceremony_id) {
             return Err(WalletProofError::InvalidInput);
         }
-        Ok(format!("{action} for account {account_id} on this Home."))
+        let intent = match self {
+            Self::SignIn => "signin".to_string(),
+            Self::AddSignInMethod {
+                account_id,
+                method_digest,
+            } => {
+                if !token(account_id) {
+                    return Err(WalletProofError::InvalidInput);
+                }
+                format!(
+                    "add-signin:{}:{}",
+                    hex::encode(account_id),
+                    hex::encode(method_digest)
+                )
+            }
+        };
+        Ok(vec![
+            format!("elastos://auth/home/{home_id}"),
+            format!("elastos://auth/ceremony/{ceremony_id}"),
+            format!(
+                "elastos://auth/browser/{}",
+                hex::encode(ceremony_commitment(secret))
+            ),
+            format!("elastos://auth/intent/{intent}"),
+        ])
+    }
+    pub fn statement(&self) -> Result<String, WalletProofError> {
+        Ok(match self {
+            Self::SignIn => SIGNIN_STATEMENT,
+            Self::AddSignInMethod { account_id, .. } => {
+                if !token(account_id) {
+                    return Err(WalletProofError::InvalidInput);
+                }
+                ADD_SIGNIN_STATEMENT
+            }
+        }
+        .into())
     }
 }
 

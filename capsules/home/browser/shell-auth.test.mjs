@@ -54,6 +54,7 @@ globalThis.window = {
   setInterval: () => 1,
   clearInterval() {},
   addEventListener() {},
+  dispatchEvent() { return true; },
   atob,
   btoa,
 };
@@ -300,7 +301,7 @@ test("Home shows Other options for a saved choice only after Runtime confirms av
     for (const passkeysAvailable of [true, false]) {
       window.PublicKeyCredential = passkeysAvailable ? supported : undefined;
       for (const available of [true, false, undefined]) {
-        const storage=new Map([['elastos.signin.options.v1',JSON.stringify([{connector:'metamask',address:'0x'+'12'.repeat(20),chain_id:20,network:'',sign_in_enabled:true}])],['elastos.signin.choice.v1','passkey']]);
+        const storage=new Map([['elastos.signin.choice.v1','passkey']]);
         globalThis.localStorage={getItem:key=>storage.get(key),setItem:(key,value)=>storage.set(key,value),removeItem:key=>storage.delete(key)};
         routes["/api/auth/passkey/status"] = () => ({body:{registered:true,wallet_signin_available:available,wallet_signin_connectors:available?["metamask"]:[]}});
         await showHomeUnlock(() => {});
@@ -310,7 +311,6 @@ test("Home shows Other options for a saved choice only after Runtime confirms av
     window.PublicKeyCredential = supported;
     routes["/api/auth/passkey/status"] = () => ({body:{registered:false,wallet_signin_available:true}});
     await showHomeUnlock(() => {});assert(walletButtons.every(button => button.hidden));
-    globalThis.localStorage.setItem('elastos.signin.options.v1',JSON.stringify([{connector:'metamask',address:'0x'+'12'.repeat(20),chain_id:20,network:'',sign_in_enabled:true}]));
     let release;
     routes["/api/auth/passkey/status"] = () => new Promise(resolve => {release=resolve;});
     const checking = showHomeUnlock(() => {});
@@ -327,10 +327,10 @@ test("Home shows Other options for a saved choice only after Runtime confirms av
 });
 
 test("opening Home keeps wallet identities out of browser storage", async () => {
- const values=new Map([['elastos.signin.options.v1','old wallet identity']]);
+ const values=new Map();
  globalThis.localStorage={getItem:k=>values.get(k),setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)};
  try {
   routes['/api/auth/passkey/status']=()=>({body:{registered:true}});
-  await showHomeUnlock(()=>{});assert.equal(values.has('elastos.signin.options.v1'),false);
+  await showHomeUnlock(()=>{});assert.deepEqual([...values.keys()],[]);
  } finally {delete globalThis.localStorage;}
 });

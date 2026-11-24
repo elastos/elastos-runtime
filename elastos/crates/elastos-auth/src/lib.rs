@@ -146,6 +146,8 @@ pub struct AuthChallengeInput {
     pub resources: Vec<String>,
 }
 
+pub const WALLET_LINK_STATEMENT: &str = "Connect this wallet to Wallet on this Home.";
+
 impl AuthChallengeV1 {
     pub const SCHEMA: &'static str = "elastos.auth.challenge/v1";
 
@@ -157,7 +159,7 @@ impl AuthChallengeV1 {
             challenge_id: input.challenge_id,
             domain: input.domain,
             uri: input.uri,
-            statement: "Sign in to ElastOS.".to_string(),
+            statement: WALLET_LINK_STATEMENT.to_string(),
             address,
             chain_id: input.chain_id,
             nonce: input.nonce,
@@ -832,6 +834,9 @@ pub fn verify_siwe_challenge(
     if challenge.schema != AuthChallengeV1::SCHEMA {
         return Err("unsupported auth challenge schema".to_string());
     }
+    if challenge.statement != WALLET_LINK_STATEMENT {
+        return Err("SIWE statement does not match wallet link action".to_string());
+    }
     if challenge.expires_at <= now {
         return Err("auth challenge expired".to_string());
     }
@@ -1374,10 +1379,36 @@ mod tests {
     }
 
     #[test]
+    fn wallet_link_refuses_other_actions_and_old_saved_statements() {
+        let (key, current) = challenge();
+        assert_eq!(
+            current.statement,
+            "Connect this wallet to Wallet on this Home."
+        );
+        for statement in [
+            "Sign in to ElastOS.",
+            "Sign in to this Home.",
+            "Add this wallet as a way to sign in to this Home.",
+            "Remove this wallet from the ways to sign in to this Home.",
+            "Connect this wallet to Wallet on another Home.",
+        ] {
+            let mut old = current.clone();
+            old.statement = statement.into();
+            let message = old.siwe_message();
+            let signature = sign_message(&key, &message);
+            assert!(verify_siwe_challenge(&current, &message, &signature, 1_800_000_010).is_err());
+            assert!(verify_siwe_challenge(&old, &message, &signature, 1_800_000_010).is_err());
+        }
+    }
+
+    #[test]
     fn rejects_modified_statement() {
         let (signing_key, challenge) = challenge();
         let mut message = challenge.siwe_message();
-        message = message.replace("Sign in to ElastOS.", "Sign this harmless demo message.");
+        message = message.replace(
+            "Connect this wallet to Wallet on this Home.",
+            "Sign this harmless demo message.",
+        );
         let signature = sign_message(&signing_key, &message);
         let err = verify_siwe_challenge(&challenge, &message, &signature, 1_800_000_010)
             .expect_err("statement tampering should fail");

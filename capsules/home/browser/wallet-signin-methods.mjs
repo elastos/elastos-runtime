@@ -16,7 +16,7 @@ export function requestWalletSigninChange({action,methodId='',token,origin,loadC
   if(window.top===window || !token || !origin)return Promise.reject(new Error('Open this app from Home to change wallet sign-in.'));
   const requestId=crypto.randomUUID();
   return new Promise((resolve,reject)=>{
-    const timeout=setTimeout(()=>{window.removeEventListener('message',receive);reject(new Error('Home ended this request.'));},walletSigninRequestTimeoutMs);
+    const timeout=setTimeout(()=>{window.removeEventListener('message',receive);resolve({status:'unknown'});},walletSigninRequestTimeoutMs);
     const receive=event=>{
       if(event.source!==window.top||event.origin!==origin||event.data?.requestId!==requestId)return;
       if(event.data.type==='home:wallet-signin-accounts-request' && action==='add' && typeof loadConnected==='function'

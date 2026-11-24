@@ -2498,7 +2498,7 @@ function humanizeName(value) {
     ["ucity", "uCity"],
     ["metamask", "MetaMask"],
     ["unisat", "UniSat"],
-    ["walletconnect", "WalletConnect"],
+    ["walletconnect", "Phone wallet"],
   ]);
   return readText(value)
     .split(/[\s_-]+/)
@@ -2525,17 +2525,19 @@ async function changeWalletSignin(action, methodId = "") {
       return summary.wallet_accounts.accounts;
     }});
     await refreshAccountList();
+    if(result?.status === "unknown") showSigninListFailure("Home has not confirmed this change.",()=>changeWalletSignin(action,methodId),"Check again");
+    if(result?.status === "busy") showSigninListFailure("Finish the open wallet request before you start another change.",()=>changeWalletSignin(action,methodId));
     if (["failed", "changed"].includes(result?.status)) showSigninListFailure("Home could not change this wallet.",()=>changeWalletSignin(action,methodId));
   } catch (error) { showSigninListFailure("Home could not change this wallet.",()=>changeWalletSignin(action,methodId)); }
   finally {if(button){button.removeAttribute("aria-busy");}}
 }
 
-function showSigninListFailure(message, retryAction = () => refreshAccountList().catch(error => showError(error))) {
+function showSigninListFailure(message, retryAction = () => refreshAccountList().catch(error => showError(error)), retryLabel = "Try again") {
   const retry = document.createElement("button");
   retry.type = "button"; retry.className = "system-button system-button-secondary";
-  retry.textContent = "Try again"; retry.onclick = retryAction;
+  retry.textContent = retryLabel; retry.onclick = retryAction;
   const error = document.createElement("p"); error.textContent = message;
-  accountListNode.append(error, retry);
+  accountListNode.prepend(error, retry);
 }
 
 async function refreshAccountList() {

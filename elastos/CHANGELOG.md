@@ -10,9 +10,9 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 
 ### Added
 
-- In System > Accounts, Add wallet uses a connected wallet or opens Wallet to connect one. One wallet signature and one passkey approval add it for sign-in. Sign in offers your available methods and can remember your choice on this device.
-- WalletConnect links your wallet to Wallet. Scan the QR code with your wallet, or copy the connection link.
-- Compatible browser wallets can link through the MetaMask option. When MetaMask is installed, the option uses MetaMask.
+- In System > Accounts, Add wallet uses a connected wallet or opens Wallet to connect one. A connected wallet signs once, then a passkey approves sign-in access. A new wallet also signs to connect to Wallet. Sign in offers your available methods and can remember your choice on this device.
+- WalletConnect connects your phone wallet to Wallet. Scan the QR code with your wallet, or copy the connection link.
+- Compatible browser wallets can connect through the MetaMask option. When MetaMask is installed, the option uses MetaMask.
 - To start Home without opening a browser window, use elastos home --browser --no-open. Updates and Undo keep this choice.
 
 ### Changed
@@ -21,8 +21,8 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 - MetaMask, UniSat and WalletConnect open in smaller windows that show one step at a time.
 - Wallet requests are headed by the action, such as Sign a message, and show the network and the app or website that asked.
 - Inbox asks before WalletConnect uses the internet, and you can turn that access off in the same Inbox entry.
-- Before you remove a linked account, Wallet explains that your funds stay unchanged and removing it does not cancel a transaction in your wallet.
-- A linked account without a name shows Your wallet.
+- Before you remove a connected account, Wallet explains that your funds stay unchanged and removing it does not cancel a transaction in your wallet.
+- A connected account without a name shows Your wallet.
 - Marketplace opens the MetaMask, UniSat and WalletConnect connection windows through Wallet.
 - Model downloads and Library uploads show their progress and use the same units for file sizes.
 - Home checks for updates in the background by default. Inbox tells you when an update is available. System > About shows release notes and update download progress. To stop background checks, turn off Check for updates automatically there.
@@ -37,7 +37,7 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 - Apps load in Safari and other WebKit browsers.
 - Home repairs local Community connection failures, keeps trying while it runs, and shows the same reconnecting state in Chat and System.
 - Community posts keep arriving when one connection stalls.
-- To add another account from a linked wallet, choose Add account. Switch account in your wallet, then scan a new QR code.
+- To add another account from a connected wallet, choose Add account. Switch account in your wallet, then scan a new QR code.
 - Wallet keeps showing your answer to a request when its request list refreshes.
 - You can dismiss an unfinished WalletConnect payment in Wallet. Home can record a later WalletConnect confirmation for up to 24 hours after the request expires.
 - Assistant opens from Marketplace and offers to get a model when none is installed.
@@ -63,9 +63,9 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 
 ### Added
 
-- In System > Accounts, Add wallet uses a connected wallet or opens Wallet to connect one. One wallet signature and one passkey approval add it for sign-in. Sign in offers your available methods and can remember your choice on this device.
-- WalletConnect links your wallet to Wallet. Scan the QR code with your wallet, or copy the connection link.
-- Compatible browser wallets can link through the MetaMask option. When MetaMask is installed, the option uses MetaMask.
+- In System > Accounts, Add wallet uses a connected wallet or opens Wallet to connect one. A connected wallet signs once, then a passkey approves sign-in access. A new wallet also signs to connect to Wallet. Sign in offers your available methods and can remember your choice on this device.
+- WalletConnect connects your phone wallet to Wallet. Scan the QR code with your wallet, or copy the connection link.
+- Compatible browser wallets can connect through the MetaMask option. When MetaMask is installed, the option uses MetaMask.
 - To start Home without opening a browser window, use elastos home --browser --no-open. Updates and Undo keep this choice.
 
 ### Changed
@@ -74,8 +74,8 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 - MetaMask, UniSat and WalletConnect open in smaller windows that show one step at a time.
 - Wallet requests are headed by the action, such as Sign a message, and show the network and the app or website that asked.
 - Inbox asks before WalletConnect uses the internet, and you can turn that access off in the same Inbox entry.
-- Before you remove a linked account, Wallet explains that your funds stay unchanged and removing it does not cancel a transaction in your wallet.
-- A linked account without a name shows Your wallet.
+- Before you remove a connected account, Wallet explains that your funds stay unchanged and removing it does not cancel a transaction in your wallet.
+- A connected account without a name shows Your wallet.
 - Marketplace opens the MetaMask, UniSat and WalletConnect connection windows through Wallet.
 - Model downloads and Library uploads show their progress and use the same units for file sizes.
 - Home checks for updates in the background by default. Inbox tells you when an update is available. System > About shows release notes and update download progress. To stop background checks, turn off Check for updates automatically there.
@@ -90,7 +90,7 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 - Apps load in Safari and other WebKit browsers.
 - Home repairs local Community connection failures, keeps trying while it runs, and shows the same reconnecting state in Chat and System.
 - Community posts keep arriving when one connection stalls.
-- To add another account from a linked wallet, choose Add account. Switch account in your wallet, then scan a new QR code.
+- To add another account from a connected wallet, choose Add account. Switch account in your wallet, then scan a new QR code.
 - Wallet keeps showing your answer to a request when its request list refreshes.
 - You can dismiss an unfinished WalletConnect payment in Wallet. Home can record a later WalletConnect confirmation for up to 24 hours after the request expires.
 - Assistant opens from Marketplace and offers to get a model when none is installed.
