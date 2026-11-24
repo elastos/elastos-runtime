@@ -175,7 +175,7 @@ const definitions = {
     },
     "link-cancelled": {
       "status": "You stopped waiting.",
-      "notice": "The request may still be waiting in {{wallet}}. Reject or close it there, then check again.",
+      "notice": "Check {{wallet}} before connecting again; the request may still be waiting there.",
       "selectedAccount": true,
       "primary": {
         "id": "check-access",
@@ -509,17 +509,17 @@ const definitions = {
       ]
     },
     "transaction-cancelled": {
-      "status": "You stopped waiting. The transaction may have been sent.",
-      "notice": "Before you send again, check {{wallet}} and Activity in Wallet.",
+      "status": "The transaction may have been sent.",
+      "notice": "Check {{wallet}} and Activity in Wallet before sending again.",
       "account": true,
       "request": true,
       "outcome": true,
       "primary": {
-        "id": "open-wallet-activity",
-        "label": "Open Activity in Wallet",
+        "id": "open-wallet",
+        "label": "Open Wallet",
         "quiet": false
       },
-      "focus": "open-wallet-activity",
+      "focus": "open-wallet",
       "secondary": [
         {
           "id": "close-window",
@@ -1116,8 +1116,8 @@ const definitions = {
       "notice": "Get a new QR code to connect again. Your addresses stay in Wallet."
     },
     "add-link-cancelled": {
-      "status": "You stopped waiting.",
-      "notice": "Home stopped waiting and disconnected from your wallet. The message may still be waiting there. Your addresses stay in Wallet. Get a new QR code to connect again.",
+      "status": "Home disconnected from {{wallet}}.",
+      "notice": "The message may still be waiting there; get a new QR code to connect again.",
       "selectedAccount": true,
       "primary": {
         "id": "start-over",
@@ -1328,7 +1328,7 @@ const definitions = {
     },
     "extension-cancelled": {
       "status": "You stopped waiting.",
-      "notice": "The request may still be waiting in {{wallet}}. Reject or close it there, then check again. If {{wallet}} will not open, enable it in your browser, then use the browser's Reload control.",
+      "notice": "Check {{wallet}} before connecting again; the request may still be waiting there.",
       "primary": {
         "id": "check-access",
         "label": "Check again",
@@ -1407,7 +1407,7 @@ const definitions = {
     },
     "link-cancelled": {
       "status": "You stopped waiting.",
-      "notice": "The request may still be waiting in {{wallet}}. Reject or close it there, then check again. If {{wallet}} will not open, enable it in your browser, then use the browser's Reload control.",
+      "notice": "Check {{wallet}} before connecting again; the request may still be waiting there.",
       "selectedAccount": true,
       "primary": {
         "id": "check-access",
@@ -1788,17 +1788,17 @@ const definitions = {
       ]
     },
     "transaction-cancelled": {
-      "status": "You stopped waiting. The transaction may have been sent.",
-      "notice": "Before you send again, check {{wallet}}, then open Wallet from Home and check Activity. Closing this window does not cancel the request in {{wallet}}.",
+      "status": "The transaction may have been sent.",
+      "notice": "Check {{wallet}} and Activity in Wallet before sending again.",
       "account": true,
       "request": true,
       "outcome": true,
       "primary": {
-        "id": "open-wallet-activity",
-        "label": "Open Activity in Wallet",
+        "id": "open-wallet",
+        "label": "Open Wallet",
         "quiet": false
       },
-      "focus": "open-wallet-activity",
+      "focus": "open-wallet",
       "secondary": [
         {
           "id": "close-window",
@@ -2309,7 +2309,7 @@ const definitions = {
     },
     "extension-cancelled": {
       "status": "You stopped waiting.",
-      "notice": "The request may still be waiting in {{wallet}}. Reject or close it there, then check again. If {{wallet}} will not open, enable it in your browser, then use the browser's Reload control.",
+      "notice": "Check {{wallet}} before connecting again; the request may still be waiting there.",
       "primary": {
         "id": "check-access",
         "label": "Check again",
@@ -2378,7 +2378,7 @@ const definitions = {
     },
     "link-cancelled": {
       "status": "You stopped waiting.",
-      "notice": "The request may still be waiting in {{wallet}}. Reject or close it there, then check again. If {{wallet}} will not open, enable it in your browser, then use the browser's Reload control.",
+      "notice": "Check {{wallet}} before connecting again; the request may still be waiting there.",
       "selectedAccount": true,
       "primary": {
         "id": "check-access",

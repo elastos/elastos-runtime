@@ -266,7 +266,7 @@ test('canonical waiting screens have at most two instruction sentences',async()=
  const {screens}=process.env.WALLET_WAIT_COPY_BASELINE
    ? await import('data:text/javascript;base64,'+Buffer.from(spawnSync('git',['show','fe768a68c:capsules/_shared/wallet-connection-screens.mjs'],{encoding:'utf8'}).stdout).toString('base64'))
    : await import('../capsules/_shared/wallet-connection-screens.mjs');
- for(const [window,rows] of Object.entries(screens))for(const [stage,screen] of Object.entries(rows))if(screen.wait){
+ for(const [window,rows] of Object.entries(screens))for(const [stage,screen] of Object.entries(rows))if(screen.wait||/stopped waiting/i.test(screen.status||'')||['request-cancelled','transaction-cancelled','add-link-cancelled'].includes(stage)){
   const text=[screen.status,screen.notice].filter(Boolean).join(' ');
   assert((text.match(/[.!?](?:\s|$)/g)||[]).length<=2,window+'/'+stage+': '+text);
  }

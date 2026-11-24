@@ -135,5 +135,16 @@ for(const width of [1280,390])for(const [window,stage] of [['metamask','transact
   const text=(await f.page.locator('.connection-status,.connection-notice').allTextContents()).join(' ');
   assert((text.match(/[.!?](?:\s|$)/g)||[]).length<=2);assert.match(text,/transaction/);assert.match(text,/stop waiting/);
   await shot(f.page,`payment-wait-${window}-${width}`);
+  args[0].stage='transaction-cancelled';await f.page.evaluate(async args=>{const m=await import('/capsules/_shared/wallet-connection-view.mjs');m.mountConnection(document.querySelector('#mount'),m.reduceConnection(...args));},args);
+  const stopped=(await f.page.locator('.connection-status,.connection-notice').allTextContents()).join(' ');assert((stopped.match(/[.!?](?:\s|$)/g)||[]).length<=2);await f.page.getByRole('button',{name:'Open Wallet',exact:true}).waitFor();await shot(f.page,`payment-stopped-${window}-${width}`);
  }finally{await f.close();}
+});
+
+for(const width of [1280,390])test(`round5 stopped connection screens keep two sentences at ${width}`,async()=>{
+ const f=await browserFixture('chromium',{width,height:900});
+ try{for(const [window,stage] of [['metamask','extension-cancelled'],['metamask','link-cancelled'],['unisat','extension-cancelled'],['unisat','link-cancelled'],['walletconnect','link-cancelled'],['walletconnect','add-link-cancelled']]){
+  const args=fixtureArguments(states.find(row=>row.window===window&&row.stage===stage));
+  await f.page.evaluate(async args=>{const m=await import('/capsules/_shared/wallet-connection-view.mjs');m.mountConnection(document.querySelector('#mount'),m.reduceConnection(...args));},args);
+  const text=(await f.page.locator('.connection-status,.connection-notice').allTextContents()).join(' ');assert((text.match(/[.!?](?:\s|$)/g)||[]).length<=2);assert(await f.page.locator('button').count());await shot(f.page,`stopped-${window}-${stage}-${width}`);
+ }}finally{await f.close();}
 });

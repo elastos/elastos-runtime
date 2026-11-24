@@ -126,7 +126,7 @@ for (const engine of ['chromium','webkit']) test(`extension_request_feedback_in_
             expectedControls=expectedControls.map(c=>c.label==='Open Wallet'?{label:'Close window',primary:true}:c);
             if(row.window==='walletconnect')expectedControls.push({label:'Add address',primary:false});
           }
-          if(row.stage==='request-cancelled')expectedControls=[{label:'Open Wallet',primary:true},{label:'Close window',primary:false}];
+          if(['request-cancelled','transaction-cancelled'].includes(row.stage))expectedControls=[{label:'Open Wallet',primary:true},{label:'Close window',primary:false}];
           if(row.window==='walletconnect'&&row.stage==='internet-ready')expectedControls=expectedControls.filter(c=>c.label!=='Manage in Inbox');
           if(row.window==='walletconnect'&&row.stage==='internet-refused')expectedControls=[{label:'Connect wallet',primary:true}];
           if(row.window==='walletconnect'&&row.stage==='internet-off')expectedControls=[{label:'Connect wallet',primary:true},{label:'Open Inbox',primary:false}];
@@ -140,7 +140,7 @@ for (const engine of ['chromium','webkit']) test(`extension_request_feedback_in_
           if(['transaction-reopened','transaction-wallet-error','transaction-cancelled','transaction-timeout','transaction-wallet-removed'].includes(row.stage)&&!expectedControls.some(c=>c.label==='Close window'))expectedControls.push({label:'Close window',primary:false});
           const actual=observed.controls.map(b=>({label:b.label.replace(/\s+/g,' '),primary:b.primary}));
           assert.deepEqual(actual,expectedControls,key+': control order and main control');
-          const expectedFocus=row.stage==='request-cancelled'?'open-wallet':fallbackClose&&facts.focus||row.unknownSafety&&['link-busy','request-busy','extension-busy','link-error'].includes(row.stage)?'close-window':facts.focus;
+          const expectedFocus=['request-cancelled','transaction-cancelled'].includes(row.stage)?'open-wallet':fallbackClose&&facts.focus||row.unknownSafety&&['link-busy','request-busy','extension-busy','link-error'].includes(row.stage)?'close-window':facts.focus;
           assert.equal(observed.focus,expectedFocus,key+': design focus, with answered-outcome override');
           if(observed.clicks.length)assert.equal(observed.clicks.length,1,key+': exit operable');
           const item={engine,theme,size:size.name,window:row.window,stage:row.stage,unknownSafety:!!row.unknownSafety,controls:observed.controls.map(({id,label,primary})=>({id,label,primary})),focus:observed.focus,text:observed.text,result:'pass'};

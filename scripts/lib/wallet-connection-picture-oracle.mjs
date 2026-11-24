@@ -85,5 +85,8 @@ export function contractCopy(expected, row, view) {
     result[key]=result[key].replace(/Close this window(?: with Home['’]s window controls)?(?:, then|\. Then|\.)?\s*/g,'').replace(/^[a-z]/,letter=>letter.toUpperCase());
   }
   if(row.stage==='request-cancelled'){result.status=`The request may still be in progress in ${name}.`;result.notice='Check your wallet and Activity in Wallet before making another request.';}
+  if(['extension-cancelled','link-cancelled'].includes(row.stage))result.notice=`Check ${name} before connecting again; the request may still be waiting there.`;
+  if(row.stage==='transaction-cancelled'){result.status='The transaction may have been sent.';result.notice=`Check ${name} and Activity in Wallet before sending again.`;}
+  if(row.stage==='add-link-cancelled'){result.status=`Home disconnected from ${name}.`;result.notice='The message may still be waiting there; get a new QR code to connect again.';}
   return result;
 }
