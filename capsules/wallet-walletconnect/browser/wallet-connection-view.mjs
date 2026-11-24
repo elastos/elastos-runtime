@@ -476,7 +476,7 @@ export function renderConnection(document, view) {
       const row = button({id:'select-wallet',label:isolated(choice.name,'wallet'),key:`select-wallet:${choice.id}`});
       row.classList.add('connection-wallet-choice');
       if (choice.icon) { const img=el('img');img.src=choice.icon;img.alt='';row.prepend(img); }
-      if (controls.parentNode === content) content.insertBefore(row, controls); else content.append(row);
+      if (controls.parentNode === destination) destination.insertBefore(row, controls); else content.append(row);
     }
     if(view.afterNote.length){const note=el('p',view.afterNote,'connection-note');if(approvalSite)destination.insertBefore(note,destination.querySelector('.connection-approval-unit'));else content.append(note);}
   }
