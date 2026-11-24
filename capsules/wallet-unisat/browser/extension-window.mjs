@@ -288,7 +288,8 @@ export function startExtensionWindow(kind, homeClipboard) {
     } catch (error) {
       if (disposed) return;
       revision += 1; operation = null;
-      const message = error.message;
+      // Earlier Home replies use the retired relation term; current copy is connected.
+      const message = error.message.replace(/\blinked (Bitcoin )?account\b/g,'connected $1account');
       if (message === 'Home cannot confirm access to the account this request needs in your wallet.') {
         operationWallet = null; linkObserved = false; chosenWalletChoiceId = null;
         preflightFailure = 'request-unsendable'; stage = preflightFailure; draw(); return;
@@ -330,7 +331,7 @@ export function startExtensionWindow(kind, homeClipboard) {
       }
       else if (/could not find a browser wallet|was not found in this browser profile/.test(message)) { operationWallet = null; linkObserved = false; providerAvailability = 'absent'; stage = 'extension-missing'; }
       else if (message === 'Your wallet declined the request.') stage = action.kind==='link'?'link-declined':`${prefix}-declined`;
-      else if (message === 'Unlock UniSat, then select Try again.') {preflightFailure='wallet-locked';stage=preflightFailure;}
+      else if (kind==='unisat' && action.kind==='link' && message === 'Unlock UniSat, then select Try again.') {preflightFailure='wallet-locked';stage=preflightFailure;}
       else if (action.kind === 'link') stage = 'link-error';
       else stage = `${prefix}-wallet-error`;
       draw();

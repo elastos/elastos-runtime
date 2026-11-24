@@ -6,6 +6,8 @@ import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {signinFixture,installSigninProviders,evmAddress,bitcoinAddress} from './lib/wallet-signin-fixture.mjs';
 import {requireProductSmokePlaywright,productSmokeLaunchOptions} from './product-smoke-browser.mjs';
+import {fixtureView,states} from './wallet-connection-view-fixtures.mjs';
+import {windowTestOptions} from './lib/walletconnect-window-resources.mjs';
 const pictures=process.env.WALLET_ROUND3_PICTURES;
 async function shot(page,name){if(pictures){await mkdir(pictures,{recursive:true});await page.waitForTimeout(150);const bytes=await page.screenshot({path:join(pictures,name+'.png'),animations:'disabled'});await writeFile(join(pictures,name+'.json'),JSON.stringify({head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),tree:execFileSync('git',['rev-parse','HEAD^{tree}'],{encoding:'utf8'}).trim(),clean:!execFileSync('git',['status','--porcelain'],{encoding:'utf8'}).trim(),viewport:page.viewportSize(),sha256:createHash('sha256').update(bytes).digest('hex')},null,2));}}
 for(const width of [1280,390])test(`round3 pointer Choose survives a focus refresh at ${width}`,{timeout:30000},async()=>{
@@ -60,7 +62,22 @@ for(const width of [1280,390])test(`round3 Home bounds content size hints and ca
  }finally{await browser.close();await f.close();}
 });
 
+for(const width of [1280,390])for(const mount of ['connection-root','wallet-window'])test(`round3 QR stays readable while ${mount} fits its window at ${width}`,{timeout:15000},async()=>{
+ const qrData=fixtureView(states.find(row=>row.window==='walletconnect'&&row.stage==='qr-shown')).qrData;
+ const f=await signinFixture(),browser=await requireProductSmokePlaywright().chromium.launch({headless:true,...productSmokeLaunchOptions()});const page=await browser.newPage({viewport:{width,height:900}});page.setDefaultTimeout(5000);
+ await page.route('**/qr-fit?*',route=>route.fulfill({contentType:'text/html',body:`<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="/apps/wallet-walletconnect/elastos-ui.css"><link rel="stylesheet" href="/apps/wallet-walletconnect/wallet-connection-view.css"><body class="el-app" style="margin:0"><div id="${mount}"></div><script type="module">import '/apps/wallet-walletconnect/wallet-connection-loading.mjs';import {connectionView,mountConnection} from '/apps/wallet-walletconnect/wallet-connection-view.mjs';mountConnection(document.getElementById('${mount}'),connectionView(${JSON.stringify({window:'walletconnect',stage:'qr-shown',qrData,supportedActions:['copy-link','cancel','close-window']})}));</script>`}));
+ try{
+  await page.goto(f.origin+'/apps/home-gui/');await page.evaluate(async()=>{const {shellState}=await import('/apps/home-gui/shell-core.js?v=home-20261101d');const {fitHomeGuiWalletWindow}=await import('/apps/home-gui/home-gui.js?v=home-20261101d');const node=document.createElement('section');node.className='window window-active';node.style.cssText='width:480px;height:560px;left:50px;top:60px';node.innerHTML='<div class="window-head"><span class="window-head-title">Phone wallet</span></div><div class="window-body window-body-frame"><iframe class="window-frame is-ready" title="QR"></iframe></div>';const frame=node.querySelector('iframe');frame.dataset.route='/apps/wallet-walletconnect/#home_token=qr-fit';document.body.append(node);shellState.windows.set('qr-fit',{id:'qr-fit',node,targetId:'wallet-walletconnect',kind:'browser'});window.fitHints=[];addEventListener('message',event=>{if(event.source===frame.contentWindow&&event.data?.type==='home:wallet-content-size'){fitHints.push(event.data);fitHomeGuiWalletWindow('qr-fit',event.data.width,event.data.height);}});frame.src='/qr-fit?home_origin='+encodeURIComponent(location.origin)+'#home_token=qr-fit';});
+  const frame=page.frameLocator('iframe[title=QR]');await frame.locator('.connection-qr').waitFor({state:'attached'});await page.waitForFunction(()=>fitHints.length>0);await page.waitForTimeout(700);const qr=await frame.locator('.connection-qr').boundingBox();assert(qr.width>=152&&qr.height>=152,JSON.stringify(qr));await frame.getByRole('button',{name:'Cancel',exact:true}).waitFor();await shot(page,`qr-content-fit-${mount}-${width}`);
+ }finally{await browser.close();await f.close();}
+});
+
 import {fixture as extensionFixture} from './lib/wallet-extension-window-fixture.mjs';
+for(const engine of ['chromium','webkit'])test(`round3 locked UniSat request keeps its consumed action in ${engine}`,windowTestOptions(engine,30000),async()=>{
+ const browser=await requireProductSmokePlaywright()[engine].launch({headless:true,...(engine==='chromium'?productSmokeLaunchOptions():{})});const f=await extensionFixture(browser,'unisat',{saved:true,requests:true,pictures:false});
+ try{await f.state('request-waiting');await f.top.evaluate(()=>testState.requestError={method:'signMessage',message:'Wallet is locked'});await f.action('send-request').click();await f.state('request-wallet-error');assert.equal(await f.action('connect').count(),0);assert.equal(await f.action('send-request').count(),0);assert.equal(await f.top.evaluate(()=>testState.requests[0].status),'approved');assert.equal(await f.top.evaluate(()=>testState.receipts.length),0);await f.assertShared();}
+ finally{await f.close();await browser.close();}
+});
 for(const width of [480,390])for(const kind of ['metamask','unisat'])test(`round3 ${kind} refusal names the wallet decision at ${width}`,{timeout:30000},async()=>{
  const browser=await requireProductSmokePlaywright().chromium.launch({headless:true,...productSmokeLaunchOptions()});
  const f=await extensionFixture(browser,kind,{saved:true,requests:true,pictures:false,...(process.env.WALLET_ROUND3_BASELINE?{hostSource:execFileSync('git',['show','61ed90494:capsules/home/browser/home-wallet-connector-host.js'],{encoding:'utf8'})}:{})});

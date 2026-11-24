@@ -2,6 +2,8 @@
 
 The view draws supplied data. Each window owns its real state, presentation lifetime and effects. Importing this module performs no work. The current window controllers opt into it separately.
 
+The loading bootstrap reports natural content size from each connector's mount. Home owns the outer bounds and title bar. The normal QR has a 152px minimum within the available width, so fitting the window preserves its size. Compact views keep their separate 56px QR.
+
 Call reduceConnection(presentation, sources) to derive contract-owned fields. renderConnection(document, view) returns a detached main element; mountConnection(container, view, previousMount) applies presentation focus and scroll inside the caller's container. All controls are declarative data-action intents. The window validates authority and handles each effect outside this module.
 
 The presentation input has window, stage, an already-cleaned account display projection, waitSeconds for window-local waits, an optional local PNG qrData, validated homeOrigin, WalletConnect localSafety, compact, targetNetwork (a canonical requested-network label), previousFocus, and an optional closed transactionDisplay projection (amount, asset, destination, network) computed by Home/Runtime. App-authored reason remains separate. Contract sources are the original provider message, optional current safety message, Runtime summary and other summaries, alternative navigation facts, audience, and an explicit nowSeconds. The reducer preserves exact site origins, request identity and the earliest supplied deadline. It never reads a clock.

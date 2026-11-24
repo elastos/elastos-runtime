@@ -656,7 +656,7 @@ export function fitHomeGuiWalletWindow(homeToken, width, height) {
   const node=entry.node;
   if(node.dataset.maximized==='true'||node.dataset.snap)return false;
   const body=node.querySelector('.window-body');
-  const chrome=Math.max(32,node.offsetHeight-(body?.getBoundingClientRect().height||node.offsetHeight));
+  const chrome=Math.max(32,node.offsetHeight-(body?.offsetHeight||node.offsetHeight));
   const bounds=fitWindowBounds({x:parseFloat(node.style.left)||48,y:parseFloat(node.style.top)||60,width:Math.max(360,Math.min(640,width)),height:Math.max(240,height+chrome)});
   Object.assign(node.style,{left:bounds.x+'px',top:bounds.y+'px',width:bounds.width+'px',height:bounds.height+'px'});
   return true;

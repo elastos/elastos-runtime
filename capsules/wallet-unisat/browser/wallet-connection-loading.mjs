@@ -10,7 +10,7 @@ document.addEventListener('click', event => {
 });
 
 // The connection window reports its content. Home owns and clamps outer bounds.
-const container=document.querySelector('#connection-root');
+const container=document.querySelector('#connection-root, #wallet-window');
 let fitFrame=0,lastFit='';
 function reportContentSize() {
   fitFrame=0;
@@ -18,7 +18,7 @@ function reportContentSize() {
   const route=new URL(location.href),homeToken=new URLSearchParams(route.hash.slice(1)).get('home_token'),homeOrigin=route.searchParams.get('home_origin');
   if(!homeToken||!homeOrigin)return;
   try {if(new URL(homeOrigin).origin!==homeOrigin||!/^https?:/.test(homeOrigin))return;}catch{return;}
-  const clone=root.cloneNode(true),width=Math.min(480,Math.max(280,root.clientWidth));
+  const clone=root.cloneNode(true),width=Math.min(480,Math.max(280,Math.ceil(root.getBoundingClientRect().width)));
   Object.assign(clone.style,{position:'fixed',visibility:'hidden',pointerEvents:'none',width:width+'px',height:'auto',minHeight:'0',overflow:'visible'});
   document.body.append(clone);const height=Math.max(100,Math.min(4000,Math.ceil(clone.getBoundingClientRect().height)));clone.remove();
   const key=width+':'+height;if(lastFit===key)return;lastFit=key;
