@@ -114,7 +114,7 @@ async function exercise(engine,width,theme) {
     const addState=stage=>wallet.locator('#wallet-signers[data-signin='+stage+']').waitFor();
     const addDone=()=>wallet.locator('#wallet-signers[data-signin]').waitFor({state:'detached'});
     const startAdd=async()=>{await page.locator('#show-system').evaluate(el=>el.click());await system.getByRole('button',{name:'Add wallet',exact:true}).click();await addState('options');};
-    const cancelAdd=async()=>{await page.locator('#show-wallet').evaluate(el=>el.click());await wallet.getByRole('button',{name:'Cancel',exact:true}).click();await addDone();};
+    const cancelAdd=async()=>{await page.locator('#show-wallet').evaluate(el=>el.click());await wallet.getByRole('button',{name:'Cancel',exact:true}).click();await addDone();await page.locator('iframe[title=system]').waitFor({state:'visible'});};
     await startAdd();await capture('08-wallet-chooser');
     assert.equal(await wallet.locator('.wallet-method-head').count(),3);assert.equal(await dialog().count(),0);
     assert.doesNotMatch(await chooser.innerText(),/New wallet|Connect another|Built-in/);
