@@ -8,13 +8,21 @@ import {connectionView,renderConnection} from './wallet-connection-view.mjs';
 const titles={signin:'Sign in',add:'Add wallet',remove:'Remove wallet'};
 function node(tag,text,className) {const el=document.createElement(tag);if(text)el.textContent=text;if(className)el.className=className;return el;}
 export async function walletSigninApi(path,body,token='',{signal}={}) {
-  const response=await fetch(path,{
-    method:body===undefined?'GET':'POST',cache:'no-store',signal:signal?AbortSignal.any([signal,AbortSignal.timeout(15000)]):AbortSignal.timeout(15000),
-    headers:{'content-type':'application/json',...(token?{'x-elastos-home-token':token}:{})},
-    ...(body===undefined?{}:{body:JSON.stringify(body)}),
-  });
-  if(!response.ok)throw Object.assign(new Error('Home refused the wallet request'),{status:response.status,retryAfter:Number(response.headers.get('retry-after'))});
-  return response.json();
+  // Own the controller until the response body settles. WebKit can collect an
+  // inline combined AbortSignal while fetch still depends on it.
+  const controller=new AbortController(),abort=()=>controller.abort();
+  const timer=setTimeout(abort,15000);
+  signal?.addEventListener('abort',abort,{once:true});if(signal?.aborted)abort();
+  try {
+    const response=await fetch(path,{
+      method:body===undefined?'GET':'POST',cache:'no-store',signal:controller.signal,
+      headers:{'content-type':'application/json',...(token?{'x-elastos-home-token':token}:{})},
+      ...(body===undefined?{}:{body:JSON.stringify(body)}),
+    });
+    if(!response.ok)throw Object.assign(new Error('Home refused the wallet request'),{status:response.status,retryAfter:Number(response.headers.get('retry-after'))});
+    return await response.json();
+  } finally {clearTimeout(timer);signal?.removeEventListener('abort',abort);}
+
 }
 export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=>{}}) {
   let passkeyController,passkeyFinished=Promise.resolve();
@@ -58,8 +66,9 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
     const id=method?.chooseConnector?signinChoiceId(method):method?optionId(method):'passkey';saveSigninChoice(remember?id:'');
     passkeyController?.abort();passkeyController=null;
     if(!method){
+      void flow.cancel();options(initial.signinMethods);
       const request=++epoch,controller=passkeyController=new AbortController(),previous=passkeyFinished;let failure;
-      void flow.cancel();options(initial.signinMethods);initial.waitingId='passkey';initial.waitingLabel='Passkey';
+      initial.waitingId='passkey';initial.waitingLabel='Passkey';
       render({stage:'passkey-signin',action:'signin'});
       passkeyFinished=(async()=>{await previous;if(!controller.signal.aborted)await onPasskey?.({signal:controller.signal});})()
         .catch(error=>{failure=error;})

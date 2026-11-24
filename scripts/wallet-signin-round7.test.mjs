@@ -163,3 +163,30 @@ if(pictures)test('round7 picture index',async()=>{
  const images=['chromium','webkit'].flatMap(engine=>[1280,390].flatMap(width=>['metamask','walletconnect'].flatMap(connector=>Object.entries(stages).map(([stage,label])=>({name:engine+'-'+width+'-'+connector+'-'+stage+'.png',caption:`${connector==='metamask'?'MetaMask':'WalletConnect'}: ${label}, ${engine==='webkit'?'WebKit':'Chromium'}, ${width} pixels.`})))));
  await mkdir(pictures,{recursive:true});await writeFile(join(pictures,'index.html'),'<!doctype html><meta charset="utf-8"><title>Round 7 sign-in</title><style>body{font:16px system-ui;margin:24px}img{max-width:100%;border:1px solid #ddd}figure{margin:24px 0}</style><h1>Round 7 sign-in</h1><p>Real Home modules with isolated wallet and passkey boundary fixtures. Desktop 1280 and phone 390.</p>'+images.map(({name,caption})=>'<figure><figcaption>'+caption+'</figcaption><a href="'+name+'"><img src="'+name+'" alt="'+caption+'" loading="lazy"></a></figure>').join(''));
 });
+
+for (const engine of ['chromium','webkit']) for (const connector of ['metamask','unisat']) test(`round9 no browser wallet starts Passkey for ${connector} in ${engine}`,windowTestOptions(engine,30000),()=>setup(engine,390,async({f,page})=>{
+ f.state.methods = f.state.methods.filter(method=>method.connector===connector);
+ await page.goto(f.origin+'/home/?desktop-app');await page.waitForFunction(()=>window.fixtureReady);
+ await page.getByRole('button',{name:'Sign in',exact:true}).click();
+ await page.waitForFunction(()=>window.openedPrincipal==='principal:alex');assert.equal(passkeyStarts(f),1);assert.equal(starts(f),0);
+}));
+
+for (const engine of ['chromium','webkit']) test(`round9 Passkey Cancel releases the owned challenge including a late begin in ${engine}`,windowTestOptions(engine,30000),()=>setup(engine,390,async({f,page})=>{
+ await page.evaluate(()=>window.walletFixture.passkeyMode='pending');
+ const dialog=page.locator('.signin-dialog');
+ await page.getByRole('button',{name:'Sign in',exact:true}).click();
+ await dialog.getByRole('button',{name:/^Passkey\b/}).click();
+ await page.waitForFunction(()=>window.walletFixture.calls.some(call=>call.method==='passkey'));
+ await dialog.getByRole('button',{name:'Cancel',exact:true}).click();
+ await assertEventually(()=>assert.equal(f.state.calls.filter(call=>call.path==='/api/auth/passkey/authenticate/cancel').length,1));
+ let release,entered;const held=new Promise(resolve=>entered=resolve);
+ await page.route('**/api/auth/passkey/authenticate/begin',async route=>{const response=await route.fetch();await new Promise(resolve=>{release=resolve;entered();});await route.fulfill({response});});
+ try {
+  await dialog.getByRole('button',{name:/^Passkey\b/}).click();await fixtureStep(held,'held passkey begin');
+  await dialog.getByRole('button',{name:'Cancel',exact:true}).click();release();
+  await assertEventually(()=>assert.equal(f.state.calls.filter(call=>call.path==='/api/auth/passkey/authenticate/cancel').length,2));
+  const begins=f.state.calls.filter(call=>call.path==='/api/auth/passkey/authenticate/begin'),cancels=f.state.calls.filter(call=>call.path==='/api/auth/passkey/authenticate/cancel');
+  for(let index=0;index<2;index++)assert.equal(cancels[index].body.browser_secret,begins[index].headers['x-elastos-passkey-secret']);
+  assert.equal(await page.locator('.signin-dialog[data-state=options]').count(),1);
+ } finally {release?.();}
+}));
