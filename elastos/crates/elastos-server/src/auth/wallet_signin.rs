@@ -28,6 +28,9 @@ pub(crate) struct Method {
     witnesses: Vec<String>,
     root_key: Option<String>,
     generation: String,
+    // Read and drop the retired trial field; every other field stays strict.
+    #[serde(default, skip_serializing, rename = "sign_in_enabled")]
+    _retired_sign_in_enabled: Option<serde::de::IgnoredAny>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -52,6 +55,14 @@ struct Pending {
     local: bool,
     transport_digest: [u8; 32],
     instance_id: String,
+    #[serde(default, skip_serializing, rename = "creates_method")]
+    _retired_creates_method: Option<serde::de::IgnoredAny>,
+    #[serde(default, skip_serializing, rename = "result")]
+    _retired_result: Option<serde::de::IgnoredAny>,
+    #[serde(default, skip_serializing, rename = "response_digest")]
+    _retired_response_digest: Option<serde::de::IgnoredAny>,
+    #[serde(default, skip_serializing, rename = "cancelled")]
+    _retired_cancelled: Option<serde::de::IgnoredAny>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -645,7 +656,25 @@ pub(crate) fn begin(
         } else {
             require(auth.principals.iter().any(active_passkey))?;
         }
-        store.pending.retain(|p| !p.cancelled());
+        store
+            .pending
+            .retain(|p| !p.cancelled() || p.issued_at.saturating_add(60) > now);
+        // Cancel frees active capacity, but keeps the rate debit for one minute.
+        // The global bound also covers callers that rotate browser commitments.
+        let recent: Vec<_> = store
+            .pending
+            .iter()
+            .filter(|p| p.issued_at.saturating_add(60) > now)
+            .collect();
+        if recent.len() >= MAX_PENDING
+            || recent
+                .iter()
+                .filter(|p| p.browser == browser && p.actor.is_none() == actor.is_none())
+                .count()
+                >= 32
+        {
+            return Err(Capacity.into());
+        }
         if store.pending.iter().filter(|p| p.expires_at > now).count() >= MAX_PENDING
             || store
                 .pending
@@ -696,6 +725,7 @@ pub(crate) fn begin(
                 witnesses: vec![],
                 root_key: None,
                 generation: random_secret_hex(),
+                _retired_sign_in_enabled: None,
             }
         };
         if actor.is_none() && !method.address.is_empty() {
@@ -721,6 +751,10 @@ pub(crate) fn begin(
         }
         let token = random_secret_hex();
         let mut pending = Pending {
+            _retired_creates_method: None,
+            _retired_result: None,
+            _retired_response_digest: None,
+            _retired_cancelled: None,
             contract_version: CONTRACT_VERSION,
             id: format!("ceremony:{}", random_secret_hex()),
             action: input.action,
@@ -879,7 +913,7 @@ pub(crate) fn complete(
             response_digest: saved_digest,
         } = &p.terminal
         {
-            require(saved_digest == &response_digest)?;
+            require(p.expires_at > now_ts() && saved_digest == &response_digest)?;
             if p.action == "signin" {
                 require(store.sessions.iter().any(|s| {
                     Some(s.grant.session_id.as_str()) == result["session_id"].as_str()
@@ -1462,6 +1496,92 @@ pub(crate) mod tests {
         }
     }
     #[test]
+    fn wallet_round3_earlier_file_loads_but_other_unknown_fields_fail() {
+        let f = fixture();
+        enabled(&f);
+        let file = path(f.data.path()).unwrap();
+        let current = read(f.data.path()).unwrap();
+        // Stored serializer at 343a7b9a9; values are isolated fixture data.
+        let mut saved: Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/wallet-signin-trial-v1.json"
+        ))
+        .unwrap();
+        saved["methods"][0]["account_id"] = serde_json::json!(f.actor.principal_id);
+        saved["methods"][0]["witnesses"] = serde_json::json!(current.methods[0].witnesses);
+        saved["audit_sequence"] = serde_json::json!(current.audit_sequence);
+        saved["audit_hash"] = serde_json::json!(current.audit_hash);
+        saved["pending"][0]["method"] = saved["methods"][0].clone();
+        write_secret_bytes_atomic(&file, &serde_json::to_vec(&saved).unwrap()).unwrap();
+        assert_eq!(
+            list(f.data.path(), &f.actor).unwrap()["methods"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(read(f.data.path())
+            .unwrap()
+            .pending
+            .iter()
+            .all(|p| p.contract_version != CONTRACT_VERSION));
+        let (_, loaded) = loaded(f.data.path()).unwrap();
+        assert!(loaded.pending.iter().all(Pending::cancelled));
+        saved["methods"][0]["unexpected_authority"] = serde_json::json!(true);
+        write_secret_bytes_atomic(&file, &serde_json::to_vec(&saved).unwrap()).unwrap();
+        assert!(read(f.data.path()).is_err());
+        saved["methods"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("unexpected_authority");
+        let duplicate = format!(
+            "{{\"schema\":\"ignored\",{}",
+            serde_json::to_string(&saved)
+                .unwrap()
+                .trim_start_matches('{')
+        );
+        write_secret_bytes_atomic(&file, duplicate.as_bytes()).unwrap();
+        assert!(read(f.data.path()).is_err());
+    }
+
+    #[test]
+    fn wallet_round3_begin_cancel_rate_window() {
+        let f = fixture();
+        enabled(&f);
+        let mut store = read(f.data.path()).unwrap();
+        for p in &mut store.pending {
+            p.issued_at = now_ts() - 61;
+        }
+        write(f.data.path(), &store).unwrap();
+        for _ in 0..32 {
+            let b = begin(
+                f.data.path(),
+                ORIGIN,
+                "home-test",
+                input("signin", "", &f.address),
+                None,
+            )
+            .unwrap();
+            cancel(f.data.path(), &b.ceremony_id, BROWSER, ORIGIN).unwrap();
+        }
+        assert!(
+            matches!(begin(f.data.path(), ORIGIN, "home-test", input("signin", "", &f.address), None), Err(e) if e.is::<Capacity>())
+        );
+        let mut store = read(f.data.path()).unwrap();
+        for p in &mut store.pending {
+            p.issued_at = now_ts() - 61;
+        }
+        write(f.data.path(), &store).unwrap();
+        assert!(begin(
+            f.data.path(),
+            ORIGIN,
+            "home-test",
+            input("signin", "", &f.address),
+            None
+        )
+        .is_ok());
+    }
+
+    #[test]
     fn wallet_signed_resources_mean_the_same_for_all_signers() {
         for action in ["add", "signin"] {
             let f = fixture();
@@ -1996,7 +2116,7 @@ pub(crate) mod tests {
         assert!(matches!(refused, Err(err) if err.is::<Capacity>()));
     }
     #[test]
-    fn wallet_committed_signin_survives_transport_expiry_and_signing_deadline() {
+    fn wallet_round3_committed_replay_ends_at_deadline_session_survives() {
         let f = fixture();
         enabled_relay(&f);
         let mut req = input("signin", "", &f.address);
@@ -2019,12 +2139,18 @@ pub(crate) mod tests {
             .expires_at = now_ts() - 1;
         write(f.data.path(), &store).unwrap();
         expire_attempt(f.data.path(), &b.ceremony_id, &b.instance_id).unwrap();
-        assert_eq!(
-            complete(f.data.path(), ORIGIN, &proof, None, |_| panic!("retry")).unwrap(),
-            result
-        );
-        cancel(f.data.path(), &b.ceremony_id, BROWSER, ORIGIN).unwrap();
-        assert!(complete(f.data.path(), ORIGIN, &proof, None, |_| panic!("revoked")).is_err());
+        assert!(complete(f.data.path(), ORIGIN, &proof, None, |_| panic!(
+            "late retry"
+        ))
+        .is_err());
+        let (auth, store) = loaded(f.data.path()).unwrap();
+        assert!(store
+            .sessions
+            .iter()
+            .any(
+                |s| Some(s.grant.session_id.as_str()) == result["session_id"].as_str()
+                    && session_active(&store, &auth, s, now_ts())
+            ));
     }
 
     #[test]
@@ -2041,6 +2167,7 @@ pub(crate) mod tests {
         for p in &mut store.pending {
             if p.action == "signin" {
                 p.expires_at = now_ts() - 1;
+                p.issued_at = now_ts() - 181;
             }
         }
         write(f.data.path(), &store).unwrap();

@@ -131,12 +131,6 @@ fn sign_in_route(path: &str, method: &Method) -> bool {
                     | "/api/auth/wallet/signin/select"
                     | "/api/auth/wallet/signin/complete"
                     | "/api/auth/wallet/cancel"
-                    | "/api/auth/wallet/register/begin"
-                    | "/api/auth/wallet/register/complete"
-                    | "/api/auth/wallet/recover/begin"
-                    | "/api/auth/wallet/recover/complete"
-                    | "/api/auth/wallet/approve/begin"
-                    | "/api/auth/wallet/approve/complete"
                     | "/api/auth/owner-recovery/begin"
                     | "/api/auth/owner-recovery/complete"
             )

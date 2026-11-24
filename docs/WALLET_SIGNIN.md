@@ -45,7 +45,7 @@ transport. JSON is `{"error":"wallet_signin_refused"}` for unknown wallet, wrong
 browser, expired/replayed proof and removed method. Signed-out responses disclose
 no account names or ownership. A refused completion grants no session. A lost
 completion response may be retried with identical input while the ceremony is
-live; it returns the same result. A committed sign-in can return its saved result until the session expires. Cancel revokes a committed sign-in session; transport expiry keeps its saved result. Before a change is sent, Cancel ends the open ceremony. After an add or remove is sent, Home reads the method list to learn the result.
+live; it returns the same result. A committed sign-in returns its saved result only before the ceremony deadline. After that deadline, the browser starts a new sign-in. The confirmed session keeps its own expiry. Cancel revokes a committed sign-in session; transport expiry keeps its saved result. Before a change is sent, Cancel ends the open ceremony. After an add or remove is sent, Home reads the method list to learn the result.
 
 ## List and manage methods
 
@@ -124,7 +124,7 @@ listed method has the value `true`. Each new method change needs new approval.
 An identical completion retry returns its saved result while the ceremony and
 original authority remain live, without another approval or authority change.
 A proof from another ceremony or the earlier enrollment contract is refused.
-Begin leaves wallet authority unchanged.
+Begin leaves wallet authority unchanged. Runtime limits begins in a 60-second window, including cancelled attempts: 32 per browser commitment and authority class, with 64 across the Home.
 
 ## Signed-out sign-in
 

@@ -591,6 +591,14 @@ async fn create_browser_wallet_transaction_request(
     let effect_id =
         runtime_transaction_effect_id(BROWSER_TRANSACTION_SOURCE, authority, &stable_request)
             .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    let approval_reason = format!(
+        "Browser asks you to send a payment on {}.",
+        match network {
+            "esc-mainnet" => "Elastos Smart Chain",
+            "base-mainnet" => "Base",
+            _ => "the selected network",
+        }
+    );
     let approval = ensure_runtime_transaction_approval(
         state,
         authority,
@@ -605,7 +613,7 @@ async fn create_browser_wallet_transaction_request(
             to: to.to_string(),
             value: value.to_string(),
             data: data.to_string(),
-            approval_reason: format!("Browser page requests {method} on {network}"),
+            approval_reason,
             metadata: serde_json::json!({
                 "method": method,
                 "page_url": page_url,
@@ -756,7 +764,7 @@ async fn create_browser_wallet_signature_request(
         (
             "browser_typed_data_sign",
             "browser_typed_data_sign",
-            format!("Browser page requests {method}"),
+            "Browser asks you to sign the displayed data.".to_string(),
             serde_json::json!([requested_address.clone(), canonical.clone()]),
             None,
             Some(typed_data),
@@ -787,7 +795,7 @@ async fn create_browser_wallet_signature_request(
         (
             "browser_personal_sign",
             "browser_personal_sign",
-            format!("Browser page requests {method}"),
+            "Browser asks you to sign a message.".to_string(),
             serde_json::json!([message, requested_address.clone()]),
             Some(message.to_string()),
             None,

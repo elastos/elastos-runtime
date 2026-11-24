@@ -272,7 +272,7 @@ async fn wallet_creation_recovery_approval_have_no_routes() {
                 Some(json!({})),
             )
             .await;
-            assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+            assert_eq!(status, StatusCode::FORBIDDEN);
         }
     }
 }
