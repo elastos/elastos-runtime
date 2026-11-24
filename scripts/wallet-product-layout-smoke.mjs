@@ -816,7 +816,7 @@ async function run() {
       const rect = drawer.getBoundingClientRect();
       return rect.left >= 0 && rect.right <= window.innerWidth;
     }, undefined, { timeout: 5000 });
-    await controlRect(frame, "#wallet-settings-drawer", "desktop settings drawer");await capture(frame,"wallet-settings-addresses","Wallet settings lists connected addresses and Phone wallet.");
+    await controlRect(frame, "#wallet-settings-drawer", "desktop settings drawer");await capture(frame,"wallet-settings-addresses","Wallet settings lists connected addresses and WalletConnect.");
     await frame.getByRole("button", { name: "Close settings" }).click();
     await frame.locator("#wallet-settings-drawer").waitFor({ state: "hidden", timeout: 5000 });
 
@@ -936,17 +936,17 @@ async function run() {
     console.log("Wallet approved-send dismissal PASS: visible recovery card, Dismiss, one Runtime request, removed after refresh");
     server.state.accounts = [{ account_id: "phone-account", address: sendAddress, label: "",
       connector_id: "wallet-walletconnect", proof_type: "siwe", chain_namespace: "eip155:8453",
-      wallet_display_name: "Scripted phone wallet", wallet_mark: "wallet" }];
+      wallet_display_name: "Scripted wallet", wallet_mark: "wallet" }];
     server.state.defaultAccounts = [];
     server.state.approvals = [];
     await railPage.reload({ waitUntil: "networkidle" });
     const phoneFrame = await walletFrame(railPage);
-    await phoneFrame.locator(".wallet-account .wallet-card-name").filter({ hasText: "Scripted phone wallet" }).waitFor();
+    await phoneFrame.locator(".wallet-account .wallet-card-name").filter({ hasText: "Scripted wallet" }).waitFor();
     await phoneFrame.locator(".wallet-account").getByText("Name reported by wallet", { exact: true }).waitFor({ timeout: 4000 });
     if (process.env.PRODUCT_FAULT_PICTURES) await screenshot(phoneFrame, join(process.env.PRODUCT_FAULT_PICTURES, "211-wallet-card.png"));
     await phoneFrame.locator("#wallet-settings-open").click();
     const linked = phoneFrame.locator("#wallet-settings-drawer");
-    await linked.getByText("Scripted phone wallet", { exact: true }).waitFor({ timeout: 4000 });
+    await linked.getByText("Scripted wallet", { exact: true }).waitFor({ timeout: 4000 });
     await linked.getByText("Name reported by wallet", { exact: true }).waitFor();
     await linked.evaluate(async drawer => {
       await Promise.all(drawer.getAnimations().map(animation => animation.finished));

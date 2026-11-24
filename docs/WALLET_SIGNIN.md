@@ -20,7 +20,7 @@ Removal ends the wallet's sessions and pending sign-in attempts. Concurrent chan
 serialized. Recovery Kit recovery keeps the passkey recovery flow and clears the
 recovered account's wallets.
 
-Supported signers are passkeys, phone wallets through WalletConnect, MetaMask-compatible ordinary EVM keys
+Supported signers are passkeys, wallets through WalletConnect, MetaMask-compatible ordinary EVM keys
 and UniSat Bitcoin mainnet proofs. Unsupported Bitcoin networks are refused before
 a ceremony starts. WalletConnect supports Elastos Smart Chain (20) and Base
 (8453). Contract-wallet signatures require a separate contract and are refused.
@@ -279,25 +279,25 @@ and `wallet_signin_relay_notice`. Runtime derives these from the current methods
 Account names, addresses, networks and method IDs stay in the authenticated list.
 
 Home has one Sign in button. It offers the passkey when one exists, browser wallets
-when their extensions are present, and Phone wallet when Runtime reports a
+when their extensions are present, and WalletConnect when Runtime reports a
 compatible WalletConnect method. A fresh browser and the desktop app use the same
 Runtime list. Signed-out choices show the wallet name and icon. The browser stores
 only the remembered choice (passkey or connector kind), with no wallet identity
 hints. Other options opens the list again.
 
 Accounts groups sign-in methods under each person. Add wallet uses Wallet's
-chooser with a Connected, Not connected or Already signs in state for each
-connector. A choice with no connected wallet opens its existing connection window. Home waits for Wallet's saved account summary.
-Choosing a connected wallet signs the Runtime `add` message once, then requests one
-passkey approval. Runtime adds the sign-in method atomically and Home closes the
-request. Each wallet row has one Remove action. Wallet owns payment connections.
+chooser. A wallet that already signs in is marked Already signs in and disabled.
+Choose MetaMask, UniSat or WalletConnect to share its address, sign the Runtime
+`add` message once, then approve with a passkey. Runtime adds the sign-in method
+atomically and Home closes the request. Each wallet row has one Remove action.
+Wallet owns payment connections; adding a sign-in method creates only sign-in access.
 
-Authenticated WalletConnect signing reuses its admitted connector window and saved
-payment session, with its existing internet permission. Signed-out Phone wallet
-shows Runtime's short relay notice beside the option. Selecting it consents to a
-short temporary connection and opens the shared QR screen. Runtime checks the
-wallet proof and current method after pairing. These transport and payment
-permissions remain separate.
+A wallet already connected in Wallet can use its existing connection for Add.
+Other WalletConnect choices show the relay disclosure before pairing and use a
+short temporary connection with the shared QR screen. Runtime's relay notice
+stays visible before passkey approval. Runtime checks the wallet proof and current
+method after pairing. Wallet payment permission and temporary sign-in permission
+remain separate.
 
 ## Explicit account removal
 
@@ -360,7 +360,7 @@ action-specific approval flow.
 Runtime chooses one fixed sentence for each signed action: "Sign in to this Home.",
 "Add this wallet as a way to sign in to this Home.", and "Connect this wallet to
 Wallet on this Home." Removal uses a passkey approval and asks for zero wallet
-signatures. MetaMask, the phone wallet and UniSat use the same sentence per action.
+signatures. MetaMask, the wallet and UniSat use the same sentence per action.
 Home, ceremony, browser commitment and intent use `elastos://auth/home/<id>`,
 `elastos://auth/ceremony/<id>`, `elastos://auth/browser/<commitment>` and
 `elastos://auth/intent/<intent>`. The Home ID is the same literal ID for all
@@ -368,7 +368,7 @@ signers. Add intent includes the account ID and the method digest. Sign-in binds
 the ceremony without an Account field. Origin, address, network, nonce and time
 limits remain bound in the message fields. Runtime verifies the exact message.
 
-A wallet already connected in Wallet signs once for Add, followed by one passkey
-approval. A new wallet first signs the separate Wallet connection proof, then
-signs Add. Connection creates a Wallet record with its own permissions; Add
-creates sign-in authority. Runtime keeps those effects separate.
+Every Add takes one wallet signature, followed by one passkey approval. The wallet
+shares its address through extension approval or WalletConnect pairing before
+signing the Add proof. This path creates a sign-in method. To use the wallet for
+payments, connect it separately in Wallet.

@@ -127,3 +127,9 @@ test('chooser resolves the current external account rather than the first used m
   const absent=await currentConnectedSigninMethods(rows,{providers:[{provider:{request:async({method})=>method==='eth_accounts'?['0x'+'56'.repeat(20)]:'0x2105'}}],unisat:null});
   assert.deepEqual(absent,[],'a new active account can connect instead of inheriting a different account sign-in flag');
 });
+
+test('only a saved payment connection can select an existing WalletConnect session',async()=>{
+ const method={connector:'walletconnect',address,chain_id:20,network:'',sign_in_enabled:true};
+ const rows=await currentConnectedSigninMethods([{...method,paymentConnected:false},{...method,paymentConnected:true}],{providers:[],unisat:null});
+ assert.equal(rows.length,1);assert.equal(rows[0].paymentConnected,true);
+});

@@ -44,7 +44,7 @@ const connectorTokens = Object.freeze({
 const connectorTitles = Object.freeze({
   "wallet-metamask": "MetaMask",
   "wallet-unisat": "UniSat",
-  "wallet-walletconnect": "Phone wallet",
+  "wallet-walletconnect": "WalletConnect",
 });
 const issuedLaunchTokens = new Map();
 const state = {
@@ -911,6 +911,7 @@ try {
   assert(walletWindowBeforeConnectors, "Home GUI did not expose the Wallet window");
   assert(walletUiBeforeConnectors.settingsOpen === false, "Wallet fixture opened settings early");
 
+  let walletRecoveryLaunches=0;
   for (const [target, connectLabel] of Object.entries(connectorLabels)) {
     // Connector controls arrive with the summary, after the static Wallet HTML.
     await wallet.locator(`[data-wallet-open-method="${target}"]`).waitFor({
@@ -1092,6 +1093,17 @@ try {
       await wallet.waitForFunction(() => document.querySelector("#wallet-account-state")?.textContent.trim() === "0 addresses", null, {timeout:4000});
     }
 
+    // Recovery opens the admitted Wallet only; queries and payload handoffs stay separate.
+    await homeGui.evaluate(()=>{window.round5WalletOpens=[];addEventListener('message',event=>{if(event.data?.type==='home:gui-command'&&event.data.command==='open-target'&&event.data.target==='wallet')round5WalletOpens.push(event.data);});});
+    await connector.evaluate(()=>{const homeToken=new URLSearchParams(location.hash.slice(1)).get('home_token'),origin=new URLSearchParams(location.search).get('home_origin');for(const message of [{type:'home:open-target',target:'wallet',query:{}},{type:'home:open-target-with-payload',target:'wallet',payload:{type:'elastos.wallet.connect/v1',target:'wallet-metamask'}}])top.postMessage({...message,homeToken},origin);});
+    await page.waitForTimeout(150);assert.equal(await homeGui.evaluate(()=>round5WalletOpens.length),0,'connector recovery rejects queries and payloads');
+    const beforeRecovery=state.launches.wallet;
+    await connector.evaluate(()=>top.postMessage({type:'home:open-target',target:'wallet',homeToken:new URLSearchParams(location.hash.slice(1)).get('home_token')},new URLSearchParams(location.search).get('home_origin')));
+    await homeGui.waitForFunction(()=>document.querySelector('.window[data-target="wallet"]')?.classList.contains('window-active'));
+    walletRecoveryLaunches+=state.launches.wallet-beforeRecovery;
+    assert.equal((await homeWindowSnapshot(homeGui,'wallet')).id,walletWindowBeforeConnectors.id,'recovery keeps the same Wallet');
+    await homeGui.locator(`.window[data-target="${target}"] .window-head`).click({position:{x:80,y:14}});
+
     const connectorClose = homeGui.locator(
       `.window[data-target="${target}"] [data-action="close"]`,
     );
@@ -1136,7 +1148,7 @@ try {
   // mounted Wallet surface gets one launch; connector opens reuse the window.
   const railMounted = await homeGui.locator('#wallet-rail-frame')
     .evaluate(frame => Boolean(frame.dataset.route));
-  assert(state.launches.wallet === 1 + Number(railMounted),
+  assert(state.launches.wallet === 1 + Number(railMounted) + walletRecoveryLaunches,
     "Home launched Wallet once per mounted surface", state);
   assert(
     state.launches["wallet-metamask"] === 2 &&

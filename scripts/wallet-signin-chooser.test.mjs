@@ -15,10 +15,10 @@ test('Accounts Add wallet uses Wallet chooser and a second click returns to the 
     await wallet.locator('#wallet-signers[data-signin=options]').waitFor();
     assert.equal(await page.locator('.signin-dialog').count(),0);
     assert.equal(await wallet.locator('#wallet-methods .wallet-method-head').count(),3);
-    assert.match(await wallet.locator('#wallet-methods').innerText(),/Connected/);
+    assert.doesNotMatch(await wallet.locator('#wallet-methods').innerText(),/Connected|Not connected/);
     const states=await wallet.locator('.wallet-method-head > div > span').allTextContents();
-    assert(states.includes('Connected'));assert(states.includes('Not connected'));
-    assert(states.every(word=>['Connected','Not connected','Already signs in'].includes(word)));
+    assert.equal(await wallet.getByRole('button',{name:'Choose',exact:true}).count(),3);assert(states.some(word=>word.includes('relay')));
+    assert(states.every(word=>word==='Already signs in'||word.includes('relay')));
     assert.doesNotMatch(await wallet.locator('#wallet-signers').innerText(),/New wallet|Connect another|Built-in/);
     await page.evaluate(()=>document.querySelector('#show-system').click());
     await system.getByRole('button',{name:'Add wallet',exact:true}).click();
@@ -54,7 +54,7 @@ test('a used MetaMask account does not disable another current connected account
     await page.goto(fixture.origin+'/home/');await page.waitForFunction(()=>window.fixtureReady);await page.evaluate(()=>window.showFixtureApps());
     const system=page.frameLocator('iframe[title=system]'),wallet=page.frameLocator('iframe[title=wallet]');
     await system.getByRole('button',{name:'Add wallet',exact:true}).click();await wallet.locator('#wallet-signers[data-signin=options]').waitFor();
-    const choice=wallet.locator('.wallet-method-head').filter({hasText:'MetaMask'});assert.match(await choice.innerText(),/Connected/);assert(await choice.getByRole('button',{name:'Choose',exact:true}).isEnabled());
+    const choice=wallet.locator('.wallet-method-head').filter({hasText:'MetaMask'});assert.doesNotMatch(await choice.innerText(),/Connected|Already signs in/);assert(await choice.getByRole('button',{name:'Choose',exact:true}).isEnabled());
     await choice.getByRole('button',{name:'Choose',exact:true}).click();
     await system.locator('[data-wallet-method]').nth(1).waitFor();assert.equal(fixture.state.methods.length,2);assert.equal(fixture.state.methods[1].address,evmAddress);
   }finally{await context.close();await browser.close();await fixture.close();}
@@ -83,20 +83,20 @@ test('a focus refresh that finishes after Choose preserves the active connector 
   }finally{release?.();await context.close();await browser.close();await fixture.close();}
 });
 
-test('a newly connected wallet stays marked Connected when its add signature is refused',async()=>{
+test('a new sign-in wallet whose proof is refused leaves Wallet payment records empty',async()=>{
   const fixture=await signinFixture(),browser=await requireProductSmokePlaywright().chromium.launch({headless:true});
   const context=await browser.newContext();await context.addInitScript(installSigninProviders,{evmAddress,bitcoinAddress,theme:'light'});
   const page=await context.newPage();page.setDefaultTimeout(10000);
   try {
     fixture.state.methods=[];fixture.state.connected=[];
-    await page.goto(fixture.origin+'/home/');await page.waitForFunction(()=>window.fixtureReady);await page.evaluate(()=>window.showFixtureApps());
+    await page.goto(fixture.origin+'/home/');await page.waitForFunction(()=>window.fixtureReady);await page.evaluate(()=>{window.showFixtureApps();window.walletFixture.mode='rejected';});
     const system=page.frameLocator('iframe[title=system]'),wallet=page.frameLocator('iframe[title=wallet]');
     await system.getByRole('button',{name:'Add wallet',exact:true}).click();await wallet.locator('#wallet-signers[data-signin=options]').waitFor();
     await wallet.locator('.wallet-method-head').filter({hasText:'MetaMask'}).getByRole('button',{name:'Choose',exact:true}).click();
-    const connector=page.frameLocator('iframe[title=wallet-metamask]');await connector.getByRole('button',{name:'Connect wallet',exact:true}).waitFor();
-    await page.evaluate(()=>{let signatures=0;addEventListener('eip6963:announceProvider',event=>{const provider=event.detail.provider;if(provider.round2Wrapped)return;provider.round2Wrapped=true;const request=provider.request.bind(provider);provider.request=input=>input.method==='personal_sign'&&++signatures===2?Promise.reject({code:4001}):request(input);});dispatchEvent(new Event('eip6963:requestProvider'));});await connector.getByRole('button',{name:'Connect wallet',exact:true}).click();
-    await wallet.locator('#wallet-signers[data-signin=error]').waitFor();assert.match(await wallet.locator('.wallet-method-head').filter({hasText:'MetaMask'}).innerText(),/Connected/);
-    assert.equal(fixture.state.methods.length,0);assert.equal(fixture.state.connected.length,1);
+    await wallet.locator('#wallet-signers[data-signin=error]').waitFor();
+    assert.equal(await page.locator('iframe[title=wallet-metamask]').count(),0);
+    assert.equal(await page.evaluate(()=>window.walletFixture.calls.filter(c=>c.method==='personal_sign').length),1);
+    assert.equal(fixture.state.methods.length,0);assert.equal(fixture.state.connected.length,0);
   }finally{await context.close();await browser.close();await fixture.close();}
 });
 

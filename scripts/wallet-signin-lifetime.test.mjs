@@ -67,17 +67,17 @@ test('phone sign-in returns from QR to its waiting row in the same sheet',async(
   const page=await context.newPage();page.setDefaultTimeout(10000);
   try{
     await page.goto(fixture.origin+'/home/?desktop-app');await page.waitForFunction(()=>window.fixtureReady);
-    await page.getByRole('button',{name:'Sign in',exact:true}).click();await page.locator('.signin-dialog[data-state=options] .connection-option').filter({hasText:'Phone wallet'}).click();
+    await page.getByRole('button',{name:'Sign in',exact:true}).click();await page.locator('.signin-dialog[data-state=options] .connection-option').filter({hasText:'WalletConnect'}).click();
     await page.locator('.signin-dialog[data-state=pairing]').waitFor();
-    await page.locator('iframe[title="Phone wallet"]').evaluate(f=>{f.contentWindow.postMessage('fixture-sign-pending','*');f.contentWindow.postMessage('fixture-pair','*');});
+    await page.locator('iframe[title="WalletConnect"]').evaluate(f=>{f.contentWindow.postMessage('fixture-sign-pending','*');f.contentWindow.postMessage('fixture-pair','*');});
     const sheet=page.locator('.signin-dialog[data-state=signing]');await sheet.waitFor();
-    assert.equal(await sheet.locator('.connection-option').filter({hasText:'Waiting for Phone wallet…'}).count(),1);
+    assert.equal(await sheet.locator('.connection-option').filter({hasText:'Waiting for WalletConnect…'}).count(),1);
     assert.equal(await sheet.locator('details,summary,pre').count(),0);assert.equal(await page.locator('#fixture-desktop iframe').count(),0);
     await sheet.getByRole('button',{name:'Cancel',exact:true}).click();
   }finally{await context.close();await browser.close();await fixture.close();}
 });
 
-test('a connection retried after its first expiry still continues the same Add wallet',async()=>{
+test('expired address selection retries Add with one proof and zero payment records',async()=>{
   const fixture=await signinFixture(),browser=await requireProductSmokePlaywright().chromium.launch({headless:true});
   const context=await browser.newContext();await context.addInitScript(installSigninProviders,{evmAddress,bitcoinAddress,theme:'light'});
   const page=await context.newPage();page.setDefaultTimeout(10000);
@@ -86,9 +86,17 @@ test('a connection retried after its first expiry still continues the same Add w
     await page.goto(fixture.origin+'/home/');await page.waitForFunction(()=>window.fixtureReady);await page.evaluate(()=>window.showFixtureApps());
     await page.clock.install();const system=page.frameLocator('iframe[title=system]'),wallet=page.frameLocator('iframe[title=wallet]');
     await system.getByRole('button',{name:'Add wallet',exact:true}).click();await wallet.locator('#wallet-signers[data-signin=options]').waitFor();
+    await page.evaluate(()=>window.walletFixture.mode='pending');
     await wallet.locator('.wallet-method-head').filter({hasText:'MetaMask'}).getByRole('button',{name:'Choose',exact:true}).click();
-    const connector=page.frameLocator('iframe[title=wallet-metamask]');await connector.getByRole('button',{name:'Connect wallet',exact:true}).waitFor();
-    await page.clock.fastForward(180001);fixture.state.clockOffsetMs=180001;await connector.getByRole('button',{name:'Connect wallet',exact:true}).click();await system.locator('[data-wallet-method]').waitFor();assert.equal(fixture.state.methods.length,1);assert.equal(await page.locator('iframe[title=wallet-metamask]').count(),0,'first-use connection closes before sign-in authority finishes');
+    await wallet.locator('#wallet-signers[data-signin=connecting]').waitFor();
+    await page.clock.fastForward(180001);fixture.state.clockOffsetMs=180001;
+    await wallet.locator('#wallet-signers[data-signin=error]').waitFor();
+    await page.evaluate(()=>{window.walletFixture.mode='normal';for(const job of window.walletFixture.pending.splice(0))job.resolve(job.result);});
+    await wallet.getByRole('button',{name:'Try again',exact:true}).click();
+    await system.locator('[data-wallet-method]').waitFor();assert.equal(fixture.state.methods.length,1);
+    assert.equal(fixture.state.connected.length,0);assert.equal(await page.locator('iframe[title=wallet-metamask]').count(),0);
+    assert.equal(await page.evaluate(()=>window.walletFixture.calls.filter(c=>c.method==='personal_sign').length),1);
+
   }finally{await context.close();await browser.close();await fixture.close();}
 });
 

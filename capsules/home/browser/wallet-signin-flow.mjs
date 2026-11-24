@@ -6,7 +6,7 @@ export function walletSigninOriginAllowed(value) {
   const url=new URL(value),host=url.hostname;
   return url.protocol==='https:' || url.protocol==='http:' && (host==='localhost' || host==='[::1]' || /^127\.(?:\d{1,3}\.){2}\d{1,3}$/.test(host));
 }
-export const connectorName = id => ({metamask:'MetaMask',walletconnect:'Phone wallet',unisat:'UniSat'})[id] || 'Wallet';
+export const connectorName = id => ({metamask:'MetaMask',walletconnect:'WalletConnect',unisat:'UniSat'})[id] || 'Wallet';
 export const walletNetwork = wallet => wallet.connector === 'unisat'
   ? (wallet.network === 'bitcoin' ? 'Bitcoin' : `Bitcoin ${wallet.network}`)
   : ({20:'Elastos Smart Chain',8453:'Base',1:'Ethereum',11155111:'Sepolia'})[wallet.chain_id] || `Network ${wallet.chain_id}`;
@@ -18,9 +18,9 @@ export function walletSigninError(error, action) {
   if(error?.code === 'changed') return 'Your wallet is using a different account or network; select Try again.';
   if(error?.code === 'wallet-unavailable') return 'Open the wallet with this account, then try again.';
   if(error?.code === 'payment-pending')return 'Finish or check the payment in Wallet, then select Try again.';
-  if(error?.code === 'permission') return 'Allow phone wallet internet access in Inbox, then try again.';
+  if(error?.code === 'permission') return 'Allow WalletConnect internet access in Inbox, then select Try again.';
   if(error?.code === 'missing') return 'Choose another wallet or use a browser with this wallet installed.';
-  if(error?.code === 'network') return 'Use Elastos Smart Chain or Base with your phone wallet.';
+  if(error?.code === 'network') return 'Use Elastos Smart Chain or Base with your wallet.';
   if(error?.code === 'bitcoin-network') return 'Switch UniSat to Bitcoin mainnet, then try again.';
   if(error?.code === 'disconnected') return 'The connection to your wallet ended; select Try again.';
   if([4001,5000,5001,5002,5003].includes(Number(error?.code))) return 'Your wallet declined the request; select Try again or choose another wallet.';

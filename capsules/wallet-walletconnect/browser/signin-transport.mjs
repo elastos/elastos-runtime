@@ -1,4 +1,5 @@
 // One opaque document owns one temporary SDK and its Runtime transport.
+import { walletConnectPeerName } from './walletconnect-client.mjs';
 import { connectWithView } from './walletconnect-pairing.mjs';
 import { createSigninTransportApi } from './signin-transport-api.mjs';
 import { installWalletConnectStorage } from './walletconnect-storage.mjs';
@@ -14,7 +15,8 @@ const readIdentity=async()=>{
   const address=accounts?.[0];
   if(typeof address!=='string' || !/^0x[0-9a-fA-F]{40}$/.test(address))throw fault('changed');
   if(![20,8453].includes(chain_id))throw fault('network');
-  return {connector:'walletconnect',address,chain_id,network:''};
+  const name=walletConnectPeerName(provider.session?.peer?.metadata?.name);
+  return {connector:'walletconnect',address,chain_id,network:'',...(name?{name}:{})};
 };
 const check=async()=>{
   const current=await readIdentity();

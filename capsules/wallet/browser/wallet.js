@@ -443,10 +443,11 @@ function onSigninChooserCommand(event) {
     if(action==='cancel')leaveSigninChooser();
   }};
   document.documentElement.dataset.signinChooser='true';signersSection.dataset.signin=state.stage;
-  signersSection.querySelector('h2').textContent='Choose wallet';
+  signersSection.querySelector('h2').textContent=['options','loading','list-error'].includes(state.stage)?'Choose wallet':'Add wallet';
   document.querySelector('#wallet-signin-actions')?.remove();
   const actions=document.createElement('div');actions.id='wallet-signin-actions';actions.className='wallet-modal-actions';
-  const status=textNode('p',state.message||({loading:'Loading wallets…',connecting:'Continue in the connection window.',signing:'Continue in your wallet.',passkey:'Confirm with your passkey.',completing:'Saving change…'}[state.stage]||''),'wallet-state');status.setAttribute('role','status');actions.append(status);
+  const status=textNode('p',state.message||({loading:'Loading wallets…',connecting:'Continue in the connection window.',signing:state.walletName?`Continue in ${state.walletName}.`:'Continue in your wallet.',passkey:'Confirm with your passkey.',completing:'Saving change…'}[state.stage]||''),'wallet-state');status.setAttribute('role','status');actions.append(status);
+  if(state.approvalNotice)actions.append(textNode('p',state.approvalNotice,'wallet-state'));
   for(const [action,label] of state.stage==='approval'?[['approve','Use passkey']]:state.stage==='unknown'?[['check','Check again']]:['error','list-error'].includes(state.stage)?[['retry','Try again']]:[])actions.append(modalButton(label,()=>signinChooser?.act(action)));
   if(!['completing','unknown'].includes(state.stage))actions.append(modalButton('Cancel',()=>signinChooser?.act('cancel'),true));signersSection.append(actions);
   renderMethods(buildViewAccounts(),currentApprovalMethods);

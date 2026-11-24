@@ -28,7 +28,7 @@ for(const engine of ['chromium','webkit']){
   const text=await r.frame.locator('main').innerText();assert.match(text,/Keep this window open until disconnecting finishes/);assert.doesNotMatch(text,/after you close|Close this window/);
   clearing.release();await r.state('disconnected');
  });
- test(`a stopped account confirmation keeps the phone wallet name in ${engine}`,windowTestOptions(engine,60000),async t=>{
+ test(`a stopped account confirmation keeps the wallet name in ${engine}`,windowTestOptions(engine,60000),async t=>{
   const r=await linkedWindow(t,engine,{sourceRef:process.env.WALLETCONNECT_LINKED_BEFORE==='access'?'40af50bac2d0047500185205c0a50cea3744677c':undefined});
   await r.link();await r.peer.changeAccount();await r.state('account-changed');r.peer.choose({request:'silent'});
   await r.click('send-message');await r.state('link-wait');await r.click('stop-waiting');await r.state('link-cancelled');await r.capture('linked-confirmation-stopped');
@@ -64,7 +64,7 @@ for(const engine of ['chromium','webkit']){
   r.fixture.state.expiredLaunch=true;await r.refresh();await r.state('window-expired');await r.capture('linked-window-expired');
   const text=(await r.frame.locator('main').innerText()).replace(/\s+/g,' ');
   assert.doesNotMatch(text,/Close this window/,'the Close button owns this action');
-  assert.match(text,/Choose Phone wallet in Wallet/);
+  assert.match(text,/Choose WalletConnect in Wallet/);
   assert.equal(await r.frame.getByRole('button',{name:'Close window',exact:true}).count(),1);
  });
  test(`reopened linked window names the data it could not read in ${engine}`,windowTestOptions(engine,60000),async t=>{

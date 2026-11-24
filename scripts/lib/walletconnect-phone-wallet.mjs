@@ -5,7 +5,7 @@ import {walletConnectFixtureRequire as require} from './walletconnect-relay-fixt
 const {SignClient} = require('@walletconnect/sign-client');
 const {generatePrivateKey,privateKeyToAccount} = require('viem/accounts');
 const {keccak256} = require('viem');
-export async function scriptedPhoneWallet({projectId,relayUrl,chains=['eip155:8453'],storage=new Map(),name='Scripted phone wallet',emitApprovalEvents=false}={}) {
+export async function scriptedPhoneWallet({projectId,relayUrl,chains=['eip155:8453'],storage=new Map(),name='Scripted wallet',emitApprovalEvents=false}={}) {
   const accounts=[privateKeyToAccount(generatePrivateKey()),privateKeyToAccount(generatePrivateKey())];
   let account=accounts[0];
   const events=new EventEmitter(), trace=[], pending=[];

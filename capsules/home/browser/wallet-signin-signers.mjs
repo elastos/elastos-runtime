@@ -79,7 +79,7 @@ export async function selectSigninWallet(connector,options) {
 
 function selectWalletConnect({signal,transport,pairing,changed}) {
   return new Promise((resolve,reject)=>{
-    const frame=document.createElement('iframe');frame.hidden=true;frame.setAttribute('sandbox','allow-scripts');frame.title='Phone wallet';
+    const frame=document.createElement('iframe');frame.hidden=true;frame.setAttribute('sandbox','allow-scripts');frame.title='WalletConnect';
     const origin=location.origin;
     frame.src=`/apps/wallet-walletconnect/signin-transport.html?home_origin=${encodeURIComponent(origin)}`;
     let selected=false,sequence=0;const pending=new Map();
@@ -123,5 +123,5 @@ export async function currentConnectedSigninMethods(methods,{providers=signinBro
     read('unisat',async()=>{if(!unisat)throw fault('missing');const [accounts,network]=await Promise.all([unisat.getAccounts(),unisat.getNetwork()]);return [accounts,0,network==='livenet'?'bitcoin':network];}),
   ]);
   const evm=evmRows.flat();
-  return [...evm,...bitcoin,...methods.filter(row=>row.connector==='walletconnect')];
+  return [...evm,...bitcoin,...methods.filter(row=>row.connector==='walletconnect'&&row.paymentConnected===true)];
 }

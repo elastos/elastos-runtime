@@ -10,7 +10,7 @@ use tokio::time::Instant;
 
 pub(super) const GRANT: &str = "walletconnect.internet.grant";
 pub(super) const REVOKE: &str = "walletconnect.internet.revoke";
-const CONSENT: &str = "Phone wallet needs internet access for payment connections. Its relay service can see this computer's internet address. Your keys stay in your wallet. You can turn payment connections off here. Wallet sign-in uses separate, short connections when Sign in is on for a compatible wallet.";
+const CONSENT: &str = "WalletConnect needs internet access for payment connections. Its relay service can see this computer's internet address. Your keys stay in your wallet. You can turn payment connections off here. Wallet sign-in uses separate, short connections when Sign in is on for a compatible wallet.";
 const MAX_BYTES: usize = 1024 * 1024;
 const MAX_SOCKETS: usize = 2;
 const RESOURCE: &str = "elastos://wallet/walletconnect/internet";
@@ -27,7 +27,7 @@ pub(crate) use attempts::retire_inactive_attempts;
 struct AdminConsentRequired;
 impl std::fmt::Display for AdminConsentRequired {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Ask an admin of this Home to open Phone wallet, choose Connect wallet, then allow internet access in Inbox.")
+        f.write_str("Ask an admin of this Home to open WalletConnect, choose Connect wallet, then allow internet access in Inbox.")
     }
 }
 impl std::error::Error for AdminConsentRequired {}
@@ -177,7 +177,7 @@ fn request(c: &Consent) -> anyhow::Result<serde_json::Value> {
     }
     Ok(
         json!({"resource":"elastos://wallet/walletconnect/internet", "id":c.id, "issued_at":c.at,
-        "text":if c.status == "granted" { "Stop Phone wallet payment connections. Enabled wallet sign-in methods use separate short connections." } else { CONSENT }}),
+        "text":if c.status == "granted" { "Stop WalletConnect payment connections. Enabled wallet sign-in methods use separate short connections." } else { CONSENT }}),
     )
 }
 fn public(c: Option<&Consent>) -> serde_json::Value {
@@ -189,10 +189,10 @@ fn public(c: Option<&Consent>) -> serde_json::Value {
 async fn check_owner(state: &GatewayState, audit_success: bool) -> anyhow::Result<()> {
     let data = &state.data_dir;
     let c = load(data)?
-        .ok_or_else(|| anyhow::anyhow!("Review Phone wallet internet access in Inbox"))?;
+        .ok_or_else(|| anyhow::anyhow!("Review WalletConnect internet access in Inbox"))?;
     anyhow::ensure!(
         c.status == "granted",
-        "Review Phone wallet internet access in Inbox"
+        "Review WalletConnect internet access in Inbox"
     );
     let owner = crate::auth::load_principal_for_proof_binding(
         data,
@@ -343,7 +343,7 @@ pub(super) async fn answer(
                 clear_all_storage(&state.data_dir)?;
                 c.cleanup_pending = false;
                 save(&state.data_dir, &c)?;
-                return Ok("Phone wallet payment connections are off. Enabled wallet sign-in methods use separate short connections.".into());
+                return Ok("WalletConnect payment connections are off. Enabled wallet sign-in methods use separate short connections.".into());
             }
         }
         _ => anyhow::bail!("Home could not complete this WalletConnect request. Try again."),
@@ -377,15 +377,15 @@ pub(super) fn notification(
             "walletconnect_internet_decision"
         }
         .into(),
-        title: "Phone wallet internet access".into(),
+        title: "WalletConnect internet access".into(),
         body: if pending {
             CONSENT
         } else if c.status == "granted" {
-            "Phone wallet payment connections can use the internet. Enabled wallet sign-in methods use separate short connections."
+            "WalletConnect payment connections can use the internet. Enabled wallet sign-in methods use separate short connections."
         } else if c.cleanup_pending {
-            "Phone wallet payment connections are off. Enabled wallet sign-in methods use separate short connections. Choose Finish disconnecting to remove the saved connection."
+            "WalletConnect payment connections are off. Enabled wallet sign-in methods use separate short connections. Choose Finish disconnecting to remove the saved connection."
         } else {
-            "Phone wallet payment connections are off. Enabled wallet sign-in methods use separate short connections."
+            "WalletConnect payment connections are off. Enabled wallet sign-in methods use separate short connections."
         }
         .into(),
         severity: if pending { "attention" } else { "info" }.into(),

@@ -5,7 +5,7 @@ import { createWalletConnectClient } from '../capsules/wallet-walletconnect/brow
 
 for (const addAccount of [false, true]) {
   for (const [kind, name, expectedName] of [
-    ['reported', 'Scripted phone wallet', 'Scripted phone wallet'],
+    ['reported', 'Scripted wallet', 'Scripted wallet'],
     ['long', 'x'.repeat(2000), 'x'.repeat(80)],
     ['missing', undefined, undefined],
     ['plain text', '<img src=x onerror=alert(1)>\u0000phone', '<img src=x onerror=alert(1)>phone'],

@@ -228,7 +228,7 @@ export function renderConnection(document,view) {
   return { top, frame, context, errors, extensionDiagnostics, reads, peerElapsed, action, state, async assertShared() { const feedback = await frame.locator('main').getAttribute('data-extension-feedback');
     if (feedback) {
       const texts = await frame.locator('.connection-status,.connection-notice').allTextContents();
-      if (feedback === 'local-wait') assert.equal(await frame.locator('.connection-notice').textContent(),kind === 'metamask' ? 'This request may still be in progress in your wallet. Closing this window does not cancel it. Check your wallet and Activity in Wallet before making another request. Open Wallet from Home to see Activity.' : 'A request may still be waiting in UniSat. Closing this window does not cancel it. Check UniSat and Activity in Wallet.');
+      if (feedback === 'local-wait') assert.equal(await frame.locator('.connection-notice').textContent(),kind === 'metamask' ? 'Check your wallet before making another request; it may still be in progress.' : 'Check UniSat before making another request; it may still be in progress.');
       else if (feedback === 'unknown-error') assert.deepEqual(texts, [requests === 'transaction' ? 'Home could not confirm the result. The transaction may have been sent.' : 'Home could not confirm the result.', kind === 'metamask' ? 'Before you make another request, check your wallet, then open Wallet from Home and check Activity.' : 'Before you try again, check UniSat and Activity in Wallet.']);
       else {
         assert.equal(feedback,'consumed');

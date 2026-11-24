@@ -104,10 +104,10 @@ The window lanes produce `wallet-loading`, `wallet-unavailable`, `home-wallet-re
 
 The request picker keeps every supplied summary (up to 100 other requests plus the selected one); other designed cards keep their short preview and View requests intent. Account cards accept up to 100 supplied rows and scroll; greater input is refused, not truncated. This is a bounded presentation batch, not a claim about Runtime's maximum account count. A producer needing a larger list needs paging and an agreed source bound. The pure summary reducer preserves Runtime's expired status and known request-kind titles; an unknown intent is Review request. Runtime rejected records with an approval time reduce to dismissed; explicit dismissed input remains compatible with legacy callers.
 
-The default site label element is exactly Site in Browser. Its following colon and space are separate fixed punctuation. “Requesting app” is a standalone fallback label; instructions use “the app”. WalletConnect recovery says “This request is unavailable here. To try again, go back to {app} and start a new request.”
+A Browser request shows its host, followed by in Browser. The Runtime origin is validated before Home displays its host. “Requesting app” is a standalone fallback label; instructions use “the app”. WalletConnect recovery says “This request is unavailable here. To try again, go back to {app} and start a new request.”
 
 
-`transport-reconnecting` is an additional connectionNotice value: Phone wallet is reconnecting. The window adds/removes it from its existing SDK transport events in idle, wait or result states. A latent request summary never substitutes an account address or request identity on a non-request screen; an expired latent summary does not turn a link screen into an expired request.
+`transport-reconnecting` is an additional connectionNotice value: WalletConnect is reconnecting. The window adds/removes it from its existing SDK transport events in idle, wait or result states. A latent request summary never substitutes an account address or request identity on a non-request screen; an expired latent summary does not turn a link screen into an expired request.
 
 `transactionHash` is a display-only 0x-prefixed 64-hex hash for supplied EVM transaction summaries. It remains full, selectable isolated text under Transaction hash:. It supplies no settlement or receipt, preserves the supplied outcome, and conservatively withholds Send/new-connection controls. The window supplies its already-validated base hash when its existing completion route fails. `showNextRequests` is an explicit opt-in to the existing local View requests control on terminal or blocked cards, from supplied other summaries. It preserves the outcome and grants no permission to send a consumed request again.
 
@@ -172,8 +172,7 @@ heading. A connection proof keeps its connection screen.
 `signinComplete` belongs only to the completed request screen. A completed add
 says {wallet} can now sign in to this Home. The controller accepts completion
 only for the matching review request ID. A wallet answer alone says Your wallet
-has answered. Phone wallet is the visible connector name; WalletConnect names
-the protocol. Wallet panels call a wallet address an address.
+has answered. WalletConnect is the visible connector and protocol name. Wallet panels call a wallet address an address.
 
 Request headings follow the names table: Review sign-in request, Review access request,
 Sign a credential, Review publishing request, Send transaction, Share your wallet

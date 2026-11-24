@@ -97,7 +97,7 @@ const HOME_GUI_AUTHORIZED_ATTACHMENT_SCHEMA =
 const WALLET_CONNECTOR_TARGET_TITLES = Object.freeze({
   "wallet-metamask": "MetaMask",
   "wallet-unisat": "UniSat",
-  "wallet-walletconnect": "Phone wallet",
+  "wallet-walletconnect": "WalletConnect",
 });
 const WALLET_CONNECTOR_TARGETS = new Set(
   Object.keys(WALLET_CONNECTOR_TARGET_TITLES),
@@ -2276,6 +2276,11 @@ window.addEventListener("message", (event) => {
     openHomeGuiTargetWithPayload("wallet", {
       type: "elastos.wallet.connect/v1", target: data.query.connect,
     }).catch((error) => console.error("home Wallet connection open failed", error));
+    return;
+  }
+  if (context.kind === "app-frame" && WALLET_CONNECTOR_TARGETS.has(context.targetId) && target === "wallet") {
+    if (!hasExactMessageKeys(data, ["type", "target", "homeToken"]) || !targetById(shellState.currentSummary, target)) return;
+    openTargetFromHomeGui("wallet", {query:{}}).catch(error => console.error("home Wallet recovery open failed", error));
     return;
   }
   if (!canOpenTargetFromHomeMessage(context, target)) {

@@ -1,3 +1,4 @@
+export const walletConnectPeerName = value => typeof value === 'string' ? Array.from(value.replace(/[\u0000-\u001f\u007f\ud800-\udfff]/gu,'')).slice(0,80).join('') : undefined;
 const networks = new Map([[1,'Ethereum'],[20,'Elastos Smart Chain'],[8453,'Base'],[11155111,'Sepolia test network']]);
 const noSupportedNetwork = 'Your wallet did not approve a network this Home supports. Select Connect wallet and choose Ethereum, Elastos Smart Chain, Base or Sepolia in your wallet.';
 const unavailableNetwork = id => `WalletConnect in this Home does not offer network ${id}.`;
@@ -303,7 +304,7 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
     signal.throwIfAborted();
     const revision = generation;
     const signer = await address(signal), namespace = await chain(signal);
-    if(action.kind==='signin-select')return {connector:'walletconnect',address:signer,chain_id:Number(namespace.split(':')[1]),network:''};
+    if(action.kind==='signin-select'){const name=walletConnectPeerName(provider.session?.peer?.metadata?.name);return {connector:'walletconnect',address:signer,chain_id:Number(namespace.split(':')[1]),network:'',...(name?{name}:{})};}
     if(action.kind==='signin') {
       if(typeof action.message!=='string'||!action.message||action.message.length>32768||!same(action.address,signer)||`eip155:${action.chain_id}`!==namespace)throw Object.assign(new Error('Wallet changed.'),{code:'changed'});
       const check=async()=>{signal.throwIfAborted();if(generation!==revision||!same(await address(signal),signer)||await chain(signal)!==namespace)throw Object.assign(new Error('Wallet changed.'),{code:'changed'});};
@@ -327,7 +328,7 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
       await check();
       operationDispatched = true;
       const reportedName = provider.session?.peer?.metadata?.name;
-      const walletPeerName = typeof reportedName === 'string' ? Array.from(reportedName.replace(/[\u0000-\u001f\u007f\ud800-\udfff]/gu,'')).slice(0,80).join('') : undefined;
+      const walletPeerName = walletConnectPeerName(reportedName);
       onPhase('ownership',{expiresAt:challenge.expires_at,address:signer,chain:namespace,name:walletPeerName || 'your wallet'});
       const signature = await request({method:'personal_sign',params:[signData(challenge.message),signer]}, 300, 'ownership',signal);
       await check();

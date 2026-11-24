@@ -45,7 +45,7 @@ test('round19 copies the pairing link from the real QR dialog and links Base wit
 });
 test('round19 a saved unlinked connection explains the wallet and resumes only with Finish linking',{timeout:60000},async t=>{
  const r=await setup(t);await r.unlinked();await r.reopen();await r.frame.locator('[data-state=saved-unlinked]').waitFor({timeout:15000});
- assert.equal(await r.frame.getByRole('button',{name:'Send message',exact:true}).isVisible(),true);assert.match(await r.frame.locator('main').innerText(),/Scripted phone wallet/,'saved unfinished connection names the wallet');
+ assert.equal(await r.frame.getByRole('button',{name:'Send message',exact:true}).isVisible(),true);assert.match(await r.frame.locator('main').innerText(),/Scripted wallet/,'saved unfinished connection names the wallet');
  r.peer.choose({request:'sign'});const proposals=r.peer.trace.filter(e=>e.kind==='proposal').length;await r.frame.getByRole('button',{name:'Send message',exact:true}).click();await r.frame.locator('[data-state=linked]').waitFor({timeout:15000});assert.equal(r.peer.trace.filter(e=>e.kind==='proposal').length,proposals);
 });
 test('round19 Connect wallet replaces a saved unlinked connection with a new QR',{timeout:60000},async t=>{
@@ -125,7 +125,7 @@ test('round19 a delayed account list cannot describe an already linked session a
  before=await r.frame.locator('main').innerText();assert.equal(r.fixture.state.calls.filter(row=>row.path.endsWith('/wallet/config')).length,previousConfigReads,'the delayed new account list starts no additional config read');}finally{release();}
  await r.frame.locator('[data-state=linked]').waitFor({timeout:15000});
  assert.equal(await r.frame.evaluate(()=>window.visibleStates.includes('saved-unlinked')||window.visibleStates.includes('account-changed')),false,'an account-list delay never displays unfinished linking');
- assert.match(before,/Loading your wallet connections/);assert.match(await r.frame.locator('main').innerText(),/Scripted phone wallet/);
+ assert.match(before,/Loading your wallet connections/);assert.match(await r.frame.locator('main').innerText(),/Scripted wallet/);
  assert.equal(r.fixture.state.verified,1,'status restore opens no new account proof');
 });
 

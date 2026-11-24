@@ -224,14 +224,14 @@ function walletViewDocument() {
 
 test('signing windows expose sr-only page titles and no visible connection-heading', () => {
   const document = walletViewDocument();
-  const linkedAccount = { name: 'Scripted phone wallet', mark: 'wallet', accounts: [{ address: '0x' + '1'.repeat(40), networks: ['Ethereum'] }] };
+  const linkedAccount = { name: 'Scripted wallet', mark: 'wallet', accounts: [{ address: '0x' + '1'.repeat(40), networks: ['Ethereum'] }] };
   const cases = [
     ['metamask', 'ready', null, 'MetaMask'],
     ['metamask', 'linked', linkedAccount, 'MetaMask'],
     ['unisat', 'ready', null, 'UniSat'],
     ['unisat', 'linked', linkedAccount, 'UniSat'],
-    ['walletconnect', 'nothing-saved', null, 'Phone wallet'],
-    ['walletconnect', 'linked', { ...linkedAccount, connection: 'WalletConnect' }, 'Phone wallet'],
+    ['walletconnect', 'nothing-saved', null, 'WalletConnect'],
+    ['walletconnect', 'linked', { ...linkedAccount, connection: 'WalletConnect' }, 'WalletConnect'],
   ];
   for (const [window, stage, account, title] of cases) {
     const view = connectionView({ window, stage, ...(account ? { account, localSafety: false } : {}) });

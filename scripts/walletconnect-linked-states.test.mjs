@@ -85,7 +85,7 @@ for(const engine of ['chromium','webkit']) {
   await r.click('back-to-connection');await r.state('linked');await r.click('add-account');await r.state('add-account');
   const clearing=r.holdApi('/api/apps/wallet-walletconnect/storage','DELETE');await r.click('disconnect');await clearing.entered;await r.state('disconnecting');await r.capture('disconnecting');clearing.release();await r.state('disconnected');await r.capture('disconnected');
   assert.doesNotMatch(await r.frame.locator('main').innerText(),/Remove account|funds stay unchanged/,'adding another wallet has no unrelated removal instructions');
-  const second=await scriptedPhoneWallet({projectId:'fixture-project',relayUrl:r.fixture.origin.replace('http','ws'),chains:['eip155:1','eip155:8453'],name:'Second phone wallet',emitApprovalEvents:true});t.after(()=>second.stop());
+  const second=await scriptedPhoneWallet({projectId:'fixture-project',relayUrl:r.fixture.origin.replace('http','ws'),chains:['eip155:1','eip155:8453'],name:'Second wallet',emitApprovalEvents:true});t.after(()=>second.stop());
   await r.click('connect');await r.state('qr-shown');await r.capture('second-wallet-qr');await r.click('copy-link');
   await second.pair(await r.page.evaluate(()=>window.copied));await r.state('linked');
   await r.wallet.locator('#wallet-account-state').filter({hasText:'2 addresses'}).waitFor({timeout:4000});await r.capture('two-wallets');

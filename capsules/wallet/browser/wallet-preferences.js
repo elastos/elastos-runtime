@@ -85,13 +85,14 @@ export function createWalletPreferences({
       if(signinRowsKey===key)return;
       signinRowsKey=key;
       methodsNode.replaceChildren();
-      for (const [connector,label,mark] of [['metamask','MetaMask','metamask'],['unisat','UniSat','btc'],['walletconnect','Phone wallet','wc']]) {
+      for (const [connector,label,mark] of [['metamask','MetaMask','metamask'],['unisat','UniSat','btc'],['walletconnect','WalletConnect','wc']]) {
         const method=signin.methods?.find(m=>m.connector===connector);
         const row=document.createElement('article');row.className='wallet-method wallet-method-head';
         row.append(methodMark(mark,METHOD_MONOGRAMS[mark],true,''));
-        const copy=document.createElement('div');copy.append(textNode('strong',label));
+        const copy=document.createElement('div');copy.append(textNode('strong',connector==='walletconnect'&&signin.walletName?signin.walletName:label));
         const used=method?.used===true;
-        copy.append(textNode('span',used?'Already signs in':method?.connected?'Connected':'Not connected'));
+        if(used)copy.append(textNode('span','Already signs in'));
+        else if(connector==='walletconnect')copy.append(textNode('span',signin.walletName?'WalletConnect':"Connects through a relay that can see this computer's internet address."));
         row.append(copy);
         const button=actionButton('Choose','walletSigninChoose',connector,true);
         button.disabled=used||signin.stage!=='options';
@@ -109,8 +110,8 @@ export function createWalletPreferences({
       { id: "btc", label: "UniSat", hint: "Connect with UniSat", connected: namesForMethod(accounts, "btc"), target: "wallet-unisat", addLabel: "Connect", openLabel: "Add address" },
       {
         id: "wc",
-        label: "Phone wallet",
-        hint: walletConnectAvailable ? "Connect with your phone wallet" : "Phone wallet connection is unavailable",
+        label: "WalletConnect",
+        hint: walletConnectAvailable ? "Connect with your wallet" : "WalletConnect connection is unavailable",
         connected: walletConnectConnected,
         target: walletConnectAvailable ? "wallet-walletconnect" : "",
         addLabel: "Connect",
@@ -234,7 +235,7 @@ export function createWalletPreferences({
       `Remove ${displayName}?`,
       remove.dataset.walletAccountManaged === "true"
         ? "Built-in addresses require their Wallet recovery key to restore later. Passkey confirmation is required."
-        : "Remove this address from Wallet. Your funds stay unchanged. This does not cancel a transaction in your wallet. Removing the last address connected through your phone wallet also clears Home's saved connection. Confirm with your passkey to remove the address.",
+        : "Remove this address from Wallet. Your funds stay unchanged. This does not cancel a transaction in your wallet. Removing the last address connected through your wallet also clears Home's saved connection. Confirm with your passkey to remove the address.",
       [textNode("p", remove.dataset.walletAccountDescription || "", "wallet-state")],
       [
         modalButton("Cancel", closeModal, true),

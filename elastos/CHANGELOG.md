@@ -10,8 +10,8 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 
 ### Added
 
-- In System > Accounts, Add wallet uses a connected wallet or opens Wallet to connect one. A connected wallet signs once, then a passkey approves sign-in access. A new wallet also signs to connect to Wallet. Sign in offers your available methods and can remember your choice on this device.
-- WalletConnect connects your phone wallet to Wallet. Scan the QR code with your wallet, or copy the connection link.
+- In System > Accounts, Add wallet takes one wallet signature, then a passkey approves sign-in access. Payment connections are managed separately in Wallet. Sign in offers your available methods and can remember your choice on this device.
+- WalletConnect connects your wallet to Wallet. Scan the QR code with your wallet, or copy the connection link.
 - Compatible browser wallets can connect through the MetaMask option. When MetaMask is installed, the option uses MetaMask.
 - To start Home without opening a browser window, use elastos home --browser --no-open. Updates and Undo keep this choice.
 
@@ -63,8 +63,8 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 
 ### Added
 
-- In System > Accounts, Add wallet uses a connected wallet or opens Wallet to connect one. A connected wallet signs once, then a passkey approves sign-in access. A new wallet also signs to connect to Wallet. Sign in offers your available methods and can remember your choice on this device.
-- WalletConnect connects your phone wallet to Wallet. Scan the QR code with your wallet, or copy the connection link.
+- In System > Accounts, Add wallet takes one wallet signature, then a passkey approves sign-in access. Payment connections are managed separately in Wallet. Sign in offers your available methods and can remember your choice on this device.
+- WalletConnect connects your wallet to Wallet. Scan the QR code with your wallet, or copy the connection link.
 - Compatible browser wallets can connect through the MetaMask option. When MetaMask is installed, the option uses MetaMask.
 - To start Home without opening a browser window, use elastos home --browser --no-open. Updates and Undo keep this choice.
 

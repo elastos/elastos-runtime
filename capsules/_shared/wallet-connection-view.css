@@ -251,3 +251,6 @@ h2 { font-size: var(--el-text-lg); font-weight: 600; }
 .connection-status:focus-visible { outline:none !important; }
 
 .connection-window:has([data-connection-loading-cancel]) { align-items:center; gap:16px; text-align:center; }
+
+.connection-step > h2 { margin-bottom:12px; }
+.connection-step > .connection-network { margin-bottom:12px; }

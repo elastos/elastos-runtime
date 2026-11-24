@@ -59,16 +59,19 @@ a blockchain address.
 ## Sign-in method
 
 A passkey or an added wallet that Runtime accepts to sign in to an account.
-Passkeys approve changes to these methods.
+Adding a wallet takes one wallet signature and a passkey approval. It grants
+sign-in access independently of Wallet payment connections.
 
 ## Wallet
 
-The app that manages payment accounts and wallet connections. Connecting a wallet
-to Wallet creates an app record. Adding it for sign-in grants separate Home access.
+The app that manages payment accounts and wallet connections. Connect a wallet
+here to use it for payments. Accounts manages wallet sign-in separately; adding
+a sign-in method leaves Wallet payment records unchanged.
 
-## Phone wallet
+## WalletConnect
 
-A wallet app on a phone that connects through the WalletConnect protocol.
+The connection protocol for a compatible wallet app. Choose WalletConnect to
+pair with a QR code or connection link. After pairing, the wallet shows its own name.
 
 ## Passkey
 

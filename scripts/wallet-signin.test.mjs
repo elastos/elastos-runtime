@@ -92,7 +92,7 @@ import {connectedWalletSigninMethods} from '../capsules/home/browser/wallet-sign
 import {handleWalletSigninRequest} from '../capsules/home/browser/wallet-signin-host.mjs';
 test('payment links start off and the same address and network shares one sign-in record',()=>{
   const accounts=[{account_id:'payment',connector_id:'wallet-walletconnect',address:method.address.toUpperCase(),chain_namespace:'eip155:20'}];
-  assert.equal(connectedWalletSigninMethods(accounts,[method]).length,1);
+  assert.equal(connectedWalletSigninMethods(accounts,[method]).length,1);assert.equal(connectedWalletSigninMethods(accounts,[method])[0].paymentConnected,true);assert.equal(connectedWalletSigninMethods([],[method])[0].paymentConnected,false);
   const [candidate]=connectedWalletSigninMethods(accounts,[]);assert.equal(candidate.sign_in_enabled,false);assert.equal(candidate.paymentOnly,true);
   assert.equal(connectedWalletSigninMethods([{...accounts[0],chain_namespace:'eip155:8453'}],[method]).length,2,'network distinguishes wallet records');
 });
@@ -383,7 +383,7 @@ const {connectionView,reduceSummary,viewText}=await import('../capsules/_shared/
 test('the shared phone wait presents Home sign-in without disconnecting the payment session',()=>{
   const summary=reduceSummary({connector_id:'wallet-walletconnect',request_id:'signin',capsule_id:'home',requesting_app_name:'Home',intent:'auth_challenge',address:wallet.address,status:'pending',reason:'Sign in',expires_at:180},{connector:'wallet-walletconnect'});
   const view=connectionView({window:'walletconnect',stage:'request-phone',purpose:'home-signin',summary,supportedActions:['stop-waiting']});
-  assert.match(viewText(view.status),/Continue in Phone wallet/);assert.doesNotMatch(viewText(view.notice),/disconnect/);assert.equal(view.wait,null);
+  assert.match(viewText(view.status),/Continue in WalletConnect/);assert.doesNotMatch(viewText(view.notice),/disconnect/);assert.equal(view.wait,null);
   assert.throws(()=>connectionView({window:'walletconnect',stage:'request-phone',purpose:'home-signin',summary:{...summary,actor:'browser'}}),/Home sign-in presentation/);
   assert.throws(()=>connectionView({window:'walletconnect',stage:'linked',purpose:'home-signin'}),/closed connection purpose/);
 });

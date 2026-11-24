@@ -297,8 +297,8 @@ for(const engine of ['chromium','webkit'])test(`background wallet redraw keeps H
  const r=await setup(t,engine);await r.link();await focusWithKeyboard(r,'copy-address');
  await r.page.evaluate(()=>{const input=document.createElement('input');input.id='home-note';input.style.position='fixed';input.style.top='0';document.body.append(input);input.focus();});
  await r.page.keyboard.press('x');assert.deepEqual(await r.page.evaluate(()=>({focused:document.hasFocus(),value:document.querySelector('#home-note').value})),{focused:true,value:'x'},'Home owns the native keystroke before the wallet redraw');
- const prior=await r.frame.locator('main').elementHandle();assert.ok(r.fixture.setRelayAvailable(false)>0);await r.frame.getByText(/Phone wallet is reconnecting/).waitFor();await prior.waitForElementState('hidden',{timeout:20000});await prior.dispose();assert.equal(await r.page.evaluate(()=>document.activeElement.id),'home-note','a wallet update redraw keeps the Home input focused');
- r.fixture.setRelayAvailable(true);await r.frame.evaluate(()=>window.dispatchEvent(new Event('online')));await until(async()=>!await r.frame.getByText(/Phone wallet is reconnecting/).count(),'relay returned after the actual redraw');
+ const prior=await r.frame.locator('main').elementHandle();assert.ok(r.fixture.setRelayAvailable(false)>0);await r.frame.getByText(/WalletConnect is reconnecting/).waitFor();await prior.waitForElementState('hidden',{timeout:20000});await prior.dispose();assert.equal(await r.page.evaluate(()=>document.activeElement.id),'home-note','a wallet update redraw keeps the Home input focused');
+ r.fixture.setRelayAvailable(true);await r.frame.evaluate(()=>window.dispatchEvent(new Event('online')));await until(async()=>!await r.frame.getByText(/WalletConnect is reconnecting/).count(),'relay returned after the actual redraw');
  await r.frame.evaluate(()=>window.focus());await refreshAndWaitForRedraw(r);assert.equal(await r.frame.evaluate(()=>document.activeElement.dataset.action),'copy-address','returning restores the same account action');assert.deepEqual(r.errors,[]);
 });
 
@@ -311,9 +311,9 @@ for(const engine of ['chromium','webkit'])for(const phase of ['idle','ownership'
  const r=await setup(t,engine);
  if(phase==='ownership'){r.peer.choose({request:'silent'});await r.qr();await r.pair();await r.state('link-wait');await until(()=>r.peer.trace.some(e=>e.kind==='request'),'proof published');}
  else{await r.link();if(phase==='signature'||phase==='result'){await r.approval('relay-message');if(phase==='signature')r.peer.choose({request:'silent'});await r.click('send-request');await until(()=>r.peer.trace.filter(e=>e.kind==='request').length>=2,'message published');await r.state(phase==='signature'?'request-phone':'request-done');}}
- const before={verified:r.fixture.state.verified,completed:r.fixture.state.completed};assert.ok(r.fixture.setRelayAvailable(false)>0,'the active Runtime relay socket was interrupted');await r.frame.getByText(/Phone wallet is reconnecting/).waitFor({timeout:15000});await r.capture(`relay-dropped-${phase}`);
+ const before={verified:r.fixture.state.verified,completed:r.fixture.state.completed};assert.ok(r.fixture.setRelayAvailable(false)>0,'the active Runtime relay socket was interrupted');await r.frame.getByText(/WalletConnect is reconnecting/).waitFor({timeout:15000});await r.capture(`relay-dropped-${phase}`);
  assert.deepEqual({verified:r.fixture.state.verified,completed:r.fixture.state.completed},before);
- r.fixture.setRelayAvailable(true);await r.frame.evaluate(()=>window.dispatchEvent(new Event('online')));await until(async()=>!await r.frame.getByText(/Phone wallet is reconnecting/).count(),'transport returns',20000);await r.capture(`relay-returned-${phase}`);
+ r.fixture.setRelayAvailable(true);await r.frame.evaluate(()=>window.dispatchEvent(new Event('online')));await until(async()=>!await r.frame.getByText(/WalletConnect is reconnecting/).count(),'transport returns',20000);await r.capture(`relay-returned-${phase}`);
  if(phase==='ownership'||phase==='signature'){await r.peer.answer('sign');await r.state(phase==='ownership'?'linked':'request-done');}
  assert.deepEqual(r.errors,[]);
 });
@@ -420,7 +420,7 @@ for(const engine of ['chromium','webkit'])test(`picker cannot replace an expired
 
 for(const engine of ['chromium','webkit'])test(`proof timeout survives relay and session-extension updates in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);r.peer.choose({request:'silent'});await r.qr();await r.pair();await r.state('link-wait');await until(()=>r.peer.trace.some(e=>e.kind==='request'),'proof published');await r.frame.evaluate(()=>{for(const fn of window.longTimers)fn();});await r.state('link-timeout');
- await r.peer.extendSession();await r.refresh();await r.state('link-timeout');r.fixture.setRelayAvailable(false);await r.frame.getByText(/Phone wallet is reconnecting/).waitFor();await r.state('link-timeout');r.fixture.setRelayAvailable(true);await r.frame.evaluate(()=>window.dispatchEvent(new Event('online')));await until(async()=>!await r.frame.getByText(/Phone wallet is reconnecting/).count(),'transport returns');await r.state('link-timeout');await r.capture('proof-timeout-after-session-events');assert.equal(r.fixture.state.verified,0);assert.deepEqual(r.errors,[]);
+ await r.peer.extendSession();await r.refresh();await r.state('link-timeout');r.fixture.setRelayAvailable(false);await r.frame.getByText(/WalletConnect is reconnecting/).waitFor();await r.state('link-timeout');r.fixture.setRelayAvailable(true);await r.frame.evaluate(()=>window.dispatchEvent(new Event('online')));await until(async()=>!await r.frame.getByText(/WalletConnect is reconnecting/).count(),'transport returns');await r.state('link-timeout');await r.capture('proof-timeout-after-session-events');assert.equal(r.fixture.state.verified,0);assert.deepEqual(r.errors,[]);
 });
 for(const engine of ['chromium','webkit'])for(const cleanupFails of [false,true])test(`a known hash survives stopping Home completion in ${engine}${cleanupFails?' when cleanup fails':''}`,windowTestOptions(engine,60000),async t=>{
  const r=await setup(t,engine);await r.link();await r.approval('hash-before-stop',{intent:'transaction_intent'});
@@ -545,9 +545,9 @@ for(const engine of ['chromium','webkit'])test(`outcome focus returns after a re
  const mutation=process.env.WALLETCONNECT_FIX1_BREAK==='F2'?{file:'wallet-walletconnect.js',from:'action:document.activeElement?.dataset.action,focusKey:saved.key',to:'action:saved.action,focusKey:saved.key'}:undefined;
  const r=await setup(t,engine,mutation);await r.link();await r.frame.locator('[data-focus=outcome]').focus();await refreshAndWaitForRedraw(r);
  await r.page.evaluate(()=>{const input=document.createElement('input');input.id='home-outcome-note';input.style.position='fixed';input.style.top='0';document.body.append(input);input.focus();});await r.page.keyboard.press('x');assert.equal(await r.page.locator('#home-outcome-note').inputValue(),'x');
- const prior=await r.frame.locator('main').elementHandle();assert.ok(r.fixture.setRelayAvailable(false)>0);await r.frame.getByText(/Phone wallet is reconnecting/).waitFor();await prior.waitForElementState('hidden');await prior.dispose();assert.equal(await r.page.evaluate(()=>document.activeElement.id),'home-outcome-note');
+ const prior=await r.frame.locator('main').elementHandle();assert.ok(r.fixture.setRelayAvailable(false)>0);await r.frame.getByText(/WalletConnect is reconnecting/).waitFor();await prior.waitForElementState('hidden');await prior.dispose();assert.equal(await r.page.evaluate(()=>document.activeElement.id),'home-outcome-note');
  await r.frame.evaluate(()=>window.focus());await refreshAndWaitForRedraw(r);assert.deepEqual(await r.frame.evaluate(()=>({focused:document.hasFocus(),focus:document.activeElement?.dataset.focus})),{focused:true,focus:'outcome'},'return restores the actual status focus, not an action with that name');await r.capture('outcome-focus-return');
- r.fixture.setRelayAvailable(true);await r.frame.evaluate(()=>window.dispatchEvent(new Event('online')));await until(async()=>!await r.frame.getByText(/Phone wallet is reconnecting/).count(),'the relay returned');assert.equal(r.fixture.state.verified,1);
+ r.fixture.setRelayAvailable(true);await r.frame.evaluate(()=>window.dispatchEvent(new Event('online')));await until(async()=>!await r.frame.getByText(/WalletConnect is reconnecting/).count(),'the relay returned');assert.equal(r.fixture.state.verified,1);
 });
 
 for(const engine of ['chromium','webkit'])test(`answered request choices follow the same access gate in ${engine}`,windowTestOptions(engine,60000),async t=>{

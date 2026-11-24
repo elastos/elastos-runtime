@@ -59,12 +59,12 @@ for(const engine of ['chromium','webkit'])test(`W2 ${engine} action titles, one 
       await f.page.setViewportSize({width,height:522});
       await f.page.evaluate(async({window,action,stage,complete,address})=>{
         const {connectionView,reduceSummary,mountConnection}=await import('/capsules/_shared/wallet-connection-view.mjs');
-        const name={metamask:'MetaMask',unisat:'UniSat',walletconnect:'Phone wallet'}[window];
+        const name={metamask:'MetaMask',unisat:'UniSat',walletconnect:'WalletConnect'}[window];
         const summary=reduceSummary({request_id:'signin',connector_id:'wallet-'+window,capsule_id:'home',intent:'auth_challenge',address,status:'pending',reason:'Runtime supplies the signature in the wallet.',expires_at:1800000600},{connector:'wallet-'+window});
         const view=connectionView({window,stage,purpose:'home-signin',signinAction:action,signinComplete:stage==='request-done'?complete:undefined,summary,account:{name,mark:window==='walletconnect'?'wallet':window,accounts:[{address,networks:[window==='unisat'?'Bitcoin':'Elastos Smart Chain']}]},supportedActions:['send-request','stop-waiting','close-window']});
         globalThis.mounted?.dispose();globalThis.mounted=mountConnection(document.querySelector('#mount'),view);
       },{window,action,stage,complete,address});
-      const text=await f.page.locator('main').textContent(),name={metamask:'MetaMask',unisat:'UniSat',walletconnect:'Phone wallet'}[window];
+      const text=await f.page.locator('main').textContent(),name={metamask:'MetaMask',unisat:'UniSat',walletconnect:'WalletConnect'}[window];
       assert.match(text,new RegExp(action==='add'?'Add '+name+' as a way to sign in':'Sign in with '+name));
       assert.doesNotMatch(text,/From app:|Review sign-in request|Account saved in Wallet|Runtime supplies|Time left:|\nHome\n/);
       assert.equal(await f.page.locator('details').count(),0);
@@ -125,10 +125,10 @@ for(const engine of ['chromium','webkit'])test(`W2 ${engine} boot wait has a wor
 // cannot grant sign-in presentation to an ordinary connect proof.
 test('W2 sign-in presentation uses purpose instead of an English heading',()=>{
   const summary=reduceSummary({...transaction,capsule_id:'home',intent:'credential'},{connector:'wallet-walletconnect'});
-  const view=connectionView({window:'walletconnect',stage:'request-phone',purpose:'home-signin',signinAction:'add',summary,account:{name:'Phone wallet',mark:'wallet',accounts:[{address,networks:['Base']}]}});
-  assert.equal(viewText(view.requestHeading),'Add Phone wallet as a way to sign in');
+  const view=connectionView({window:'walletconnect',stage:'request-phone',purpose:'home-signin',signinAction:'add',summary,account:{name:'WalletConnect',mark:'wallet',accounts:[{address,networks:['Base']}]}});
+  assert.equal(viewText(view.requestHeading),'Add WalletConnect as a way to sign in');
   assert.equal(connectionView({window:'walletconnect',stage:'link-wait',waitSeconds:120}).signinScreen,false);
-  assert.equal(connectionView({window:'walletconnect',stage:'nothing-saved'}).title,'Phone wallet');
+  assert.equal(connectionView({window:'walletconnect',stage:'nothing-saved'}).title,'WalletConnect');
 });
 
 
@@ -145,7 +145,7 @@ test('W2 Wallet chooser shows only state below names and one refusal with recove
       await page.evaluate(stage=>document.querySelector('iframe[title=wallet]').contentWindow.postMessage({type:'home:wallet-signin-chooser',homeToken:'fixture-wallet',requestId:'w2-chooser',state:{stage,message:stage==='error'?'Your wallet declined the request.':'',methods:[{connector:'metamask',used:true,connected:true},{connector:'unisat',connected:false},{connector:'walletconnect',connected:true}]}},'*'),stage);
       await frame.locator('#wallet-signers[data-signin='+stage+']').waitFor();
       const rows=frame.locator('#wallet-methods .wallet-method-head');
-      assert.deepEqual(await rows.locator('div > span').allTextContents(),['Already signs in','Not connected','Connected']);
+      assert.deepEqual(await rows.locator('div > span').allTextContents(),['Already signs in',"Connects through a relay that can see this computer's internet address."]);
       assert.deepEqual(await rows.locator('button').allTextContents(),['Choose','Choose','Choose']);
       assert.equal(await rows.nth(0).getByRole('button',{name:'Choose',exact:true}).isDisabled(),true);
       if(stage==='error'){assert.equal(await frame.getByText('Your wallet declined the request.',{exact:true}).count(),1);assert.equal(await frame.getByRole('button',{name:'Try again',exact:true}).count(),1);}

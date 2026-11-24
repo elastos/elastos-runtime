@@ -1,2 +1,3 @@
 # Active rejected product terms, one per line.
-# 2026-11-23: The signed-out choices use Anders's requested label "Phone wallet".
+# The connection option is named WalletConnect.
+phone wallet

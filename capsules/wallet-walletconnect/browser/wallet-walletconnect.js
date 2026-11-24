@@ -81,6 +81,7 @@ root.addEventListener('click', async event => {
   if (!button || button.disabled || !mounted?.root.contains(button)) return;
   const action = button.dataset.action;
   if(unresolvedPayment()&&['connect','start-over','finish','send-message','send-request','add-account','back-to-connection','view-requests','select-request'].includes(action)){draw();return;}
+  if(action==='open-wallet'){window.top.postMessage({type:'home:open-target',target:'wallet',homeToken:frameHomeToken},homeOrigin);return;}
   if(action==='close-window'){window.top.postMessage({type:'home:close-self',homeToken:frameHomeToken},homeOrigin);return;}
   if(signinRequest&&action==='stop-waiting'){await stopHomeSignin();return;}
   if (action === 'connect' || action === 'start-over') return onConnect();
@@ -317,7 +318,7 @@ async function requestCapsuleWalletEffect(action) {
       if (consent.status !== 'granted') {
         pendingEffect={requestId:consent.request?.id,expiresAt:(consent.request?.issued_at+1800)*1000,action,run:action.kind === 'link' ? ()=>onConnect({fresh:action.fresh !== false}) : ()=>onRequestClick(action.approvalRequestId)};
         watchConnection();showInternetRequest();
-        throw Object.assign(new Error('Phone wallet needs internet access. An admin of this Home can allow it in Inbox. Then continue here.'),{tone:'muted'});
+        throw Object.assign(new Error('WalletConnect needs internet access. An admin of this Home can allow it in Inbox. Then continue here.'),{tone:'muted'});
       }
     }
     const result=await connector.effect(action);
@@ -358,10 +359,10 @@ async function fetchJson(url,init) {
     try {code=JSON.parse(detail).code;} catch {}
     if (code === 'walletconnect_admin_required') {
       ownerConsentNeeded=true;permissionStatus='off';pendingEffect=undefined;draw();watchConnection();
-      throw Object.assign(new Error('An admin of this Home can allow Phone wallet internet access in Inbox.'),{tone:'muted'});
+      throw Object.assign(new Error('An admin of this Home can allow WalletConnect internet access in Inbox.'),{tone:'muted'});
     }
     if (response.status === 403) {launchExpired=true;draw();watchConnection();}
-    throw new Error(response.status === 403 ? 'This wallet window expired. Close it and open Phone wallet again.' : detail.trim() || 'ElastOS could not complete this request. Try again.');
+    throw new Error(response.status === 403 ? 'This wallet window expired. Close it and open WalletConnect again.' : detail.trim() || 'ElastOS could not complete this request. Try again.');
   }
   return response.json();
 }

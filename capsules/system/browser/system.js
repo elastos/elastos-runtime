@@ -2498,7 +2498,7 @@ function humanizeName(value) {
     ["ucity", "uCity"],
     ["metamask", "MetaMask"],
     ["unisat", "UniSat"],
-    ["walletconnect", "Phone wallet"],
+    ["walletconnect", "WalletConnect"],
   ]);
   return readText(value)
     .split(/[\s_-]+/)

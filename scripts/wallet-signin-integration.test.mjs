@@ -41,11 +41,11 @@ test('Home copies use the canonical connector view and its action completion scr
 
 import {connectionView,stageNames,viewText,reduceSummary} from '../capsules/_shared/wallet-connection-view.mjs';
 import {shared} from './wallet-connection-view-fixtures.mjs';
-test('joined wallet screens use Phone wallet and direct connection words',()=>{
+test('joined wallet screens use WalletConnect and direct connection words',()=>{
   for(const window of ['walletconnect'])for(const stage of stageNames[window]) {
     const view=connectionView({window,stage,waitSeconds:300,localSafety:false,qrData:'data:image/png;base64,'+readFileSync('scripts/fixtures/wallet-connection-view-qr.png').toString('base64'),summary:reduceSummary({...shared.n7PrivateSummaries.find(r=>r.id==='site-wallet-metamask').summary,connector_id:'wallet-'+window},{connector:'wallet-'+window})});
     const text=[view.title,view.status,view.notice,view.afterNote,...view.actions.map(a=>a.label)].map(value=>typeof value==='string'?value:viewText(value)).join(' ');
-    assert.doesNotMatch(text,/WalletConnect|\b[Ll]inked\b|From app:/,window+'/'+stage);
+    assert.doesNotMatch(text,/Phone wallet|\b[Ll]inked\b|From app:/,window+'/'+stage);
   }
   assert.doesNotMatch(readFileSync('elastos/crates/elastos-auth/src/wallet_signin/vectors.json','utf8'),/urn:elastos:/);
 });

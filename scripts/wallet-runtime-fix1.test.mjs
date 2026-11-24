@@ -22,15 +22,15 @@ test("fix1 JB5 site consumers enforce the exact shared ASCII origin rule", async
       r.state.approvals[0].requesting_origin=origin; r.state.entries[0].requesting_origin=origin;
       await r.page.reload();
       await r.frame.locator(app === "wallet" ? ".wallet-request" : "#entry-detail").waitFor();
-      const count = await r.frame.getByText(origin,{exact:true}).count();
       let valid=false; try { valid=new URL(origin).origin===origin && /^https?:\/\/[^/?#@\\]+$/.test(origin); } catch {}
+      const count = await r.frame.getByText(app==="wallet"&&valid?new URL(origin).host:origin,{exact:true}).count();
       assert.equal(count, valid ? 1 : 0, `${app}: ${origin}`);
     }
     r.state.approvals[0].capsule_id="notes"; r.state.entries[0].source_app="notes";
     r.state.approvals[0].requesting_origin="https://shop.example"; r.state.entries[0].requesting_origin="https://shop.example";
     await r.page.reload();
     await r.frame.locator(app === "wallet" ? ".wallet-request" : "#entry-detail").waitFor();
-    assert.equal(await r.frame.getByText("https://shop.example",{exact:true}).count(),0,"a copied projection on another app is omitted");
+    assert.equal(await r.frame.getByText(app==="wallet"?"shop.example":"https://shop.example",{exact:true}).count(),0,"a copied projection on another app is omitted");
   });
 });
 
@@ -43,7 +43,7 @@ for (const dismissed of [false,true]) test(`fix1 JB9 acknowledged facts belong t
   await card.getByRole("button",{name:dismissed?"Dismiss":"Reject",exact:true}).click();
   await card.locator('[role="status"]').waitFor();
   assert.match(await card.textContent(),/Reason for second/);
-  assert.equal(await card.getByText("https://second.example",{exact:true}).count(),1);
+  assert.equal(await card.getByText("second.example",{exact:true}).count(),1);
   assert(!(await card.textContent()).includes("Reason for first"));
 });
 
@@ -115,7 +115,7 @@ test("fix1 removal dialog names its row and uses the shared removal sentence",as
   assert.equal(await identity.textContent(),"Trust Wallet");
   assert.equal(await identity.evaluate(el=>el.dir),"auto");
   assert.equal(await identity.evaluate(el=>getComputedStyle(el).unicodeBidi),"isolate");
-  assert.equal(await r.frame.getByText("Remove this address from Wallet. Your funds stay unchanged. This does not cancel a transaction in your wallet. Removing the last address connected through your phone wallet also clears Home's saved connection. Confirm with your passkey to remove the address.",{exact:true}).count(),1);
+  assert.equal(await r.frame.getByText("Remove this address from Wallet. Your funds stay unchanged. This does not cancel a transaction in your wallet. Removing the last address connected through your wallet also clears Home's saved connection. Confirm with your passkey to remove the address.",{exact:true}).count(),1);
   await r.capture("wallet-external-account-removal-light-window.png");
 });
 

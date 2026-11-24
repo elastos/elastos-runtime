@@ -7,17 +7,17 @@ import {extname,resolve,relative} from 'node:path';
 import {importProductSmokePlaywright,productSmokeLaunchOptions} from './product-smoke-browser.mjs';
 import {walletConnectRelayFixture} from './lib/walletconnect-relay-fixture.mjs';
 import {walletConnectMessages as messages} from '../capsules/wallet-walletconnect/browser/walletconnect-client.mjs';
-const permissionText = 'Allow Phone wallet to use the internet?';
-const turnedOff = 'Internet access for Phone wallet is off.';
+const permissionText = 'Allow WalletConnect to use the internet?';
+const turnedOff = 'Internet access for WalletConnect is off.';
 // API and passkey responses are fixtures. All app markup, scripts, CSS and SDK are real.
 test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{timeout:240000},async t=>{
   let permissionPosts=0,holdApprovalList=false,releaseApprovalList,approvalListHeld,holdConnectionStatus=false,releaseConnectionStatus,connectionStatusHeld;
   let status='off',requestId=0,issuedAt=Math.floor(Date.now()/1000),passkeys=0,failSummary=false,keys={},verified=0,completions=0,approvalRequests=[];
   const consent=()=>({status,request:['requested','granted'].includes(status)?{id:String(requestId),issued_at:issuedAt,text:'Fixture consent'}:null});
   const actions=[];
-  const notification=()=>({id:'walletconnect-internet:permission',source_app:'wallet-walletconnect',kind:status==='requested'?'walletconnect_internet_request':'walletconnect_internet_decision',title:'Phone wallet internet access',body:status==='requested'
+  const notification=()=>({id:'walletconnect-internet:permission',source_app:'wallet-walletconnect',kind:status==='requested'?'walletconnect_internet_request':'walletconnect_internet_decision',title:'WalletConnect internet access',body:status==='requested'
     ? readFileSync('elastos/crates/elastos-server/src/api/gateway_walletconnect.rs','utf8').match(/const CONSENT: &str = "([^"]+)"/)[1]
-    : status==='granted'?'WalletConnect can use the internet.':'Internet access for Phone wallet is off.',read:status!=='requested',created_at:Math.floor(Date.now()/1000),severity:status==='requested'?'attention':'info',action_ref:['requested','granted'].includes(status)?{action_id:`walletconnect-internet-${status==='requested'?'allow':'turn-off'}:${requestId}`} : null});
+    : status==='granted'?'WalletConnect can use the internet.':'Internet access for WalletConnect is off.',read:status!=='requested',created_at:Math.floor(Date.now()/1000),severity:status==='requested'?'attention':'info',action_ref:['requested','granted'].includes(status)?{action_id:`walletconnect-internet-${status==='requested'?'allow':'turn-off'}:${requestId}`} : null});
   const server=http.createServer(async(req,res)=>{
     const url=new URL(req.url,'http://localhost');const path=url.pathname;
     const json=(value,code=200)=>{res.writeHead(code,{'content-type':'application/json'});res.end(JSON.stringify(value));};
@@ -127,7 +127,7 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     await wallet.locator('.connection-qr').waitFor({timeout:20000});
     assert.equal(methods.filter(method=>method==='wc_proposeSession').length,1,'Allow continues one pairing');
     assert.equal(await page.locator('#wallet').count(),1);
-    assert.equal(await wallet.getByRole('dialog',{name:'Phone wallet',exact:true}).count(),1);
+    assert.equal(await wallet.getByRole('dialog',{name:'WalletConnect',exact:true}).count(),1);
     const canvas=await wallet.locator('.connection-qr').evaluate(image=>{const canvas=document.createElement('canvas');canvas.width=image.naturalWidth;canvas.height=image.naturalHeight;canvas.getContext('2d').drawImage(image,0,0); const {data}=canvas.getContext('2d').getImageData(0,0,canvas.width,canvas.height);let min=canvas.width;for(let y=0;y<canvas.height;y++)for(let x=0;x<canvas.width;x++)if(data[(y*canvas.width+x)*4]<10)min=Math.min(min,x);return {width:canvas.width,margin:min};});
     assert.ok(canvas.margin>=16,JSON.stringify(canvas));
     for(const value of ['dark','light']){await theme(value);await shot(`r6-r7-r8-r9-qr-${value}`);}
@@ -284,7 +284,7 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
     assert.equal(completions,1,'the visible Send continues once from its matching Allow');
     assert.equal(verified,expectedVerified,'Send starts no extra ownership proof');
     approvalRequests=[];
-    // Capture the real client error rendering with a deterministic phone wallet.
+    // Capture the real client error rendering with a deterministic wallet.
     status='granted';await reload();
     const freshRequest = (intent='browser_personal_sign',chain='eip155:20') => ({request_id:'approval-fixture',connector_id:'wallet-walletconnect',capsule_id:'browser',proof_type:'siwe',intent,status:'pending',address:'0x'+'12'.repeat(20),reason:'Fixture review',chain_namespace:chain,expires_at:Math.floor(Date.now()/1000)+600});
     const endings=[['decline',{code:4001,message:'User rejected.'},'Declined'],['timeout',{code:6,message:'Request expired. Please try again.'},'Timeout',true],['error-32000',{code:-32000,message:'Private library text'},'Error'],['error5100',{code:5100,message:'Private library text'},'Error']];
@@ -513,7 +513,7 @@ for (const journey of ['A','B']) test(`round18 ${journey}: the open window recov
       await connectVisible();
       await wallet.locator('[data-focus=outcome]').filter({hasText:permissionText}).waitFor();
       status='refused';await nextPoll();
-      await t.test('refusal gives a true sentence and a working next step',async()=>assert.equal(await text(),'Internet access for Phone wallet is off.'));
+      await t.test('refusal gives a true sentence and a working next step',async()=>assert.equal(await text(),'Internet access for WalletConnect is off.'));
     } else {
       status='revoked';revision++;keys={};await wallet.locator('[data-focus=outcome]').filter({hasText:turnedOff}).waitFor({timeout:10000});
       assert.equal(await wallet.locator('[role=dialog]').count(),0,'Turn Off removes the QR');

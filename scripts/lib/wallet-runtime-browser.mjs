@@ -94,7 +94,7 @@ export async function runtimeView(t, app, state = {}) {
           state.permission = "revoked";
           state.cleanup = false;
           state.entries = [permissionEntry("revoked", state.question)];
-          message = "Internet access for Phone wallet is off.";
+          message = "Internet access for WalletConnect is off.";
         } else if (input.action_id?.startsWith("wallet-reject-request:")) {
           const id = `wallet-approval-request:${input.action_id.slice("wallet-reject-request:".length)}`;
           if (!state.entries.some(e => e.id === id)) return json({ error:"request unavailable" }, 404);
@@ -193,8 +193,8 @@ export async function runtimeView(t, app, state = {}) {
 export function permissionEntry(status, id = "consent:current") {
   const asked = status === "requested";
   return { id: "walletconnect-internet:permission", source_app: "wallet-walletconnect", kind: `walletconnect_internet_${asked ? "request" : "decision"}`,
-    title: "Phone wallet internet access", body: asked ? consentText : status === "granted" ? "WalletConnect can use the internet."
-      : status === "cleanup" ? "Internet access for Phone wallet is off. Choose Finish disconnecting to remove the saved connection." : "Internet access for Phone wallet is off.",
+    title: "WalletConnect internet access", body: asked ? consentText : status === "granted" ? "WalletConnect can use the internet."
+      : status === "cleanup" ? "Internet access for WalletConnect is off. Choose Finish disconnecting to remove the saved connection." : "Internet access for WalletConnect is off.",
     severity: asked ? "attention" : "info", read: !asked, created_at: Math.floor(Date.now() / 1000),
     action_ref: asked ? { app: "inbox", action_id: `walletconnect-internet-allow:${id}` }
       : ["granted", "cleanup"].includes(status) ? { app: "inbox", action_id: `walletconnect-internet-turn-off:${id}` } : null };

@@ -12,7 +12,7 @@ const MAX_PENDING: usize = 64;
 const MAX_METHODS: usize = 128;
 pub(crate) const OPERATION: &str = "auth.wallet.method";
 pub(crate) const RELAY_NOTICE: &str =
-    "Your phone wallet connects through a relay that can see this computer's internet address.";
+    "Your wallet connects through a relay that can see this computer's internet address.";
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

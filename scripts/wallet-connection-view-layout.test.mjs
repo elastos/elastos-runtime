@@ -116,7 +116,7 @@ for (const engine of ['chromium','webkit']) test(`extension_request_feedback_in_
           }
           if(facts.answered)assert(!/Time left:/.test(observed.text),key+': answered timing');
           // The design receipt is an independent control-order oracle.
-          const labels=(expected?.inventory||[`Open ${view.request.app} [primary]`]).filter(s=>/\[(primary|quiet secondary|bordered secondary)\]$/.test(s)).filter(s=>!((facts.capability||facts.payment)&&s.startsWith('Phone wallet [')));
+          const labels=(expected?.inventory||[`Open ${view.request.app} [primary]`]).filter(s=>/\[(primary|quiet secondary|bordered secondary)\]$/.test(s)).filter(s=>!((facts.capability||facts.payment)&&s.startsWith('WalletConnect [')));
           const normalized=label=>{
             const text=label.replace('Show Request','Show request').replace('Wallet activity','Activity in Wallet').replace(/^\[mark:[^\]]+\]\s*/,'').replace(/\s+/g,' ');
             return row.window==='panel'?text:text.replaceAll('MetaMask',view.account?.name||'MetaMask').replaceAll('UniSat',view.account?.name||'UniSat').replaceAll('Browser',view.request?.app||'Browser').replaceAll('Notes',view.request?.app||'Notes');
@@ -126,11 +126,12 @@ for (const engine of ['chromium','webkit']) test(`extension_request_feedback_in_
             expectedControls=expectedControls.map(c=>c.label==='Open Wallet'?{label:'Close window',primary:true}:c);
             if(row.window==='walletconnect')expectedControls.push({label:'Add address',primary:false});
           }
+          if(row.stage==='request-cancelled')expectedControls=[{label:'Open Wallet',primary:true},{label:'Close window',primary:false}];
           if(row.window==='walletconnect'&&row.stage==='internet-ready')expectedControls=expectedControls.filter(c=>c.label!=='Manage in Inbox');
           if(row.window==='walletconnect'&&row.stage==='internet-refused')expectedControls=[{label:'Connect wallet',primary:true}];
           if(row.window==='walletconnect'&&row.stage==='internet-off')expectedControls=[{label:'Connect wallet',primary:true},{label:'Open Inbox',primary:false}];
           if(row.window==='metamask'&&['extension-missing','extensions-unavailable','other-ethereum-wallet','request-unsendable','link-error'].includes(row.stage))expectedControls=[{label:'Check again',primary:true},{label:'Close window',primary:false}];
-          const fallbackClose=!expectedControls.length&&row.window==='metamask'&&expected?.inventory.some(s=>s.startsWith('Phone wallet [primary]'))&&(facts.payment||facts.capability);
+          const fallbackClose=!expectedControls.length&&row.window==='metamask'&&expected?.inventory.some(s=>s.startsWith('WalletConnect [primary]'))&&(facts.payment||facts.capability);
           if(fallbackClose)expectedControls=[{label:'Close window',primary:true}];
           if(facts.approval){const main=expectedControls.filter(c=>c.primary),close=expectedControls.find(c=>['Close window','Cancel'].includes(c.label)),other=expectedControls.filter(c=>!c.primary&&!['Close window','Cancel'].includes(c.label));expectedControls=[...other.filter(c=>c.label==='View requests'),...main,...other.filter(c=>!c.label.startsWith('View request')),close?{...close,primary:false}:{label:'Cancel',primary:false},...other.filter(c=>c.label==='View request')];}
           if(row.unknownSafety&&['link-busy','request-busy','extension-busy'].includes(row.stage))expectedControls=[{label:'Close window',primary:true},...expectedControls.filter(c=>!c.primary&&c.label!=='Close window')];
@@ -212,7 +213,7 @@ for(const engine of ['chromium','webkit'])test(`isolated names share text baseli
      }
     }
     const mark=document.querySelector('.connection-account-header img')?.getBoundingClientRect();
-    const note=[...document.querySelectorAll('.connection-content > .connection-note')].at(-1),button=document.querySelector('.connection-content > .connection-actions [data-action="close-window"]');
+    const note=[...document.querySelectorAll('.connection-content > .connection-note,.connection-step > .connection-note')].at(-1),button=document.querySelector('.connection-content > .connection-actions [data-action="close-window"],.connection-step > .connection-actions [data-action="close-window"]');
     return {baselines,mark:mark&&{width:mark.width,height:mark.height},gapBeforeClose:note&&button?button.getBoundingClientRect().top-note.getBoundingClientRect().bottom:null,computed:[...document.querySelectorAll('.connection-computed-detail')].map(e=>({text:e.textContent,hasAppLabel:!!e.querySelector('.connection-detail-label')})),app:[...document.querySelectorAll('.connection-context')].map(e=>e.textContent)};
    });
    if(name.includes('/request-')||name==='walletconnect/link-wait'){assert(measured.baselines.length,name+': baseline samples');assert(measured.baselines.every(b=>b.delta<=.5),name+': '+JSON.stringify(measured.baselines));}
@@ -226,7 +227,7 @@ for(const engine of ['chromium','webkit'])test(`isolated names share text baseli
    document.querySelector('#mount').replaceChildren(renderConnection(document,connectionView({window:'walletconnect',stage:'linked',localSafety:false,account:{name:'WalletConnect',mark:'metamask',connection:'WalletConnect',accounts:[{address:'0x1122334455667788990011223344556677889900',networks:['Ethereum']}]}})));
    return {heading:document.querySelector('h1')?.textContent,peer:document.querySelector('.connection-account-name bdi')?.textContent,mark:document.querySelector('.connection-account-header img')?.getAttribute('src'),hint:document.querySelector('.connection-via')?.textContent};
   });
-  assert.deepEqual(peer,{heading:'Phone wallet',peer:'WalletConnect',mark:'./connection-wallet.png',hint:undefined});
+  assert.deepEqual(peer,{heading:'WalletConnect',peer:'WalletConnect',mark:'./connection-wallet.png',hint:undefined});
   await writeFile(`${proof}/polish-${engine}.json`,JSON.stringify(checks,null,2)+'\n');
  }finally{await f.close();}
 });

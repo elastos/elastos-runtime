@@ -26,8 +26,8 @@ test('live needs: a supported-action projection withholds authority and keeps ma
 });
 test('live needs: stopped recovery retains the unanswered operation without a dead Check again instruction',()=>{
  for(const window of ['walletconnect','metamask','unisat'])for(const stage of ['request-timeout','request-cancelled']){
-  const args=fixtureArguments(states.find(r=>r.window===window&&r.stage===stage));args[0].supportedActions=['close-window'];const v=reduceConnection(...args),copy=viewText(v.notice);
-  assert.doesNotMatch(copy,/Check again|Check access|Check status/);assert.match(copy,/may still be waiting|later answer/);assert(v.actions.every(a=>a.id==='close-window'));
+  const args=fixtureArguments(states.find(r=>r.window===window&&r.stage===stage));args[0].supportedActions=['close-window'];const v=reduceConnection(...args),copy=viewText([...v.status,...v.notice]);
+  assert.doesNotMatch(copy,/Check again|Check access|Check status/);assert.match(copy,/may still be waiting|may still be in progress|later answer/);assert(v.actions.every(a=>a.id==='close-window'));
  }
 });
 test('live needs: request kind titles and expired status use Runtime vocabulary',async()=>{
@@ -73,7 +73,7 @@ test('late needs: latent summaries cannot replace a linking account or its card 
 test('late needs: reconnecting is secondary fixed copy in idle, wait and result states',()=>{
  for(const stage of ['linked','link-wait','request-phone','transaction-done']){
   const args=fixtureArguments(states.find(r=>r.window==='walletconnect'&&r.stage===stage)),before=reduceConnection(...args);args[0].connectionNotice='transport-reconnecting';const v=reduceConnection(...args);
-  assert.equal(viewText(v.connectionNotice),'Phone wallet is reconnecting.');assert.equal(viewText(v.status),viewText(before.status));assert.deepEqual(v.walletResult,before.walletResult);assert.equal(v.wait,before.wait);
+  assert.equal(viewText(v.connectionNotice),'WalletConnect is reconnecting.');assert.equal(viewText(v.status),viewText(before.status));assert.deepEqual(v.walletResult,before.walletResult);assert.equal(v.wait,before.wait);
  }
 });
 test('late needs: completion-failure hash is display only, full and closed',()=>{

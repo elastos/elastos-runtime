@@ -111,8 +111,8 @@ test("n7_browser_site_projection_all_surfaces: Inbox and Wallet consumers", asyn
       kind: "wallet_approval_request", title, body: `${request.capsule_id} requests wallet approval for ${request.reason}.`, severity: "attention", read: true,
       requesting_origin: request.requesting_origin, action_ref: { action_id: `wallet-review-request:${request.request_id}` } };
     const r = await runtimeView(t, app, { approvals: [request], entries: [entry] });
-    await r.frame.getByText("Site in Browser", { exact: true }).waitFor();
-    const origin = r.frame.getByText(request.requesting_origin, { exact: true });
+    if(app==="inbox")await r.frame.getByText("Site in Browser", { exact: true }).waitFor();
+    const origin = r.frame.getByText(app==="wallet"?new URL(request.requesting_origin).host:request.requesting_origin, { exact: true });
     assert.equal(await origin.count(), 1);
     assert.equal(await origin.evaluate(el => el.tagName), "SPAN");
     assert.equal(await origin.evaluate(el => el.dir), "auto");
@@ -123,7 +123,7 @@ test("n7_browser_site_projection_all_surfaces: Inbox and Wallet consumers", asyn
     r.state.approvals[0].requesting_origin = canonical;
     r.state.entries[0].requesting_origin = canonical;
     await r.page.reload();
-    await r.frame.getByText(canonical, { exact:true }).waitFor();
+    await r.frame.getByText(app==="wallet"?new URL(canonical).host:canonical, { exact:true }).waitFor();
     assert.deepEqual(r.errors, []);
     }
   });
@@ -142,7 +142,7 @@ test("n7_site_absent_or_forged_origin: shared invalid summaries", async t => {
     });
   }, packets.n7PrivateSummaries);
   for (const result of outcomes) assert.equal(result.actual, result.expected, result.id);
-  assert.equal(outcomes.find(r => r.id === "literal-idn").text, "https://xn--bcher-kva.example");
+  assert.equal(outcomes.find(r => r.id === "literal-idn").text, "xn--bcher-kva.example");
 });
 
 test("n7_account_access_uses_same_projection: one site and no review fallback", async t => {
@@ -152,7 +152,7 @@ test("n7_account_access_uses_same_projection: one site and no review fallback", 
   const r = await runtimeView(t, "wallet", { approvals: [request] });
   const card = r.frame.locator(".wallet-request");
   await card.waitFor();
-  assert.equal(await card.getByText("https://shop.example", { exact: true }).count(), 1);
+  assert.equal(await card.getByText("shop.example", { exact: true }).count(), 1);
   assert(!await card.textContent().then(text => text.includes("old.example")));
   await r.capture("wallet-account-access-light-window.png");
   await r.frame.locator("body").evaluate(async (_, request) => {

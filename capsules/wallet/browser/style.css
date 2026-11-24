@@ -2145,3 +2145,5 @@ html[data-signin-chooser] #wallet-signers .eyebrow { display: none; }
 html[data-signin-chooser] #wallet-signers { margin-top: 0; }
 html[data-signin-chooser] #wallet-signin-actions { flex-wrap: wrap; }
 html[data-signin-chooser] #wallet-signin-actions p { flex-basis: 100%; }
+
+.wallet-request-site > span { display:inline; }

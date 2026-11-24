@@ -17,9 +17,9 @@ const renderedViews = new WeakSet();
 const freeze = value => { if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); } return value; };
 const requestTitles={auth_challenge:'Review sign-in request',capability_grant:'Review access request',credential:'Sign a credential',publish_envelope:'Review publishing request',transaction_intent:'Send transaction',browser_account_access:'Share your wallet address with this site',browser_personal_sign:'Sign a message',browser_typed_data_sign:'Sign typed data',bitcoin_bip322_proof:'Confirm this Bitcoin account is yours',revocation:'Review request'};
 const requestTitleValues=[...Object.values(requestTitles),'Review request','Approval request'];
-const connectionNotices={'account-changed':'Your wallet is using a different account.','network-changed':'Your wallet is using a different network.','network-unsupported':'This network is not supported here.','network-unknown':'Your wallet\'s network could not be identified.','transport-unavailable':'The connection to your wallet was lost.','transport-reconnecting':'Phone wallet is reconnecting.','connection-removed':'Your wallet removed this connection.','connection-expired':'This wallet connection expired.','provider-unavailable':'The connection to your wallet is unavailable.'};
+const connectionNotices={'account-changed':'Your wallet is using a different account.','network-changed':'Your wallet is using a different network.','network-unsupported':'This network is not supported here.','network-unknown':'Your wallet\'s network could not be identified.','transport-unavailable':'The connection to your wallet was lost.','transport-reconnecting':'WalletConnect is reconnecting.','connection-removed':'Your wallet removed this connection.','connection-expired':'This wallet connection expired.','provider-unavailable':'The connection to your wallet is unavailable.'};
 const copyFeedbacks={'link-copied':'Link copied.','address-copied':'Address copied.','copy-failed':'Could not copy. Try again.'};
-const brands = { walletconnect: 'Phone wallet', metamask: 'MetaMask', unisat: 'UniSat', panel: 'Wallet' };
+const brands = { walletconnect: 'WalletConnect', metamask: 'MetaMask', unisat: 'UniSat', panel: 'Wallet' };
 // H:754 (busy recovery), H:767-779 (unknown cross-window work).
 const unknownRecoveryStages = new Set(['extension-busy','link-busy','request-busy']);
 const approves = id => ['connect','restore-access','send-request','send-message','finish'].includes(id);
@@ -397,7 +397,7 @@ export function renderConnection(document, view) {
     h.append(el('h2',selected ? (view.stage==='site-access-ended'?'Required account':'Account to confirm') : isolated(matchesAction ? account.name : 'Your wallet','wallet'),'connection-account-name'));
     if(view.panel&&supports('open-wallet'))h.append(button({id:'open-wallet',label:isolated('Manage','copy'),quiet:true}));
     card.append(h);
-    if(account.connection && (view.panel||view.window!=='walletconnect'))card.append(el('p','Phone wallet','connection-note connection-via'));
+    if(account.connection && (view.panel||view.window!=='walletconnect'))card.append(el('p','WalletConnect','connection-note connection-via'));
     for (const row of account.accounts) {
       const r=el('div',null,'connection-address-row');r.append(el('code',isolated(short(row.address),'address'),'connection-address'));
       if(!selected&&supports('copy-address')){const copy=button({id:'copy-address',label:isolated('Copy','copy'),key:`copy-address:${row.address}`});copy.setAttribute('aria-label',`Copy address ${short(row.address)}`);r.append(copy);}
@@ -407,21 +407,20 @@ export function renderConnection(document, view) {
     return card;
   }
   function siteIdentity(origin) {
-    const row=el('div',null,'connection-site-row');row.append(el('span','Site in Browser'),document.createTextNode(': '));
+    const row=el('div',null,'connection-site-row');
     const site=el('bdi',null,'connection-isolated connection-site');site.dir='auto';
-    const authority=origin.indexOf('://')+3, labels=origin.slice(authority).split('.'), tail=labels.splice(Math.max(0,labels.length-3));
-    site.append(document.createTextNode(origin.slice(0,authority)));
+    const labels=new URL(origin).host.split('.'), tail=labels.splice(Math.max(0,labels.length-3));
     const label=(value,parent,dot=false)=>{const part=el('span',null,'connection-host-label');part.append(document.createTextNode(value.slice(0,-1)),el('span',value.slice(-1)+(dot?'.':''),'connection-host-label-last'));parent.append(part);if(dot)parent.append(el('wbr'));};
     for(const value of labels)label(value,site,true);
     const end=el('span',null,'connection-host-end'),endText=el('span',null,'connection-host-end-text');
-    tail.forEach((value,i)=>label(value,endText,i<tail.length-1));end.append(endText);
+    tail.forEach((value,i)=>label(value,endText,i<tail.length-1));endText.lastElementChild.lastElementChild.append(document.createTextNode(' in Browser'));end.append(endText);
     site.append(end);row.append(site);return row;
   }
   function requestIdentity(request, card, decision = false) {
     card.dataset.requestId = request.id;
     const identity=el('div',null,'connection-identity');identity.dataset.scrollKey='request:'+request.id;
     const context=el('div',null,'connection-context');
-    if(!request.site||request.app!=='Browser'){const app=el('bdi',request.app,'connection-isolated connection-app');app.dir='auto';context.append(app);}
+    if(!request.site){const app=el('bdi',request.app,'connection-isolated connection-app');app.dir='auto';context.append(app);}
     if(request.site&&!decision)context.append(siteIdentity(request.site));
     const detail=el('p',null,'connection-detail');detail.append(el('bdi',request.detail,'connection-app-content'));detail.lastChild.dir='auto';
     if(request.actor!=='home')identity.append(context);
@@ -442,15 +441,20 @@ export function renderConnection(document, view) {
     const row=el('div',null,'connection-actions');if(supports('create'))row.append(button({id:'create',label:isolated('Create address','copy')}));if(supports('import'))row.append(button({id:'import',label:isolated('Import address','copy'),quiet:true}));accounts.append(row);content.append(accounts);
     const options=el('section',null,'connection-wallet-options');options.append(el('h2',view.account?'Connect another wallet':'Connect a wallet'));
     const list=el('div',null,'connection-card connection-options-list');
-    for(const kind of ['walletconnect','metamask','unisat']){if(!supports(`use-${kind}`))continue;if(kind==='walletconnect'&&!view.walletconnectAvailable)continue;const b=button({id:`use-${kind}`,label:[]});b.className='connection-option';const label=el('span',null,'connection-option-text');label.append(el('span',brands[kind],'connection-option-label'),document.createTextNode(' '),el('span',kind==='walletconnect'?(view.account?.connection?'Add address':'Connect a phone wallet with a QR code'):kind==='unisat'?'Bitcoin extension':'Browser extension','connection-note'));b.append(icon(kind),label,document.createTextNode(' '),el('span','›'));list.append(b);}options.append(list);content.append(options);
+    for(const kind of ['walletconnect','metamask','unisat']){if(!supports(`use-${kind}`))continue;if(kind==='walletconnect'&&!view.walletconnectAvailable)continue;const b=button({id:`use-${kind}`,label:[]});b.className='connection-option';const label=el('span',null,'connection-option-text');label.append(el('span',brands[kind],'connection-option-label'),document.createTextNode(' '),el('span',kind==='walletconnect'?(view.account?.connection?'Add address':'Connect a wallet with a QR code'):kind==='unisat'?'Bitcoin extension':'Browser extension','connection-note'));b.append(icon(kind),label,document.createTextNode(' '),el('span','›'));list.append(b);}options.append(list);content.append(options);
   }else{
-    if(view.showAccount&&view.account&&!view.request)content.append(accountCard(view.account));
-    if(view.selectedAccount&&view.account&&!view.request)content.append(accountCard(view.account,true));
     let destination=content;
+    if(!view.panel&&!view.request&&!view.context&&!view.qrData){
+      destination=el('article',null,'connection-card connection-step');
+      destination.append(el('h2',view.title));content.append(destination);
+    }
+    if(view.showAccount&&view.account&&!view.request){const card=accountCard(view.account);if(destination!==content){destination.classList.add('connection-account');destination.append(...card.childNodes);}else destination.append(card);}
+    if(view.selectedAccount&&view.account&&!view.request)destination.append(accountCard(view.account,true));
     if(view.request&&!view.picker){const card=el('article',null,'connection-card connection-request');const identity=requestIdentity(view.request,card,approvalSite);
       if(view.account){const a=el('div',null,'connection-request-account');if(view.window==='metamask'&&view.walletIcon){const img=el('img');img.src=view.walletIcon;img.alt='';a.append(img);}else a.append(icon(view.account.mark));const parts=[];if(view.requiredAccount)parts.push({kind:'copy',text:'Required account · '});parts.push({kind:'wallet',text:view.account.name},{kind:'copy',text:' · '});parts.push({kind:'address',text:short(view.account.accounts[0].address)},{kind:'copy',text:' · '},...view.account.accounts[0].networks.flatMap((network,i)=>[...(i?[{kind:'copy',text:' · '}]:[]),{kind:'network',text:network}]));a.append(el('span',parts));identity.append(a);}content.append(card);destination=card;}
-    if(view.context&&!view.request){const card=el('article',null,'connection-card connection-request');card.dataset.requestId=view.context.id;const identity=el('div',null,'connection-identity');identity.dataset.scrollKey='context:'+view.context.id;const context=el('div',null,'connection-context');if(!view.context.site||view.context.app!=='Browser'){const app=el('bdi',view.context.app,'connection-isolated connection-app');app.dir='auto';context.append(app);}if(view.context.site&&!approvalSite)context.append(siteIdentity(view.context.site));identity.append(context);card.append(identity);content.append(card);destination=card;}
-    if(view.connectionNotice.length)destination.append(el('p',view.connectionNotice,'connection-note connection-change'));
+    if(view.context&&!view.request){const card=el('article',null,'connection-card connection-request');card.dataset.requestId=view.context.id;const identity=el('div',null,'connection-identity');identity.dataset.scrollKey='context:'+view.context.id;const context=el('div',null,'connection-context');if(!view.context.site){const app=el('bdi',view.context.app,'connection-isolated connection-app');app.dir='auto';context.append(app);}if(view.context.site&&!approvalSite)context.append(siteIdentity(view.context.site));identity.append(context);card.append(identity);content.append(card);destination=card;}
+    const connectionNote=view.connectionNotice.length?el('p',view.connectionNotice,'connection-note connection-change'):null;
+    if(connectionNote)destination.append(connectionNote);
     if(view.currentSelection){const p=el('p',null,'connection-note connection-current-selection');p.append(el('bdi',view.account?.name || 'Your wallet','connection-isolated connection-wallet'),document.createTextNode(' now shows '),el('bdi',view.currentSelection.address,'connection-isolated connection-address'),document.createTextNode(' · '),el('bdi',view.currentSelection.network,'connection-isolated connection-network'));for(const bdi of p.querySelectorAll('bdi'))bdi.dir='auto';destination.append(p);}
     if(view.transactionHash){const p=el('p',null,'connection-note connection-transaction-hash');const hash=el('bdi',view.transactionHash,'connection-hash');hash.dir='ltr';p.append(document.createTextNode('Transaction hash: '),hash);destination.append(p);}
     if(view.copyFeedback.length){const p=el('p',view.copyFeedback,'connection-note connection-copy-feedback');p.setAttribute('role','status');p.setAttribute('aria-live','polite');destination.append(p);}
@@ -463,8 +467,9 @@ export function renderConnection(document, view) {
       for(const a of [...view.actions].sort((a,b)=>Number(b.primary)-Number(a.primary)))decisions.append(button(a));
       if(!supports('close-window')){const manual=el('p',windowManualClose(view.window),'connection-note');manual.dataset.focus='dismissal';manual.tabIndex=-1;decisions.append(manual);}
       unit.append(decisions);destination.append(unit);
-    }else if(!view.compact){if(view.status.length&&!status.parentNode){if(view.request)destination.append(status);else root.append(status);}if(wait)destination.append(wait);if(notice)destination.append(notice);destination.append(controls);}
+    }else if(!view.compact){if(view.status.length&&!status.parentNode){destination.append(status);}if(wait)destination.append(wait);if(notice)destination.append(notice);destination.append(controls);}
     else{if(notice)destination.append(notice);if(view.status.length)feedback.append(status);if(wait)feedback.append(wait);feedback.append(controls);}
+    if(connectionNote&&status.parentNode)status.after(connectionNote);
     for(const request of view.choices){const card=el('article',null,'connection-card connection-request connection-request-choice');const text=el('div');requestIdentity(request,text);card.append(text);if(supports('select-request'))card.append(button({id:'select-request',label:isolated('View request','copy'),quiet:true,key:`select-request:${request.id}`}));if(approvalSite)content.insertBefore(card,destination);else content.append(card);}
     for (const choice of view.walletChoices || []) {
       if (!supports('select-wallet')) continue;
@@ -477,7 +482,7 @@ export function renderConnection(document, view) {
   }
   root.append(content);
   if(view.compact&&!approvalSite)root.append(feedback);
-  if(view.qrData){heading.hidden=true;content.replaceChildren();const dialog=el('section',null,'connection-dialog');dialog.setAttribute('role','dialog');dialog.setAttribute('aria-modal','true');dialog.setAttribute('aria-label','Phone wallet');const title=el('h2','Phone wallet');title.prepend(icon('walletconnect'));dialog.append(title);const qr=el('img',null,'connection-qr');qr.src=view.qrData;qr.alt='Wallet connection QR code';dialog.append(qr,el('p','Scan with your wallet.'),el('p','Or paste the copied link into your wallet.'));if(view.copyFeedback.length){const p=el('p',view.copyFeedback,'connection-copy-feedback');p.setAttribute('role','status');p.setAttribute('aria-live','polite');dialog.append(p);}if(!view.compact)dialog.append(controls);content.append(dialog);}
+  if(view.qrData){heading.hidden=true;content.replaceChildren();const dialog=el('section',null,'connection-dialog');dialog.setAttribute('role','dialog');dialog.setAttribute('aria-modal','true');dialog.setAttribute('aria-label','WalletConnect');const title=el('h2','WalletConnect');title.prepend(icon('walletconnect'));dialog.append(title);const qr=el('img',null,'connection-qr');qr.src=view.qrData;qr.alt='Wallet connection QR code';dialog.append(qr,el('p','Scan with your wallet.'),el('p','Or paste the copied link into your wallet.'));if(view.copyFeedback.length){const p=el('p',view.copyFeedback,'connection-copy-feedback');p.setAttribute('role','status');p.setAttribute('aria-live','polite');dialog.append(p);}if(!view.compact)dialog.append(controls);content.append(dialog);}
   return root;
 }
 

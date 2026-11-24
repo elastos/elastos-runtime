@@ -48,17 +48,18 @@ export function watchWalletSigninMethods(refresh,origin) {
 }
 
 export function connectedWalletSigninMethods(accounts,methods) {
-  const result=[...methods];
+  const result=methods.map(method=>({...method,paymentConnected:false}));
   for(const account of accounts) {
     const connector=({'wallet-metamask':'metamask','wallet-walletconnect':'walletconnect','wallet-unisat':'unisat'})[account.connector_id];
     if(!connector || typeof account.address!=='string' || ['managed_evm','managed_btc_p2wpkh'].includes(account.proof_type))continue;
     const chain_id=connector==='unisat'?0:Number(account.chain_namespace?.split(':')[1]);
     if(connector!=='unisat' && (!Number.isSafeInteger(chain_id)||chain_id<=0))continue;
     const network=connector==='unisat'?'bitcoin':'';
-    if(result.some(row=>(connector==='unisat'?row.address===account.address:row.address.toLowerCase()===account.address.toLowerCase())&&row.chain_id===chain_id&&row.network===network))continue;
+    const existing=result.find(row=>(connector==='unisat'?row.address===account.address:row.address.toLowerCase()===account.address.toLowerCase())&&row.chain_id===chain_id&&row.network===network);
+    if(existing){existing.paymentConnected=true;continue;}
     const displayName=typeof account.wallet_display_name==='string'&&account.wallet_display_name.length<=80&&!/[\p{Cc}\p{Cf}]/u.test(account.wallet_display_name)?account.wallet_display_name:undefined;
     const providerId=typeof account.provider_id==='string'&&account.provider_id.length<=128&&/^[a-z0-9]+(?:\.[a-z0-9-]+)+$/.test(account.provider_id)?account.provider_id:undefined;
-    result.push({connector,address:account.address,chain_id,network,...(displayName?{displayName}:{}),...(providerId?{providerId}:{}),sign_in_enabled:false,method_id:`payment:${account.account_id}`,paymentOnly:true,last_used_at:null});
+    result.push({connector,address:account.address,chain_id,network,...(displayName?{displayName}:{}),...(providerId?{providerId}:{}),sign_in_enabled:false,method_id:`payment:${account.account_id}`,paymentOnly:true,paymentConnected:true,last_used_at:null});
   }
   return result;
 }

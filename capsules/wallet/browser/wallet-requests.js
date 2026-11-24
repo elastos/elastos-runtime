@@ -92,12 +92,13 @@ export function createWalletRequests({
     main.className = "wallet-request-main";
     const purpose = requestTitle(request);
     const detail = accountAccess ? "A site in Browser asks to see your account address." : readText(request.reason) || "Approval requested.";
+    const chainNamespace=readText(request.chain_namespace)||(accountAccess?readText(request.review?.requested_chain_namespace):"");
+    const site = readText(request.capsule_id) === "browser" ? requestSite(request.requesting_origin) : null;
     main.append(
       textNode("strong", purpose),
-      textNode("span", `${requestingAppName(request)} · ${shortAddress(request.address)} · ${chainLabel(readText(request.chain_namespace).slice(0, 64))}`),
+      textNode("span", `${site?'':requestingAppName(request)+' · '}${shortAddress(request.address)} · ${chainLabel(chainNamespace.slice(0, 64))}`),
     );
-    if (detail !== purpose) main.append(textNode("small", detail));
-    const site = readText(request.capsule_id) === "browser" ? requestSite(request.requesting_origin) : null;
+    if (detail !== purpose && !accountAccessReview) main.append(textNode("small", detail));
     if (site) main.append(site);
     if (!answered) main.append(textNode("small", requestTiming(request), "wallet-request-time"));
     if (accountAccessReview) {
@@ -158,12 +159,12 @@ export function createWalletRequests({
       if (!text) return;
       fields.append(textNode("dt", label), textNode("dd", text));
     };
-    appendField("Permission", review.permission);
-    appendField("Account", review.account_id);
+    appendField("The site can see", "Your wallet address");
     appendField("Address", review.address);
-    appendField("Requested network", review.requested_chain_namespace);
-    appendField("Allowed networks", review.chain_namespaces);
-    appendField("Access expires", review.grant_expires_at);
+    const networkName = value => { const name=chainLabel(value); return name===value ? "Other network" : name; };
+    appendField("Network", networkName(review.requested_chain_namespace));
+    if (Array.isArray(review.chain_namespaces))appendField("Allowed networks", review.chain_namespaces.map(networkName));
+    if (Number.isSafeInteger(review.grant_expires_at))appendField("Access until", new Date(review.grant_expires_at * 1000).toLocaleDateString(undefined, {year:"numeric",month:"short",day:"numeric"}));
     details.append(fields);
     return details;
   }
@@ -174,11 +175,11 @@ export function createWalletRequests({
     try { if (new URL(origin).origin !== origin) return null; } catch (_) { return null; }
     const row = document.createElement("div");
     row.className = "wallet-request-site";
-    const value = textNode("span", origin, "wallet-request-origin");
+    const value = textNode("span", new URL(origin).host, "wallet-request-origin");
     value.dir = "auto";
     // Assignment remains compatible with the lightweight DOM used by unit tests.
     value.setAttribute?.("dir", "auto");
-    row.append(textNode("small", "Site in Browser"), value);
+    row.append(value, textNode("span", " in Browser"));
     return row;
   }
 

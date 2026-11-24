@@ -8,7 +8,7 @@ import {windowPresentation, walletConnectView, errorStage} from '../capsules/wal
 import {walletConnectMessages as messages} from '../capsules/wallet-walletconnect/browser/walletconnect-client.mjs';
 const now=1800000000,address='0x'+'12'.repeat(20);
 const account={address,chain_namespace:'eip155:8453'};
-const session={address,chain:'eip155:8453',name:'Scripted phone wallet'};
+const session={address,chain:'eip155:8453',name:'Scripted wallet'};
 const request={request_id:'request-1',connector_id:'wallet-walletconnect',capsule_id:'browser',requesting_origin:'https://example.test',reason:'Test message',status:'pending',intent:'credential',proof_type:'siwe',address,chain_namespace:'eip155:8453',expires_at:now+600};
 const initial={permission:'granted',connection:{session},accounts:[account]};
 const cases=[
@@ -167,7 +167,7 @@ for(const outcome of ['qr-cancelled','qr-expired','connection-declined','disconn
 
 for(const extra of [{address:'0x'+'56'.repeat(20),chain_namespace:'eip155:1'},{address,chain_namespace:'eip155:1'}])test(`the current connection keeps its own wallet/account/network beside another Home record ${extra.address}`,()=>{
  const home=[account,extra];const view=walletConnectView(windowPresentation({...initial,accounts:home},now));
- assert.equal(view.stage,'linked');assert.equal(view.account.name,'Scripted phone wallet');
+ assert.equal(view.stage,'linked');assert.equal(view.account.name,'Scripted wallet');
  assert.deepEqual(view.account.accounts,[{address,networks:['Base']}]);assert.equal(home.length,2,'Home owns the complete account list');
 });
 

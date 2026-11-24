@@ -108,7 +108,7 @@ export function startExtensionWindow(kind, homeClipboard) {
 
   // Home owns every effect. These are the intents this v1 window can perform.
   const supported = ['connect', 'restore-access', 'send-message', 'send-request',
-    'stop-waiting', 'close-window', 'copy-address', 'select-request', 'select-wallet', 'view-requests', 'refresh-status'];
+    'stop-waiting', 'close-window', 'open-wallet', 'copy-address', 'select-request', 'select-wallet', 'view-requests', 'refresh-status'];
 
   function boundedWalletLabel(value) {
     const name = readText(value);
@@ -164,7 +164,7 @@ export function startExtensionWindow(kind, homeClipboard) {
     presentation = mountConnection(mount, view, presentation);
     const root = presentation.root;
     for (const control of root.querySelectorAll('[data-action]')) {
-      control.disabled = Boolean((operation || uncertain) && !['stop-waiting', 'close-window', 'copy-address'].includes(control.dataset.action));
+      control.disabled = Boolean((operation || uncertain) && !['stop-waiting', 'close-window', 'open-wallet', 'copy-address'].includes(control.dataset.action));
     }
     // R5 has no consumed-but-unsent state. Reuse its outcome/card/Close parts
     // once, with a closed local copy override. No control retries this request.
@@ -186,9 +186,9 @@ export function startExtensionWindow(kind, homeClipboard) {
     // v1 keeps the admitted Home operation alive after local Stop/timeout.
     // R5's filtered Check action assumes a terminal wait, which v1 cannot claim.
     const notice = root.querySelector('.connection-notice');
-    if (notice && ['extension-timeout','extension-cancelled','link-timeout','link-cancelled','request-timeout','request-cancelled'].includes(stage)) {
+    if (notice && ['extension-timeout','extension-cancelled','link-timeout','link-cancelled','request-timeout'].includes(stage)) {
       root.dataset.extensionFeedback = 'local-wait';
-      feedbackText(notice, [kind === 'metamask' ? 'This request may still be in progress in your wallet. Closing this window does not cancel it. Check your wallet and Activity in Wallet before making another request. Open Wallet from Home to see Activity.' : 'A request may still be waiting in UniSat. Closing this window does not cancel it. Check UniSat and Activity in Wallet.']);
+      feedbackText(notice, [kind === 'metamask' ? 'Check your wallet before making another request; it may still be in progress.' : 'Check UniSat before making another request; it may still be in progress.']);
     }
     // Some R5 outcome tables still offer only navigation that v1 cannot do.
     // Until the shared capability fallback covers them, reuse its Close part.
@@ -348,7 +348,8 @@ export function startExtensionWindow(kind, homeClipboard) {
     const button = event.target.closest('[data-action]');
     if (!button || button.disabled) return;
     const action = button.dataset.action;
-    if (action === 'close-window') window.top.postMessage({ type: 'home:close-self', homeToken: frameHomeToken }, homeOrigin);
+    if (action === 'open-wallet') window.top.postMessage({type:'home:open-target',target:'wallet',homeToken:frameHomeToken},homeOrigin);
+    else if (action === 'close-window') window.top.postMessage({ type: 'home:close-self', homeToken: frameHomeToken }, homeOrigin);
     else if (action === 'stop-waiting' && operation) {
       stage = operation.action.kind === 'link' ? 'extension-cancelled' : selected?.transaction ? 'transaction-cancelled' : 'request-cancelled';
       draw();

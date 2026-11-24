@@ -89,7 +89,7 @@ for(const engine of ['chromium','webkit'])describe(engine+' approval journey',{c
      const delayedFamily=await f.prepareFont();
      await mount(f.page,{window,origin:origins[i],compact:scale===2||width<=360});
      const fontBefore=await f.page.evaluate(family=>[...document.fonts].find(f=>f.family===family)?.status,delayedFamily);assert(fontBefore&&fontBefore!=='loaded','font response is withheld through fallback paint');
-     const opening=await check(f.page);assert.equal(opening.origin,origins[i]);assert.equal(opening.scrollTop,0);
+     const opening=await check(f.page);assert.equal(opening.origin,new URL(origins[i]).host+' in Browser');assert.equal(opening.scrollTop,0);
      const measured=await sweep(f.page);measured.siteLinesPainted=await assertEverySiteLinePaint(f.page);
      if(requested&&scale===1&&width!==390&&[6,7,8].includes(i)){await f.page.screenshot({path:`${proof.path}/${window}-approval-${i===6?'253':i===7?'135':'lookalike'}-${width}x${height}-end-${engine}.png`});await f.page.evaluate(()=>{document.querySelector('main').scrollTop=0;});await f.page.screenshot({path:`${proof.path}/${window}-approval-${i===6?'253':i===7?'135':'lookalike'}-${width}x${height}-start-${engine}.png`});}
      await f.releaseFont();const fontAfter=await f.page.evaluate(family=>[...document.fonts].find(f=>f.family===family)?.status,delayedFamily);assert.equal(fontAfter,'loaded','real web font arrives after fallback paint');await check(f.page,{paint:false});measured.loadedFontLinesPainted=await assertEverySiteLinePaint(f.page);

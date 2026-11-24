@@ -99,7 +99,7 @@ for(const engine of ['chromium','webkit']){
      }
      if(row.approving===false){
       assert(!model.actions.some(a=>approvalIds.includes(a)),'empty-account QR recovery grants no approval');assert(model.actions.includes('start-over'));
-      assert.equal(await f.page.locator('.connection-site').textContent(),reviewOrigin);
+      assert.equal(await f.page.locator('.connection-site').textContent(),new URL(reviewOrigin).host+' in Browser');
       evidence.push({engine,case:row.window+'/'+row.stage,width,height,kind:'non-approving fresh-QR recovery',result:'PASS'});continue;
      }
      assert(model.actions.some(a=>approvalIds.includes(a)));
