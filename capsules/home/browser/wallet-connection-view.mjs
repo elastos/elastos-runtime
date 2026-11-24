@@ -448,7 +448,7 @@ export function renderConnection(document, view) {
       destination=el('article',null,'connection-card connection-step');
       destination.append(el('h2',view.title));content.append(destination);
     }
-    if(view.showAccount&&view.account&&!view.request){const card=accountCard(view.account);if(destination!==content){destination.classList.add('connection-account');destination.append(...card.childNodes);}else destination.append(card);}
+    if(view.showAccount&&view.account&&!view.request){const card=accountCard(view.account);if(destination!==content&&card.nodeType!==11){destination.classList.add('connection-account');destination.append(...card.childNodes);}else destination.append(card);}
     if(view.selectedAccount&&view.account&&!view.request)destination.append(accountCard(view.account,true));
     if(view.request&&!view.picker){const card=el('article',null,'connection-card connection-request');const identity=requestIdentity(view.request,card,approvalSite);
       if(view.account){const a=el('div',null,'connection-request-account');if(view.window==='metamask'&&view.walletIcon){const img=el('img');img.src=view.walletIcon;img.alt='';a.append(img);}else a.append(icon(view.account.mark));const parts=[];if(view.requiredAccount)parts.push({kind:'copy',text:'Required account · '});parts.push({kind:'wallet',text:view.account.name},{kind:'copy',text:' · '});parts.push({kind:'address',text:short(view.account.accounts[0].address)},{kind:'copy',text:' · '},...view.account.accounts[0].networks.flatMap((network,i)=>[...(i?[{kind:'copy',text:' · '}]:[]),{kind:'network',text:network}]));a.append(el('span',parts));identity.append(a);}content.append(card);destination=card;}
