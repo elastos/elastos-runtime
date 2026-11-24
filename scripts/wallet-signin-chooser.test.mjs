@@ -56,3 +56,24 @@ test('a used MetaMask account does not disable another current connected account
     await system.locator('[data-wallet-method]').nth(1).waitFor();assert.equal(fixture.state.methods.length,2);assert.equal(fixture.state.methods[1].address,evmAddress);
   }finally{await context.close();await browser.close();await fixture.close();}
 });
+
+test('a focus refresh that finishes after Choose preserves the active connector step',async()=>{
+  const fixture=await signinFixture(),browser=await requireProductSmokePlaywright().chromium.launch({headless:true});
+  const context=await browser.newContext();await context.addInitScript(installSigninProviders,{evmAddress,bitcoinAddress,theme:'light'});
+  const page=await context.newPage();page.setDefaultTimeout(10000);let holdNext=false,release,acknowledge;
+  const held=new Promise(resolve=>acknowledge=resolve);
+  await page.route('**/api/auth/wallet-methods',async route=>{
+    if(holdNext&&route.request().headers()['x-elastos-home-token']==='fixture-home') {holdNext=false;const response=await route.fetch();await new Promise(resolve=>{release=resolve;acknowledge();});return route.fulfill({response});}
+    return route.continue();
+  });
+  try {
+    fixture.state.methods=[];await page.goto(fixture.origin+'/home/');await page.waitForFunction(()=>window.fixtureReady);await page.evaluate(()=>window.showFixtureApps());
+    const system=page.frameLocator('iframe[title=system]'),wallet=page.frameLocator('iframe[title=wallet]');
+    await system.getByRole('button',{name:'Add wallet',exact:true}).click();await wallet.locator('#wallet-signers[data-signin=options]').waitFor();
+    holdNext=true;await wallet.locator('body').evaluate(()=>window.dispatchEvent(new Event('focus')));await held;
+    await wallet.locator('.wallet-method-head').filter({hasText:'MetaMask'}).getByRole('button',{name:'Choose',exact:true}).click();
+    await page.frameLocator('iframe[title=wallet-metamask]').locator('[data-action=send-request]').waitFor();
+    release();await page.waitForTimeout(200);assert.equal(await wallet.locator('#wallet-signers').getAttribute('data-signin'),'signing');
+    assert.equal(await page.locator('iframe[title=wallet-metamask]').count(),1);
+  }finally{release?.();await context.close();await browser.close();await fixture.close();}
+});

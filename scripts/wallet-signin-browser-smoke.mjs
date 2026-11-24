@@ -32,6 +32,10 @@ async function exercise(engine,width,theme) {
   const cancel=async()=>{await dialog().getByRole('button',{name:'Cancel',exact:true}).click();await dialog().waitFor({state:'detached'});};
   async function home() {await page.goto(fixture.origin+'/home/',{waitUntil:'domcontentloaded'});await page.waitForFunction(()=>window.fixtureReady);}
   async function capture(name) {
+    const walletFrames=['08-wallet-chooser','11b-already-signs-in','13-connect-wallet','17b-phone-stopped','18-check-again','19-passkey-retry','20-wallet-connections'];
+    const target=walletFrames.includes(name)?'wallet':['09-add-signature','10-one-passkey','14-connected-signin-request'].includes(name)?'wallet-metamask':name==='17-existing-phone-session'?'wallet-walletconnect':['11-signs-in','12-remove-wallet','25-wallet-removed'].includes(name)?'system':null;
+    if(target)await page.locator('iframe[title="'+target+'"]').waitFor({state:'visible',timeout:5000});
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
     const file=`${engine}-${width}-${theme}-${name}.png`;
     await page.waitForFunction(()=>[...document.querySelectorAll('.signin-dialog img')].every(img=>img.complete&&img.naturalWidth>0),null,{timeout:5000});
     await page.screenshot({path:join(output,file),fullPage:true});

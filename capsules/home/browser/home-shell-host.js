@@ -240,6 +240,12 @@ async function openSigninConnector(target) {
   }
   if(!WALLET_CONNECTOR_TARGETS.has(target))throw new Error("Unknown wallet connector");
   requireHomeGuiActive("launch Wallet connector");
+  const prior=[...launchedAppContexts.entries()].find(([,c])=>c.targetId===target&&c.source&&!c.source.closed&&c.expiresAt>Date.now());
+  if(prior) {
+    const [homeToken,context]=prior;
+    const focus=()=>postToActiveShell({type:'home:gui-command',command:'focus-window',homeToken});focus();
+    return {homeToken,source:context.source,isOpen:()=>currentSigninConnector({homeToken,source:context.source}),focus};
+  }
   const launched = await launchHomeTarget(target);
   const descriptor = walletConnectorAttachmentDescriptor(target, launched);
   requireHomeGuiActive("attach Wallet connector");

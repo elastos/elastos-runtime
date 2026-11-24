@@ -85,9 +85,9 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
     }catch{if(request===epoch)render({stage:'list-error',action:'add',message:'Home could not load your wallets.'});}
   }
   async function connected() {
-    const request=epoch;
-    try{const methods=await currentConnectedSigninMethods(await initial.loadConnected());if(request===epoch&&chooser)render({stage:'options',action:'add',methods});}
-    catch{if(request===epoch)render({stage:'list-error',action:'add',message:'Home could not load your wallets.'});}
+    const request=epoch,stage=currentState?.stage;
+    try{const methods=await currentConnectedSigninMethods(await initial.loadConnected());if(request===epoch&&chooser&&currentState?.stage===stage)render({stage:'options',action:'add',methods});}
+    catch{if(request===epoch&&currentState?.stage===stage)render({stage:'list-error',action:'add',message:'Home could not load your wallets.'});}
   }
   function chooserAction(action) {
     if(action==='cancel'){void flow.cancel();return;}
