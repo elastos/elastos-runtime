@@ -553,7 +553,7 @@ fn compatible_relay_method(m: &Method) -> bool {
     m.connector == "walletconnect" && matches!(m.chain_id, 20 | 8453)
 }
 fn has_relay_method(store: &Store) -> bool {
-    store.methods.iter().any(|m| compatible_relay_method(m))
+    store.methods.iter().any(compatible_relay_method)
 }
 fn same_wallet(a: &Method, b: &Method) -> bool {
     a.address == b.address && a.chain_id == b.chain_id && a.network == b.network
