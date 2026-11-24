@@ -81,6 +81,9 @@ try{
         await form.getByText('Address Type',{exact:true}).waitFor();await form.getByText('Continue',{exact:true}).click();
         await form.getByText('Receive',{exact:true}).waitFor();
       }
+      // Both unpacked extensions can open their startup tab asynchronously.
+      // Let those owned tabs settle before a notification can be dismissed by it.
+      await new Promise(resolve=>setTimeout(resolve,2000));
       for(const page of context.pages())await page.close();
       f=await fixture({newContext:async()=>context},kind,{realExtension:true,pictures:false});
       await f.top.evaluate(()=>{
