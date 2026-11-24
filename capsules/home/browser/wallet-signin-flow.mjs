@@ -24,7 +24,10 @@ export function walletSigninError(error, action) {
   if(error?.code === 'bitcoin-network') return 'Switch UniSat to Bitcoin mainnet, then try again.';
   if(error?.code === 'disconnected') return 'The connection to your wallet ended; select Try again.';
   if([4001,5000,5001,5002,5003].includes(Number(error?.code))) return 'Your wallet declined the request; select Try again or choose another wallet.';
-  if(error?.status === 429) return 'Home is busy; select Try again in a moment.';
+  if(error?.status === 429) {
+    const seconds=Number.isFinite(error.retryAfter)&&error.retryAfter>0?Math.ceil(error.retryAfter):180;
+    return `Home is busy. Try again in ${seconds} seconds.${action==='signin'?' You can also use your passkey.':''}`;
+  }
   if(error?.status === 409) return action === 'signin' ? 'Use your passkey or choose another wallet because this wallet cannot sign in to this Home.' : 'Home could not make this change; select Try again to choose another wallet.';
   if(error?.status === 403) return action === 'signin' ? 'Use your passkey or choose another wallet because this wallet cannot sign in to this Home.' : 'Home could not approve this change; select Try again to choose another wallet.';
   if(error?.status === 503) return 'The wallet connection is unavailable; select Try again.';
@@ -32,7 +35,7 @@ export function walletSigninError(error, action) {
 }
 const fault = code => Object.assign(new Error(code),{code});
 export function createWalletSigninFlow({api,select,approve,render,onComplete=()=>{},randomSecret=walletBrowserSecret,now=()=>Date.now()/1000}) {
-  let state={stage:'closed'}, run, timer, controls;
+  let state={stage:'closed'}, run, timer, controls, cleanup;
   function show(stage, extra={}) { state={...state,message:'',...extra,stage,expiresAt:run?.deadline};render(state); }
   function live(current) { return run===current && !current.controller.signal.aborted; }
   function assertLive(current) {
@@ -41,9 +44,11 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
   }
   function stopLocal(current) { current.controller.abort();current.wallet?.close?.(); }
   async function clear(current) {
-    if(!current) return;
+    if(!current) return cleanup;
     stopLocal(current);
-    await Promise.allSettled([...current.ceremonies].map(([ceremony_id,browser_secret])=>api('/api/auth/wallet/cancel',{ceremony_id,browser_secret})));
+    const pending=Promise.allSettled([...current.ceremonies].map(([ceremony_id,browser_secret])=>api('/api/auth/wallet/cancel',{ceremony_id,browser_secret})));
+    cleanup=Promise.allSettled([cleanup,pending]).then(()=>{});
+    return cleanup;
   }
   function deadline(current, expires) {
     if(!Number.isFinite(expires) || expires<=now()) throw fault('expired');
@@ -193,9 +198,10 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
     async start({action='signin',method=null,account='',accountId='',token='',automatic=false,delegateWalletConnect=false,providerId='',sessionMethodId='' }={}) {
       if(!['signin','add','remove'].includes(action))throw fault('invalid');
       if(run && run.effect!=='open' && state.action!=='signin')throw fault('busy');
-      const previous=run;run=null;clearTimeout(timer);void clear(previous);
+      const previous=run;run=null;clearTimeout(timer);const retiring=previous?clear(previous):cleanup;
       const current=run={secret:randomSecret(),controller:new AbortController(),ceremonies:new Map(),deadline:now()+180,effect:'open'};
       state={stage:'choice',action,method,account,accountId,token,automatic,delegateWalletConnect,providerId,sessionMethodId,walletconnectAvailable:action==='signin'?null:true};show('choice');deadline(current,current.deadline);
+      if(retiring)await retiring;if(!live(current))return;
       if(action==='signin') {
         let available=null;
         try {const status=await api('/api/auth/passkey/status');available=typeof status?.walletconnect_signin_available==='boolean'?status.walletconnect_signin_available:null;}catch{}

@@ -1,4 +1,3 @@
-import {readSigninChoice} from "./wallet-signin-options.mjs";
 import { createHomeWalletSignin } from "./wallet-signin-view.mjs?v=wallet-signin-1";
 import {
   clearHomeAuthorityToken,
@@ -61,11 +60,10 @@ let unlockClockTimer = 0;
 let unlockLeaveTimer = 0;
 let unlockPersonLabel = "";
 
-let walletSigninAvailable = false;
 let signinAvailability = {passkey:true,walletconnect:false,connectors:[]};
 const walletSignin = createHomeWalletSignin({
   approve: requestPasskeyStepUp,
-  onPasskey: () => runPasskeySignIn().catch(reportUnlockError),
+  onPasskey: ({signal}={}) => runPasskeySignIn({signal}).catch(error=>{reportUnlockError(error);throw error;}),
   onSignin: async response => {
     setHomeAuthorityToken(response.app_token, response);
     try { await unlockComplete(response, {walletSignin:true}); }
@@ -92,7 +90,6 @@ export async function showHomeUnlock(onUnlocked, options = {}) {
   unlockPanel.dataset.surface = "neutral";
   delete unlockPanel.dataset.flow;
   unlockPanel.style.removeProperty("--home-unlock-ground");
-  walletSigninAvailable = false;
   signinAvailability = {passkey:true,walletconnect:false,connectors:[]};
   renderUnlockChecking();
   unlockPanel.hidden = false;
@@ -101,9 +98,7 @@ export async function showHomeUnlock(onUnlocked, options = {}) {
 
   try {
     const status = await fetchJson("/api/auth/passkey/status");
-    walletSigninAvailable = status.wallet_signin_available === true;
     signinAvailability = {passkey:status.registered === true,walletconnect:status.walletconnect_signin_available === true,connectors:status.wallet_signin_connectors||[],relayNotice:status.wallet_signin_relay_notice||""};
-    readSigninChoice();
     if (!window.PublicKeyCredential) {
       unlockMode = "unsupported";
       renderUnlockMode({ registered: status.registered === true, guestRegistrationEnabled: false });
@@ -220,9 +215,6 @@ export function bindHomeUnlock() {
     if(signinAvailability.connectors.length)void walletSignin.start({action:"signin",availability:signinAvailability});
     else runPasskeySignIn().catch(reportUnlockError);
   };
-  for (const button of document.querySelectorAll("[data-home-signin-options]")) {
-    button.addEventListener("click", () => { if (!busy) void walletSignin.start({action:"signin",otherOptions:true,availability:signinAvailability}); });
-  }
   unlockPrimary?.addEventListener("click", startUnlock);
   unlockPerson?.addEventListener("click", startUnlock);
   // First-visit entry on the lock face: the same guest enrollment the card's
@@ -442,10 +434,6 @@ function passkeyAddFailure(stage, error) {
 }
 
 function renderUnlockChecking() {
-  for (const button of document.querySelectorAll("[data-home-signin-options]")) {
-    button.hidden = true;
-    button.disabled = true;
-  }
   if (unlockTitle) {
     unlockTitle.textContent = "Sign in";
   }
@@ -475,10 +463,6 @@ function renderUnlockChecking() {
 }
 
 function renderUnlockMode({ registered, guestRegistrationEnabled }) {
-  for (const button of document.querySelectorAll("[data-home-signin-options]")) {
-    button.hidden = !walletSigninAvailable || !(signinAvailability.connectors.length) || !readSigninChoice() || !registered || !["signin", "signin_guest_enabled", "unsupported"].includes(unlockMode);
-    button.disabled = busy;
-  }
   const resumingOwner = unlockMode === "resume_owner";
   const resumingRegistration = unlockMode === "resume_registration";
   const recoveringOwner = unlockMode === "recover_owner";
@@ -992,7 +976,7 @@ async function runOwnerRecovery() {
   }
 }
 
-async function runPasskeySignIn() {
+async function runPasskeySignIn({signal}={}) {
   if (busy || !window.PublicKeyCredential) {
     return;
   }
@@ -1001,25 +985,28 @@ async function runPasskeySignIn() {
   setUnlockStatus("Choose your passkey.", "muted");
   let stage = "start";
   try {
-    const begin = await fetchJson("/api/auth/passkey/authenticate/begin", { method: "POST" });
+    const begin = await fetchJson("/api/auth/passkey/authenticate/begin", { method: "POST", signal });
     const request = toRequestOptions(begin.options);
     stage = "passkey";
-    const credential = await navigator.credentials.get(request);
+    const credential = await navigator.credentials.get({...request,signal});
     if (!credential) {
       throw Object.assign(new Error("Passkey sign-in was cancelled."), { name: "NotAllowedError" });
     }
     stage = "verify";
     const response = await fetchJson("/api/auth/passkey/authenticate/complete", {
       method: "POST",
+      signal,
       body: JSON.stringify({
         ceremony_id: begin.ceremony_id,
         response: serializeAssertionCredential(credential),
       }),
     });
+    signal?.throwIfAborted();
     setHomeAuthorityToken(response?.home_token, response);
     stage = "open";
     await unlockComplete(response);
   } catch (error) {
+    if (signal?.aborted && stage !== "open") { setUnlockStatus("", "muted"); return; }
     throw signInFailure(stage, error);
   } finally {
     busy = false;
@@ -1042,7 +1029,8 @@ function signInFailure(stage, error) {
   if (stage === "open") {
     message = "Home could not open after sign-in. Reload this page.";
   } else if (status === 429) {
-    message = "Sign-in is busy right now. Wait a minute, then try again.";
+    const seconds = Number.isFinite(error.retryAfter) && error.retryAfter > 0 ? Math.ceil(error.retryAfter) : 300;
+    message = `Sign-in is busy. Try again in ${seconds} seconds.`;
   } else if (stage === "passkey") {
     if (name === "NotAllowedError" || name === "AbortError") {
       message = "No passkey was used. Select your account to try again.";
@@ -1091,7 +1079,6 @@ function reportUnlockError(error) {
 }
 
 function setButtonsDisabled(disabled) {
-  for (const button of document.querySelectorAll("[data-home-signin-options]")) button.disabled = disabled;
   if (unlockPerson) {
     unlockPerson.disabled = disabled || unlockMode === "unsupported" && !(signinAvailability.connectors.length);
   }

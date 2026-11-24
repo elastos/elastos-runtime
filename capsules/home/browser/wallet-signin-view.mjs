@@ -13,10 +13,11 @@ export async function walletSigninApi(path,body,token='') {
     headers:{'content-type':'application/json',...(token?{'x-elastos-home-token':token}:{})},
     ...(body===undefined?{}:{body:JSON.stringify(body)}),
   });
-  if(!response.ok)throw Object.assign(new Error('Home refused the wallet request'),{status:response.status});
+  if(!response.ok)throw Object.assign(new Error('Home refused the wallet request'),{status:response.status,retryAfter:Number(response.headers.get('retry-after'))});
   return response.json();
 }
 export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=>{}}) {
+  let passkeyController,passkeyFinished=Promise.resolve();
   let dialog,previousFocus,token='',initial={},watcher,managementTimer,epoch=0,remember=false,currentState,chooser,management={kind:'idle'};
   const flow=createWalletSigninFlow({
     api:(path,body)=>{const finishingRead=path==='/api/auth/wallet-methods'&&body===undefined&&initial.sessionCurrent?.();if(initial.isCurrent&&!initial.isCurrent()&&!path.endsWith('/cancel')&&!finishingRead)throw new Error('Home session changed');return walletSigninApi(path,body,token);},
@@ -40,6 +41,7 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
     },
   });
   function close() {
+    passkeyController?.abort();passkeyController=null;
     const pending=management;management={kind:'idle'};chooser?.close();chooser=null;
     epoch++;clearInterval(watcher);clearTimeout(managementTimer);dialog?.close();dialog?.remove();dialog=null;previousFocus?.focus();
     pending.resolve?.({status:'cancelled',...(initial.restarting?{refocus:false}:{})});
@@ -52,14 +54,39 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
     if(kind==='passkey'){const icon=document.createElementNS('http://www.w3.org/2000/svg','svg');icon.setAttribute('viewBox','0 0 24 24');icon.setAttribute('class','signin-passkey-icon');icon.setAttribute('aria-hidden','true');icon.innerHTML='<circle cx="8" cy="8" r="5"/><path d="m11.5 11.5 8 8m-3-3 3-3m-6 0 3-3"/>';el.append(icon);}else if(kind){const icon=node('img');icon.alt='';icon.src=`./connection-${kind}.png`;el.append(icon);}
     const copy=node('span');copy.append(node('span',label,'connection-option-label'));if(detail)copy.append(node('span',detail,'connection-note'));el.append(copy,node('span','›'));return el;
   }
-  async function chooseSignin(method,{saveChoice=true}={}) {
-    const id=method?.chooseConnector?signinChoiceId(method):method?optionId(method):'passkey';if(saveChoice)saveSigninChoice(remember?id:'');
-    if(!method){close();onPasskey?.();return;}
-    if(!dialog?.querySelector('.connection-options-list'))options(initial.signinMethods||[method]);
+  async function chooseSignin(method) {
+    const id=method?.chooseConnector?signinChoiceId(method):method?optionId(method):'passkey';saveSigninChoice(remember?id:'');
+    passkeyController?.abort();passkeyController=null;
+    if(!method){
+      const request=++epoch,controller=passkeyController=new AbortController(),previous=passkeyFinished;let failure;
+      void flow.cancel();options(initial.signinMethods);initial.waitingId='passkey';initial.waitingLabel='Passkey';
+      render({stage:'passkey-signin',action:'signin'});
+      passkeyFinished=(async()=>{await previous;if(!controller.signal.aborted)await onPasskey?.({signal:controller.signal});})()
+        .catch(error=>{failure=error;})
+        .finally(()=>{if(request===epoch&&dialog){passkeyController=null;options(initial.signinMethods,failure?.message||'');}});
+      return passkeyFinished;
+    }
+    options(initial.signinMethods||[method]);
     initial={...initial,waitingId:method.chooseConnector?signinChoiceId(method):optionId(method),waitingLabel:method.connector==='walletconnect'?'WalletConnect':method.displayName||connectorName(method.connector),action:'signin',method:method.chooseConnector?null:method,chooseConnector:method.chooseConnector?method.connector:null,providerId:method.providerId,automatic:true};await restart();
   }
-  async function restart() {if(initial.action==='signin'&&!dialog?.querySelector('.connection-options-list'))options(initial.signinMethods);const config=initial;await flow.start(config);if(config.chooseConnector)await flow.choose(config.chooseConnector);}
-  function options(methods) {render({stage:'options',action:initial.action,methods});}
+  async function restart() {if(initial.action==='signin'&&!dialog?.querySelector('.connection-options-list'))options(initial.signinMethods);const request=++epoch,config=initial;await flow.start(config);if(request===epoch&&config.chooseConnector)await flow.choose(config.chooseConnector);}
+  function signinOptions(body,methods) {
+    const list=node('div',null,'connection-card connection-options-list');
+    if(initial.action==='signin'&&initial.availability?.passkey!==false){const passkey=option('Passkey','','passkey',()=>chooseSignin(null));passkey.dataset.choice='passkey';passkey.disabled=!window.PublicKeyCredential;list.append(passkey);}
+    const phoneNotice=initial.availability?.relayNotice?"Connects through a relay that can see this computer's internet address.":'';
+    for(const method of methods||[]){const row=option(initial.action==='signin'?(method.connector==='walletconnect'?'WalletConnect':method.displayName||connectorName(method.connector)):(method.displayName||connectorName(method.connector)),initial.action==='signin'?(method.connector==='walletconnect'?phoneNotice:''):`${shortWalletAddress(method.address)} · ${walletNetwork(method)}`,method.connector==='metamask'&&method.providerId&&method.providerId!=='io.metamask'?'wallet':method.connector,()=>chooseSignin(method));row.dataset.choice=method.chooseConnector?signinChoiceId(method):optionId(method);list.append(row);}
+
+    body.append(list);
+    if(initial.action==='signin') {
+      const label=node('label',null,'signin-remember'),input=node('input');input.type='checkbox';input.checked=remember;input.onchange=()=>{remember=input.checked;if(!remember)saveSigninChoice('');};label.append(input,document.createTextNode('Remember my choice'));body.append(label);
+    }
+  }
+  function cancel() {
+    if(passkeyController){epoch++;passkeyController.abort();passkeyController=null;options(initial.signinMethods);return;}
+    if(initial.action==='signin'&&currentState?.stage==='options'){close();return;}
+    epoch++;void flow.cancel();
+  }
+  function options(methods,message='') {render({stage:'options',action:initial.action,methods,message});}
   async function chooseAdd(choice) {
     const [kind,providerId='']=choice.split(':');
     const request=++epoch;
@@ -88,58 +115,51 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
     if(currentState?.stage==='options')void chooseAdd(action);
   }
   function render(state) {
-    if(state.action==='signin'&&['review','signing','completing'].includes(state.stage)&&!dialog?.querySelector('.connection-options-list')&&initial.signinMethods)options(initial.signinMethods);
-    if(state.stage==='closed'){close();return;}
+    if(state.action==='signin'&&['review','signing','completing'].includes(state.stage)&&(!dialog?.querySelector('.connection-options-list')||currentState?.stage==='pairing')&&initial.signinMethods)options(initial.signinMethods);
+    if(state.stage==='closed'){if(initial.action==='signin'&&dialog&&initial.signinMethods){options(initial.signinMethods);return;}close();return;}
     currentState=state;if(management.kind==='active')management.stage=state.stage;
     if(state.action==='add'&&chooser&&state.stage!=='pairing'){dialog?.close();if(state.message||['error','list-error','unknown'].includes(state.stage))chooser.focus();chooser.render({stage:state.stage,message:state.message||'',approvalNotice:state.approvalNotice||'',walletName:state.wallet?.connector==='walletconnect'?state.wallet.displayName||'':'',methods:Array.isArray(state.methods)?[...(signinBrowserWallets().length?signinBrowserWallets().map(p=>({connector:'metamask',providerId:p.rdns,label:p.name})): [{connector:'metamask'}]),{connector:'unisat'},{connector:'walletconnect'}].map(choice=>{const rows=state.methods.filter(m=>m.connector===choice.connector&&(!choice.providerId||m.providerId===choice.providerId));return {...choice,connected:rows.length>0,used:rows.length>0&&rows.every(m=>m.sign_in_enabled)};}):undefined});return;}
-    if(state.action==='signin'&&['choice','connecting','review','signing','completing'].includes(state.stage)&&dialog?.querySelector('.connection-options-list')){
+    if(state.action==='signin'&&['choice','connecting','review','signing','completing','passkey-signin'].includes(state.stage)&&dialog?.querySelector('.connection-options-list')){
       dialog.dataset.state=state.stage;
-      for(const row of dialog.querySelectorAll('.connection-option')){row.disabled=true;const label=row.querySelector('.connection-option-label');if(label&&row.dataset.choice===initial.waitingId){label.dataset.waiting='true';label.textContent=`Waiting for ${initial.waitingLabel}…`;}}
+      for(const row of dialog.querySelectorAll('.connection-option')){row.disabled=row.dataset.choice===initial.waitingId||row.dataset.choice==='passkey'&&!window.PublicKeyCredential;const label=row.querySelector('.connection-option-label');if(label&&row.dataset.choice===initial.waitingId){label.dataset.waiting='true';label.textContent=`Waiting for ${initial.waitingLabel}…`;}}
       return;
     }
     if(state.action==='add'&&['choice','connecting','review','signing','approval','passkey','completing','done'].includes(state.stage)&&!state.message){dialog?.close();return;}
     if(!dialog) {
       previousFocus=document.activeElement;dialog=node('dialog',null,'signin-dialog');
       dialog.setAttribute('aria-labelledby','wallet-signin-title');
-      dialog.addEventListener('cancel',event=>{event.preventDefault();void flow.cancel();});
+      dialog.addEventListener('cancel',event=>{event.preventDefault();cancel();});
       document.body.append(dialog);dialog.showModal();
     }
     const hadFocus=dialog.contains(document.activeElement);
     if(!dialog.open)dialog.showModal();
-    dialog.dataset.state=state.stage;dialog.replaceChildren();
+    dialog.dataset.state=state.stage;dialog.dataset.purpose=state.action;dialog.replaceChildren();
     const body=node('div',null,'signin-body'),footer=node('footer',null,'signin-footer');dialog.append(body,footer);
     if(state.stage==='pairing') {
       // Reuse the connector QR with Home's sign-in context and fixed controls.
       const view=connectionView({window:'walletconnect',stage:'qr-shown',qrData:state.pairing.qr});
       const shared=renderConnection(document,view);
       const title=shared.querySelector('h2'),mark=title.querySelector('img');title.id='wallet-signin-title';title.textContent=titles[state.action]||'Sign in';if(mark)title.prepend(mark);
-      title.after(node('p',location.origin,'signin-destination'));
+      const destination=node('p',location.origin,'signin-destination');title.after(destination);
       const instructions=shared.querySelectorAll('.connection-dialog > p:not(.signin-destination)');
       instructions[0].textContent='Scan with your wallet, or paste the copied link into your wallet.';instructions[1].remove();
       footer.append(shared.querySelector('.connection-actions'));
       const qrDialog=shared.querySelector('.connection-dialog');qrDialog.removeAttribute('role');qrDialog.removeAttribute('aria-modal');qrDialog.removeAttribute('aria-label');
       footer.addEventListener('click',async event=>{
         const action=event.target.closest('[data-action]')?.dataset.action;
-        if(action==='cancel'||action==='close-window')void flow.cancel();
+        if(action==='cancel'||action==='close-window')cancel();
         if(action==='copy-link') {
           const control=event.target.closest('button');control.disabled=true;
           try{await copyHomeWalletConnectionLink(state.pairing.uri);control.textContent='Copied';}
           catch{control.textContent='Try copying again';}finally{control.disabled=false;}
         }
       });
+      if(state.action==='signin'){body.append(title,destination);signinOptions(body,initial.signinMethods);for(const row of body.querySelectorAll('.connection-option'))if(row.dataset.choice===initial.waitingId){row.disabled=true;row.querySelector('.connection-option-label').textContent=`Waiting for ${initial.waitingLabel}…`;}}
       body.append(shared);
     } else {
       const title=node('h2',titles[state.action]||'Sign in');title.id='wallet-signin-title';body.append(title);
       if(state.stage==='options') {
-        const list=node('div',null,'connection-card connection-options-list');
-        if(state.action==='signin'&&initial.availability?.passkey!==false){const passkey=option('Passkey','','passkey',()=>chooseSignin(null));passkey.disabled=!window.PublicKeyCredential;list.append(passkey);}
-        const phoneNotice=initial.availability?.relayNotice?"Connects through a relay that can see this computer's internet address.":'';
-        for(const method of state.methods||[]){const row=option(state.action==='signin'?(method.connector==='walletconnect'?'WalletConnect':method.displayName||connectorName(method.connector)):(method.displayName||connectorName(method.connector)),state.action==='signin'?(method.connector==='walletconnect'?phoneNotice:''):`${shortWalletAddress(method.address)} · ${walletNetwork(method)}`,method.connector==='metamask'&&method.providerId&&method.providerId!=='io.metamask'?'wallet':method.connector,()=>chooseSignin(method));row.dataset.choice=method.chooseConnector?signinChoiceId(method):optionId(method);list.append(row);}
-
-        body.append(list);
-        if(state.action==='signin') {
-          const label=node('label',null,'signin-remember'),input=node('input');input.type='checkbox';input.checked=remember;input.onchange=()=>{remember=input.checked;if(!remember)saveSigninChoice('');};label.append(input,document.createTextNode('Remember my choice'));body.append(label);
-        }
+        signinOptions(body,state.methods);
       }
       if(state.wallet&&state.stage!=='review')body.append(node('p',`${connectorName(state.wallet.connector)} · ${shortWalletAddress(state.wallet.address)} · ${walletNetwork(state.wallet)}`,'connection-note'));
       const connector=state.wallet?.connector||state.connector;
@@ -150,11 +170,11 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
       const actions=node('div',null,'connection-actions');
       if(state.stage==='approval')actions.append(button('Use passkey',()=>flow.approve()));
       if(state.stage==='unknown')actions.append(button('Check again',()=>flow.retry()));
-      if(state.stage==='error'||state.stage==='list-error') {
-        if(state.retryable!==false)actions.append(button('Try again',()=>state.stage==='list-error'?connected():restart()));
-        if(state.action==='signin'&&onPasskey&&state.allowPasskey!==false&&initial.availability?.passkey!==false)actions.append(button('Use passkey',()=>chooseSignin(null,{saveChoice:false}),true));
+      if(state.stage==='error'||state.stage==='list-error'||state.stage==='unknown') {
+        if(state.stage!=='unknown'&&state.retryable!==false)actions.append(button('Try again',()=>state.stage==='list-error'?connected():restart()));
+        if(state.action==='signin'&&onPasskey&&state.allowPasskey!==false&&initial.availability?.passkey!==false)actions.append(button('Use passkey',()=>chooseSignin(null),true));
       }
-      if(!['completing','unknown'].includes(state.stage)||state.action==='signin')actions.append(button('Cancel',()=>flow.cancel(),true));footer.append(actions);
+      if(!['completing','unknown'].includes(state.stage)||state.action==='signin')actions.append(button('Cancel',cancel,true));footer.append(actions);
     }
     if(state.action==='signin')footer.append(node('p','Continue only if you started this sign-in in this browser.','connection-note signin-presence'));
     if(hadFocus)dialog.querySelector('button')?.focus();
@@ -174,10 +194,11 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
         initial.action='signin';let providers=[];try{providers=signinBrowserWallets();}catch{}
         const methods=availableSigninOptions(initial.availability?.connectors,{providers,unisatAvailable:typeof window.unisat?.signMessage==='function',walletconnectAvailable:initial.availability?.walletconnect===true});
         initial.signinMethods=methods;
-        if(!methods.length){onPasskey?.();return;}
+        if(!methods.length)return chooseSignin(null);
         const saved=readSigninChoice(),method=methods.find(m=>(m.chooseConnector?signinChoiceId(m):optionId(m))===saved);
-        if(!initial.otherOptions&&(saved==='passkey'&&initial.availability?.passkey!==false||method))return chooseSignin(method||null);
-        options(methods);return;
+        options(methods);
+        if(saved==='passkey'&&initial.availability?.passkey!==false||method)return chooseSignin(method||null);
+        return;
       }
       let resolve;const result=new Promise(done=>{resolve=done;});management={kind:'active',action:initial.action,methodId:initial.method?.method_id||'',stage:'options',result,resolve};
       const request=epoch;
@@ -189,6 +210,6 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
       }else if(initial.method){void flow.start(initial);}
       return result;
     },
-    cancel:()=>flow.cancel(),
+    cancel:()=>{const retiring=flow.cancel();if(initial.action==='signin')close();return retiring;},
   };
 }

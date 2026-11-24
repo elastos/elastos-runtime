@@ -31,7 +31,6 @@ class FakeElement {
   focus() {}
 }
 
-const walletButtons = [new FakeElement(), new FakeElement()];
 const elements = new Map();
 const element = (selector) => {
   if (!elements.has(selector)) elements.set(selector, new FakeElement());
@@ -40,7 +39,7 @@ const element = (selector) => {
 globalThis.document = {
   body: { dataset: {} },
   querySelector: element,
-  querySelectorAll: selector => selector === "[data-home-signin-options]" ? walletButtons : [],
+  querySelectorAll: () => [],
   getElementById: (id) => element(`#${id}`),
 };
 globalThis.location = new URL("http://localhost:61180/home/");
@@ -72,11 +71,12 @@ globalThis.fetch = async (url, init = {}) => {
   requests.push({ url, body: init.body ? JSON.parse(init.body) : null });
   const route = routes[url];
   if (!route) throw new TypeError("Failed to fetch");
-  const { status = 200, body = {} } = await route();
+  const { status = 200, body = {}, retryAfter } = await route();
   return {
     ok: status >= 200 && status < 300,
     status,
     statusText: status === 403 ? "Forbidden" : "",
+    headers: { get: name => name === "retry-after" ? retryAfter : null },
     text: async () => (typeof body === "string" ? body : JSON.stringify(body)),
     json: async () => body,
   };
@@ -118,7 +118,7 @@ async function signInOnLockFace() {
   element("#home-unlock-person").click();
   await settle();
   assert.equal(faceStatus.hidden, false, "the failure is visible on the lock face");
-  assert.doesNotMatch(faceStatus.textContent, /\d{3}|request failed|enrollment|credential|Error/i);
+  assert.doesNotMatch(faceStatus.textContent.replace(/\b\d+ seconds\b/g, ""), /\d{3}|request failed|enrollment|credential|Error/i);
   return faceStatus.textContent;
 }
 
@@ -144,12 +144,17 @@ test("a cancelled passkey prompt says so and how to retry", async () => {
 
 test("a busy or unreachable Home is named, not shown as a status code", async () => {
   routes["/api/auth/passkey/authenticate/begin"] = () => ({ status: 429, body: "Passkey sign-in is busy." });
-  assert.equal(await signInOnLockFace(), "Sign-in is busy right now. Wait a minute, then try again.");
+  assert.equal(await signInOnLockFace(), "Sign-in is busy. Try again in 300 seconds.");
   delete routes["/api/auth/passkey/authenticate/begin"];
   assert.equal(
     await signInOnLockFace(),
     "Home is not responding. Check that ElastOS is running, then try again.",
   );
+});
+
+test("passkey sign-in shows the server wait rounded up to whole seconds", async () => {
+  routes["/api/auth/passkey/authenticate/begin"] = () => ({status:429,retryAfter:"181",body:"Busy"});
+  assert.equal(await signInOnLockFace(), "Sign-in is busy. Try again in 181 seconds.");
 });
 
 test("adding a passkey takes a fresh approval first and carries the System launch", async () => {
@@ -296,35 +301,14 @@ test("wallet sign-in opens the account when the contract result has no enrollmen
   assert.equal(profileReadinessActionTarget({...response, profile_readiness:{schema:"elastos.profile.readiness/v1",status:"ready"}}, {walletSignin:true}), "");
 });
 
-test("Home shows Other options for a saved choice only after Runtime confirms availability", async () => {
-  const supported = window.PublicKeyCredential;
-  try {
-    for (const passkeysAvailable of [true, false]) {
-      window.PublicKeyCredential = passkeysAvailable ? supported : undefined;
-      for (const available of [true, false, undefined]) {
-        const storage=new Map([['elastos.signin.choice.v1','passkey']]);
-        globalThis.localStorage={getItem:key=>storage.get(key),setItem:(key,value)=>storage.set(key,value),removeItem:key=>storage.delete(key)};
-        routes["/api/auth/passkey/status"] = () => ({body:{registered:true,wallet_signin_available:available,wallet_signin_connectors:available?["metamask"]:[]}});
-        await showHomeUnlock(() => {});
-        assert(walletButtons.every(button => button.hidden === (available !== true)));
-      }
-    }
-    window.PublicKeyCredential = supported;
-    routes["/api/auth/passkey/status"] = () => ({body:{registered:false,wallet_signin_available:true}});
-    await showHomeUnlock(() => {});assert(walletButtons.every(button => button.hidden));
-    let release;
-    routes["/api/auth/passkey/status"] = () => new Promise(resolve => {release=resolve;});
-    const checking = showHomeUnlock(() => {});
-    assert(walletButtons.every(button => button.hidden && button.disabled));
-    release({body:{registered:true,wallet_signin_available:true,wallet_signin_connectors:["metamask"]}});await checking;
-    assert(walletButtons.every(button => !button.hidden));
-    routes["/api/auth/passkey/status"] = () => {throw new TypeError("Home unavailable");};
-    await showHomeUnlock(() => {});assert(walletButtons.every(button => button.hidden));
-  } finally {
-    delete globalThis.localStorage;
-    window.PublicKeyCredential = supported;
-    routes["/api/auth/passkey/status"] = () => ({body:{registered:true}});
-  }
+test("Home has one Sign in entry and offers choices in its sign-in sheet", async () => {
+  const {readFile} = await import("node:fs/promises");
+  const markup = await readFile(new URL("./index.html", import.meta.url), "utf8");
+  assert.doesNotMatch(markup, /Other options|data-home-signin-options/);
+  routes["/api/auth/passkey/status"] = () => ({body:{registered:true,wallet_signin_available:true,wallet_signin_connectors:["metamask"]}});
+  await showHomeUnlock(() => {});
+  assert.equal(element("#home-unlock-person").disabled, false);
+  routes["/api/auth/passkey/status"] = () => ({body:{registered:true}});
 });
 
 test("opening Home keeps wallet identities out of browser storage", async () => {

@@ -19,6 +19,7 @@ const MAX_PENDING_STARTS: usize = 8;
 enum CeremonyKind {
     Registration,
     Authentication,
+    WalletAuthentication,
 }
 
 impl CeremonyKind {
@@ -27,10 +28,16 @@ impl CeremonyKind {
             "/api/auth/passkey/register/begin"
             | "/api/auth/owner-recovery/begin"
             | "/api/auth/owner-recovery/complete" => Some(Self::Registration),
-            "/api/auth/wallet/signin/begin" | "/api/auth/passkey/authenticate/begin" => {
-                Some(Self::Authentication)
-            }
+            "/api/auth/passkey/authenticate/begin" => Some(Self::Authentication),
+            "/api/auth/wallet/signin/begin" => Some(Self::WalletAuthentication),
             _ => None,
+        }
+    }
+
+    fn limits(self) -> (usize, usize) {
+        match self {
+            Self::Registration => (MAX_SHORT_BEGINS, MAX_PENDING_STARTS),
+            Self::Authentication | Self::WalletAuthentication => (32, 64),
         }
     }
 
@@ -38,13 +45,14 @@ impl CeremonyKind {
         match self {
             Self::Registration => 0,
             Self::Authentication => 1,
+            Self::WalletAuthentication => 2,
         }
     }
 }
 
 #[derive(Default)]
 struct BeginLimiter {
-    clients: BTreeMap<(PathBuf, Option<IpAddr>), [VecDeque<Instant>; 2]>,
+    clients: BTreeMap<(PathBuf, Option<IpAddr>), [VecDeque<Instant>; 3]>,
 }
 
 impl BeginLimiter {
@@ -68,7 +76,7 @@ impl BeginLimiter {
         });
         let key = (root.to_path_buf(), peer.map(|ip| ip.to_canonical()));
         if !self.clients.contains_key(&key) && self.clients.len() >= MAX_CLIENTS {
-            // An entry leaves the table when its last start expires in either pool.
+            // An entry leaves the table when its last start expires in every pool.
             let retry = self
                 .clients
                 .values()
@@ -80,11 +88,12 @@ impl BeginLimiter {
         }
         let window = &mut self.clients.entry(key).or_default()[kind.index()];
         let mut retry = Duration::ZERO;
-        if window.len() >= MAX_PENDING_STARTS {
-            let start = window[window.len() - MAX_PENDING_STARTS];
+        let (short_begins, pending_starts) = kind.limits();
+        if window.len() >= pending_starts {
+            let start = window[window.len() - pending_starts];
             retry = CHALLENGE_WINDOW.saturating_sub(now.saturating_duration_since(start));
         }
-        if let Some(start) = window.iter().rev().nth(MAX_SHORT_BEGINS - 1) {
+        if let Some(start) = window.iter().rev().nth(short_begins - 1) {
             retry = retry.max(SHORT_WINDOW.saturating_sub(now.saturating_duration_since(*start)));
         }
         if !retry.is_zero() {
@@ -99,13 +108,14 @@ fn begin_limit_response(kind: CeremonyKind, retry: Duration) -> Response {
     // A fractional second still needs one complete second before retrying.
     let seconds = retry.as_secs() + u64::from(retry.subsec_nanos() != 0);
     let action = match kind {
-        CeremonyKind::Registration => "sign-up",
-        CeremonyKind::Authentication => "sign-in",
+        CeremonyKind::Registration => "passkey sign-up",
+        CeremonyKind::Authentication => "passkey sign-in",
+        CeremonyKind::WalletAuthentication => "wallet sign-in",
     };
     (
         StatusCode::TOO_MANY_REQUESTS,
         [("retry-after", seconds.to_string())],
-        format!("Too many passkey {action} attempts. Try again in {seconds} seconds."),
+        format!("Too many {action} attempts. Try again in {seconds} seconds."),
     )
         .into_response()
 }
@@ -144,22 +154,87 @@ mod tests {
     use super::*;
 
     #[test]
+    fn ten_wallet_retries_leave_passkey_recovery_available() {
+        let mut limiter = BeginLimiter::default();
+        let root = Path::new("round7");
+        let now = Instant::now();
+        let wallet = CeremonyKind::from_path("/api/auth/wallet/signin/begin").unwrap();
+        let passkey = CeremonyKind::from_path("/api/auth/passkey/authenticate/begin").unwrap();
+        for cycle in 0..10 {
+            assert!(
+                limiter.admit(root, None, wallet, now).is_ok(),
+                "wallet retry {cycle}"
+            );
+        }
+        for cycle in 0..10 {
+            assert!(
+                limiter.admit(root, None, passkey, now).is_ok(),
+                "passkey retry {cycle}"
+            );
+        }
+    }
+
+    #[test]
+    fn exhausted_wallet_budget_keeps_a_separate_passkey_budget() {
+        let mut limiter = BeginLimiter::default();
+        let root = Path::new("round7");
+        let now = Instant::now();
+        let wallet = CeremonyKind::from_path("/api/auth/wallet/signin/begin").unwrap();
+        let passkey = CeremonyKind::from_path("/api/auth/passkey/authenticate/begin").unwrap();
+        let mut admitted = 0;
+        while limiter.admit(root, None, wallet, now).is_ok() {
+            admitted += 1;
+            assert!(admitted <= 64, "wallet starts remain bounded");
+        }
+        assert!(
+            limiter.admit(root, None, passkey, now).is_ok(),
+            "wallet abuse leaves passkey recovery available"
+        );
+    }
+
+    #[test]
+    fn signin_budgets_remain_bounded_over_both_windows() {
+        for path in [
+            "/api/auth/wallet/signin/begin",
+            "/api/auth/passkey/authenticate/begin",
+        ] {
+            let kind = CeremonyKind::from_path(path).unwrap();
+            let mut limiter = BeginLimiter::default();
+            let root = Path::new("round7");
+            let now = Instant::now();
+            for offset in [Duration::ZERO, SHORT_WINDOW] {
+                for _ in 0..32 {
+                    assert!(limiter.admit(root, None, kind, now + offset).is_ok());
+                }
+                assert!(limiter.admit(root, None, kind, now + offset).is_err());
+            }
+            assert_eq!(
+                limiter.admit(root, None, kind, now + SHORT_WINDOW * 2),
+                Err(Duration::from_secs(180))
+            );
+            assert!(limiter
+                .admit(root, None, kind, now + CHALLENGE_WINDOW)
+                .is_ok());
+        }
+    }
+
+    #[test]
     fn begin_quota_is_separate_for_each_peer_kind_and_home() {
         let mut limiter = BeginLimiter::default();
         let root = Path::new("home-a");
         let attacker = Some("192.0.2.1".parse().unwrap());
         let guest = Some("192.0.2.2".parse().unwrap());
         let now = Instant::now();
-        for _ in 0..MAX_SHORT_BEGINS {
+        for _ in 0..32 {
             assert!(limiter
-                .admit(root, attacker, CeremonyKind::Registration, now)
+                .admit(root, attacker, CeremonyKind::WalletAuthentication, now)
                 .is_ok());
             assert!(limiter
                 .admit(root, attacker, CeremonyKind::Authentication, now)
                 .is_ok());
         }
         assert_eq!(
-            limiter.admit(root, attacker, CeremonyKind::Registration, now),
+            limiter.admit(root, attacker, CeremonyKind::WalletAuthentication, now),
             Err(SHORT_WINDOW)
         );
         assert!(limiter
@@ -184,7 +259,7 @@ mod tests {
             .admit(
                 root,
                 Some("::ffff:192.0.2.1".parse().unwrap()),
-                CeremonyKind::Registration,
+                CeremonyKind::WalletAuthentication,
                 now
             )
             .is_err());
@@ -198,7 +273,7 @@ mod tests {
         for step in [Duration::ZERO, SHORT_WINDOW] {
             for _ in 0..MAX_SHORT_BEGINS {
                 assert!(limiter
-                    .admit(root, None, CeremonyKind::Authentication, now + step)
+                    .admit(root, None, CeremonyKind::Registration, now + step)
                     .is_ok());
             }
         }
@@ -206,7 +281,7 @@ mod tests {
             limiter.admit(
                 root,
                 None,
-                CeremonyKind::Authentication,
+                CeremonyKind::Registration,
                 now + SHORT_WINDOW * 2
             ),
             Err(Duration::from_secs(180))
@@ -215,7 +290,7 @@ mod tests {
             limiter.admit(
                 root,
                 None,
-                CeremonyKind::Authentication,
+                CeremonyKind::Registration,
                 now + CHALLENGE_WINDOW - Duration::from_millis(500)
             ),
             Err(Duration::from_millis(500))
@@ -224,7 +299,7 @@ mod tests {
             .admit(
                 root,
                 None,
-                CeremonyKind::Authentication,
+                CeremonyKind::Registration,
                 now + CHALLENGE_WINDOW
             )
             .is_ok());
@@ -342,8 +417,9 @@ mod tests {
         use axum::body::to_bytes;
 
         for (kind, action) in [
-            (CeremonyKind::Registration, "sign-up"),
-            (CeremonyKind::Authentication, "sign-in"),
+            (CeremonyKind::Registration, "passkey sign-up"),
+            (CeremonyKind::Authentication, "passkey sign-in"),
+            (CeremonyKind::WalletAuthentication, "wallet sign-in"),
         ] {
             let response = begin_limit_response(kind, Duration::from_millis(180_500));
             assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
@@ -351,7 +427,7 @@ mod tests {
             let body = to_bytes(response.into_body(), 1024).await.unwrap();
             assert_eq!(
                 std::str::from_utf8(&body).unwrap(),
-                format!("Too many passkey {action} attempts. Try again in 181 seconds.")
+                format!("Too many {action} attempts. Try again in 181 seconds.")
             );
         }
     }

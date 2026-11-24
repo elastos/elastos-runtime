@@ -114,6 +114,7 @@ export async function fetchJson(url, init) {
       `request failed: ${response.status} ${response.statusText}${detail ? ` ${detail}` : ""}`,
     );
     error.status = response.status;
+    error.retryAfter = Number(response.headers?.get("retry-after"));
     throw error;
   }
   return response.json();

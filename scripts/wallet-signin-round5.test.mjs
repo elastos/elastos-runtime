@@ -17,7 +17,7 @@ for(const engine of ['chromium','webkit'])for(const width of [1280,390])for(cons
  const system=page.frameLocator('iframe[title=system]'),wallet=page.frameLocator('iframe[title=wallet]');
  const name=`${engine}-${width}-${kind.toLowerCase()}`;
  const signatures=async()=>f.state.calls.filter(c=>c.path==='/api/fixture-sdk'&&c.body.method==='personal_sign').length+await page.evaluate(()=>window.walletFixture.calls.filter(c=>['personal_sign','signMessage'].includes(c.method)).length);
- const pair=async purpose=>{await page.locator('.signin-dialog[data-state=pairing]').waitFor();const bounds=await page.locator('.signin-dialog').boundingBox();assert(bounds.height<700,'QR dialog fits its content');await shot(page,name+'-'+purpose+'-qr');await page.locator('iframe[title=WalletConnect]').evaluate(frame=>frame.contentWindow.postMessage('fixture-pair','*'));};
+ const pair=async purpose=>{await page.locator('.signin-dialog[data-state=pairing]').waitFor();const bounds=await page.locator('.signin-dialog').boundingBox();assert(purpose==='signin'?bounds.height<=900:bounds.height<700,'QR dialog fits its content and the sign-in choices stay within the viewport');await shot(page,name+'-'+purpose+'-qr');await page.locator('iframe[title=WalletConnect]').evaluate(frame=>frame.contentWindow.postMessage('fixture-pair','*'));};
  try{
   await page.goto(f.origin+'/home/');await page.waitForFunction(()=>window.fixtureReady);if(process.env.WALLET_ROUND5_BASELINE)assert(baselineLoads>0,'pinned baseline module was served');await page.evaluate(()=>{window.showFixtureApps();window.walletFixture.passkeyMode='pending';});
   await system.getByRole('button',{name:'Add wallet',exact:true}).click();await wallet.locator('#wallet-signers[data-signin=options]').waitFor();

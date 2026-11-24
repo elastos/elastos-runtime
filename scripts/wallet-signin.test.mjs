@@ -476,3 +476,21 @@ test('Home-managed EVM and Bitcoin accounts are excluded even with an external c
     assert.deepEqual(connectedWalletSigninMethods([{account_id:'managed',connector_id,address:method.address,chain_namespace:'eip155:20',proof_type}],[]),[]);
   }
 });
+
+test('a wallet retry waits for the preceding cancellation to release server capacity',async()=>{
+  let begins=0,cancels=0,release;
+  const held=new Promise(resolve=>{release=resolve;});
+  const wallet={connector:'metamask',address:'0x'+'12'.repeat(20),chain_id:20,network:''};
+  const flow=createWalletSigninFlow({randomSecret:()=> 'a'.repeat(64),render(){},select:async()=>({...wallet,close(){}}),api:async(path)=>{
+    if(path==='/api/auth/passkey/status')return {walletconnect_signin_available:true};
+    if(path.endsWith('/begin'))return {ceremony_id:'retry:'+ ++begins,message:'Home sign-in',expires_at:Date.now()/1000+180};
+    if(path.endsWith('/cancel')&&++cancels===1)await held;
+    return {};
+  }});
+  try {
+    await flow.start({action:'signin',method:wallet});
+    const cancelling=flow.cancel(),retrying=flow.start({action:'signin',method:wallet});
+    await new Promise(setImmediate);assert.equal(begins,1,'the prior slot is still held');
+    release();await Promise.all([cancelling,retrying]);assert.equal(begins,2);assert.equal(flow.state.stage,'review');
+  } finally {release();await flow.cancel();}
+});

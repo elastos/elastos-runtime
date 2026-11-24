@@ -30,7 +30,7 @@ async function exercise(engine,width,theme) {
   });
   const state=stage=>page.locator(`.signin-dialog[data-state="${stage}"]`).waitFor({timeout:15000});
   const dialog=()=>page.locator('.signin-dialog');
-  const cancel=async()=>{await dialog().getByRole('button',{name:'Cancel',exact:true}).click();await dialog().waitFor({state:'detached'});};
+  const cancel=async()=>{await dialog().getByRole('button',{name:'Cancel',exact:true}).click();if(await dialog().count()&&await dialog().getAttribute('data-state')==='options')await dialog().getByRole('button',{name:'Cancel',exact:true}).click();await dialog().waitFor({state:'detached'});};
   async function home() {await page.goto(fixture.origin+'/home/',{waitUntil:'domcontentloaded'});await page.waitForFunction(()=>window.fixtureReady);}
   async function capture(name) {
     const walletFrames=['08-wallet-chooser','11b-already-signs-in','13-connect-wallet','17b-phone-stopped','18-check-again','19-passkey-retry','20-wallet-connections','09-add-signature','10-one-passkey','14-connected-passkey'];
@@ -70,13 +70,14 @@ async function exercise(engine,width,theme) {
     await release();await page.waitForFunction(()=>window.openedPrincipal==='principal:alex');
     await home();await page.evaluate(()=>window.walletFixture.signaturePending=true);
     await page.getByRole('button',{name:'Sign in',exact:true}).click();await state('signing');
-    assert.equal(await option('Waiting for MetaMask…').count(),1,'remembered wallet keeps its waiting row');await cancel();
-    await page.getByRole('button',{name:'Other options',exact:true}).click();await state('options');await capture('04-other-options');
+    assert.equal(await option('Waiting for MetaMask…').count(),1,'remembered wallet keeps its waiting row');
+    await dialog().getByRole('button',{name:'Cancel',exact:true}).click();await state('options');await capture('04-cancelled-options');
+    assert.equal(await page.getByRole('button',{name:'Other options',exact:true}).count(),0);
     await dialog().getByLabel('Remember my choice').uncheck();await cancel();
     await home();await page.evaluate(()=>window.walletFixture.signaturePending=true);await startSignin('UniSat');await state('signing');assert.equal(await dialog().getByText('Waiting for UniSat…',{exact:true}).count(),1);await release();await page.waitForFunction(()=>window.openedPrincipal==='principal:alex');
     await page.goto(fixture.origin+'/home/?no-passkeys',{waitUntil:'domcontentloaded'});await page.waitForFunction(()=>window.fixtureReady);
     await page.getByRole('button',{name:'Sign in',exact:true}).click();await state('options');assert(await option('Passkey').isDisabled());await option('MetaMask').click();await page.waitForFunction(()=>window.openedPrincipal==='principal:alex');
-    checks.push(`${engine}/${width}/${theme}: single Sign in, passkey fallback, enabled wallet list, extension and UniSat signing, remember, Other options and wallets without browser passkey support`);
+    checks.push(`${engine}/${width}/${theme}: single Sign in, passkey fallback, enabled wallet list, extension and UniSat signing, remember, Cancel to choices and wallets without browser passkey support`);
 
     await home();const before=fixture.state.calls.filter(c=>c.path==='/api/auth/wallet/signin/begin').length;
     await page.getByRole('button',{name:'Sign in',exact:true}).click();await state('options');

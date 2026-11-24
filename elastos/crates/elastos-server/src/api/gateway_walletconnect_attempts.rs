@@ -166,7 +166,7 @@ fn capacity(
         });
         retry = retry.max(window_wait(
             Some(&inner.attempt_issues[pool]),
-            if local { 4 } else { 8 },
+            if local { 32 } else { 64 },
             now,
         ));
         retry = retry.max(slot_wait(
@@ -179,7 +179,7 @@ fn capacity(
         ));
         if !local {
             let source = source.ok_or(crate::auth::wallet_signin::Refused)?;
-            retry = retry.max(window_wait(inner.address_issues.get(&source), 4, now));
+            retry = retry.max(window_wait(inner.address_issues.get(&source), 32, now));
             retry = retry.max(slot_wait(
                 inner
                     .attempts
@@ -225,7 +225,7 @@ fn window_wait(
         })
 }
 
-/// Loopback has four issues/minute; remote has eight, at most four/address budget.
+/// Loopback has 32 issues/minute; remote has 64, at most 32/address budget.
 /// IPv6 addresses in the same /64 share that budget.
 /// Three anonymous slots reserve one for loopback; each remote address owns one. Renewing the
 /// frame credential of the same live attempt costs neither another slot nor time.
@@ -666,6 +666,59 @@ mod tests {
         );
     }
 
+    #[test]
+    fn ten_cancelled_pairings_fit_local_and_remote_issue_budgets() {
+        for local in [true, false] {
+            let mut inner = Inner::default();
+            let source = Some("203.0.113.1".parse().unwrap());
+            for cycle in 0..32 {
+                assert!(
+                    capacity(&mut inner, local, None, None, source).is_ok(),
+                    "pairing retry {cycle}, local={local}"
+                );
+                // Cancel releases the held slot; issue debits remain for abuse bounds.
+                inner.attempt_issues[usize::from(local)].push_back(Instant::now());
+                if !local {
+                    inner
+                        .address_issues
+                        .entry(source.unwrap())
+                        .or_default()
+                        .push_back(Instant::now());
+                }
+            }
+            let error = capacity(&mut inner, local, None, None, source).unwrap_err();
+            assert_eq!(
+                error
+                    .downcast_ref::<AttemptCapacity>()
+                    .unwrap()
+                    .retry_after_secs,
+                60
+            );
+        }
+    }
+
+    #[test]
+    fn cancelled_pairings_keep_the_aggregate_remote_limit() {
+        let mut inner = Inner::default();
+        inner.attempt_issues[0] = std::iter::repeat_n(Instant::now(), 64).collect();
+        let error = capacity(
+            &mut inner,
+            false,
+            None,
+            None,
+            Some("203.0.113.8".parse().unwrap()),
+        )
+        .unwrap_err();
+        assert_eq!(
+            error
+                .downcast_ref::<AttemptCapacity>()
+                .unwrap()
+                .retry_after_secs,
+            60
+        );
+        assert!(capacity(&mut inner, true, None, None, None).is_ok());
+    }
+
     #[tokio::test]
     async fn two_remote_slots_refuse_third_with_real_wait_and_keep_loopback() {
         let mut inner = Inner::default();
@@ -710,7 +763,7 @@ mod tests {
         held(&mut inner, "first", "203.0.113.1", 200);
         held(&mut inner, "second", "203.0.113.2", 20);
         inner.attempt_issues[0] =
-            std::iter::repeat_n(Instant::now() - Duration::from_secs(10), 8).collect();
+            std::iter::repeat_n(Instant::now() - Duration::from_secs(10), 64).collect();
         for (source, expected) in [("203.0.113.3", 50), ("203.0.113.1", 200)] {
             let error =
                 capacity(&mut inner, false, None, None, Some(source.parse().unwrap())).unwrap_err();
@@ -723,7 +776,7 @@ mod tests {
             );
         }
         inner.attempts.clear();
-        inner.attempt_issues[1] = std::iter::repeat_n(Instant::now(), 4).collect();
+        inner.attempt_issues[1] = std::iter::repeat_n(Instant::now(), 32).collect();
         let error = capacity(&mut inner, true, None, None, None).unwrap_err();
         assert_eq!(
             error
@@ -766,7 +819,7 @@ mod tests {
         inner.attempts.clear();
         inner.address_issues.insert(
             "2001:db8:1:2::".parse().unwrap(),
-            std::iter::repeat_n(Instant::now(), 4).collect(),
+            std::iter::repeat_n(Instant::now(), 32).collect(),
         );
         assert!(capacity(
             &mut inner,

@@ -126,6 +126,16 @@ An identical completion retry returns its saved result while the ceremony and
 original authority remain live, without another approval or authority change.
 A proof from another ceremony or the earlier enrollment contract is refused.
 Begin leaves wallet authority unchanged. Runtime limits begins in a 60-second window, including cancelled attempts: 32 per browser commitment and authority class, with 64 across the Home.
+The gateway gives wallet sign-in and passkey sign-in separate budgets: each socket
+peer can start 32 requests per minute and 64 per five minutes for each mechanism.
+Account creation and recovery retain their separate 4-per-minute, 8-per-five-minute
+budget. Wallet retries leave the passkey budget available.
+WalletConnect transport setup allows 32 starts per minute on loopback and 64 for
+remote callers, with at most 32 per remote address budget (IPv6 /64). Cancelled
+starts still count. Live transport slots remain limited to three anonymous
+attempts, with two per local or remote pool and one per remote address; loopback
+keeps a reserved slot. A 429 supplies Retry-After; Home shows the wait in seconds
+and offers Passkey.
 
 ## Signed-out sign-in
 
@@ -284,7 +294,11 @@ when their extensions are present, and WalletConnect when Runtime reports a
 compatible WalletConnect method. A fresh browser and the desktop app use the same
 Runtime list. Signed-out choices show the wallet name and icon. The browser stores
 only the remembered choice (passkey or connector kind), with no wallet identity
-hints. Other options opens the list again.
+hints. Each press of Sign in opens the same list and starts the remembered option
+once. Cancel stops the wallet request and leaves the list available. Passkey and
+other wallet choices stay available during the request. With Remember my choice
+ticked, choosing another option saves that choice; unticking it clears the saved
+choice. Cancel on the idle list closes the sheet.
 
 Accounts groups sign-in methods under each person. Add wallet uses Wallet's
 chooser. A wallet that already signs in is marked Already signs in and disabled.

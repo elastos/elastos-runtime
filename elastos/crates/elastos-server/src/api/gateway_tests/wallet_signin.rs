@@ -81,6 +81,79 @@ async fn change(
     result
 }
 #[tokio::test]
+async fn round7_ten_cancelled_wallet_signins_keep_real_passkey_begin_available() {
+    for connector in ["metamask", "walletconnect"] {
+        for source in ["127.0.0.1:49152", "203.0.113.7:49152"] {
+            let f = wallet_fixture::fixture();
+            install_real_approver(f.data.path(), &f.actor.principal_id, b"round7-passkey");
+            let state = test_state(f.data.path());
+            let token =
+                issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &f.actor)
+                    .unwrap();
+            let app = gateway_router(state);
+            change(&app, &token, &f, "add", "", connector).await;
+            for cycle in 0..10 {
+                let input = json!({"connector":connector,"address":if connector=="walletconnect" {""} else {&f.address},"chain_id":20,"browser_secret":BROWSER,"allow_temporary_internet":true});
+                let request = Request::builder()
+                    .uri("/api/auth/wallet/signin/begin")
+                    .method("POST")
+                    .header(HOST, "localhost:61180")
+                    .header("origin", ORIGIN)
+                    .header(CONTENT_TYPE, "application/json")
+                    .extension(axum::extract::ConnectInfo(
+                        source.parse::<std::net::SocketAddr>().unwrap(),
+                    ))
+                    .body(Body::from(input.to_string()))
+                    .unwrap();
+                let response = app.clone().oneshot(request).await.unwrap();
+                let status = response.status();
+                let bytes = axum::body::to_bytes(response.into_body(), 8192)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    status,
+                    StatusCode::OK,
+                    "{connector} {source} retry {cycle}: {}",
+                    String::from_utf8_lossy(&bytes)
+                );
+                let begin: Value = serde_json::from_slice(&bytes).unwrap();
+                let (status, result) = call(
+                    &app,
+                    "/api/auth/wallet/cancel",
+                    None,
+                    Some(json!({"ceremony_id":begin["ceremony_id"],"browser_secret":BROWSER})),
+                )
+                .await;
+                assert_eq!(status, StatusCode::OK, "{result}");
+            }
+            let request = Request::builder()
+                .uri("/api/auth/passkey/authenticate/begin")
+                .method("POST")
+                .header(HOST, "localhost:61180")
+                .header("origin", ORIGIN)
+                .extension(axum::extract::ConnectInfo(
+                    source.parse::<std::net::SocketAddr>().unwrap(),
+                ))
+                .body(Body::empty())
+                .unwrap();
+            let response = app.clone().oneshot(request).await.unwrap();
+            let status = response.status();
+            let bytes = axum::body::to_bytes(response.into_body(), 8192)
+                .await
+                .unwrap();
+            assert_eq!(
+                status,
+                StatusCode::OK,
+                "passkey after {connector} retries: {}",
+                String::from_utf8_lossy(&bytes)
+            );
+            let begin: Value = serde_json::from_slice(&bytes).unwrap();
+            assert!(begin["options"]["publicKey"]["challenge"].is_string());
+        }
+    }
+}
+
+#[tokio::test]
 async fn wallet_signin_http_add_signin_remove_journey() {
     let f = wallet_fixture::fixture();
     let state = test_state(f.data.path());

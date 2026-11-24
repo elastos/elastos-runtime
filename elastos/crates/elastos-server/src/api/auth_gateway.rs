@@ -5577,7 +5577,12 @@ mod tests {
             "/api/auth/passkey/register/begin",
             "/api/auth/passkey/authenticate/begin",
         ] {
-            for attempt in 0..12 {
+            let limit = if path.ends_with("authenticate/begin") {
+                32
+            } else {
+                4
+            };
+            for attempt in 0..limit + 8 {
                 let mut request = make_request(
                     path,
                     "192.0.2.1:1234",
@@ -5592,7 +5597,7 @@ mod tests {
                 let response = app.clone().oneshot(request).await.unwrap();
                 assert_eq!(
                     response.status(),
-                    if attempt < 4 {
+                    if attempt < limit {
                         StatusCode::OK
                     } else {
                         StatusCode::TOO_MANY_REQUESTS
@@ -5603,7 +5608,7 @@ mod tests {
                 for credential in [test_credential(), test_credential_2()] {
                     assert!(!text.contains(&credential.credential_id));
                 }
-                if path.ends_with("authenticate/begin") && attempt < 4 {
+                if path.ends_with("authenticate/begin") && attempt < limit {
                     let body: Value = serde_json::from_str(&text).unwrap();
                     assert_eq!(body["options"]["publicKey"]["allowCredentials"], json!([]));
                 }
