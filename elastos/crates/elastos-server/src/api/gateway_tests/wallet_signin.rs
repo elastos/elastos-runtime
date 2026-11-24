@@ -1594,7 +1594,9 @@ async fn wallet_guest_lists_its_own_passkeys_without_exposing_other_accounts() {
 #[tokio::test]
 async fn round9_pending_caps_and_owned_cancel_keep_other_peers_available() {
     let f = wallet_fixture::fixture();
-    install_real_approver(f.data.path(), &f.actor.principal_id, b"round9-passkey");
+    let (_, credential) =
+        install_real_approver(f.data.path(), &f.actor.principal_id, b"round9-passkey");
+    wallet_fixture::enabled(&f);
     let app = gateway_router(test_state(f.data.path()));
     for path in [
         "/api/auth/passkey/authenticate/begin",
@@ -1603,7 +1605,7 @@ async fn round9_pending_caps_and_owned_cancel_keep_other_peers_available() {
         let mut first = Value::Null;
         for index in 0..9 {
             let input = if path.contains("wallet") {
-                json!({"connector":"metamask","address":&f.address,"chain_id":1,"browser_secret":BROWSER})
+                json!({"connector":"metamask","address":&f.address,"chain_id":20,"browser_secret":BROWSER})
             } else {
                 json!({})
             };
@@ -1641,9 +1643,12 @@ async fn round9_pending_caps_and_owned_cancel_keep_other_peers_available() {
             }
         }
         // Other peers remain admitted while the first peer still holds all eight items.
-        for peer in ["203.0.113.45:1234", "127.0.0.1:1234"] {
+        for (index, peer) in ["203.0.113.45:1234", "127.0.0.1:1234"]
+            .into_iter()
+            .enumerate()
+        {
             let input = if path.contains("wallet") {
-                json!({"connector":"metamask","address":&f.address,"chain_id":1,"browser_secret":BROWSER})
+                json!({"connector":"metamask","address":&f.address,"chain_id":20,"browser_secret":BROWSER})
             } else {
                 json!({})
             };
@@ -1669,6 +1674,39 @@ async fn round9_pending_caps_and_owned_cancel_keep_other_peers_available() {
                 StatusCode::OK,
                 "{path} peer {peer} while attacker is capped"
             );
+            let bytes = axum::body::to_bytes(response.into_body(), 8192)
+                .await
+                .unwrap();
+            let begin: Value = serde_json::from_slice(&bytes).unwrap();
+            let complete = if path.contains("wallet") {
+                let complete =
+                    wallet_fixture::completion(&f, &serde_json::from_value(begin).unwrap());
+                json!({"ceremony_id":complete.ceremony_id,"browser_secret":complete.browser_secret,"signature":complete.signature,"signature_type":complete.signature_type,"public_key":complete.public_key})
+            } else {
+                use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+                use p256::ecdsa::{signature::Signer, Signature, SigningKey};
+                let client=json!({"type":"webauthn.get","challenge":begin["options"]["publicKey"]["challenge"],"origin":ORIGIN,"crossOrigin":false}).to_string();
+                let mut auth = Sha256::digest(b"localhost").to_vec();
+                auth.push(0x05);
+                auth.extend_from_slice(&(index as u32 + 1).to_be_bytes());
+                let mut signed = auth.clone();
+                signed.extend_from_slice(&Sha256::digest(client.as_bytes()));
+                let mut key = [0u8; 32];
+                key[31] = 1;
+                let signature: Signature =
+                    SigningKey::from_bytes((&key).into()).unwrap().sign(&signed);
+                json!({"ceremony_id":begin["ceremony_id"],"response":{"id":credential,"rawId":credential,"type":"public-key","response":{"clientDataJson":URL_SAFE_NO_PAD.encode(client),"authenticatorData":URL_SAFE_NO_PAD.encode(auth),"signature":URL_SAFE_NO_PAD.encode(signature.to_der().as_bytes())}}})
+            };
+            let complete_path = path.replace("/begin", "/complete");
+            let (status, granted) = call(&app, &complete_path, None, Some(complete)).await;
+            assert_eq!(status, StatusCode::OK, "{complete_path} {peer}: {granted}");
+            assert_eq!(granted["principal_id"], f.actor.principal_id);
+            assert!(crate::auth::load_active_session_grant(
+                f.data.path(),
+                granted["session_id"].as_str().unwrap(),
+                now_ts()
+            )
+            .is_ok());
         }
         let cancel = if path.contains("wallet") {
             "/api/auth/wallet/cancel"
@@ -1697,7 +1735,7 @@ async fn round9_pending_caps_and_owned_cancel_keep_other_peers_available() {
             "127.0.0.1:1234",
         ] {
             let input = if path.contains("wallet") {
-                json!({"connector":"metamask","address":&f.address,"chain_id":1,"browser_secret":BROWSER})
+                json!({"connector":"metamask","address":&f.address,"chain_id":20,"browser_secret":BROWSER})
             } else {
                 json!({})
             };

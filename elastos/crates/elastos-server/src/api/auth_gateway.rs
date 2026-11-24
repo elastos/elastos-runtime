@@ -4350,7 +4350,7 @@ pub async fn passkey_authenticate_cancel(
     .await;
     match result {
         Ok(value) => Json(value).into_response(),
-        Err(error) => auth_error_response(error),
+        Err(_) => (StatusCode::FORBIDDEN, "Passkey cancellation refused").into_response(),
     }
 }
 
@@ -5620,8 +5620,10 @@ mod tests {
             "/api/auth/passkey/register/begin",
             "/api/auth/passkey/authenticate/begin",
         ] {
+            // Without Cancel, a peer reaches its eight live challenges before
+            // its separate 32-start rate budget. Registration retains four starts.
             let limit = if path.ends_with("authenticate/begin") {
-                32
+                8
             } else {
                 4
             };
