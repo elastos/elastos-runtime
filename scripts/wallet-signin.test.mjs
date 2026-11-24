@@ -383,7 +383,7 @@ const {connectionView,reduceSummary,viewText}=await import('../capsules/_shared/
 test('the shared phone wait presents Home sign-in without disconnecting the payment session',()=>{
   const summary=reduceSummary({connector_id:'wallet-walletconnect',request_id:'signin',capsule_id:'home',requesting_app_name:'Home',intent:'auth_challenge',address:wallet.address,status:'pending',reason:'Sign in',expires_at:180},{connector:'wallet-walletconnect'});
   const view=connectionView({window:'walletconnect',stage:'request-phone',purpose:'home-signin',summary,supportedActions:['stop-waiting']});
-  assert.match(viewText(view.status),/add this wallet to Home/);assert.doesNotMatch(viewText(view.notice),/disconnect/);assert.equal(view.wait,null);
+  assert.match(viewText(view.status),/Continue in Phone wallet/);assert.doesNotMatch(viewText(view.notice),/disconnect/);assert.equal(view.wait,null);
   assert.throws(()=>connectionView({window:'walletconnect',stage:'request-phone',purpose:'home-signin',summary:{...summary,actor:'browser'}}),/Home sign-in presentation/);
   assert.throws(()=>connectionView({window:'walletconnect',stage:'linked',purpose:'home-signin'}),/closed connection purpose/);
 });

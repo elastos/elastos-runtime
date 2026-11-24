@@ -40,7 +40,7 @@ export function createWalletFlows({
     return Boolean(
       accountsSectionNode
         && accountsBackNode
-        && /^(Create account|Import recovery key|Account|Rename account|Remove account|Delete account|Passkey required|Recovery key)\b/i.test(
+        && /^(Create address|Import recovery key|Address|Rename address|Remove address|Delete address|Passkey required|Recovery key)\b/i.test(
           String(title || ""),
         ),
     );

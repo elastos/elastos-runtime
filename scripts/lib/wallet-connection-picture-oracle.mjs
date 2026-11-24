@@ -35,9 +35,9 @@ export function contractCopy(expected, row, view) {
       'internet-off':{notice:'Connect again to ask for internet access, then answer in Inbox.'},
       'internet-refused':{status:'Internet access for WalletConnect is off.'},
       'internet-clearing':{status:'Internet access for WalletConnect is off.'},
-      'link-wait':{status:`Open ${name} and sign the message to confirm this account is yours.`,notice:`If you stop waiting, Home disconnects from ${name}. The request may still be waiting there.`},
+      'link-wait':{status:`Open ${name} and sign the message to confirm this account is yours.`,notice:''},
       'link-declined':{status:'Your wallet declined to sign the message.',notice:'Send another message to confirm this account.'},
-      'request-phone':{notice:`Check the message in ${name}. If you stop waiting, Home disconnects from ${name}. The request may still be waiting there.`},
+      'request-phone':{status:`Continue in ${name}.`,notice:''},
       'transaction-phone':{notice:`Check the transaction in ${name}. If you stop waiting, Home disconnects from ${name}. The transaction may still be waiting there or may already have been sent.`},
       'transaction-deadline':{notice:`Start a new transaction in ${app}.`},
       'transaction-declined':{notice:`To try again, go back to ${app}. In Wallet, choose Dismiss to clear this request.`},
@@ -58,7 +58,7 @@ export function contractCopy(expected, row, view) {
       result.status=metamask?'Home could not find a wallet in this browser.':'Home could not find UniSat in this browser.';
       result.notice=metamask?'Open Home in a browser where your wallet is available, then choose MetaMask in Wallet.':'Close this window. Open Home in a browser where UniSat is available, then open this connection from Wallet.';
     }
-    if(['extension-wait','link-wait'].includes(row.stage))result.notice=`Find ${name} in your browser's extensions menu. Unlock it if asked. Stopping here does not cancel the request in ${name}.`;
+    if(['extension-wait','link-wait'].includes(row.stage)){result.status=`Waiting for ${name}.`;result.notice='';}
     if(row.stage==='request-extension')result.notice=`Open ${name} from your browser's extensions menu. Stopping here does not cancel the request in ${name}.`;
     if(metamask&&row.stage==='request-unsendable'){result.status='Home cannot confirm access to the account this request needs in your wallet.';result.notice='';}
     if(row.stage==='account-unavailable')result.status=metamask?`Home cannot confirm access to this account in ${name}.`:'Home cannot use this UniSat account right now.';
@@ -79,5 +79,6 @@ export function contractCopy(expected, row, view) {
   if(!['linked','linked-multiple'].includes(row.stage)&&view.actions.some(a=>a.primary&&a.id==='close-window')&&!/close (this )?window/i.test(`${result.status} ${result.notice}`))result.notice=`Close this window. ${result.notice}`.trim();
   if(row.stage==='request-next')result.status='Message signed.';
   if(row.stage==='disconnecting')result.notice='Disconnecting continues after you close this window.';
+  for(const key of Object.keys(result))result[key]=result[key].replaceAll('wallet app','phone wallet').replaceAll('Account saved in Wallet.','Address saved in Wallet.').replaceAll('Your account stays in Wallet.','Your address stays in Wallet.').replaceAll('choose WalletConnect in Wallet.','choose Phone wallet in Wallet.').replaceAll('open WalletConnect, choose','open Phone wallet, choose');
   return result;
 }

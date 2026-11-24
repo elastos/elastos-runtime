@@ -9,8 +9,8 @@
       "picture": "walletconnect-nothing-saved-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
-        "Connect a wallet app with a QR code, then sign a message.",
+        "Phone wallet",
+        "Connect a phone wallet with a QR code, then sign a message.",
         "Connect wallet [primary]"
       ],
       "focus": null,
@@ -28,7 +28,7 @@
       "picture": "walletconnect-internet-pending-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "Allow WalletConnect to use the internet?",
         "Answer in Inbox to get your QR code.",
         "Show Request [primary]",
@@ -49,7 +49,7 @@
       "picture": "walletconnect-internet-refused-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "Internet access is off for WalletConnect.",
         "Allow access in Inbox, then return here to connect.",
         "Open Inbox [primary]"
@@ -69,7 +69,7 @@
       "picture": "walletconnect-internet-off-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "Internet access is off for WalletConnect.",
         "Allow access in Inbox when you want to connect again.",
         "Open Inbox [primary]"
@@ -89,7 +89,7 @@
       "picture": "walletconnect-internet-expired-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "The access request expired.",
         "After Allow, return here to connect.",
         "Open Inbox [primary]"
@@ -109,7 +109,7 @@
       "picture": "walletconnect-internet-clearing-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "Internet access is off.",
         "Finish removing the saved connection in Inbox.",
         "Open Inbox [primary]"
@@ -129,8 +129,8 @@
       "picture": "walletconnect-internet-ready-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
-        "Connect a wallet app with a QR code, then sign a message.",
+        "Phone wallet",
+        "Connect a phone wallet with a QR code, then sign a message.",
         "Connect wallet [primary]",
         "Manage in Inbox [quiet secondary]"
       ],
@@ -149,7 +149,7 @@
       "picture": "walletconnect-preparing-qr-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "Getting your QR code…",
         "Cancel [bordered secondary]"
       ],
@@ -189,7 +189,7 @@
       "picture": "walletconnect-qr-cancelled-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "Connection cancelled.",
         "Connect wallet [primary]"
       ],
@@ -208,7 +208,7 @@
       "picture": "walletconnect-qr-expired-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "QR code expired.",
         "Try again [primary]"
       ],
@@ -227,7 +227,7 @@
       "picture": "walletconnect-connection-declined-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "Connection declined.",
         "Try again [primary]"
       ],
@@ -246,7 +246,7 @@
       "picture": "walletconnect-link-wait-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "[mark: metamask.png] Open MetaMask on your phone and sign the message to confirm this account is yours.",
         "Account to confirm",
         "0x71C7…976F",
@@ -270,7 +270,7 @@
       "picture": "walletconnect-link-declined-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "[mark: metamask.png] Account confirmation declined.",
         "Account to confirm",
         "0x71C7…976F",
@@ -294,7 +294,7 @@
       "picture": "walletconnect-link-timeout-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "[mark: metamask.png] Time to connect ran out.",
         "Account to confirm",
         "0x71C7…976F",
@@ -319,7 +319,7 @@
       "picture": "walletconnect-link-cancelled-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "You stopped waiting.",
         "Account to confirm",
         "0x71C7…976F",
@@ -344,7 +344,7 @@
       "picture": "walletconnect-saved-unlinked-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "[mark: metamask.png] Confirm this account is yours.",
         "Account to confirm",
         "0x71C7…976F",
@@ -368,7 +368,7 @@
       "picture": "walletconnect-connection-expired-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "This wallet connection expired.",
         "Get new QR code [primary]"
       ],
@@ -387,7 +387,7 @@
       "picture": "walletconnect-request-connection-expired-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "This wallet connection expired.",
         "Browser · example.org",
         "Sign a message",
@@ -412,7 +412,7 @@
       "picture": "walletconnect-wallet-removed-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "Your wallet removed this connection.",
         "Scan a new QR code to reconnect.",
         "Connect wallet [primary]"
@@ -432,7 +432,7 @@
       "picture": "walletconnect-linked-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "Connected.",
         "[mark: metamask.png]",
         "MetaMask",
@@ -457,7 +457,7 @@
       "picture": "walletconnect-linked-multiple-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "Connected.",
         "[mark: metamask.png]",
         "MetaMask",
@@ -485,14 +485,14 @@
       "picture": "walletconnect-request-waiting-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "Browser · example.org",
         "Sign a message",
         "Sign in to example.org.",
         "[mark: metamask.png] MetaMask · 0x71C7…976F · Base",
         "Time left: 9:59",
-        "Send to MetaMask [primary]",
-        "Review in Wallet [quiet secondary]"
+        "Continue in MetaMask [primary]",
+        "Cancel [quiet secondary]"
       ],
       "focus": null,
       "copy": {
@@ -509,7 +509,7 @@
       "picture": "walletconnect-request-multiple-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "3 requests waiting",
         "View requests [quiet secondary]",
         "Browser · example.org",
@@ -517,8 +517,8 @@
         "Sign in to example.org.",
         "[mark: metamask.png] MetaMask · 0x71C7…976F · Base",
         "Time left: 9:59",
-        "Send to MetaMask [primary]",
-        "Review in Wallet [quiet secondary]"
+        "Continue in MetaMask [primary]",
+        "Cancel [quiet secondary]"
       ],
       "focus": null,
       "copy": {
@@ -535,7 +535,7 @@
       "picture": "walletconnect-request-unsendable-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "This request cannot be sent from WalletConnect. Reject it in Wallet.",
         "Browser · example.org",
         "Sign typed data",
@@ -558,7 +558,7 @@
       "picture": "walletconnect-request-expired-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "This request expired.",
         "Browser · example.org",
         "Sign a message",
@@ -582,7 +582,7 @@
       "picture": "walletconnect-request-phone-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "Waiting for MetaMask.",
         "Browser · example.org",
         "Sign a message",
@@ -607,7 +607,7 @@
       "picture": "walletconnect-request-declined-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "You declined this message in MetaMask.",
         "Browser · example.org",
         "Sign a message",
@@ -631,7 +631,7 @@
       "picture": "walletconnect-request-timeout-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "Time to answer ran out.",
         "Browser · example.org",
         "Sign a message",
@@ -656,7 +656,7 @@
       "picture": "walletconnect-request-done-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "Message signed.",
         "Browser · example.org",
         "Sign a message",
@@ -679,7 +679,7 @@
       "picture": "walletconnect-request-cancelled-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "You stopped waiting.",
         "Browser · example.org",
         "Sign a message",
@@ -704,14 +704,14 @@
       "picture": "walletconnect-transaction-waiting-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "Browser · example.org",
         "Send transaction",
         "0.01 ETH to 0x8bC4…391a · Base",
         "[mark: metamask.png] MetaMask · 0x71C7…976F · Base",
         "Time left: 9:59",
-        "Send to MetaMask [primary]",
-        "Review in Wallet [quiet secondary]"
+        "Continue in MetaMask [primary]",
+        "Cancel [quiet secondary]"
       ],
       "focus": null,
       "copy": {
@@ -728,7 +728,7 @@
       "picture": "walletconnect-transaction-deadline-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "There is too little time to send this transaction.",
         "Browser · example.org",
         "Send transaction",
@@ -753,7 +753,7 @@
       "picture": "walletconnect-transaction-phone-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "Waiting for MetaMask.",
         "Browser · example.org",
         "Send transaction",
@@ -778,7 +778,7 @@
       "picture": "walletconnect-transaction-declined-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "You declined this transaction in MetaMask.",
         "Browser · example.org",
         "Send transaction",
@@ -803,7 +803,7 @@
       "picture": "walletconnect-transaction-timeout-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "Transaction result unknown.",
         "Browser · example.org",
         "Send transaction",
@@ -827,7 +827,7 @@
       "picture": "walletconnect-transaction-cancelled-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "You stopped waiting. Result unknown.",
         "Browser · example.org",
         "Send transaction",
@@ -851,7 +851,7 @@
       "picture": "walletconnect-transaction-wallet-error-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "Transaction result unknown.",
         "Browser · example.org",
         "Send transaction",
@@ -875,7 +875,7 @@
       "picture": "walletconnect-transaction-done-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "Transaction sent.",
         "Browser · example.org",
         "Send transaction",
@@ -898,7 +898,7 @@
       "picture": "walletconnect-transaction-reopened-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "Transaction result unknown.",
         "Browser · example.org",
         "Send transaction",
@@ -922,7 +922,7 @@
       "picture": "walletconnect-request-wallet-error-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "MetaMask could not sign this message.",
         "Browser · example.org",
         "Sign a message",
@@ -946,7 +946,7 @@
       "picture": "walletconnect-request-new-connection-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "Connect on Ethereum to send this request.",
         "Browser · example.org",
         "Sign a message",
@@ -971,7 +971,7 @@
       "picture": "walletconnect-request-network-unsupported-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "This wallet does not support the requested network.",
         "Browser · example.org",
         "Sign a message",
@@ -996,7 +996,7 @@
       "picture": "walletconnect-request-wallet-removed-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "MetaMask ended the connection.",
         "Browser · example.org",
         "Sign a message",
@@ -1020,7 +1020,7 @@
       "picture": "walletconnect-request-sent-wallet-removed-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "MetaMask ended the connection after this message was sent.",
         "Browser · example.org",
         "Sign a message",
@@ -1044,7 +1044,7 @@
       "picture": "walletconnect-transaction-wallet-removed-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "Transaction result unknown.",
         "Browser · example.org",
         "Send transaction",
@@ -1068,7 +1068,7 @@
       "picture": "walletconnect-request-internet-off-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "Internet access is off for WalletConnect.",
         "Browser · example.org",
         "Sign a message",
@@ -1092,7 +1092,7 @@
       "picture": "walletconnect-request-internet-pending-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "Allow WalletConnect to use the internet?",
         "Browser · example.org",
         "Sign a message",
@@ -1117,7 +1117,7 @@
       "picture": "walletconnect-disconnecting-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "Disconnecting…",
         "[mark: metamask.png]",
         "MetaMask",
@@ -1140,7 +1140,7 @@
       "picture": "walletconnect-disconnected-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "Disconnected. Your accounts remain in Wallet.",
         "To remove this account from Home, open Wallet, choose Manage, then Remove account. Your wallet and funds stay unchanged.",
         "Connect wallet [primary]"
@@ -1160,7 +1160,7 @@
       "picture": "walletconnect-window-expired-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "This window is no longer active.",
         "Close this window, then choose WalletConnect in Wallet.",
         "Close window [primary]"
@@ -1180,7 +1180,7 @@
       "picture": "walletconnect-guest-access-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "Internet access is not allowed.",
         "Only the person who set up this Home can allow it. This account cannot send them a question.",
         "Check again [primary]"
@@ -1200,7 +1200,7 @@
       "picture": "walletconnect-link-error-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "Could not connect.",
         "Try again [primary]"
       ],
@@ -1219,7 +1219,7 @@
       "picture": "walletconnect-request-list-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "3 requests waiting",
         "Browser · example.org",
         "Sign a message",
@@ -1249,7 +1249,7 @@
       "picture": "walletconnect-request-selected-second-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "3 requests waiting",
         "View requests [quiet secondary]",
         "Notes",
@@ -1275,7 +1275,7 @@
       "picture": "walletconnect-request-next-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "2 requests waiting",
         "View requests [quiet secondary]",
         "Browser · example.org",
@@ -1303,7 +1303,7 @@
       "picture": "walletconnect-transaction-late-result-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "Transaction sent. The result arrived after waiting ended.",
         "Browser · example.org",
         "Send transaction",
@@ -1327,7 +1327,7 @@
       "picture": "walletconnect-guest-ready-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "Internet access is allowed.",
         "Connect wallet [primary]"
       ],
@@ -1346,7 +1346,7 @@
       "picture": "walletconnect-link-busy-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "MetaMask has not answered.",
         "Account to confirm",
         "0x71C7…976F",
@@ -1371,7 +1371,7 @@
       "picture": "walletconnect-request-busy-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "MetaMask has not answered.",
         "Browser · example.org",
         "Sign a message",
@@ -1396,7 +1396,7 @@
       "picture": "walletconnect-link-late-ignored-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
+        "Phone wallet",
         "The signed message arrived after waiting ended.",
         "Account to confirm",
         "0x71C7…976F",
@@ -1419,8 +1419,8 @@
       "picture": "walletconnect-focus-{dark,light}-{window,390,1280}.png",
       "inventory": [
         "[mark: walletconnect.png]",
-        "WalletConnect",
-        "Connect a wallet app with a QR code, then sign a message.",
+        "Phone wallet",
+        "Connect a phone wallet with a QR code, then sign a message.",
         "Connect wallet [primary]"
       ],
       "focus": "connect",
@@ -1478,8 +1478,8 @@
         "[mark: metamask.png]",
         "MetaMask",
         "MetaMask was not found here.",
-        "Connect a wallet app with a QR code. If you enable MetaMask in this browser, reload Home using your browser’s Reload control.",
-        "WalletConnect [primary]"
+        "Connect a phone wallet with a QR code. If you enable MetaMask in this browser, reload Home using your browser’s Reload control.",
+        "Phone wallet [primary]"
       ],
       "focus": "use-walletconnect",
       "copy": {
@@ -1498,8 +1498,8 @@
         "[mark: metamask.png]",
         "MetaMask",
         "No wallet extension was found here.",
-        "Connect a wallet app with a QR code.",
-        "WalletConnect [primary]"
+        "Connect a phone wallet with a QR code.",
+        "Phone wallet [primary]"
       ],
       "focus": null,
       "copy": {
@@ -1520,7 +1520,7 @@
         "Open MetaMask to continue.",
         "Time left: 4:59",
         "Find MetaMask in your browser’s extensions menu. Unlock it if asked. Stopping here leaves its prompt open.",
-        "Stop waiting [bordered secondary]"
+        "Cancel [quiet secondary]"
       ],
       "focus": null,
       "copy": {
@@ -1542,7 +1542,7 @@
         "The request may still be waiting in MetaMask. Reject or close it there, then check again. If MetaMask will not open, enable it in your browser, then use the browser’s Reload control.",
         "Check again [primary]",
         "Close window [quiet secondary]",
-        "WalletConnect [quiet secondary]"
+        "Phone wallet [quiet secondary]"
       ],
       "focus": "check-access",
       "copy": {
@@ -1564,7 +1564,7 @@
         "The request may still be waiting in MetaMask. Reject or close it there, then check again. If MetaMask will not open, enable it in your browser, then use the browser’s Reload control.",
         "Check again [primary]",
         "Close window [quiet secondary]",
-        "WalletConnect [quiet secondary]"
+        "Phone wallet [quiet secondary]"
       ],
       "focus": "check-access",
       "copy": {
@@ -1588,7 +1588,7 @@
         "Ethereum",
         "Time left: 4:39",
         "Find MetaMask in your browser’s extensions menu. Unlock it if asked. Stopping here leaves the request open in MetaMask.",
-        "Stop waiting [bordered secondary]"
+        "Cancel [quiet secondary]"
       ],
       "focus": null,
       "copy": {
@@ -1655,7 +1655,7 @@
         "The request may still be waiting in MetaMask. Reject or close it there, then check again. If MetaMask will not open, enable it in your browser, then use the browser’s Reload control.",
         "Check again [primary]",
         "Close window [quiet secondary]",
-        "WalletConnect [quiet secondary]"
+        "Phone wallet [quiet secondary]"
       ],
       "focus": "check-access",
       "copy": {
@@ -1680,7 +1680,7 @@
         "The request may still be waiting in MetaMask. Reject or close it there, then check again. If MetaMask will not open, enable it in your browser, then use the browser’s Reload control.",
         "Check again [primary]",
         "Close window [quiet secondary]",
-        "WalletConnect [quiet secondary]"
+        "Phone wallet [quiet secondary]"
       ],
       "focus": "check-access",
       "copy": {
@@ -1772,7 +1772,7 @@
         "The request may still be waiting in MetaMask. Reject or close it there, then check again. If MetaMask will not open, enable it in your browser, then use the browser’s Reload control.",
         "Check again [primary]",
         "Close window [quiet secondary]",
-        "WalletConnect [quiet secondary]"
+        "Phone wallet [quiet secondary]"
       ],
       "focus": "check-access",
       "copy": {
@@ -1914,8 +1914,8 @@
         "Sign in to example.org.",
         "0x71C7…976F · Ethereum",
         "Time left: 9:59",
-        "Send to MetaMask [primary]",
-        "Review in Wallet [quiet secondary]"
+        "Continue in MetaMask [primary]",
+        "Cancel [quiet secondary]"
       ],
       "focus": null,
       "copy": {
@@ -1940,8 +1940,8 @@
         "Sign in to example.org.",
         "0x71C7…976F · Ethereum",
         "Time left: 9:59",
-        "Send to MetaMask [primary]",
-        "Review in Wallet [quiet secondary]"
+        "Continue in MetaMask [primary]",
+        "Cancel [quiet secondary]"
       ],
       "focus": null,
       "copy": {
@@ -1990,8 +1990,8 @@
         "Confirm the details shown by Browser.",
         "0x71C7…976F · Ethereum",
         "Time left: 9:59",
-        "Send to MetaMask [primary]",
-        "Review in Wallet [quiet secondary]"
+        "Continue in MetaMask [primary]",
+        "Cancel [quiet secondary]"
       ],
       "focus": null,
       "copy": {
@@ -2160,8 +2160,8 @@
         "0.01 ETH to 0x8bC4…391a · Ethereum",
         "0x71C7…976F · Ethereum",
         "Time left: 9:59",
-        "Send to MetaMask [primary]",
-        "Review in Wallet [quiet secondary]"
+        "Continue in MetaMask [primary]",
+        "Cancel [quiet secondary]"
       ],
       "focus": null,
       "copy": {
@@ -2519,8 +2519,8 @@
         "[mark: metamask.png]",
         "MetaMask",
         "MetaMask was not found here.",
-        "Connect a wallet app with a QR code. If you enable MetaMask in this browser, reload Home using your browser’s Reload control.",
-        "WalletConnect [primary]"
+        "Connect a phone wallet with a QR code. If you enable MetaMask in this browser, reload Home using your browser’s Reload control.",
+        "Phone wallet [primary]"
       ],
       "focus": "use-walletconnect",
       "copy": {
@@ -2571,7 +2571,7 @@
         "Close this window. The request may still be waiting in MetaMask. Reject or close it there. If MetaMask will not open, enable it in your browser, then use the browser’s Reload control.",
         "Close window [primary]",
         "Check again [quiet secondary]",
-        "WalletConnect [quiet secondary]"
+        "Phone wallet [quiet secondary]"
       ],
       "focus": "close-window",
       "copy": {
@@ -2618,7 +2618,7 @@
         "Close this window. The request may still be waiting in MetaMask. Reject or close it there. If MetaMask will not open, enable it in your browser, then use the browser’s Reload control.",
         "Close window [primary]",
         "Check again [quiet secondary]",
-        "WalletConnect [quiet secondary]"
+        "Phone wallet [quiet secondary]"
       ],
       "focus": "close-window",
       "copy": {
@@ -2737,7 +2737,7 @@
         "Open UniSat to continue.",
         "Time left: 4:59",
         "Find UniSat in your browser’s extensions menu. Unlock it if asked. Stopping here leaves its prompt open.",
-        "Stop waiting [bordered secondary]"
+        "Cancel [quiet secondary]"
       ],
       "focus": null,
       "copy": {
@@ -2803,7 +2803,7 @@
         "Bitcoin",
         "Time left: 4:39",
         "Find UniSat in your browser’s extensions menu. Unlock it if asked. Stopping here leaves the request open in UniSat.",
-        "Stop waiting [bordered secondary]"
+        "Cancel [quiet secondary]"
       ],
       "focus": null,
       "copy": {
@@ -3045,8 +3045,8 @@
         "Sign in to Notes.",
         "bc1qxy2k…hx0wlh · Bitcoin",
         "Time left: 9:59",
-        "Send to UniSat [primary]",
-        "Review in Wallet [quiet secondary]"
+        "Continue in UniSat [primary]",
+        "Cancel [quiet secondary]"
       ],
       "focus": null,
       "copy": {
@@ -3071,8 +3071,8 @@
         "Sign in to Notes.",
         "bc1qxy2k…hx0wlh · Bitcoin",
         "Time left: 9:59",
-        "Send to UniSat [primary]",
-        "Review in Wallet [quiet secondary]"
+        "Continue in UniSat [primary]",
+        "Cancel [quiet secondary]"
       ],
       "focus": null,
       "copy": {
@@ -3617,10 +3617,10 @@
       "inventory": [
         "Wallet",
         "Accounts",
-        "Create account [bordered secondary]",
-        "Import account [quiet secondary]",
+        "Create address [bordered secondary]",
+        "Import address [quiet secondary]",
         "Connect a wallet",
-        "[mark: walletconnect.png] WalletConnect\nConnect a wallet app with a QR code\n› [bordered secondary]",
+        "[mark: walletconnect.png] Phone wallet\nConnect a phone wallet with a QR code\n› [bordered secondary]",
         "[mark: metamask.png] MetaMask\nBrowser extension\n› [bordered secondary]",
         "[mark: unisat.png] UniSat\nBitcoin extension\n› [bordered secondary]"
       ],
@@ -3640,10 +3640,10 @@
       "inventory": [
         "Wallet",
         "Accounts",
-        "Create account [bordered secondary]",
-        "Import account [quiet secondary]",
+        "Create address [bordered secondary]",
+        "Import address [quiet secondary]",
         "Connect a wallet",
-        "[mark: walletconnect.png] WalletConnect\nConnect a wallet app with a QR code\n› [bordered secondary]",
+        "[mark: walletconnect.png] Phone wallet\nConnect a phone wallet with a QR code\n› [bordered secondary]",
         "[mark: metamask.png] MetaMask\nBrowser extension\n› [bordered secondary]",
         "[mark: unisat.png] UniSat\nBitcoin extension\n› [bordered secondary]"
       ],
@@ -3670,10 +3670,10 @@
         "0x71C7…976F",
         "Copy [bordered secondary]",
         "Base",
-        "Create account [bordered secondary]",
-        "Import account [quiet secondary]",
+        "Create address [bordered secondary]",
+        "Import address [quiet secondary]",
         "Connect another wallet",
-        "[mark: walletconnect.png] WalletConnect\nAdd account\n› [bordered secondary]",
+        "[mark: walletconnect.png] Phone wallet\nAdd address\n› [bordered secondary]",
         "[mark: metamask.png] MetaMask\nBrowser extension\n› [bordered secondary]",
         "[mark: unisat.png] UniSat\nBitcoin extension\n› [bordered secondary]"
       ],
@@ -3699,10 +3699,10 @@
         "bc1qxy2k…hx0wlh",
         "Copy [bordered secondary]",
         "Bitcoin",
-        "Create account [bordered secondary]",
-        "Import account [quiet secondary]",
+        "Create address [bordered secondary]",
+        "Import address [quiet secondary]",
         "Connect another wallet",
-        "[mark: walletconnect.png] WalletConnect\nConnect a wallet app with a QR code\n› [bordered secondary]",
+        "[mark: walletconnect.png] Phone wallet\nConnect a phone wallet with a QR code\n› [bordered secondary]",
         "[mark: metamask.png] MetaMask\nBrowser extension\n› [bordered secondary]",
         "[mark: unisat.png] UniSat\nBitcoin extension\n› [bordered secondary]"
       ],
@@ -3722,8 +3722,8 @@
       "inventory": [
         "Wallet",
         "Accounts",
-        "Create account [bordered secondary]",
-        "Import account [quiet secondary]",
+        "Create address [bordered secondary]",
+        "Import address [quiet secondary]",
         "Connect a wallet",
         "[mark: metamask.png] MetaMask\nBrowser extension\n› [bordered secondary]",
         "[mark: unisat.png] UniSat\nBitcoin extension\n› [bordered secondary]"
@@ -3750,10 +3750,10 @@
         "0x71C7…976F",
         "Copy [bordered secondary]",
         "Ethereum",
-        "Create account [bordered secondary]",
-        "Import account [quiet secondary]",
+        "Create address [bordered secondary]",
+        "Import address [quiet secondary]",
         "Connect another wallet",
-        "[mark: walletconnect.png] WalletConnect\nConnect a wallet app with a QR code\n› [bordered secondary]",
+        "[mark: walletconnect.png] Phone wallet\nConnect a phone wallet with a QR code\n› [bordered secondary]",
         "[mark: metamask.png] MetaMask\nBrowser extension\n› [bordered secondary]",
         "[mark: unisat.png] UniSat\nBitcoin extension\n› [bordered secondary]"
       ],
@@ -3780,10 +3780,10 @@
         "0x71C7…976F",
         "Copy [bordered secondary]",
         "Base",
-        "Create account [bordered secondary]",
-        "Import account [quiet secondary]",
+        "Create address [bordered secondary]",
+        "Import address [quiet secondary]",
         "Connect another wallet",
-        "[mark: walletconnect.png] WalletConnect\nAdd account\n› [bordered secondary]",
+        "[mark: walletconnect.png] Phone wallet\nAdd address\n› [bordered secondary]",
         "[mark: metamask.png] MetaMask\nBrowser extension\n› [bordered secondary]",
         "[mark: unisat.png] UniSat\nBitcoin extension\n› [bordered secondary]"
       ],
@@ -3803,10 +3803,10 @@
       "inventory": [
         "Wallet",
         "Accounts",
-        "Create account [bordered secondary]",
-        "Import account [quiet secondary]",
+        "Create address [bordered secondary]",
+        "Import address [quiet secondary]",
         "Connect a wallet",
-        "[mark: walletconnect.png] WalletConnect\nConnect a wallet app with a QR code\n› [bordered secondary]",
+        "[mark: walletconnect.png] Phone wallet\nConnect a phone wallet with a QR code\n› [bordered secondary]",
         "[mark: metamask.png] MetaMask\nBrowser extension\n› [bordered secondary]",
         "[mark: unisat.png] UniSat\nBitcoin extension\n› [bordered secondary]"
       ],
@@ -3833,10 +3833,10 @@
         "0x71C7…976F",
         "Copy [bordered secondary]",
         "Base",
-        "Create account [bordered secondary]",
-        "Import account [quiet secondary]",
+        "Create address [bordered secondary]",
+        "Import address [quiet secondary]",
         "Connect another wallet",
-        "[mark: walletconnect.png] WalletConnect\nAdd account\n› [bordered secondary]",
+        "[mark: walletconnect.png] Phone wallet\nAdd address\n› [bordered secondary]",
         "[mark: metamask.png] MetaMask\nBrowser extension\n› [bordered secondary]",
         "[mark: unisat.png] UniSat\nBitcoin extension\n› [bordered secondary]"
       ],
@@ -3862,10 +3862,10 @@
         "0x71C7…976F",
         "Copy [bordered secondary]",
         "Ethereum",
-        "Create account [bordered secondary]",
-        "Import account [quiet secondary]",
+        "Create address [bordered secondary]",
+        "Import address [quiet secondary]",
         "Connect another wallet",
-        "[mark: walletconnect.png] WalletConnect\nConnect a wallet app with a QR code\n› [bordered secondary]",
+        "[mark: walletconnect.png] Phone wallet\nConnect a phone wallet with a QR code\n› [bordered secondary]",
         "[mark: metamask.png] MetaMask\nBrowser extension\n› [bordered secondary]",
         "[mark: unisat.png] UniSat\nBitcoin extension\n› [bordered secondary]"
       ],
@@ -3891,10 +3891,10 @@
         "bc1qxy2k…hx0wlh",
         "Copy [bordered secondary]",
         "Bitcoin",
-        "Create account [bordered secondary]",
-        "Import account [quiet secondary]",
+        "Create address [bordered secondary]",
+        "Import address [quiet secondary]",
         "Connect another wallet",
-        "[mark: walletconnect.png] WalletConnect\nConnect a wallet app with a QR code\n› [bordered secondary]",
+        "[mark: walletconnect.png] Phone wallet\nConnect a phone wallet with a QR code\n› [bordered secondary]",
         "[mark: metamask.png] MetaMask\nBrowser extension\n› [bordered secondary]",
         "[mark: unisat.png] UniSat\nBitcoin extension\n› [bordered secondary]"
       ],
@@ -3964,5 +3964,6 @@
         "height": 682
       }
     }
-  }
+  },
+  "connection_control_contract": "A connection request presents Continue in the wallet followed by quiet Cancel. Wallet choices say Phone wallet; Wallet panels name wallet addresses as addresses. Historical image files retain their original provenance."
 }

@@ -1,9 +1,9 @@
 // Fixed local copy and closed stage definitions. Design source: 58aaafe6db48f8a3600f1e3bb8312499405502fc.
-// This data grants no effect or navigation authority.
+// Effects stay with the mounting window.
 const definitions = {
   "walletconnect": {
     "nothing-saved": {
-      "notice": "Connect a wallet app with a QR code, then sign a message.",
+      "notice": "Connect a phone wallet with a QR code, then sign a message.",
       "primary": {
         "id": "connect",
         "label": "Connect wallet",
@@ -22,7 +22,7 @@ const definitions = {
         {
           "id": "cancel",
           "label": "Cancel",
-          "quiet": false
+          "quiet": true
         }
       ]
     },
@@ -43,7 +43,13 @@ const definitions = {
         "label": "Connect wallet",
         "quiet": false
       },
-      "secondary": [{"id":"inbox","label":"Open Inbox","quiet":true}]
+      "secondary": [
+        {
+          "id": "inbox",
+          "label": "Open Inbox",
+          "quiet": true
+        }
+      ]
     },
     "internet-expired": {
       "status": "The access request expired.",
@@ -65,7 +71,7 @@ const definitions = {
       }
     },
     "internet-ready": {
-      "notice": "Connect a wallet app with a QR code, then sign a message.",
+      "notice": "Connect a phone wallet with a QR code, then sign a message.",
       "primary": {
         "id": "connect",
         "label": "Connect wallet",
@@ -78,7 +84,7 @@ const definitions = {
         {
           "id": "cancel",
           "label": "Cancel",
-          "quiet": false
+          "quiet": true
         }
       ]
     },
@@ -114,7 +120,7 @@ const definitions = {
     },
     "link-wait": {
       "status": "Open {{wallet}} and sign the message to confirm this account is yours.",
-      "notice": "If you stop waiting, Home disconnects from {{wallet}}. The request may still be waiting there.",
+      "notice": "",
       "selectedAccount": true,
       "wait": true,
       "dispatched": true,
@@ -243,21 +249,37 @@ const definitions = {
       "status": "Connected.",
       "account": true,
       "primary": {
-        "id": "open-wallet",
-        "label": "Open Wallet",
+        "id": "close-window",
+        "label": "Close window",
         "quiet": false
       },
-      "focus": "open-wallet"
+      "focus": "close-window",
+      "focusOutcome": true,
+      "secondary": [
+        {
+          "id": "add-account",
+          "label": "Add address",
+          "quiet": true
+        }
+      ]
     },
     "linked-multiple": {
       "status": "Connected.",
       "account": true,
       "primary": {
-        "id": "open-wallet",
-        "label": "Open Wallet",
+        "id": "close-window",
+        "label": "Close window",
         "quiet": false
       },
-      "focus": "open-wallet"
+      "focus": "close-window",
+      "focusOutcome": true,
+      "secondary": [
+        {
+          "id": "add-account",
+          "label": "Add address",
+          "quiet": true
+        }
+      ]
     },
     "request-waiting": {
       "account": true,
@@ -265,14 +287,16 @@ const definitions = {
       "wait": true,
       "requestAction": {
         "id": "send-request",
-        "label": "Send to {{wallet}}",
+        "label": "Continue in {{wallet}}",
         "quiet": false
       },
-      "reviewAction": {
-        "id": "open-wallet",
-        "label": "Review in Wallet",
-        "quiet": true
-      }
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Cancel",
+          "quiet": true
+        }
+      ]
     },
     "request-multiple": {
       "account": true,
@@ -280,16 +304,18 @@ const definitions = {
       "wait": true,
       "requestAction": {
         "id": "send-request",
-        "label": "Send to {{wallet}}",
+        "label": "Continue in {{wallet}}",
         "quiet": false
       },
-      "reviewAction": {
-        "id": "open-wallet",
-        "label": "Review in Wallet",
-        "quiet": true
-      },
       "queueCount": 3,
-      "choices": 0
+      "choices": 0,
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Cancel",
+          "quiet": true
+        }
+      ]
     },
     "request-unsendable": {
       "status": "This request cannot be sent from WalletConnect. Reject it in Wallet.",
@@ -317,8 +343,8 @@ const definitions = {
       "focus": "open-request-app"
     },
     "request-phone": {
-      "status": "Waiting for {{wallet}}.",
-      "notice": "Check the message in {{wallet}}. If you stop waiting, Home disconnects from {{wallet}}. The request may still be waiting there.",
+      "status": "Continue in {{wallet}}.",
+      "notice": "",
       "account": true,
       "request": true,
       "wait": true,
@@ -402,14 +428,16 @@ const definitions = {
       "wait": true,
       "requestAction": {
         "id": "send-request",
-        "label": "Send to {{wallet}}",
+        "label": "Continue in {{wallet}}",
         "quiet": false
       },
-      "reviewAction": {
-        "id": "open-wallet",
-        "label": "Review in Wallet",
-        "quiet": true
-      }
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Cancel",
+          "quiet": true
+        }
+      ]
     },
     "transaction-deadline": {
       "status": "There is too little time to send this transaction.",
@@ -471,7 +499,14 @@ const definitions = {
         "label": "Open Activity in Wallet",
         "quiet": false
       },
-      "focus": "open-wallet-activity"
+      "focus": "open-wallet-activity",
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Close window",
+          "quiet": true
+        }
+      ]
     },
     "transaction-cancelled": {
       "status": "You stopped waiting. The transaction may have been sent.",
@@ -484,7 +519,14 @@ const definitions = {
         "label": "Open Activity in Wallet",
         "quiet": false
       },
-      "focus": "open-wallet-activity"
+      "focus": "open-wallet-activity",
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Close window",
+          "quiet": true
+        }
+      ]
     },
     "transaction-wallet-error": {
       "status": "Home could not confirm the transaction result.",
@@ -497,7 +539,14 @@ const definitions = {
         "label": "Open Activity in Wallet",
         "quiet": false
       },
-      "focus": "open-wallet-activity"
+      "focus": "open-wallet-activity",
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Close window",
+          "quiet": true
+        }
+      ]
     },
     "transaction-done": {
       "status": "Transaction sent.",
@@ -522,7 +571,14 @@ const definitions = {
         "label": "Open Activity in Wallet",
         "quiet": false
       },
-      "focus": "open-wallet-activity"
+      "focus": "open-wallet-activity",
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Close window",
+          "quiet": true
+        }
+      ]
     },
     "request-wallet-error": {
       "status": "{{wallet}} could not sign this message.",
@@ -604,7 +660,14 @@ const definitions = {
         "label": "Open Activity in Wallet",
         "quiet": false
       },
-      "focus": "open-wallet-activity"
+      "focus": "open-wallet-activity",
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Close window",
+          "quiet": true
+        }
+      ]
     },
     "request-internet-off": {
       "status": "Internet access for WalletConnect is off.",
@@ -631,7 +694,7 @@ const definitions = {
         {
           "id": "cancel",
           "label": "Cancel",
-          "quiet": false
+          "quiet": true
         }
       ]
     },
@@ -651,7 +714,7 @@ const definitions = {
     },
     "window-expired": {
       "status": "This window is no longer active.",
-      "notice": "{{closeThen}} choose WalletConnect in Wallet.",
+      "notice": "{{closeThen}} choose Phone wallet in Wallet.",
       "primary": {
         "id": "close-window",
         "label": "Close window",
@@ -661,7 +724,7 @@ const definitions = {
     },
     "guest-access": {
       "status": "You cannot turn on internet access for WalletConnect.",
-      "notice": "Ask an admin of this Home to open WalletConnect, choose Connect wallet, then allow internet access in Inbox.",
+      "notice": "Ask an admin of this Home to open Phone wallet, choose Connect wallet, then allow internet access in Inbox.",
       "primary": {
         "id": "check-status",
         "label": "Check again",
@@ -802,7 +865,7 @@ const definitions = {
       "focus": "connect"
     },
     "focus": {
-      "notice": "Connect a wallet app with a QR code, then sign a message.",
+      "notice": "Connect a phone wallet with a QR code, then sign a message.",
       "primary": {
         "id": "connect",
         "label": "Connect wallet",
@@ -820,6 +883,337 @@ const definitions = {
         "label": "Open {{app}}",
         "quiet": false
       }
+    },
+    "wallet-loading": {
+      "status": "Loading your wallet connections.",
+      "primary": {
+        "id": "close-window",
+        "label": "Close window",
+        "quiet": true
+      }
+    },
+    "wallet-unavailable": {
+      "status": "Home could not load your wallet connections.",
+      "primary": {
+        "id": "refresh-status",
+        "label": "Check again",
+        "quiet": false
+      },
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Close window",
+          "quiet": true
+        }
+      ],
+      "focus": "refresh-status"
+    },
+    "home-wallet-required": {
+      "status": "Create or import an account in Wallet to continue.",
+      "primary": {
+        "id": "open-wallet",
+        "label": "Open Wallet",
+        "quiet": false
+      },
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Close window",
+          "quiet": true
+        }
+      ]
+    },
+    "provider-unavailable": {
+      "status": "The connection to your wallet is unavailable.",
+      "notice": "Open {{wallet}} to check its connection.",
+      "primary": {
+        "id": "refresh-status",
+        "label": "Check again",
+        "quiet": false
+      },
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Close window",
+          "quiet": true
+        }
+      ]
+    },
+    "account-changed": {
+      "requiresSafeRetry": true,
+      "status": "Your wallet is using a different account.",
+      "notice": "Confirm this account is yours before you use it in Home.",
+      "primary": {
+        "id": "send-message",
+        "label": "Send message",
+        "quiet": false
+      },
+      "secondary": [
+        {
+          "id": "start-over",
+          "label": "Get new QR code",
+          "quiet": false
+        },
+        {
+          "id": "close-window",
+          "label": "Close window",
+          "quiet": true
+        }
+      ],
+      "account": true
+    },
+    "account-unavailable-unknown": {
+      "requiresSafeRetry": true,
+      "status": "Your wallet is not showing an account.",
+      "notice": "Choose an account in your wallet, then return here.",
+      "primary": {
+        "id": "start-over",
+        "label": "Get new QR code",
+        "quiet": false
+      },
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Close window",
+          "quiet": true
+        }
+      ],
+      "focus": "start-over"
+    },
+    "network-unsupported": {
+      "status": "This network is not supported here.",
+      "notice": "Choose Ethereum, Elastos Smart Chain, Base or Sepolia test network in {{wallet}}. {{close}}",
+      "primary": {
+        "id": "close-window",
+        "label": "Close window",
+        "quiet": true
+      }
+    },
+    "preparing-request": {
+      "status": "Preparing request.",
+      "primary": {
+        "id": "cancel",
+        "label": "Cancel",
+        "quiet": false
+      }
+    },
+    "preparing-connection": {
+      "status": "Preparing connection.",
+      "primary": {
+        "id": "cancel",
+        "label": "Cancel",
+        "quiet": false
+      }
+    },
+    "add-account": {
+      "status": "Add an address.",
+      "notice": "Choose another account in {{wallet}}, then get a new QR code and scan it. You can also scan with another phone wallet. The new code replaces this connection. Your addresses stay in Wallet.",
+      "account": true,
+      "primary": {
+        "id": "start-over",
+        "label": "Get new QR code",
+        "quiet": false
+      },
+      "secondary": [
+        {
+          "id": "back-to-connection",
+          "label": "Back to connection",
+          "quiet": true
+        }
+      ],
+      "focus": "start-over"
+    },
+    "account-already-linked": {
+      "status": "This address is already in Wallet.",
+      "notice": "Choose another account in {{wallet}}, then get a new QR code and scan it. Your addresses stay in Wallet.",
+      "account": true,
+      "primary": {
+        "id": "start-over",
+        "label": "Try again",
+        "quiet": false
+      },
+      "secondary": [
+        {
+          "id": "back-to-connection",
+          "label": "Back to connection",
+          "quiet": true
+        }
+      ],
+      "focus": "start-over"
+    },
+    "add-qr-cancelled": {
+      "status": "Connection cancelled.",
+      "primary": {
+        "id": "start-over",
+        "label": "Get new QR code",
+        "quiet": false
+      },
+      "focus": "start-over",
+      "secondary": [],
+      "notice": "Get a new QR code to connect again. Your addresses stay in Wallet."
+    },
+    "add-qr-expired": {
+      "status": "QR code expired.",
+      "primary": {
+        "id": "start-over",
+        "label": "Get new QR code",
+        "quiet": false
+      },
+      "focus": "start-over",
+      "secondary": [],
+      "notice": "Get a new QR code to connect again. Your addresses stay in Wallet."
+    },
+    "add-connection-declined": {
+      "status": "Connection declined.",
+      "primary": {
+        "id": "start-over",
+        "label": "Get new QR code",
+        "quiet": false
+      },
+      "focus": "start-over",
+      "secondary": [],
+      "notice": "Get a new QR code to connect again. Your addresses stay in Wallet."
+    },
+    "add-link-declined": {
+      "status": "Your wallet declined to sign the message.",
+      "notice": "Send a new message to confirm this account, or get a new QR code for another account. Your addresses stay in Wallet.",
+      "selectedAccount": true,
+      "primary": {
+        "id": "finish",
+        "label": "Send new message",
+        "quiet": false
+      },
+      "secondary": [
+        {
+          "id": "start-over",
+          "label": "Get new QR code",
+          "quiet": true
+        }
+      ],
+      "focus": "finish"
+    },
+    "add-link-timeout": {
+      "status": "Time to connect ran out.",
+      "notice": "The message may still be waiting in {{wallet}}. Reject or close it there, then get a new QR code to connect again. Your addresses stay in Wallet.",
+      "selectedAccount": true,
+      "primary": {
+        "id": "start-over",
+        "label": "Get new QR code",
+        "quiet": false
+      },
+      "secondary": [],
+      "focus": "start-over"
+    },
+    "add-link-error": {
+      "status": "Could not connect.",
+      "primary": {
+        "id": "start-over",
+        "label": "Get new QR code",
+        "quiet": false
+      },
+      "focus": "start-over",
+      "secondary": [],
+      "notice": "Get a new QR code to connect again. Your addresses stay in Wallet."
+    },
+    "add-link-cancelled": {
+      "status": "You stopped waiting.",
+      "notice": "Home stopped waiting and disconnected from your wallet. The message may still be waiting there. Your addresses stay in Wallet. Get a new QR code to connect again.",
+      "selectedAccount": true,
+      "primary": {
+        "id": "start-over",
+        "label": "Get new QR code",
+        "quiet": false
+      },
+      "secondary": [],
+      "focus": "start-over"
+    },
+    "checking-response": {
+      "status": "Checking your wallet answer.",
+      "notice": "",
+      "optionalRequest": true,
+      "account": true,
+      "dispatched": true,
+      "primary": {
+        "id": "stop-waiting",
+        "label": "Stop waiting",
+        "quiet": true
+      },
+      "secondary": [],
+      "focus": "stop-waiting"
+    },
+    "home-read-unavailable": {
+      "status": "Home could not load the wallet details.",
+      "notice": "Check again to load them.",
+      "primary": {
+        "id": "refresh-status",
+        "label": "Check again",
+        "quiet": false
+      },
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Close window",
+          "quiet": true
+        }
+      ],
+      "focus": "refresh-status"
+    },
+    "disconnect-error": {
+      "status": "Home could not finish disconnecting this wallet.",
+      "notice": "Try disconnecting again. Closing this window does not finish disconnecting.",
+      "primary": {
+        "id": "disconnect",
+        "label": "Disconnect",
+        "quiet": false
+      },
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Close window",
+          "quiet": true
+        }
+      ],
+      "focus": "disconnect"
+    },
+    "request-rejected": {
+      "status": "This request was rejected.",
+      "notice": "To try again, go back to {{app}} and start a new request.",
+      "request": true,
+      "account": true,
+      "afterAnswer": true,
+      "focusOutcome": true,
+      "primary": {
+        "id": "open-request-app",
+        "label": "Open {{app}}",
+        "quiet": false
+      },
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Close window",
+          "quiet": true
+        }
+      ]
+    },
+    "request-dismissed": {
+      "status": "This request was dismissed.",
+      "notice": "This request may still be in progress in {{wallet}}. Closing this window does not cancel it. Before making a new request in {{app}}, check {{wallet}} and Activity in Wallet. Open Wallet from Home to see Activity.",
+      "request": true,
+      "account": true,
+      "afterAnswer": true,
+      "focusOutcome": true,
+      "primary": {
+        "id": "open-wallet-activity",
+        "label": "Open Activity in Wallet",
+        "quiet": false
+      },
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Close window",
+          "quiet": true
+        }
+      ]
     }
   },
   "metamask": {
@@ -843,42 +1237,70 @@ const definitions = {
     "extension-choose-wallet": {
       "status": "Home could not find MetaMask in this browser.",
       "notice": "Choose a wallet.",
-      "secondary": [{"id":"refresh-status","label":"Check again","quiet":true},{"id":"close-window","label":"Close window","quiet":true}],
+      "secondary": [
+        {
+          "id": "refresh-status",
+          "label": "Check again",
+          "quiet": true
+        },
+        {
+          "id": "close-window",
+          "label": "Close window",
+          "quiet": true
+        }
+      ],
       "walletPicker": true,
       "account": true,
       "focus": "select-wallet"
     },
     "extension-missing": {
-      "status": "{{wallet}} was not found here.",
-      "notice": "Connect a wallet app with a QR code. If you enable {{wallet}} in this browser, reload Home using your browser's Reload control.",
-      "paymentSafeNotice": "Enable {{wallet}} in this browser. Open {{wallet}} again from Wallet.",
+      "status": "Home could not find a wallet in this browser.",
+      "notice": "Open Home in a browser where your wallet is available, then choose MetaMask in Wallet.",
+      "paymentSafeNotice": "Open Home in a browser where your wallet is available, then choose MetaMask in Wallet.",
       "primary": {
-        "id": "use-walletconnect",
-        "label": "WalletConnect",
+        "id": "refresh-status",
+        "label": "Check again",
         "quiet": false
       },
-      "focus": "use-walletconnect"
+      "focus": "refresh-status",
+      "account": true,
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Close window",
+          "quiet": true
+        }
+      ]
     },
     "extensions-unavailable": {
-      "status": "No wallet extension was found here.",
-      "notice": "Connect a wallet app with a QR code.",
-      "paymentSafeNotice": "",
+      "status": "Home could not find a wallet in this browser.",
+      "notice": "Open Home in a browser where your wallet is available, then choose MetaMask in Wallet.",
+      "paymentSafeNotice": "Open Home in a browser where your wallet is available, then choose MetaMask in Wallet.",
       "primary": {
-        "id": "use-walletconnect",
-        "label": "WalletConnect",
+        "id": "refresh-status",
+        "label": "Check again",
         "quiet": false
-      }
+      },
+      "account": true,
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Close window",
+          "quiet": true
+        }
+      ],
+      "focus": "refresh-status"
     },
     "extension-wait": {
-      "status": "Open {{wallet}} to continue.",
-      "notice": "Find {{wallet}} in your browser's extensions menu. Unlock it if asked. Stopping here does not cancel the request in {{wallet}}.",
+      "status": "Waiting for {{wallet}}.",
+      "notice": "",
       "wait": true,
       "dispatched": true,
       "secondary": [
         {
           "id": "stop-waiting",
-          "label": "Stop waiting",
-          "quiet": false
+          "label": "Cancel",
+          "quiet": true
         }
       ]
     },
@@ -898,7 +1320,7 @@ const definitions = {
         },
         {
           "id": "use-walletconnect",
-          "label": "WalletConnect",
+          "label": "Phone wallet",
           "quiet": true
         }
       ],
@@ -920,23 +1342,23 @@ const definitions = {
         },
         {
           "id": "use-walletconnect",
-          "label": "WalletConnect",
+          "label": "Phone wallet",
           "quiet": true
         }
       ],
       "focus": "check-access"
     },
     "link-wait": {
-      "status": "Open {{wallet}} and sign the message to confirm this account is yours.",
-      "notice": "Find {{wallet}} in your browser's extensions menu. Unlock it if asked. Stopping here does not cancel the request in {{wallet}}.",
+      "status": "Waiting for {{wallet}}.",
+      "notice": "",
       "selectedAccount": true,
       "wait": true,
       "dispatched": true,
       "secondary": [
         {
           "id": "stop-waiting",
-          "label": "Stop waiting",
-          "quiet": false
+          "label": "Cancel",
+          "quiet": true
         }
       ]
     },
@@ -977,7 +1399,7 @@ const definitions = {
         },
         {
           "id": "use-walletconnect",
-          "label": "WalletConnect",
+          "label": "Phone wallet",
           "quiet": true
         }
       ],
@@ -1000,7 +1422,7 @@ const definitions = {
         },
         {
           "id": "use-walletconnect",
-          "label": "WalletConnect",
+          "label": "Phone wallet",
           "quiet": true
         }
       ],
@@ -1061,7 +1483,7 @@ const definitions = {
         },
         {
           "id": "use-walletconnect",
-          "label": "WalletConnect",
+          "label": "Phone wallet",
           "quiet": true
         }
       ],
@@ -1069,7 +1491,7 @@ const definitions = {
     },
     "request-access-error": {
       "status": "{{wallet}} did not allow this message.",
-      "notice": "To try again, return to {{app}}.",
+      "notice": "To try again, go back to {{app}} and start a new request.",
       "account": true,
       "request": true,
       "outcome": true,
@@ -1122,15 +1544,16 @@ const definitions = {
       "focus": "open-wallet"
     },
     "linked": {
-      "status": "Connected.",
+      "status": "Address saved in Wallet.",
       "account": true,
       "disconnect": false,
       "primary": {
-        "id": "open-wallet",
-        "label": "Open Wallet",
+        "id": "close-window",
+        "label": "Close window",
         "quiet": false
       },
-      "focus": "open-wallet"
+      "focus": "close-window",
+      "notice": "To stop sharing, remove this Home's connection in {{wallet}}. Your address stays in Wallet."
     },
     "request-waiting": {
       "account": true,
@@ -1138,14 +1561,16 @@ const definitions = {
       "wait": true,
       "requestAction": {
         "id": "send-request",
-        "label": "Send to {{wallet}}",
+        "label": "Continue in {{wallet}}",
         "quiet": false
       },
-      "reviewAction": {
-        "id": "open-wallet",
-        "label": "Review in Wallet",
-        "quiet": true
-      }
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Cancel",
+          "quiet": true
+        }
+      ]
     },
     "request-multiple": {
       "account": true,
@@ -1153,42 +1578,39 @@ const definitions = {
       "wait": true,
       "requestAction": {
         "id": "send-request",
-        "label": "Send to {{wallet}}",
+        "label": "Continue in {{wallet}}",
         "quiet": false
       },
-      "reviewAction": {
-        "id": "open-wallet",
-        "label": "Review in Wallet",
-        "quiet": true
-      },
       "queueCount": 3,
-      "choices": 0
+      "choices": 0,
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Cancel",
+          "quiet": true
+        }
+      ]
     },
     "request-unsendable": {
-      "status": "Home cannot confirm access to the account this request needs in {{wallet}}.",
-      "notice": "In {{wallet}}, open Account options → Permissions → {{home}} → Manage connected accounts. Select the required account, then Save.",
+      "status": "Home cannot confirm access to the account this request needs in your wallet.",
+      "notice": "",
       "account": true,
       "request": true,
       "outcome": true,
       "requiredAccount": true,
       "primary": {
-        "id": "connect",
-        "label": "Connect wallet",
+        "id": "refresh-status",
+        "label": "Check again",
         "quiet": false
       },
       "secondary": [
         {
-          "id": "check-access",
-          "label": "Check access",
-          "quiet": true
-        },
-        {
-          "id": "open-wallet",
-          "label": "Open Wallet",
+          "id": "close-window",
+          "label": "Close window",
           "quiet": true
         }
       ],
-      "focus": "connect"
+      "focus": "refresh-status"
     },
     "request-typed-data": {
       "account": true,
@@ -1196,18 +1618,20 @@ const definitions = {
       "wait": true,
       "requestAction": {
         "id": "send-request",
-        "label": "Send to {{wallet}}",
+        "label": "Continue in {{wallet}}",
         "quiet": false
       },
-      "reviewAction": {
-        "id": "open-wallet",
-        "label": "Review in Wallet",
-        "quiet": true
-      }
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Cancel",
+          "quiet": true
+        }
+      ]
     },
     "request-expired": {
       "status": "This request expired.",
-      "notice": "To try again, return to {{app}}.",
+      "notice": "To try again, go back to {{app}} and start a new request.",
       "account": true,
       "request": true,
       "outcome": true,
@@ -1235,7 +1659,7 @@ const definitions = {
     },
     "request-declined": {
       "status": "{{wallet}} did not approve this message.",
-      "notice": "To try again, return to {{app}}.",
+      "notice": "To try again, go back to {{app}} and start a new request.",
       "account": true,
       "request": true,
       "outcome": true,
@@ -1304,14 +1728,16 @@ const definitions = {
       "wait": true,
       "requestAction": {
         "id": "send-request",
-        "label": "Send to {{wallet}}",
+        "label": "Continue in {{wallet}}",
         "quiet": false
       },
-      "reviewAction": {
-        "id": "open-wallet",
-        "label": "Review in Wallet",
-        "quiet": true
-      }
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Cancel",
+          "quiet": true
+        }
+      ]
     },
     "transaction-extension": {
       "status": "Waiting for {{wallet}}.",
@@ -1330,7 +1756,7 @@ const definitions = {
     },
     "transaction-declined": {
       "status": "{{wallet}} did not approve this transaction.",
-      "notice": "To try again, return to {{app}}.",
+      "notice": "To try again, go back to {{app}} and start a new request.",
       "account": true,
       "request": true,
       "outcome": true,
@@ -1352,7 +1778,14 @@ const definitions = {
         "label": "Open Activity in Wallet",
         "quiet": false
       },
-      "focus": "open-wallet-activity"
+      "focus": "open-wallet-activity",
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Close window",
+          "quiet": true
+        }
+      ]
     },
     "transaction-cancelled": {
       "status": "You stopped waiting. The transaction may have been sent.",
@@ -1365,7 +1798,14 @@ const definitions = {
         "label": "Open Activity in Wallet",
         "quiet": false
       },
-      "focus": "open-wallet-activity"
+      "focus": "open-wallet-activity",
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Close window",
+          "quiet": true
+        }
+      ]
     },
     "transaction-wallet-error": {
       "status": "Home does not know if the transaction was sent.",
@@ -1378,7 +1818,14 @@ const definitions = {
         "label": "Open Activity in Wallet",
         "quiet": false
       },
-      "focus": "open-wallet-activity"
+      "focus": "open-wallet-activity",
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Close window",
+          "quiet": true
+        }
+      ]
     },
     "transaction-done": {
       "status": "Transaction sent.",
@@ -1394,7 +1841,7 @@ const definitions = {
     },
     "request-wallet-error": {
       "status": "{{wallet}} could not sign this message.",
-      "notice": "To try again, return to {{app}}.",
+      "notice": "To try again, go back to {{app}} and start a new request.",
       "account": true,
       "request": true,
       "outcome": true,
@@ -1407,7 +1854,7 @@ const definitions = {
     },
     "request-late-ignored": {
       "status": "The signed message arrived after waiting ended.",
-      "notice": "To try again, return to {{app}}.",
+      "notice": "To try again, go back to {{app}} and start a new request.",
       "account": true,
       "request": true,
       "outcome": true,
@@ -1431,11 +1878,18 @@ const definitions = {
     "link-error": {
       "status": "Home could not confirm the connection.",
       "primary": {
-        "id": "connect",
-        "label": "Try again",
+        "id": "refresh-status",
+        "label": "Check again",
         "quiet": false
       },
-      "focus": "connect"
+      "focus": "refresh-status",
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Close window",
+          "quiet": true
+        }
+      ]
     },
     "request-list": {
       "account": true,
@@ -1498,15 +1952,23 @@ const definitions = {
       "focus": "open-wallet-activity"
     },
     "other-ethereum-wallet": {
-      "status": "{{wallet}} was not found here.",
-      "notice": "Connect a wallet app with a QR code. If you enable {{wallet}} in this browser, reload Home using your browser's Reload control.",
-      "paymentSafeNotice": "Enable {{wallet}} in this browser. Open {{wallet}} again from Wallet.",
+      "status": "Home could not find a wallet in this browser.",
+      "notice": "Open Home in a browser where your wallet is available, then choose MetaMask in Wallet.",
+      "paymentSafeNotice": "Open Home in a browser where your wallet is available, then choose MetaMask in Wallet.",
       "primary": {
-        "id": "use-walletconnect",
-        "label": "WalletConnect",
+        "id": "refresh-status",
+        "label": "Check again",
         "quiet": false
       },
-      "focus": "use-walletconnect"
+      "focus": "refresh-status",
+      "account": true,
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Close window",
+          "quiet": true
+        }
+      ]
     },
     "access-wrong-account": {
       "status": "{{wallet}} returned a different account.",
@@ -1551,7 +2013,7 @@ const definitions = {
         },
         {
           "id": "use-walletconnect",
-          "label": "WalletConnect",
+          "label": "Phone wallet",
           "quiet": true
         }
       ],
@@ -1593,7 +2055,7 @@ const definitions = {
         },
         {
           "id": "use-walletconnect",
-          "label": "WalletConnect",
+          "label": "Phone wallet",
           "quiet": true
         }
       ],
@@ -1628,6 +2090,161 @@ const definitions = {
         "label": "Open {{app}}",
         "quiet": false
       }
+    },
+    "wallet-loading": {
+      "status": "Loading your wallet connections.",
+      "primary": {
+        "id": "close-window",
+        "label": "Close window",
+        "quiet": true
+      }
+    },
+    "wallet-unavailable": {
+      "status": "Home could not load your wallet connections.",
+      "primary": {
+        "id": "refresh-status",
+        "label": "Check again",
+        "quiet": false
+      },
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Close window",
+          "quiet": true
+        }
+      ],
+      "focus": "refresh-status"
+    },
+    "home-wallet-required": {
+      "status": "Create or import an account in Wallet to continue.",
+      "primary": {
+        "id": "open-wallet",
+        "label": "Open Wallet",
+        "quiet": false
+      },
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Close window",
+          "quiet": true
+        }
+      ]
+    },
+    "provider-unavailable": {
+      "status": "The connection to your wallet is unavailable.",
+      "notice": "Open {{wallet}} to check its connection.",
+      "primary": {
+        "id": "refresh-status",
+        "label": "Check again",
+        "quiet": false
+      },
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Close window",
+          "quiet": true
+        }
+      ]
+    },
+    "account-changed": {
+      "requiresSafeRetry": true,
+      "status": "Your wallet is using a different account.",
+      "notice": "Confirm this account is yours before you use it in Home.",
+      "primary": {
+        "id": "connect",
+        "label": "Connect",
+        "quiet": false
+      },
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Close window",
+          "quiet": true
+        }
+      ],
+      "account": true
+    },
+    "account-unavailable-unknown": {
+      "requiresSafeRetry": true,
+      "status": "Your wallet is not showing an account.",
+      "notice": "Open {{wallet}} and choose an account, then connect again.",
+      "primary": {
+        "id": "connect",
+        "label": "Connect",
+        "quiet": false
+      },
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Close window",
+          "quiet": true
+        }
+      ]
+    },
+    "network-unsupported": {
+      "status": "This network is not supported here.",
+      "notice": "Choose a supported network in {{wallet}}.",
+      "primary": {
+        "id": "close-window",
+        "label": "Close window",
+        "quiet": true
+      }
+    },
+    "preparing-request": {
+      "status": "Preparing request.",
+      "primary": {
+        "id": "cancel",
+        "label": "Cancel",
+        "quiet": false
+      }
+    },
+    "preparing-connection": {
+      "status": "Preparing connection.",
+      "primary": {
+        "id": "cancel",
+        "label": "Cancel",
+        "quiet": false
+      }
+    },
+    "request-rejected": {
+      "status": "This request was rejected.",
+      "notice": "To try again, go back to {{app}} and start a new request.",
+      "request": true,
+      "account": true,
+      "afterAnswer": true,
+      "focusOutcome": true,
+      "primary": {
+        "id": "open-request-app",
+        "label": "Open {{app}}",
+        "quiet": false
+      },
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Close window",
+          "quiet": true
+        }
+      ]
+    },
+    "request-dismissed": {
+      "status": "This request was dismissed.",
+      "notice": "This request may still be in progress in {{wallet}}. Closing this window does not cancel it. Before making a new request in {{app}}, check {{wallet}} and Activity in Wallet. Open Wallet from Home to see Activity.",
+      "request": true,
+      "account": true,
+      "afterAnswer": true,
+      "focusOutcome": true,
+      "primary": {
+        "id": "open-wallet-activity",
+        "label": "Open Activity in Wallet",
+        "quiet": false
+      },
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Close window",
+          "quiet": true
+        }
+      ]
     }
   },
   "unisat": {
@@ -1640,34 +2257,36 @@ const definitions = {
       }
     },
     "extension-missing": {
-      "status": "{{wallet}} was not found here.",
-      "notice": "Enable {{wallet}} in this browser, then reload Home using the browser's Reload control. Open {{wallet}} again from Wallet.",
+      "status": "Home could not find UniSat in this browser.",
+      "notice": "{{close}} Open Home in a browser where UniSat is available, then open this connection from Wallet.",
       "primary": {
         "id": "close-window",
         "label": "Close window",
         "quiet": false
       },
-      "focus": "close-window"
+      "focus": "close-window",
+      "paymentSafeNotice": "{{close}} Open Home in a browser where UniSat is available, then open this connection from Wallet."
     },
     "extensions-unavailable": {
-      "status": "No wallet extension was found here.",
-      "notice": "Enable {{wallet}} in this browser, then reload Home using the browser's Reload control. Open {{wallet}} again from Wallet.",
+      "status": "Home could not find UniSat in this browser.",
+      "notice": "{{close}} Open Home in a browser where UniSat is available, then open this connection from Wallet.",
       "primary": {
         "id": "close-window",
         "label": "Close window",
         "quiet": false
-      }
+      },
+      "paymentSafeNotice": "{{close}} Open Home in a browser where UniSat is available, then open this connection from Wallet."
     },
     "extension-wait": {
-      "status": "Open {{wallet}} to continue.",
-      "notice": "Find UniSat in your browser's extensions menu. Unlock it if asked. Stopping here does not cancel the request in UniSat.",
+      "status": "Waiting for {{wallet}}.",
+      "notice": "",
       "wait": true,
       "dispatched": true,
       "secondary": [
         {
           "id": "stop-waiting",
-          "label": "Stop waiting",
-          "quiet": false
+          "label": "Cancel",
+          "quiet": true
         }
       ]
     },
@@ -1706,16 +2325,16 @@ const definitions = {
       "focus": "check-access"
     },
     "link-wait": {
-      "status": "Open {{wallet}} and sign the message to confirm this account is yours.",
-      "notice": "Find UniSat in your browser's extensions menu. Unlock it if asked. Stopping here does not cancel the request in UniSat.",
+      "status": "Waiting for {{wallet}}.",
+      "notice": "",
       "selectedAccount": true,
       "wait": true,
       "dispatched": true,
       "secondary": [
         {
           "id": "stop-waiting",
-          "label": "Stop waiting",
-          "quiet": false
+          "label": "Cancel",
+          "quiet": true
         }
       ]
     },
@@ -1836,11 +2455,11 @@ const definitions = {
       "account": true,
       "disconnect": false,
       "primary": {
-        "id": "open-wallet",
-        "label": "Open Wallet",
+        "id": "close-window",
+        "label": "Close window",
         "quiet": false
       },
-      "focus": "open-wallet"
+      "focus": "close-window"
     },
     "request-waiting": {
       "account": true,
@@ -1848,14 +2467,16 @@ const definitions = {
       "wait": true,
       "requestAction": {
         "id": "send-request",
-        "label": "Send to {{wallet}}",
+        "label": "Continue in {{wallet}}",
         "quiet": false
       },
-      "reviewAction": {
-        "id": "open-wallet",
-        "label": "Review in Wallet",
-        "quiet": true
-      }
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Cancel",
+          "quiet": true
+        }
+      ]
     },
     "request-multiple": {
       "account": true,
@@ -1863,16 +2484,18 @@ const definitions = {
       "wait": true,
       "requestAction": {
         "id": "send-request",
-        "label": "Send to {{wallet}}",
+        "label": "Continue in {{wallet}}",
         "quiet": false
       },
-      "reviewAction": {
-        "id": "open-wallet",
-        "label": "Review in Wallet",
-        "quiet": true
-      },
       "queueCount": 3,
-      "choices": 0
+      "choices": 0,
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Cancel",
+          "quiet": true
+        }
+      ]
     },
     "request-unsendable": {
       "status": "Home cannot use the UniSat account this request needs.",
@@ -1902,7 +2525,7 @@ const definitions = {
     },
     "request-expired": {
       "status": "This request expired.",
-      "notice": "Start a new request in {{app}} to try again.",
+      "notice": "To try again, go back to {{app}} and start a new request.",
       "account": true,
       "request": true,
       "outcome": true,
@@ -1930,7 +2553,7 @@ const definitions = {
     },
     "request-declined": {
       "status": "{{wallet}} did not approve this message.",
-      "notice": "Start a new request in {{app}} to try again.",
+      "notice": "To try again, go back to {{app}} and start a new request.",
       "account": true,
       "request": true,
       "outcome": true,
@@ -1995,7 +2618,7 @@ const definitions = {
     },
     "request-wallet-error": {
       "status": "{{wallet}} could not sign this message.",
-      "notice": "Start a new request in {{app}} to try again.",
+      "notice": "To try again, go back to {{app}} and start a new request.",
       "account": true,
       "request": true,
       "outcome": true,
@@ -2008,7 +2631,7 @@ const definitions = {
     },
     "request-late-ignored": {
       "status": "The signed message arrived after waiting ended.",
-      "notice": "Start a new request in {{app}} to try again.",
+      "notice": "To try again, go back to {{app}} and start a new request.",
       "account": true,
       "request": true,
       "outcome": true,
@@ -2229,6 +2852,161 @@ const definitions = {
         "label": "Open {{app}}",
         "quiet": false
       }
+    },
+    "wallet-loading": {
+      "status": "Loading your wallet connections.",
+      "primary": {
+        "id": "close-window",
+        "label": "Close window",
+        "quiet": true
+      }
+    },
+    "wallet-unavailable": {
+      "status": "Home could not load your wallet connections.",
+      "primary": {
+        "id": "refresh-status",
+        "label": "Check again",
+        "quiet": false
+      },
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Close window",
+          "quiet": true
+        }
+      ],
+      "focus": "refresh-status"
+    },
+    "home-wallet-required": {
+      "status": "Create or import an account in Wallet to continue.",
+      "primary": {
+        "id": "open-wallet",
+        "label": "Open Wallet",
+        "quiet": false
+      },
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Close window",
+          "quiet": true
+        }
+      ]
+    },
+    "provider-unavailable": {
+      "status": "The connection to your wallet is unavailable.",
+      "notice": "Open {{wallet}} to check its connection.",
+      "primary": {
+        "id": "refresh-status",
+        "label": "Check again",
+        "quiet": false
+      },
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Close window",
+          "quiet": true
+        }
+      ]
+    },
+    "account-changed": {
+      "requiresSafeRetry": true,
+      "status": "Your wallet is using a different account.",
+      "notice": "Confirm this account is yours before you use it in Home.",
+      "primary": {
+        "id": "connect",
+        "label": "Connect",
+        "quiet": false
+      },
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Close window",
+          "quiet": true
+        }
+      ],
+      "account": true
+    },
+    "account-unavailable-unknown": {
+      "requiresSafeRetry": true,
+      "status": "Your wallet is not showing an account.",
+      "notice": "Open {{wallet}} and choose an account, then connect again.",
+      "primary": {
+        "id": "connect",
+        "label": "Connect",
+        "quiet": false
+      },
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Close window",
+          "quiet": true
+        }
+      ]
+    },
+    "network-unsupported": {
+      "status": "This network is not supported here.",
+      "notice": "Choose a supported network in {{wallet}}.",
+      "primary": {
+        "id": "close-window",
+        "label": "Close window",
+        "quiet": true
+      }
+    },
+    "preparing-request": {
+      "status": "Preparing request.",
+      "primary": {
+        "id": "cancel",
+        "label": "Cancel",
+        "quiet": false
+      }
+    },
+    "preparing-connection": {
+      "status": "Preparing connection.",
+      "primary": {
+        "id": "cancel",
+        "label": "Cancel",
+        "quiet": false
+      }
+    },
+    "request-rejected": {
+      "status": "This request was rejected.",
+      "notice": "To try again, go back to {{app}} and start a new request.",
+      "request": true,
+      "account": true,
+      "afterAnswer": true,
+      "focusOutcome": true,
+      "primary": {
+        "id": "open-request-app",
+        "label": "Open {{app}}",
+        "quiet": false
+      },
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Close window",
+          "quiet": true
+        }
+      ]
+    },
+    "request-dismissed": {
+      "status": "This request was dismissed.",
+      "notice": "A request may still be waiting in UniSat. Before trying again, check UniSat and Activity in Wallet. Open Wallet from Home to review this request.",
+      "request": true,
+      "account": true,
+      "afterAnswer": true,
+      "focusOutcome": true,
+      "primary": {
+        "id": "open-wallet-activity",
+        "label": "Open Activity in Wallet",
+        "quiet": false
+      },
+      "secondary": [
+        {
+          "id": "close-window",
+          "label": "Close window",
+          "quiet": true
+        }
+      ]
     }
   },
   "panel": {
@@ -2266,68 +3044,5 @@ const definitions = {
     }
   }
 };
-
-// Current-plumbing presentation states. Effects remain with the mounting window.
-for(const window of ['walletconnect','metamask','unisat']){
-  const close={id:'close-window',label:'Close window',quiet:false};
-  const refresh={id:'refresh-status',label:'Check again',quiet:false};
-  Object.assign(definitions[window],{
-    'wallet-loading':{status:'Loading your wallet connections.',primary:close},
-    'wallet-unavailable':{status:'Home could not load your wallet connections.',primary:refresh,secondary:[close],focus:'refresh-status'},
-    'home-wallet-required':{status:'Create or import an account in Wallet to continue.',primary:{id:'open-wallet',label:'Open Wallet',quiet:false},secondary:[close]},
-    'provider-unavailable':{status:'The connection to your wallet is unavailable.',notice:'Open {{wallet}} to check its connection.',primary:refresh,secondary:[close]},
-    'account-changed':{requiresSafeRetry:true,status:'Your wallet is using a different account.',notice:'Confirm this account is yours before you use it in Home.',primary:{id:window==='walletconnect'?'send-message':'connect',label:window==='walletconnect'?'Send message':'Connect',quiet:false},secondary:window==='walletconnect'?[{id:'start-over',label:'Get new QR code',quiet:false},close]:[close],account:true},
-    'account-unavailable-unknown':{requiresSafeRetry:true,status:'Your wallet is not showing an account.',notice:'Open {{wallet}} and choose an account, then connect again.',primary:{id:'connect',label:'Connect',quiet:false},secondary:[close]},
-    'network-unsupported':{status:'This network is not supported here.',notice:'Choose a supported network in {{wallet}}.',primary:close},
-    'preparing-request':{status:'Preparing request.',primary:{id:'cancel',label:'Cancel',quiet:false}},
-    'preparing-connection':{status:'Preparing connection.',primary:{id:'cancel',label:'Cancel',quiet:false}}
-  });
-}
-
-// A completed link needs only dismissal; adding another account is a separate choice.
-for(const window of ['walletconnect','metamask','unisat'])for(const stage of ['linked',...(window==='walletconnect'?['linked-multiple']:[])]){
-  definitions[window][stage].primary={id:'close-window',label:'Close window',quiet:false};
-  definitions[window][stage].focus='close-window';
-  if(window==='walletconnect'){
-    definitions[window][stage].focusOutcome=true;
-    definitions[window][stage].secondary=[{id:'add-account',label:'Add account',quiet:true}];
-  }
-}
-definitions.metamask.linked.status='Account saved in Wallet.';
-definitions.metamask.linked.notice="To stop sharing, remove this Home's connection in {{wallet}}. Your account stays in Wallet.";
-
-definitions.walletconnect['network-unsupported'].notice='Choose Ethereum, Elastos Smart Chain, Base or Sepolia test network in {{wallet}}. {{close}}';
-definitions.walletconnect['add-account']={status:'Add an account.',notice:'Choose another account in {{wallet}}, then get a new QR code and scan it. You can also scan with another wallet app. The new code replaces this connection. Your accounts stay in Wallet.',account:true,primary:{id:'start-over',label:'Get new QR code',quiet:false},secondary:[{id:'back-to-connection',label:'Back to connection',quiet:true}],focus:'start-over'};
-definitions.walletconnect['account-already-linked']={status:'This account is already in Wallet.',notice:'Choose another account in {{wallet}}, then get a new QR code and scan it. Your accounts stay in Wallet.',account:true,primary:{id:'start-over',label:'Try again',quiet:false},secondary:[{id:'back-to-connection',label:'Back to connection',quiet:true}],focus:'start-over'};
-for(const stage of ['qr-cancelled','qr-expired','connection-declined','link-declined','link-timeout','link-error','link-cancelled']){
-  const screen=definitions.walletconnect[stage];
-  const notice=stage==='link-timeout' ? 'The message may still be waiting in {{wallet}}. Reject or close it there, then get a new QR code to connect again.' : stage==='link-declined' ? 'Send a new message to confirm this account, or get a new QR code for another account.' : 'Get a new QR code to connect again.';
-  definitions.walletconnect['add-'+stage]={...screen,...(stage!=='link-declined'?{primary:{id:'start-over',label:'Get new QR code',quiet:false},secondary:[],focus:'start-over'}:{}),notice:notice+' Your accounts stay in Wallet.',...(stage==='link-cancelled'?{notice:'Home stopped waiting and disconnected from your wallet. The message may still be waiting there. Your accounts stay in Wallet. Get a new QR code to connect again.'}:{})};
-}
-
-definitions.walletconnect['checking-response']={status:'Your wallet has answered. Home is checking the answer.',notice:'If you stop waiting, Home disconnects from your wallet. Home may still save the answer.',optionalRequest:true,account:true,dispatched:true,primary:{id:'stop-waiting',label:'Stop waiting',quiet:false},secondary:[{id:'close-window',label:'Close window',quiet:false}],focus:'stop-waiting'};
-definitions.walletconnect['home-read-unavailable']={status:'Home could not load the wallet details.',notice:'Check again to load them.',primary:{id:'refresh-status',label:'Check again',quiet:false},secondary:[{id:'close-window',label:'Close window',quiet:false}],focus:'refresh-status'};
-definitions.walletconnect['disconnect-error']={status:'Home could not finish disconnecting this wallet.',notice:'Try disconnecting again. Closing this window does not finish disconnecting.',primary:{id:'disconnect',label:'Disconnect',quiet:false},secondary:[{id:'close-window',label:'Close window',quiet:false}],focus:'disconnect'};
-definitions.walletconnect['account-unavailable-unknown']={requiresSafeRetry:true,status:'Your wallet is not showing an account.',notice:'Choose an account in your wallet, then return here.',primary:{id:'start-over',label:'Get new QR code',quiet:false},secondary:[{id:'close-window',label:'Close window',quiet:false}],focus:'start-over'};
-
-const requestRecovery='To try again, go back to {{app}} and start a new request.';
-for(const window of ['metamask','unisat']){
-  for(const screen of Object.values(definitions[window]))if(['To try again, return to {{app}}.','Start a new request in {{app}} to try again.'].includes(screen.notice))screen.notice=requestRecovery;
-  for(const stage of ['extension-missing','extensions-unavailable',...(window==='metamask'?['other-ethereum-wallet']:[])]){
-    const screen=definitions[window][stage];screen.status=window==='metamask'?'Home could not find a wallet in this browser.':'Home could not find UniSat in this browser.';
-    screen.notice=window==='metamask'?'Open Home in a browser where your wallet is available, then choose MetaMask in Wallet.':'{{close}} Open Home in a browser where UniSat is available, then open this connection from Wallet.';screen.paymentSafeNotice=screen.notice;
-  }
-}
-for(const window of ['walletconnect','metamask','unisat']){
-  definitions[window]['request-rejected']={status:'This request was rejected.',notice:requestRecovery,request:true,account:true,afterAnswer:true,focusOutcome:true,primary:{id:'open-request-app',label:'Open {{app}}',quiet:false},secondary:[{id:'close-window',label:'Close window',quiet:false}]};
-  definitions[window]['request-dismissed']={status:'This request was dismissed.',notice:'This request may still be in progress in {{wallet}}. Closing this window does not cancel it. Before making a new request in {{app}}, check {{wallet}} and Activity in Wallet. Open Wallet from Home to see Activity.',request:true,account:true,afterAnswer:true,focusOutcome:true,primary:{id:'open-wallet-activity',label:'Open Activity in Wallet',quiet:false},secondary:[{id:'close-window',label:'Close window',quiet:false}]};
-}
-
-definitions.unisat['request-dismissed'].notice='A request may still be waiting in UniSat. Before trying again, check UniSat and Activity in Wallet. Open Wallet from Home to review this request.';
-for (const stage of ['extension-missing','extensions-unavailable','other-ethereum-wallet']) {
-  Object.assign(definitions.metamask[stage], {account:true, primary:{id:'refresh-status',label:'Check again',quiet:false}, secondary:[{id:'close-window',label:'Close window',quiet:true}], focus:'refresh-status'});
-}
-Object.assign(definitions.metamask['request-unsendable'], {status:'Home cannot confirm access to the account this request needs in your wallet.',notice:'',primary:{id:'refresh-status',label:'Check again',quiet:false},secondary:[{id:'close-window',label:'Close window',quiet:true}],focus:'refresh-status'});
-Object.assign(definitions.metamask['link-error'], {focus:'refresh-status',primary:{id:'refresh-status',label:'Check again',quiet:false},secondary:[{id:'close-window',label:'Close window',quiet:true}]});
 const freeze = value => { if(value && typeof value==='object'){Object.values(value).forEach(freeze);Object.freeze(value);}return value;};
 export const screens = freeze(definitions);

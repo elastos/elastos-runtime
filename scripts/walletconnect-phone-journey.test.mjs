@@ -75,10 +75,11 @@ test('round19 disconnect stops the retired SDK heartbeat and its pulse listeners
  assert.equal(r.fixture.state.calls.slice(count).some(e=>e.path.endsWith('/relay-admission')||e.path.endsWith('/storage')&&e.method==='POST'),false,'retired SDK sends no admission or storage write');
 });
 
-test('round19 an expired window leaves Close to the Home shell and offers no wallet actions',{timeout:30000},async t=>{
+test('round19 an expired window offers only Close window',{timeout:30000},async t=>{
  const r=await setup(t);r.fixture.state.expiredLaunch=true;await r.reopen({ready:false});
  await r.frame.locator('[data-state=window-expired]').waitFor({timeout:10000});
- assert.equal(await r.frame.locator('button:visible').count(),0);
+ assert.deepEqual(await r.frame.locator('button:visible').allTextContents(),['Close window']);
+ await r.frame.getByRole('button',{name:'Close window',exact:true}).click();await r.page.waitForFunction(()=>events.some(event=>event.type==='home:close-self'));
 });
 test('round19 a guest asks the Home owner and waits for the owner to allow access',{timeout:30000},async t=>{
  const r=await setup(t);r.fixture.setPermission('off');r.fixture.state.guest=true;await r.frame.locator('[data-action=connect],[data-action=start-over]').click();
@@ -95,7 +96,7 @@ test('round19 an approval on another network offers a working new-connection act
  await r.frame.evaluate(()=>window.dispatchEvent(new Event('focus')));await r.frame.locator('[data-state=request-new-connection]').waitFor();
  assert.equal(await r.frame.locator('[data-action=connect],[data-action=start-over]').isVisible(),true);
  assert.equal(await r.frame.locator('[data-action=disconnect]').isVisible(),false);
- assert.equal(await r.frame.getByRole('button',{name:/^Send to / }).count(),0);
+ assert.equal(await r.frame.getByRole('button',{name:/^Continue in / }).count(),0);
  await r.frame.locator('[data-action=connect],[data-action=start-over]').click();await r.frame.locator('[data-state=qr-shown]').waitFor({timeout:15000});
 });
 
@@ -109,7 +110,7 @@ test('round19 saved-session restore withholds Review until the same live adapter
  await r.frame.locator('[data-state=wallet-loading]').waitFor();const configReads=r.fixture.state.calls.filter(row=>row.path.endsWith('/wallet/config')).length;
  await delay(300);assert.equal(r.fixture.state.completed,0);assert.equal(await r.frame.locator('[data-action=send-request]').count(),0,'Review is withheld until the saved session is known');assert.equal(r.fixture.state.calls.filter(row=>row.path.endsWith('/wallet/config')).length,configReads,'restoration keeps one adapter');assert.equal(r.peer.trace.filter(e=>e.kind==='proposal').length,1,'restoration never starts a new proposal');
  }finally{release();}
- await r.frame.locator('[data-state=request-waiting]').waitFor();await r.frame.getByRole('button',{name:/^Send to / }).click();
+ await r.frame.locator('[data-state=request-waiting]').waitFor();await r.frame.getByRole('button',{name:/^Continue in / }).click();
  await r.frame.locator('[data-state=request-done]').waitFor({timeout:15000});assert.equal(r.peer.trace.filter(e=>e.kind==='proposal').length,1,'Review reuses the restored phone session');
  assert.equal(await r.frame.locator('iframe').count(),0,'optional website attestation has no direct frame route');
  assert.equal(r.fixture.state.completed,1);assert.equal(r.peer.trace.some(event=>event.kind==='deleted'),false,'restoring for Review keeps the phone session');

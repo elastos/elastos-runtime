@@ -27,7 +27,7 @@ export const METHOD_LABELS = Object.freeze({
   passkey: "Passkey",
   metamask: "MetaMask",
   btc: "Bitcoin",
-  wc: "WalletConnect",
+  wc: "Phone wallet",
 });
 
 export const METHOD_MONOGRAMS = Object.freeze({

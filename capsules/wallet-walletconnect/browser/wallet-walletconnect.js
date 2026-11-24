@@ -27,7 +27,7 @@ let showPicker = false, addingAccount = false;
 let copying=false;
 let clipboardFeedback = '';
 let clipboardFeedbackKey;
-let signinSelection,signinBusy=false,signinRequest;
+let signinSelection,signinBusy=false,signinRequest,signinResult;
 
 const homeClipboard = createHomeClipboardClient({targetId: CONNECTOR_ID,homeOrigin,homeToken:frameHomeToken});
 homeClipboard.start();
@@ -80,6 +80,8 @@ root.addEventListener('click', async event => {
   const button = event.target.closest('button[data-action]');
   if (!button || button.disabled || !mounted?.root.contains(button)) return;
   const action = button.dataset.action;
+  if(unresolvedPayment()&&['connect','start-over','finish','send-message','send-request','add-account','back-to-connection','view-requests','select-request'].includes(action)){draw();return;}
+  if(action==='close-window'){window.top.postMessage({type:'home:close-self',homeToken:frameHomeToken},homeOrigin);return;}
   if(signinRequest&&action==='stop-waiting'){await stopHomeSignin();return;}
   if (action === 'connect' || action === 'start-over') return onConnect();
   if (action === 'finish' || action === 'send-message') return onConnect({fresh:false});
@@ -89,6 +91,7 @@ root.addEventListener('click', async event => {
   if (action === 'inbox') return showInternetRequest();
   if (action === 'add-account') {addingAccount=true;connectionPage='add-account';showPicker=false;activeRequest=undefined;selectedId=undefined;outcome=undefined;draw();return;}
   if (action === 'back-to-connection') {
+    if(activeRequest?.request_id===dispatchedRequestId&&['transaction-done','transaction-declined'].includes(outcome))dispatchedRequestId=undefined;
     addingAccount=false;connectionPage='overview';showPicker=false;activeRequest=undefined;selectedId=undefined;outcome=undefined;draw();return;
   }
   if (action === 'check-access' || action === 'check-status' || action === 'refresh-status') {
@@ -145,29 +148,36 @@ window.addEventListener('message',event=>{
   if (event.data.layout?.visible === true) refreshReturnedWindow();
 });
 
+function unresolvedPayment() {
+  return [activeRequest,...requests].find(row=>row?.intent==='transaction_intent'&&(row.request_id===dispatchedRequestId||row.status==='approved')&&
+    !['transaction-done','transaction-declined'].includes(row.request_id===activeRequest?.request_id?outcome||requestOutcomes.get(row.request_id)?.outcome:requestOutcomes.get(row.request_id)?.outcome));
+}
+
 function draw() {
-  if(signinRequest) {
-    const account={name:(connectionState?.session?.name||'Your wallet').slice(0,40),mark:'wallet',connection:'WalletConnect',accounts:[{address:signinRequest.address,networks:[signinRequest.chain_namespace==='eip155:20'?'Elastos Smart Chain':'Base']}]};
-    currentView=connectionView({window:'walletconnect',stage:'request-phone',purpose:'home-signin',summary:reduceSummary(signinRequest,{connector:CONNECTOR_ID}),account,homeOrigin,supportedActions:['stop-waiting']});
-    mounted=mountConnection(root,currentView,mounted);renderKey='signin:'+signinRequest.request_id;return;
+  const shownSignin=signinRequest || signinResult?.request;
+  if(shownSignin) {
+    const account={name:(connectionState?.session?.name||'your wallet').slice(0,40),mark:'wallet',connection:'WalletConnect',accounts:[{address:shownSignin.address,networks:[shownSignin.chain_namespace==='eip155:20'?'Elastos Smart Chain':'Base']}]};
+    currentView=connectionView({window:'walletconnect',stage:signinResult?.stage||(currentPhase==='checking'?'checking-response':'request-phone'),purpose:'home-signin',signinAction:shownSignin.action,signinComplete:signinResult?.complete,summary:reduceSummary(shownSignin,{connector:CONNECTOR_ID}),account,homeOrigin,supportedActions:['stop-waiting','close-window']});
+    mounted=mountConnection(root,currentView,mounted);renderKey='signin:'+shownSignin.request_id;return;
   }
   if(mounted){const saved=captureConnectionPresentation(mounted.root);if(saved.action)rememberedFocus={key:renderKey,action:document.activeElement?.dataset.action,focusKey:saved.key,outcome:saved.action};}
   if(activeRequest && /^(request|transaction)-/.test(outcome || '')) {
     if(dispatchedRequestId===activeRequest.request_id || unrecordedHash)requestOutcomes.set(activeRequest.request_id,{outcome,hash:unrecordedHash,dispatched:dispatchedRequestId===activeRequest.request_id,walletName:activeRequest.walletName});
     else requestOutcomes.delete(activeRequest.request_id);
   }
-  const now = Math.floor(Date.now()/1000);
+  const now = Math.floor(Date.now()/1000),payment=unresolvedPayment();
+  const samePayment=!payment||payment.request_id===activeRequest?.request_id;
   const presentation = windowPresentation({loading:!accountsLoaded || !connectionState && !outcome && !hostEffectInFlight && !homeReadFailed && !launchExpired,connection:connectionState,accounts:linkedAccounts,requests:connectionPage ? [] : requests,busy:hostEffectInFlight && !outcome,
     phase:currentPhase,checking:currentPhase==='checking',effectPhase,permission:permissionStatus,pending:pendingEffect,ownerNeeded:ownerConsentNeeded,expired:launchExpired,
-    outcome:homeReadFailed&&!knownOutcome()&&!hostEffectInFlight ? 'home-read-unavailable' : outcome,qrData,selectedId,activeRequest,deadline,homeOrigin,action:recoveryAction,unrecordedHash,proofAccount,walletChanged,walletChange,dispatchedRequestId,connectionPage,resultWalletName:outcome?activeRequest?.walletName:undefined,
-    paymentPending:requests.some(row=>row.intent==='transaction_intent'&&row.status==='approved'&&!['transaction-declined','transaction-done'].includes(requestOutcomes.get(row.request_id)?.outcome))},now);
+    outcome:!samePayment?requestOutcomes.get(payment.request_id)?.outcome:homeReadFailed&&!knownOutcome()&&!hostEffectInFlight ? 'home-read-unavailable' : outcome,qrData,selectedId,activeRequest:payment||activeRequest,deadline,homeOrigin,action:recoveryAction,unrecordedHash,proofAccount,walletChanged,walletChange,dispatchedRequestId,connectionPage,resultWalletName:outcome?activeRequest?.walletName:undefined,
+    paymentPending:Boolean(payment)},now);
   if (connectionPage === 'add-account' && presentation.input.stage === 'linked') {presentation.input.stage='add-account';presentation.input.localReturn=false;}
   if (addingAccount && ['qr-cancelled','qr-expired','connection-declined','link-declined','link-timeout','link-error','link-cancelled'].includes(presentation.input.stage)) presentation.input.stage='add-'+presentation.input.stage;
   if (addingAccount && (['add-account','account-already-linked'].includes(presentation.input.stage) || presentation.input.stage.startsWith('add-'))) presentation.input.linkedConnection=false;
   if (presentation.input.stage === 'account-already-linked' || ['add-qr-cancelled','add-qr-expired','add-connection-declined','add-link-cancelled'].includes(presentation.input.stage)) presentation.input.localReturn=false;
   if (connectionPage) presentation.otherRequests=requests;
   if (connectionNeedsReplacement && ['request-waiting','request-multiple','transaction-waiting'].includes(presentation.input.stage) && !hostEffectInFlight) presentation.input.stage='request-new-connection';
-  const canChooseRequests=Boolean(accountsLoaded&&requests.length&&!hostEffectInFlight&&!launchExpired&&permissionStatus==='granted'&&!homeReadFailed);
+  const canChooseRequests=Boolean(!payment&&accountsLoaded&&requests.length&&!hostEffectInFlight&&!launchExpired&&permissionStatus==='granted'&&!homeReadFailed);
   presentation.input.supportedActions=presentation.input.supportedActions.filter(action=>!['view-requests','select-request'].includes(action)||canChooseRequests);
   presentation.input.showNextRequests=canChooseRequests;
   if (showPicker && canChooseRequests) {
@@ -246,7 +256,7 @@ async function refreshWalletState() {
 function copyFeedbackKey() {return `${renderKey}:${currentView?.account?.accounts[0]?.address || ''}`;}
 function resetFeedback() {homeReadFailed=false;connectionPage=undefined;showPicker=false;proofAccount=undefined;unrecordedHash=undefined;dispatchedRequestId=undefined;walletChanged=false;walletChange=undefined;outcome=undefined;clipboardFeedback='';deadline=undefined;}
 async function onConnect({fresh=true}={}) {
-  if (hostEffectInFlight || launchExpired) return;
+  if (hostEffectInFlight || launchExpired || unresolvedPayment()) return;
   resetFeedback();if(addingAccount)connectionPage='adding-account';activeRequest=undefined;connectionNeedsReplacement=false;
   const epoch=++actionEpoch;currentPhase='starting';effectPhase='starting';
   try {
@@ -259,7 +269,7 @@ async function onConnect({fresh=true}={}) {
   finally {if (epoch === actionEpoch) {draw();checkConnection().catch(()=>{});}}
 }
 async function onRequestClick(approvalRequestId=currentView?.request?.id || selectedId) {
-  if (hostEffectInFlight || launchExpired) return;
+  if (hostEffectInFlight || launchExpired || unresolvedPayment()) return;
   const request=(approvalRequestId ? requests.find(row=>row.request_id === approvalRequestId) : requests[0]) || (activeRequest?.request_id === approvalRequestId ? activeRequest : undefined);
   if (!request) return;
   resetFeedback();activeRequest=structuredClone(request);
@@ -364,25 +374,32 @@ draw();watchConnection();refreshWalletState().catch(showError);
 
 // Both stop controls retire only the Home request that they observed.
 async function stopHomeSignin() {
-  const owned=signinRequest;signinSelection=undefined;
+  const owned=signinRequest,result=signinResult;signinSelection=undefined;
+  if(owned){signinResult={request:owned,stage:'request-cancelled'};signinRequest=undefined;hostEffectInFlight=false;currentPhase='idle';draw();}
   await connector.effect({kind:'stop-signin'});
-  if(owned&&signinRequest===owned){signinRequest=undefined;hostEffectInFlight=false;currentPhase='idle';draw();}
+  if(result&&signinResult===result){signinResult=undefined;window.top.postMessage({type:'home:close-self',homeToken:frameHomeToken},homeOrigin);}
 }
 
 // Only Home can ask this admitted window to sign its Runtime-built message.
 addEventListener('message',async event=>{
   const data=event.data;
   if(event.source!==window.top||event.origin!==homeOrigin||data?.type!=='home:wallet-signin-effect'||data.homeToken!==frameHomeToken)return;
-  if(typeof data.requestId!=='string'||data.requestId.length>128||!['select','check','sign','stop'].includes(data.operation))return;
-  const keys=['type','homeToken','requestId','operation',...(['check','sign'].includes(data.operation)?['address','chain_id']:[]),...(data.operation==='sign'?['message']:[])];
+  if(typeof data.requestId!=='string'||data.requestId.length>128||!['select','check','sign','complete','stop'].includes(data.operation))return;
+  const keys=['type','homeToken','requestId','operation',...(['check','sign'].includes(data.operation)?['address','chain_id']:[]),...(data.operation==='sign'?['message',...(Object.hasOwn(data,'action')?['action']:[])]:data.operation==='complete'?['reviewRequestId']:[])];
   if(Object.keys(data).length!==keys.length||keys.some(key=>!Object.hasOwn(data,key)))return;
+  if(data.action!==undefined&&!['add','signin'].includes(data.action))return;
   const reply=result=>window.top.postMessage({type:'home:wallet-signin-effect-result',homeToken:frameHomeToken,requestId:data.requestId,...result},homeOrigin);
   if(data.operation==='stop'){await stopHomeSignin();return;}
-  if(signinBusy||hostEffectInFlight)return reply({error:true});
+  if(data.operation==='complete'){
+    if(signinResult?.stage!=='request-done'||data.reviewRequestId!==signinResult.request.request_id)return reply({error:true});
+    signinResult.complete=true;draw();reply({result:{}});return;
+  }
+  if(signinBusy||hostEffectInFlight||unresolvedPayment())return reply({error:true});
   signinBusy=true;let ownedRequest;
   try {
     let result;
     if(data.operation==='select') {
+      signinResult=undefined;
       await connector.effect({kind:'status'});
       result=signinSelection=await connector.effect({kind:'signin-select'});
     } else {
@@ -390,8 +407,9 @@ addEventListener('message',async event=>{
       const status=await connector.effect({kind:'status'}),selected=status.session;
       if(!selected||selected.address?.toLowerCase()!==data.address.toLowerCase()||selected.chain!==`eip155:${data.chain_id}`)throw new Error('Wallet changed');
       if(data.operation==='check')result={};
-      else {signinRequest=ownedRequest={connector_id:CONNECTOR_ID,request_id:data.requestId,capsule_id:'home',requesting_app_name:'Home',intent:'auth_challenge',address:data.address,chain_namespace:`eip155:${data.chain_id}`,status:'pending',reason:'Add this wallet as a sign-in method.',expires_at:Math.floor(Date.now()/1000)+180};hostEffectInFlight=true;result=await connector.effect({kind:'signin',address:data.address,chain_id:data.chain_id,message:data.message});}
+      else {signinResult=undefined;signinRequest=ownedRequest={connector_id:CONNECTOR_ID,request_id:data.requestId,capsule_id:'home',intent:'auth_challenge',address:data.address,chain_namespace:`eip155:${data.chain_id}`,status:'pending',reason:'',action:data.action,expires_at:Math.floor(Date.now()/1000)+180};hostEffectInFlight=true;draw();result=await connector.effect({kind:'signin',address:data.address,chain_id:data.chain_id,message:data.message});if(signinRequest===ownedRequest)signinResult={request:ownedRequest,stage:'request-done',complete:false};}
     }
+    if(ownedRequest&&signinRequest!==ownedRequest)return reply({error:true});
     reply({result});
   } catch(error) {reply({error:true,code:error.code});}
   finally {signinBusy=false;if(ownedRequest&&signinRequest===ownedRequest){signinRequest=undefined;hostEffectInFlight=false;currentPhase='idle';}draw();}

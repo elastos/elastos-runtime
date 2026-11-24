@@ -121,7 +121,7 @@ export function accountCard(account, displayedAccountId = "", { privacyMode, pri
   more.type = "button";
   more.textContent = "⋯";
   more.dataset.walletAccountMenu = account.account_id;
-  more.setAttribute("aria-label", `Account actions for ${accountDisplayName(account)}`);
+  more.setAttribute("aria-label", `Address actions for ${accountDisplayName(account)}`);
 
   top.append(identity, balance, more);
 
@@ -156,7 +156,7 @@ export function emptyHero() {
   const empty = document.createElement("div");
   empty.className = "wallet-empty";
   empty.innerHTML = `
-    <p class="wallet-state">This account has no wallet yet. Select Create account, or connect MetaMask / UniSat below.</p>
+    <p class="wallet-state">This Home account has no wallet yet. Select Create address, or connect MetaMask / UniSat below.</p>
   `;
   return empty;
 }

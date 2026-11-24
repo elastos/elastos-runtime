@@ -739,7 +739,7 @@ function renderHero(accounts) {
   if (accounts.length === 0) {
     totalBalanceNode.textContent = "—";
     totalBalanceNode.classList.remove("is-loading");
-    balanceStateNode.textContent = "This account has no wallet yet.";
+    balanceStateNode.textContent = "This Home account has no wallet yet.";
     balanceStateNode.hidden = false;
     deltaNode.hidden = true;
     return;
@@ -875,7 +875,7 @@ function accountMatchesDefault(account, defaultAccount) {
 
 function renderAccounts(accounts) {
   accountsNode.replaceChildren();
-  stateNode.textContent = `${accounts.length} account${accounts.length === 1 ? "" : "s"}`;
+  stateNode.textContent = `${accounts.length} address${accounts.length === 1 ? "" : "es"}`;
   if (accountActionsNode) {
     accountActionsNode.hidden = false;
   }
@@ -902,7 +902,7 @@ function updateFlowButtons(accounts) {
     sendButton.hidden = empty;
     sendButton.title = empty || canSend
       ? "Send"
-      : "Wallet Send needs a built-in passkey account";
+      : "Wallet Send needs a built-in passkey address";
     sendButton.setAttribute("aria-description", sendButton.title);
   }
   if (receiveButton) {

@@ -83,10 +83,10 @@ test('dispatch identity belongs only to the actual sent request',()=>{
  const view=walletConnectView(windowPresentation({...initial,connection:{removed:true},activeRequest:{...request,request_id:'not-sent'},dispatchedRequestId:'earlier'},now));assert.equal(view.stage,'request-wallet-removed');
 });
 test('a previous challenge deadline cannot shorten a later request',()=>{
- const view=walletConnectView(windowPresentation({...initial,requests:[request],deadline:now+1},now));assert.equal(view.wait,'Time left: 10:00');
+ const view=walletConnectView(windowPresentation({...initial,requests:[request],deadline:now+1},now));assert.equal(view.wait,null);assert.equal(windowPresentation({...initial,requests:[request],deadline:now+1},now).input.waitSeconds,600);
 });
 test('an unrelated request cannot shorten the ownership challenge',()=>{
- const view=walletConnectView(windowPresentation({...initial,busy:true,phase:'ownership',requests:[{...request,expires_at:now+1}],deadline:now+300},now));assert.equal(view.wait,'Time left: 5:00');
+ const view=walletConnectView(windowPresentation({...initial,busy:true,phase:'ownership',requests:[{...request,expires_at:now+1}],deadline:now+300},now));assert.equal(view.wait,null);assert.equal(windowPresentation({...initial,busy:true,phase:'ownership',requests:[{...request,expires_at:now+1}],deadline:now+300},now).input.waitSeconds,300);
 });
 test('the QR renderer reproduces from the existing locked graph',async()=>{
  const require=walletConnectFixtureRequire,{build}=require('esbuild');
@@ -96,7 +96,7 @@ test('the QR renderer reproduces from the existing locked graph',async()=>{
  const shipped=await readFile(new URL('../capsules/wallet-walletconnect/browser/qrcode.mjs',import.meta.url),'utf8');assert.equal(result.outputFiles[0].text,shipped.slice(shipped.indexOf('\n')+1));
 });
 for(const left of [50,1500])test(`a sent request shows the bounded wallet wait for ${left}s approval lifetime`,()=>{
- const view=walletConnectView(windowPresentation({...initial,busy:true,phase:'signature',activeRequest:{...request,expires_at:now+left},deadline:now+(left<300?300:600)},now));assert.equal(view.wait,left<300?'Time left: 5:00':'Time left: 10:00');
+ const view=walletConnectView(windowPresentation({...initial,busy:true,phase:'signature',activeRequest:{...request,expires_at:now+left},deadline:now+(left<300?300:600)},now));assert.equal(view.wait,null);assert.equal(windowPresentation({...initial,busy:true,phase:'signature',activeRequest:{...request,expires_at:now+left},deadline:now+(left<300?300:600)},now).input.waitSeconds,left<300?300:600);
 });
 for(const outcome of ['request-declined','transaction-declined'])for(const ended of [{permission:'revoked'},{connection:{removed:true}},{connection:{expired:true}}])test(`known ${outcome} survives ${JSON.stringify(ended)}`,()=>{
  const view=walletConnectView(windowPresentation({...initial,...ended,activeRequest:{...request,status:'approved',intent:outcome.startsWith('transaction')?'transaction_intent':'credential'},dispatchedRequestId:request.request_id,outcome},now));assert.equal(view.stage,outcome);

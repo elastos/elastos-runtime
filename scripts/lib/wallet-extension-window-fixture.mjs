@@ -64,7 +64,7 @@ function installProvider({ kind, address, dualAlt = false, wallets }) {
   if (kind === 'unisat') window.unisat = provider;
 }
 
-export async function fixture(browser, kind, { saved = false, requests = false, recording, mutate, oldHost = false, oldWindow = false, readFailure = null, launch = true, noHomeWallet = false, extraHomeAccount = false, pictures = true, pictureContext = null, dualAlt = false, wallets, hostSource } = {}) {
+export async function fixture(browser, kind, { saved = false, requests = false, recording, mutate, oldHost = false, oldWindow = false, readFailure = null, launch = true, noHomeWallet = false, extraHomeAccount = false, pictures = true, pictureContext = null, dualAlt = false, wallets, hostSource, realExtension = false } = {}) {
   const address = kind === 'metamask' ? A : U;
   const context = await browser.newContext({ viewport: { width: 480, height: 560 }, colorScheme: 'dark' });
   const replay = recording ? await replayInput(recording) : null;
@@ -85,12 +85,26 @@ export async function fixture(browser, kind, { saved = false, requests = false, 
       }
     }, { source: installScriptedExtension.toString(), input: replay, kind });
     await context.addInitScript(({ address }) => { if (window === window.top) window.testState = { address, linked: false, requests: [], receipts: [], effects: [], copies: [], calls: [] }; }, { address });
-  } else await context.addInitScript(installProvider, { kind, address, dualAlt, wallets });
-  const errors = [], reads = [];
-  const top = await context.newPage(); top.on('pageerror', e => errors.push(e.message));
-  await top.clock.install();
+  } else if(realExtension) await context.addInitScript(({address})=>{
+    if(window===window.top)window.testState={address,linked:false,requests:[],calls:[],receipts:[],effects:[],copies:[]};
+  },{address});
+  else await context.addInitScript(installProvider, { kind, address, dualAlt, wallets });
+  const errors = [], reads = [], extensionDiagnostics=[];
+  const top = await context.newPage(); top.on('pageerror', e => {
+    // MetaMask also injects into the null-origin sandbox, where its own
+    // inpage transport cannot attach. The real provider runs in the parent.
+    if(realExtension&&e.message==='Failed to connect to MetaMask'&&/^.*\n\s+at Object\.connect \(chrome-extension:\/\/fahggfellgfmaipmbahaikhklihepmdg\/scripts\/inpage\.js:/.test(e.stack)){
+      extensionDiagnostics.push('MetaMask inpage transport in sandbox');return;
+    }
+    errors.push(e.message);
+  });
+  if(!realExtension)await top.clock.install();
   await context.route('**/*', async route => {
     const url = new URL(route.request().url());
+    if(realExtension&&url.protocol==='chrome-extension:')return route.continue();
+    // Real extensions own their normal wallet metadata/RPC requests.
+    // The fixture asks only for harmless message signatures, never a payment.
+    if(realExtension&&url.hostname!=='extensions.test')return route.continue();
     assert.equal(url.hostname, 'extensions.test', 'all harness traffic stays local');
     if (url.pathname === '/') return route.fulfill({ contentType: 'text/html', body: `<!doctype html><body style="margin:0"><script type="module">
 import { handleHomeWalletConnectorEffect } from '/apps/home/home-wallet-connector-host.js';
@@ -121,7 +135,7 @@ window.runtimeFetch=async(url,init)=>{
  }
  const action=url.includes('/link/challenge')?(kind==='metamask'?'evm_link_challenge':'bitcoin_link_challenge'):url.includes('/link/verify')?(kind==='metamask'?'evm_link_complete':'bitcoin_link_complete'):url.endsWith('/handoff')?'approval_handoff':'approval_complete';
  if(url.includes('/link/challenge') && state.accountDuringChallenge) state.walletAddress=state.accountDuringChallenge;
- if(url.includes('/link/challenge'))return {schema,action,connector_id:id,challenge:{schema:kind==='metamask'?'elastos.auth.challenge/v1':'elastos.wallet.bitcoin_challenge/v1',challenge_id:'fixture-challenge',message:'Isolated account proof',expires_at:Math.floor(Date.now()/1000)+300,resources:[],...(kind==='unisat'?{network:'bitcoin',address:state.address,proof_type:'bip322_simple'}:{})}};
+ if(url.includes('/link/challenge')){if(${realExtension}){state.address=body.address;state.chainNamespace=kind==='metamask'?'eip155:'+body.chain_id:'bip122:000000000019d6689c085ae165831e93';}return {schema,action,connector_id:id,challenge:{schema:kind==='metamask'?'elastos.auth.challenge/v1':'elastos.wallet.bitcoin_challenge/v1',challenge_id:'fixture-challenge',message:'Isolated account proof',expires_at:Math.floor(Date.now()/1000)+300,resources:[],...(kind==='unisat'?{network:'bitcoin',address:state.address,proof_type:'bip322_simple'}:{})}};}
  if(url.includes('/link/verify')){state.linked=true;state.receipts.push(body);return {schema,action,connector_id:id,status:'linked'};}
  if(url.endsWith('/handoff')&&${JSON.stringify(requests)}==='transaction') return {schema,action,connector_id:id,request_id:requestId,evm_chains:[{chainId:'0x14',chainName:'Elastos Smart Chain',nativeCurrency:{name:'ELA',symbol:'ELA',decimals:18},rpcUrls:['https://api.elastos.io/esc']}],handoff:{schema:'elastos.wallet.webconnect_handoff/v1',request_id:requestId,intent:'transaction_intent',payload_hash:'0x'+'ab'.repeat(32),signer:signerAddress,status:'awaiting_wallet_transaction',transaction:{from:signerAddress,to:'0x'+'2'.repeat(40),value:'0x1',data:'0x',gas:'0x5208',gasPrice:'0x1',nonce:'0x0',chainId:'0x14'}}};
  if(url.endsWith('/handoff'))return {schema,action,connector_id:id,request_id:requestId,evm_chains:[],handoff:{schema:'elastos.wallet.webconnect_handoff/v1',request_id:requestId,intent:${JSON.stringify(requests)}==='transaction'?'transaction_intent':${JSON.stringify(requests)}==='typed'?'browser_typed_data_sign':kind==='metamask'?'browser_personal_sign':'bitcoin_bip322_proof',payload_hash:'0x'+'ab'.repeat(32),signer:signerAddress,status:'awaiting_wallet_signature',message:'Isolated app request',signature_type:kind==='metamask'?'personal_sign':'bip322_simple'}};
@@ -136,7 +150,7 @@ const frame=document.createElement('iframe');frame.style='width:480px;height:522
       if (readFailure) { await route.fulfill({ status: readFailure, json: { error: 'fixture read failure' } });return; }
       const data = await top.evaluate(({ url, kind, extraHomeAccount }) => {
         const s = testState;
-        return url.endsWith('/accounts') ? { accounts: s.linked ? [{ address: s.address, connector_id: 'wallet-' + kind, chain_namespace: kind === 'metamask' ? 'eip155:1' : 'bip122:000000000019d6689c085ae165831e93' }, ...(extraHomeAccount ? [{address:kind==='metamask'?'0x'+'2'.repeat(40):'bc1q'+'b'.repeat(38),connector_id:'wallet-'+kind,chain_namespace:kind==='metamask'?'eip155:1':'bip122:000000000019d6689c085ae165831e93'}] : [])] : [] } : { approval_requests: s.requests.filter(request=>request.status==='pending') };
+        return url.endsWith('/accounts') ? { accounts: s.linked ? [{ address: s.address, connector_id: 'wallet-' + kind, chain_namespace: kind === 'metamask' ? s.chainNamespace || 'eip155:1' : 'bip122:000000000019d6689c085ae165831e93' }, ...(extraHomeAccount ? [{address:kind==='metamask'?'0x'+'2'.repeat(40):'bc1q'+'b'.repeat(38),connector_id:'wallet-'+kind,chain_namespace:kind==='metamask'?'eip155:1':'bip122:000000000019d6689c085ae165831e93'}] : [])] : [] } : { approval_requests: s.requests.filter(request=>request.status==='pending') };
       }, { url: url.pathname, kind, extraHomeAccount });
       await route.fulfill({ json: data });return;
     }
@@ -211,7 +225,7 @@ export function renderConnection(document,view) {
         pngs,engine:browser.browserType().name(),viewport:{width:480,height:560},content:{width:480,height:522},...copy },null,2));
     }
   };
-  return { top, frame, context, errors, reads, peerElapsed, action, state, async assertShared() { const feedback = await frame.locator('main').getAttribute('data-extension-feedback');
+  return { top, frame, context, errors, extensionDiagnostics, reads, peerElapsed, action, state, async assertShared() { const feedback = await frame.locator('main').getAttribute('data-extension-feedback');
     if (feedback) {
       const texts = await frame.locator('.connection-status,.connection-notice').allTextContents();
       if (feedback === 'local-wait') assert.equal(await frame.locator('.connection-notice').textContent(),kind === 'metamask' ? 'This request may still be in progress in your wallet. Closing this window does not cancel it. Check your wallet and Activity in Wallet before making another request. Open Wallet from Home to see Activity.' : 'A request may still be waiting in UniSat. Closing this window does not cancel it. Check UniSat and Activity in Wallet.');

@@ -9,7 +9,8 @@
 <link rel="stylesheet" href="./style.css">
 </head>
 <body class="el-app">
-<div id="connection-root"></div>
+<div id="connection-root"><main class="connection-window"><p class="connection-status" role="status">Loading wallet connection…</p><div class="connection-actions"><button type="button" class="el-button connection-quiet" data-connection-loading-cancel>Cancel</button></div></main></div>
+<script type="module" src="./wallet-connection-loading.mjs"></script>
 <script type="module" src="./wallet-metamask.js"></script>
 </body>
 </html>

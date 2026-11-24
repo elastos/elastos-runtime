@@ -3,7 +3,7 @@
 import { createServer } from "node:http";
 import { observeCopiedFeedback } from "./lib/wallet-copy-feedback.mjs";
 import { productSmokeLaunchOptions, requireProductSmokePlaywright } from "./product-smoke-browser.mjs";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { extname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,6 +12,13 @@ const repoRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
 const walletRoot = join(repoRoot, "capsules/wallet/browser");
 const homeRoot = join(repoRoot, "capsules/home/browser");
 const { chromium } = requireProductSmokePlaywright();
+
+const pictureRoot=process.env.WALLET_ROUND2_PICTURES, walletCaptures=[];
+async function capture(frame,id,caption){
+  if(!pictureRoot)return;await mkdir(pictureRoot,{recursive:true});
+  await frame.locator('main.wallet-shell').screenshot({path:join(pictureRoot,id+'.png')});
+  walletCaptures.push({file:id+'.png',caption});await writeFile(join(pictureRoot,'wallet-index.json'),JSON.stringify(walletCaptures,null,2));
+}
 
 const groupAddress = "0x1111111111111111111111111111111111111111";
 const sendAddress = "0x2222222222222222222222222222222222222222";
@@ -614,6 +621,7 @@ async function run() {
       .click();
     await frame.locator('input[name="amount"]').fill("0.25");
     await frame.locator('input[name="to"]').fill(sendAddress);
+    await capture(frame,"wallet-send","Wallet chooses an address and reviews a payment.");
     await frame.getByRole("button", { name: "Review" }).click();
     await frame.getByRole("button", { name: "Sign" }).click();
     await waitForCondition(() => server.state.sendBodies.length === 1, 5000, "wallet send request");
@@ -707,7 +715,7 @@ async function run() {
     const openTarget = (await fixtureState(page)).openTargets.at(-1);
     assert(openTarget?.target === "wallet-metamask", "Wallet connector launch must stay on the exact Home open-target path.", openTarget);
 
-    await openAccountMenu(frame);
+    await openAccountMenu(frame);await capture(frame,"wallet-address-actions","Wallet address actions.");
     const defaultRequestCount = server.state.defaultBodies.length;
     await frame.locator(".wallet-flow-row").filter({ hasText: "Use by default" }).click();
     const defaultDialog = frame.getByRole("dialog", { name: "Use by default" });
@@ -721,7 +729,7 @@ async function run() {
       server.state.defaultBodies.at(-1),
     );
 
-    await openAccountMenu(frame);
+    await openAccountMenu(frame);await capture(frame,"wallet-address-actions","Wallet address actions.");
     const recoveryRequestCount = server.state.recoveryCalls.length;
     const recoveryStepUpCount = (await fixtureState(page)).stepUps.length;
     await frame.locator(".wallet-flow-row").filter({ hasText: "Show recovery key" }).click();
@@ -745,16 +753,16 @@ async function run() {
     );
     await frame.getByRole("button", { name: "Done" }).click();
 
-    await openAccountMenu(frame);
+    await openAccountMenu(frame);await capture(frame,"wallet-address-actions","Wallet address actions.");
     const renameRequestCount = server.state.renameBodies.length;
     await frame.locator(".wallet-flow-row").filter({ hasText: "Rename" }).click();
     await frame.locator(".wallet-flow-hint").waitFor({ state: "visible", timeout: 5000 });
     assert(
-      (await frame.locator(".wallet-flow-hint").textContent()).includes("updates 2 exact account records"),
+      (await frame.locator(".wallet-flow-hint").textContent()).includes("updates 2 network records"),
       "Grouped rename must name the full grouped scope.",
     );
-    await frame.locator('input[name="label"]').fill("Family Office");
-    const renameDialog = frame.getByRole("dialog", { name: "Rename account" });
+    await frame.locator('input[name="label"]').fill("Family Office");await capture(frame,"wallet-rename-address","Rename a Wallet address.");
+    const renameDialog = frame.getByRole("dialog", { name: "Rename address" });
     await frame.getByRole("button", { name: "Save" }).click();
     await waitForCondition(() => server.state.renameBodies.length === renameRequestCount + 2, 5000, "wallet rename requests");
     assert(
@@ -808,7 +816,7 @@ async function run() {
       const rect = drawer.getBoundingClientRect();
       return rect.left >= 0 && rect.right <= window.innerWidth;
     }, undefined, { timeout: 5000 });
-    await controlRect(frame, "#wallet-settings-drawer", "desktop settings drawer");
+    await controlRect(frame, "#wallet-settings-drawer", "desktop settings drawer");await capture(frame,"wallet-settings-addresses","Wallet settings lists connected addresses and Phone wallet.");
     await frame.getByRole("button", { name: "Close settings" }).click();
     await frame.locator("#wallet-settings-drawer").waitFor({ state: "hidden", timeout: 5000 });
 
@@ -819,12 +827,13 @@ async function run() {
     await controlRect(frame, ".wallet-hero", "narrow hero");
     await screenshot(frame, narrowShot);
 
-    await openAccountMenu(frame);
+    await openAccountMenu(frame);await capture(frame,"wallet-address-actions","Wallet address actions.");
     const deleteRequestCount = server.state.deleteBodies.length;
     const deleteStepUpCount = (await fixtureState(page)).stepUps.length;
-    await frame.locator(".wallet-flow-row").filter({ hasText: "Delete account" }).click();
+    await frame.locator(".wallet-flow-row").filter({ hasText: "Delete address" }).click();
+    await capture(frame,"wallet-delete-address","Delete a Wallet address after confirmation.");
     const deleteHint = await frame.locator(".wallet-flow-hint").textContent();
-    assert(deleteHint.includes("removes 2 exact account records"), "Grouped delete must name the full grouped scope.");
+    assert(deleteHint.includes("removes 2 network records"), "Grouped delete must name the full grouped scope.");
     assert(server.state.deleteBodies.length === 0, "Delete must not run before confirmation.");
     await frame.getByRole("button", { name: "Delete" }).click();
     await waitForCondition(() => server.state.deleteBodies.length === deleteRequestCount + 2, 5000, "wallet delete requests");
@@ -833,7 +842,7 @@ async function run() {
       5000,
       "wallet delete step-ups",
     );
-    await frame.waitForFunction(() => document.querySelector("#wallet-account-state")?.textContent === "0 accounts", undefined, { timeout: 5000 });
+    await frame.waitForFunction(() => document.querySelector("#wallet-account-state")?.textContent === "0 addresses", undefined, { timeout: 5000 });
     assert(
       server.state.deleteBodies.length === 2
         && server.state.deleteBodies.some((item) => item.accountId === "acc-esc")
@@ -919,6 +928,11 @@ async function run() {
       assert(await otherFrame.locator('[data-wallet-request-id="approved-send"]').count() === 0, `${connector_id} stays out of the pending list`);
     }
     await assertNoErrors(railPage, server, "dismissal");
+    await railPage.reload({waitUntil:'networkidle'});const createFrame=await walletFrame(railPage);
+    await createFrame.locator('.wallet-section-actions [data-wallet-create-account]').click();await capture(createFrame,'wallet-create-address','Choose the type of Wallet address.');
+    await createFrame.locator('.wallet-flow-row').filter({hasText:'EVM'}).click();await capture(createFrame,'wallet-create-evm-address','Create an EVM address.');
+    await createFrame.getByRole('button',{name:'Back',exact:true}).click();await createFrame.locator('.wallet-flow-row').filter({hasText:'Bitcoin'}).click();await capture(createFrame,'wallet-create-bitcoin-address','Create a Bitcoin address.');
+    await createFrame.getByRole('button',{name:'Back',exact:true}).click();await createFrame.getByRole('button',{name:'Cancel',exact:true}).click();
     console.log("Wallet approved-send dismissal PASS: visible recovery card, Dismiss, one Runtime request, removed after refresh");
     await railPage.close();
 

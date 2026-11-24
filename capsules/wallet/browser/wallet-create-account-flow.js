@@ -34,7 +34,7 @@ export function createWalletCreateAccountFlow({
       rows.push(
         flowRow(
           "EVM",
-          "One passkey-controlled account for ESC, Base, and supported EVM networks.",
+          "One passkey-controlled address for ESC, Base, and supported EVM networks.",
           () => openCreateAccountTypeForm("evm"),
         ),
       );
@@ -43,14 +43,14 @@ export function createWalletCreateAccountFlow({
       rows.push(
         flowRow(
           "Bitcoin",
-          "Native Bitcoin account controlled by this passkey.",
+          "Native Bitcoin address controlled by this passkey.",
           () => openCreateAccountTypeForm("bitcoin"),
         ),
       );
     }
     openFlowModal(
-      "Create account",
-      "Choose the account type you want to create.",
+      "Create address",
+      "Choose the address type you want to create.",
       rows,
       [modalButton("Cancel", closeModal, true)],
     );
@@ -59,7 +59,7 @@ export function createWalletCreateAccountFlow({
   function openCreateAccountTypeForm(accountType) {
     const form = document.createElement("form");
     form.className = "wallet-flow-form";
-    const defaultLabel = accountType === "bitcoin" ? "Savings" : "EVM Account";
+    const defaultLabel = accountType === "bitcoin" ? "Savings" : "EVM address";
     form.innerHTML = `
       <label>Name <input name="label" autocomplete="off" maxlength="40" placeholder="${defaultLabel}"></label>
     `;
@@ -70,10 +70,10 @@ export function createWalletCreateAccountFlow({
       );
     });
     openFlowModal(
-      "Create account",
+      "Create address",
       accountType === "bitcoin"
-        ? "Create a native Bitcoin account."
-        : "Create an EVM account for supported networks.",
+        ? "Create a native Bitcoin address."
+        : "Create an EVM address for supported networks.",
       [form],
       [
         modalButton("Back", openCreateAccountFlow, true),
@@ -96,9 +96,9 @@ export function createWalletCreateAccountFlow({
             firstNamespace,
             buildViewAccounts().map((account) => account.name),
           )
-        : "EVM Account");
+        : "EVM address");
     if (targetNamespaces.length === 0) {
-      showStatus("This account type is not available yet.", "error");
+      showStatus("This address type is not available yet.", "error");
       return;
     }
     const submit = modalNode.querySelector(
@@ -121,7 +121,7 @@ export function createWalletCreateAccountFlow({
       showStatus(
         accountType === "bitcoin"
           ? `${label} created.`
-          : `${label} EVM account created.`,
+          : `${label} EVM address created.`,
         "success",
       );
       notifyHomeSummaryChanged();
@@ -140,7 +140,7 @@ export function createWalletCreateAccountFlow({
       <label>Wallet recovery key
         <textarea name="recovery_key" rows="8" spellcheck="false" placeholder="Paste your Wallet recovery key"></textarea>
       </label>
-      <label>Name <input name="label" autocomplete="off" maxlength="40" placeholder="Recovered account"></label>
+      <label>Name <input name="label" autocomplete="off" maxlength="40" placeholder="Recovered address"></label>
       <p class="wallet-flow-hint">Paste one Wallet recovery key. To restore from a Recovery Kit, open System and choose Import Recovery Kit. A Recovery Kit does not contain your files.</p>
     `;
     form.addEventListener("submit", (event) => {
