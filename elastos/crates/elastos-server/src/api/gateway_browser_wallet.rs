@@ -1316,6 +1316,9 @@ async fn browser_wallet_approval_status(
         "request_id": request_id,
         "status": status,
     });
+    if status == "rejected" && request["wallet_outcome"] == "declined" {
+        payload["wallet_outcome"] = serde_json::json!("declined");
+    }
     if status == "completed" {
         let result = request.get("signed_result").ok_or_else(|| {
             (

@@ -470,7 +470,7 @@ const definitions = {
     },
     "transaction-declined": {
       "status": "{{wallet}} did not approve this transaction.",
-      "notice": "To try again, go back to {{app}}. In Wallet, choose Dismiss to clear this request.",
+      "notice": "To try again, dismiss this request in Wallet, then return to {{app}}.",
       "account": true,
       "request": true,
       "outcome": true,

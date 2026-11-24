@@ -38,7 +38,7 @@ export function activityTime(request) {
 }
 
 function decisionWasDismissed(request) {
-  return Boolean(request.approved_at) || request.localDecisionKind === "dismissed";
+  return request.wallet_outcome !== "declined" && (Boolean(request.approved_at) || request.localDecisionKind === "dismissed");
 }
 
 export function activityIcon(request) {
@@ -62,6 +62,7 @@ export function activityTitle(request) {
     return `${capsule} · Approved ${requestOutcomeName(request)}`;
   }
   if (status === "rejected") {
+    if (request.wallet_outcome === "declined") return `${capsule} · Wallet declined ${requestOutcomeName(request)}`;
     if (request.intent === "transaction_intent" && decisionWasDismissed(request) && readText(request.connector_id)) {
       return `${capsule} · Dismissed transaction request`;
     }

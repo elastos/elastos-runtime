@@ -16,7 +16,8 @@ export function windowPresentation(state, nowSeconds) {
   const request = activeRequest || requests.find(row => row.request_id === selectedId) || requests.find(row=>row.request_id===state.dispatchedRequestId) || requests.find(row=>sendable(row,nowSeconds));
   const sent = Boolean(request && (state.dispatchedRequestId === request.request_id || request.status === 'approved' && request.intent === 'transaction_intent'));
   const completed = ['request-done','request-next','transaction-done'].includes(outcome);
-  const answered = completed || ['request-declined','transaction-declined'].includes(outcome);
+  const walletDeclined=request?.wallet_outcome==='declined';
+  const answered = completed || walletDeclined || ['request-declined','transaction-declined'].includes(outcome);
   const linked = sessionLinked(session, accounts) || Boolean(outcome === 'linked' && session && state.proofAccount && sameAccount(session.address,state.proofAccount.address) && session.chain === state.proofAccount.chain);
   // Once dispatched, a payment owns this window until its answer is known.
   // QR, launch, access and connection changes cannot turn it into a new send.
@@ -32,7 +33,7 @@ export function windowPresentation(state, nowSeconds) {
   }
   else if (expired) stage = 'window-expired';
   else if (state.loading) stage = outcome==='home-read-unavailable' ? outcome : 'wallet-loading';
-  else if (answered) stage=outcome;
+  else if (answered) stage=walletDeclined?request.intent==='transaction_intent'?'transaction-declined':'request-declined':outcome;
   else if (outcome === 'request-unavailable' && !sent && (connection?.removed || connection?.expired || permission && permission !== 'granted')) stage=outcome;
   else if (sent && permission && permission !== 'granted') stage=request.intent === 'transaction_intent' ? 'transaction-wallet-error' : 'request-unavailable';
   else if (busy && phase === 'disconnecting') stage = 'disconnecting';

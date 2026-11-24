@@ -64,7 +64,7 @@ try{
   f.state.approvals=[{...f.state.approvals[0],request_id:'layout-recovery',intent:'transaction_intent',status:'approved'}];await frame.evaluate(()=>window.dispatchEvent(new Event('focus')));
   await frame.waitForFunction(()=>document.querySelector('main')?.dataset.requestId==='layout-recovery'||document.querySelector('[data-action=view-requests]'));
   if(await frame.locator('main').getAttribute('data-request-id')!=='layout-recovery'){await frame.getByRole('button',{name:'View requests',exact:true}).click();await frame.locator('[data-focus-key="select-request:layout-recovery"]').click();}await state('transaction-reopened');
-  assert.equal(await frame.locator('[data-action=send-request]').count(),0,'unfinished transaction cannot send again');await capture(page,frame,'walletconnect','back-to-connection');
+  assert.equal(await frame.locator('[data-action=send-request]').count(),0,'unfinished transaction cannot send again');await capture(page,frame,'walletconnect','open-wallet');
  }finally{try{await settle(frame);}finally{await peer.stop();await page.close();await f.stop();}assert.deepEqual(errors,[]);}
 }finally{await browser?.close();ownedPictures?.cleanup();}
 if(!ownedPictures)for(const path of screenshots)console.log('screenshot: '+path);

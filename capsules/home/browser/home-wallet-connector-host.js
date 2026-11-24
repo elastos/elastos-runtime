@@ -365,10 +365,18 @@ async function completeApproval(connectorId, connectorToken, approvalRequestId, 
     connectorId,
     approvalRequestId,
   );
-  if (connectorId === METAMASK_CONNECTOR_ID) {
-    return completeEvmApproval(provider, connectorToken, handoff, evmChains, selected);
+  try {
+    if (connectorId === METAMASK_CONNECTOR_ID) {
+      return await completeEvmApproval(provider, connectorToken, handoff, evmChains, selected);
+    }
+    return await completeBitcoinApproval(provider, connectorToken, handoff);
+  } catch (error) {
+    if (Number(error?.code) === 4001) {
+      await runtimePost(`/api/apps/home/wallet-connector/approvals/${encodedRequestId}/complete`,
+        connectorBody(connectorId, connectorToken, {payload_hash:handoff.payload_hash,signer:handoff.signer,declined:true}));
+    }
+    throw error;
   }
-  return completeBitcoinApproval(provider, connectorToken, handoff);
 }
 
 async function completeEvmApproval(provider, connectorToken, handoff, evmChains, selected = null) {
@@ -461,6 +469,10 @@ async function ensureProviderChain(provider, chainId, chains) {
       method: "wallet_addEthereumChain",
       params: [chain],
     });
+    // EIP-3085 adds a network; the wallet may keep its previous selection.
+    if (normalizeChainId(await provider.request({method:"eth_chainId"})) !== target) {
+      await provider.request({method:"wallet_switchEthereumChain",params:[{chainId:target}]});
+    }
   }
   if (normalizeChainId(await provider.request({ method: "eth_chainId" })) !== target) {
     throw new Error("Wallet did not switch to the Runtime-selected chain.");

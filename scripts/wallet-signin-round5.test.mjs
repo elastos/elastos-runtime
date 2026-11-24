@@ -5,9 +5,10 @@ import {mkdir} from 'node:fs/promises';
 import {join} from 'node:path';
 import {signinFixture,installSigninProviders,evmAddress,bitcoinAddress} from './lib/wallet-signin-fixture.mjs';
 import {requireProductSmokePlaywright} from './product-smoke-browser.mjs';
+import {windowTestOptions} from './lib/walletconnect-window-resources.mjs';
 const pictures=process.env.WALLET_ROUND5_PICTURES;
 async function shot(page,name){if(pictures){await mkdir(pictures,{recursive:true});await page.screenshot({path:join(pictures,name+'.png'),animations:'disabled'});}}
-for(const engine of ['chromium','webkit'])for(const width of [1280,390])for(const kind of ['MetaMask','UniSat','WalletConnect'])test(`round5 new ${kind}: one Add signature, sign in and Remove in ${engine} at ${width}`,{timeout:30000},async()=>{
+for(const engine of ['chromium','webkit'])for(const width of [1280,390])for(const kind of ['MetaMask','UniSat','WalletConnect'])test(`round5 new ${kind}: one Add signature, sign in and Remove in ${engine} at ${width}`,windowTestOptions(engine,30000),async()=>{
  const f=await signinFixture(),browser=await requireProductSmokePlaywright()[engine].launch({headless:true});
  f.state.methods=[];f.state.connected=[];f.state.wcConnected=false;
  const context=await browser.newContext({viewport:{width,height:900},locale:'en-US'});await context.addInitScript(installSigninProviders,{evmAddress,bitcoinAddress,theme:'light'});
@@ -40,7 +41,7 @@ for(const engine of ['chromium','webkit'])for(const width of [1280,390])for(cons
   await system.locator('[data-wallet-method]').waitFor({state:'detached'});assert.equal(f.state.methods.length,0);assert.equal(f.state.connected.length,0);await shot(page,name+'-removed');
  }finally{await context.close();await browser.close();await f.close();}
 });
-for(const engine of ['chromium','webkit'])test(`round5 cancel new WalletConnect pairing in ${engine} leaves both stores unchanged`,{timeout:20000},async()=>{
+for(const engine of ['chromium','webkit'])test(`round5 cancel new WalletConnect pairing in ${engine} leaves both stores unchanged`,windowTestOptions(engine,20000),async()=>{
  const f=await signinFixture(),browser=await requireProductSmokePlaywright()[engine].launch({headless:true});f.state.methods=[];f.state.connected=[];f.state.wcConnected=false;
  const context=await browser.newContext();await context.addInitScript(installSigninProviders,{evmAddress,bitcoinAddress,theme:'light'});const page=await context.newPage();page.setDefaultTimeout(5000);
  try{

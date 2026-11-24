@@ -571,3 +571,156 @@ fn approval_external_request_cannot_complete_after_expiry() {
         other => panic!("expected expired approval rejection, got {other:?}"),
     }
 }
+
+#[test]
+fn wallet_refusal_resolves_only_its_approved_handoff_and_is_terminal() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut provider = init_provider(dir.path());
+    let principal_id = "person:local:alice";
+    let signing_key = SigningKey::from_bytes((&[8u8; 32]).into()).unwrap();
+    let address = test_address(&signing_key);
+    let account_id = format!("wallet:eip155:20:{address}");
+
+    assert!(matches!(
+        invoke_wallet(
+            &mut provider,
+            principal_id,
+            "wallet-metamask",
+            WalletProviderOperationV2::LinkVerifiedAccount {
+                proof_binding_id: format!("proof:eip155:20:{address}"),
+                chain_namespace: "eip155:20".into(),
+                address: address.clone(),
+                proof_type: "siwe".into(),
+                label: None,
+
+                provider_id: None,
+                wallet_peer_name: None,
+            },
+        ),
+        Response::Ok { .. }
+    ));
+    let (request_id, payload_hash) = match invoke_wallet(
+        &mut provider,
+        principal_id,
+        "documents",
+        WalletProviderOperationV2::RequestApproval {
+            account_id,
+            chain_namespace: "eip155:20".into(),
+            intent: "publish_envelope".into(),
+            resource: "elastos://content/publish".into(),
+            reason: "Publish document revision".into(),
+            payload: json!({"cid": "bafy-test"}),
+            expires_at: now_ts().saturating_add(APPROVAL_REQUEST_TTL_SECS),
+        },
+    ) {
+        Response::Ok { data: Some(data) } => (
+            data["approval_request"]["request_id"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+            data["approval_request"]["payload_hash"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+        ),
+        other => panic!("expected approval request, got {other:?}"),
+    };
+
+    let handoff_message = match invoke_wallet(
+        &mut provider,
+        principal_id,
+        "wallet-metamask",
+        WalletProviderOperationV2::ApproveConnectorHandoff {
+            request_id: request_id.clone(),
+            reason: "Looks correct".into(),
+        },
+    ) {
+        Response::Ok { data: Some(data) } => {
+            assert_eq!(data["approval_request"]["status"], "approved");
+            assert_eq!(data["approval_request"]["approval_reason"], "Looks correct");
+            assert_eq!(data["handoff"]["status"], "awaiting_wallet_signature");
+            assert!(data["signature"].is_null());
+            data["handoff"]["message"].as_str().unwrap().to_string()
+        }
+        other => panic!("expected approval handoff, got {other:?}"),
+    };
+
+    for (actor, reason) in [
+        ("wallet-unisat", "Declined by wallet"),
+        ("wallet", "Declined by wallet"),
+        ("wallet-metamask", "arbitrary rejection"),
+    ] {
+        assert!(matches!(
+            invoke_wallet(
+                &mut provider,
+                principal_id,
+                actor,
+                WalletProviderOperationV2::RejectApproval {
+                    request_id: request_id.clone(),
+                    reason: reason.into()
+                }
+            ),
+            Response::Error { .. }
+        ));
+    }
+    match invoke_wallet(
+        &mut provider,
+        principal_id,
+        "wallet-metamask",
+        WalletProviderOperationV2::RejectApproval {
+            request_id: request_id.clone(),
+            reason: "Declined by wallet".into(),
+        },
+    ) {
+        Response::Ok { data: Some(data) } => {
+            assert_eq!(data["approval_request"]["status"], "rejected");
+            assert_eq!(
+                data["approval_request"]["rejection_reason"],
+                "Declined by wallet"
+            );
+            assert!(data["approval_request"]["approved_at"].is_number());
+            assert_eq!(data["approval_request"]["wallet_outcome"], "declined");
+        }
+        other => panic!("expected terminal wallet refusal, got {other:?}"),
+    }
+    let saved = load_store(provider.store_path.as_ref().unwrap()).unwrap();
+    assert_eq!(
+        saved
+            .approval_requests
+            .iter()
+            .find(|r| r.request_id == request_id)
+            .unwrap()
+            .wallet_outcome,
+        Some(WalletOutcome::Declined)
+    );
+    assert!(matches!(
+        invoke_wallet(
+            &mut provider,
+            principal_id,
+            "wallet-metamask",
+            WalletProviderOperationV2::RejectApproval {
+                request_id: request_id.clone(),
+                reason: "Declined by wallet".into()
+            }
+        ),
+        Response::Error { .. }
+    ));
+    let signature = sign_message(&signing_key, &handoff_message);
+    assert!(matches!(
+        invoke_wallet(
+            &mut provider,
+            principal_id,
+            "wallet-metamask",
+            WalletProviderOperationV2::CompleteConnectorHandoff {
+                request_id,
+                payload_hash,
+                signature: Some(signature),
+                signature_type: Some("personal_sign".into()),
+                public_key: None,
+                signer: address,
+                transaction_hash: None
+            }
+        ),
+        Response::Error { .. }
+    ));
+}

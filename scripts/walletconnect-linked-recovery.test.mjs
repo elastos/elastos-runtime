@@ -33,7 +33,7 @@ for(const engine of ['chromium','webkit']){
   await r.link();await r.peer.changeAccount();await r.state('account-changed');r.peer.choose({request:'silent'});
   await r.click('send-message');await r.state('link-wait');await r.click('stop-waiting');await r.state('link-cancelled');await r.capture('linked-confirmation-stopped');
   const text=(await r.frame.locator('main').innerText()).replace(/\s+/g,' ');
-  assert.match(text,/The request may still be waiting in Trust Wallet/);assert.doesNotMatch(text,/waiting in WalletConnect/);
+  assert.match(text,/Check Trust Wallet before connecting again; the request may still be waiting there/);assert.doesNotMatch(text,/waiting in WalletConnect/);
  });
  test(`a wallet-removed screen states the cause once in ${engine}`,windowTestOptions(engine,60000),async t=>{
   const r=await linkedWindow(t,engine,{sourceRef:process.env.WALLETCONNECT_LINKED_BEFORE==='access'?'40af50bac2d0047500185205c0a50cea3744677c':undefined});

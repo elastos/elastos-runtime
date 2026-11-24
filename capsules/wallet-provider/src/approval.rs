@@ -266,6 +266,7 @@ impl WalletProvider {
             authority_binding: input.authority_binding,
             kind: "signature".to_string(),
             status: ApprovalStatus::Pending,
+            wallet_outcome: None,
             principal_id: input.principal_id,
             account_id: account.account_id,
             proof_binding_id: account.proof_binding_id,
@@ -421,13 +422,20 @@ impl WalletProvider {
                 "wallet approval request belongs to a different connector",
             );
         }
-        if request.status != ApprovalStatus::Pending && !owner_dismissal {
+        let wallet_decline = request.status == ApprovalStatus::Approved
+            && actor.starts_with("wallet-")
+            && request.connector_id.as_deref() == Some(actor)
+            && reason == "Declined by wallet";
+        if request.status != ApprovalStatus::Pending && !owner_dismissal && !wallet_decline {
             return Response::error(
                 "invalid_request",
                 "wallet approval request cannot be rejected",
             );
         }
         request.status = ApprovalStatus::Rejected;
+        if wallet_decline {
+            request.wallet_outcome = Some(WalletOutcome::Declined);
+        }
         request.resolved_at = Some(now);
         request.rejection_reason = Some(if owner_dismissal {
             elastos_wallet_contract::WALLETCONNECT_DISMISSAL_REASON.to_string()
@@ -603,6 +611,9 @@ impl WalletProvider {
                 return Response::error("invalid_request", "wallet approval request expired");
             }
             let late_transaction_receipt = request.status == ApprovalStatus::Rejected
+                && request.wallet_outcome.is_none()
+                && request.rejection_reason.as_deref()
+                    == Some(elastos_wallet_contract::WALLETCONNECT_DISMISSAL_REASON)
                 && request.approved_at.is_some()
                 && request.intent == "transaction_intent"
                 && request.connector_id.as_deref() == Some("wallet-walletconnect")

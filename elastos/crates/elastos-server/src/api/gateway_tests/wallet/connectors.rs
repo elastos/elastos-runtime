@@ -1380,6 +1380,7 @@ async fn test_walletconnect_capsule_completion_enforces_hash_and_request_binding
                 "connector_id":if case == "connector" { WALLET_METAMASK_CAPSULE_ID } else { WALLET_WALLETCONNECT_CAPSULE_ID },
                 "principal_id":if case == "principal" { "other-principal" } else { &owner.principal_id },
                 "approved_at":if case == "dismissed-pending" { None } else { Some(now_ts()-60) },
+                "rejection_reason":if case.starts_with("dismissed") { Some(elastos_wallet_contract::WALLETCONNECT_DISMISSAL_REASON) } else { None },
                 "signed_result":if case == "dismissed-recorded" { json!({"transaction_hash":"recorded"}) } else { Value::Null },
                 "payload_hash":payload, "created_at":now_ts(), "expires_at":if matches!(case, "expired" | "dismissed") { now_ts()-1 } else if matches!(case, "outside-grace" | "dismissed-outside-grace") { now_ts()-elastos_wallet_contract::WALLETCONNECT_TRANSACTION_COMPLETION_GRACE_SECS } else { now_ts()+600 },
             })]),
@@ -1701,4 +1702,111 @@ async fn test_walletconnect_account_removal_clears_its_store_through_wallet_rout
             connector_id != WALLET_WALLETCONNECT_CAPSULE_ID || keep_another
         );
     }
+}
+
+#[tokio::test]
+async fn test_wallet_decline_is_bound_to_the_connector_person_session_account_and_payload() {
+    for actor in [
+        WALLET_WALLETCONNECT_CAPSULE_ID,
+        WALLET_METAMASK_CAPSULE_ID,
+        WALLET_UNISAT_CAPSULE_ID,
+    ] {
+        for fault in [
+            "valid",
+            "principal",
+            "session",
+            "connector",
+            "payload",
+            "signer",
+            "pending",
+            "signed-result",
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let owner = passkey_authority(dir.path());
+            let token = app_token_for_authority(dir.path(), actor, &owner);
+            let authority = runtime_wallet_authority_for_app_token(dir.path(), actor, &token);
+            let context = authority.home_launch_context();
+            let payload = format!("0x{}", "ab".repeat(32));
+            let address = format!("0x{}", "12".repeat(20));
+            let request = json!({"request_id":"decline-bound", "status":if fault=="pending" {"pending"} else {"approved"},
+                "principal_id":if fault=="principal" {"other"} else {authority.verified_context().principal_id()},
+                "session_id":if fault=="session" {"other"} else {authority.verified_context().session_id()},
+                "connector_id":if fault=="connector" {"other"} else {actor}, "payload_hash":payload, "address":address});
+            let provider = Arc::new(RecordingWalletProvider::new(MockWalletProvider {
+                approvals: TokioMutex::new(vec![request]),
+                ..Default::default()
+            }));
+            let state = wallet_test_state_with_shared_provider(dir.path(), provider.clone()).await;
+            let input = WalletApprovalCompleteRequest {
+                declined: true,
+                payload_hash: if fault == "payload" {
+                    "other".into()
+                } else {
+                    payload
+                },
+                signer: if fault == "signer" {
+                    "other".into()
+                } else {
+                    address
+                },
+                signature: if fault == "signed-result" {
+                    Some("signature".into())
+                } else {
+                    None
+                },
+                signature_type: None,
+                public_key: None,
+                transaction_hash: None,
+            };
+            let result = complete_external_wallet_approval(
+                &state,
+                &context,
+                &authority,
+                "decline-bound",
+                input,
+                actor,
+                "fixture",
+            )
+            .await;
+            let operations = provider.recorded_v2_operation_kinds().await;
+            assert_eq!(result.is_ok(), fault == "valid", "{actor}/{fault}");
+            assert_eq!(
+                operations.contains(&WalletOperationKind::RejectApproval),
+                fault == "valid",
+                "{actor}/{fault}"
+            );
+            assert!(!operations.contains(&WalletOperationKind::CompleteConnectorHandoff));
+            if let Ok(summary) = result {
+                assert_eq!(summary.receipt_status.as_deref(), Some("declined"));
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_browser_wallet_refusal_reports_wallet_outcome_after_owner_approval() {
+    let dir = tempfile::tempdir().unwrap();
+    let owner = passkey_authority(dir.path());
+    let token = app_token_for_authority(dir.path(), BROWSER_CAPSULE_ID, &owner);
+    let authority = runtime_wallet_authority_for_app_token(dir.path(), BROWSER_CAPSULE_ID, &token);
+    let context = authority.verified_context();
+    let request = json!({"request_id":"wallet-approval:declined", "principal_id":context.principal_id(), "session_id":context.session_id(),
+        "requested_by_actor":"browser", "capsule_id":"browser", "intent":"browser_personal_sign", "status":"rejected", "approved_at":now_ts(),
+        "rejection_reason":"Declined by wallet", "wallet_outcome":"declined", "signed_result":null});
+    let provider = MockWalletProvider {
+        approvals: TokioMutex::new(vec![request]),
+        ..Default::default()
+    };
+    let app = gateway_router(wallet_test_state_with_provider(dir.path(), provider).await);
+    let response = app.oneshot(test_browser_request("localhost:61180", "null")
+        .uri("/api/apps/browser/wallet/approvals/wallet-approval%3Adeclined?page_url=https%3A%2F%2Fdapp.example%2Fsign&origin=https%3A%2F%2Fdapp.example")
+        .header("x-elastos-home-token", token).body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["status"], "rejected");
+    assert_eq!(body["wallet_outcome"], "declined");
+    assert!(body["signature"].is_null());
 }

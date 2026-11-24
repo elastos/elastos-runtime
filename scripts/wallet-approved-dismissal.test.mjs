@@ -148,3 +148,10 @@ test("n3_reject_dismiss_acknowledgement: consecutive decisions survive a stale r
   assert.deepEqual(requests.requestsWithDecisions(stale).map(r => r.status), ["rejected", "rejected"]);
   assert.equal(requests.pendingWalletRequests(stale).length, 0, "neither known decision reopens in the count");
 });
+
+test("Wallet activity keeps the wallet refusal separate from prior owner approval",()=>{
+ for(const intent of ["browser_personal_sign","transaction_intent"]){
+  const request={capsule_id:"browser",status:"rejected",approved_at:1800000000,wallet_outcome:"declined",intent,connector_id:"wallet-walletconnect"};
+  assert.match(activityTitle(request),/Wallet declined/);assert.doesNotMatch(activityTitle(request),/Dismissed/);assert.equal(activityIcon(request),"×");assert.equal(pendingRequests([request]).length,0);
+ }
+});

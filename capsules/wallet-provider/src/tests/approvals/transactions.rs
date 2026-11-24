@@ -634,6 +634,21 @@ fn external_transaction_handoff_with_expiry(
                     Response::Error { .. }
                 ));
             }
+            // Only owner dismissal permits a later receipt; a wallet refusal is terminal.
+            for reason in [None, Some("Declined by wallet".to_string())] {
+                let request = provider
+                    .store
+                    .approval_requests
+                    .iter_mut()
+                    .find(|r| r.request_id == request_id)
+                    .unwrap();
+                *request = dismissed.clone();
+                request.rejection_reason = reason;
+                assert!(matches!(
+                    invoke_wallet(&mut provider, principal_id, connector, complete()),
+                    Response::Error { .. }
+                ));
+            }
             *provider
                 .store
                 .approval_requests

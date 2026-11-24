@@ -417,6 +417,8 @@ struct WalletApprovalApproveRequest {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WalletApprovalCompleteRequest {
+    #[serde(default)]
+    declined: bool,
     payload_hash: String,
     #[serde(default)]
     signature: Option<String>,
@@ -643,6 +645,8 @@ struct SystemWalletApprovalsSummary {
 
 #[derive(Debug, Clone, Serialize)]
 struct SystemWalletApprovalSummary {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wallet_outcome: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     requesting_app_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

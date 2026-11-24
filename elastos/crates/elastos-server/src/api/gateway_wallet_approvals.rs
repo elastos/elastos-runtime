@@ -324,6 +324,65 @@ pub(in crate::api::gateway) async fn complete_external_wallet_approval(
     capsule_id: &str,
     audit_reason: &str,
 ) -> anyhow::Result<SystemWalletApprovalsSummary> {
+    if input.declined {
+        anyhow::ensure!(
+            input.signature.is_none()
+                && input.signature_type.is_none()
+                && input.public_key.is_none()
+                && input.transaction_hash.is_none(),
+            "declined wallet response cannot contain a signed result"
+        );
+        let data = runtime_wallet_data(
+            state,
+            authority,
+            elastos_wallet_contract::WalletProviderOperationV2::ListApprovals {
+                include_resolved: true,
+            },
+        )
+        .await?;
+        let request = data["approval_requests"]
+            .as_array()
+            .and_then(|rows| rows.iter().find(|r| r["request_id"] == request_id))
+            .ok_or_else(|| anyhow::anyhow!("wallet approval request not found"))?;
+        anyhow::ensure!(
+            request["status"] == "approved"
+                && request["connector_id"].as_str() == Some(authority.verified_context().actor())
+                && request["principal_id"].as_str()
+                    == Some(authority.verified_context().principal_id())
+                && request["session_id"].as_str()
+                    == Some(authority.verified_context().session_id())
+                && request["signed_result"].is_null()
+                && request["payload_hash"].as_str() == Some(input.payload_hash.as_str())
+                && request["address"]
+                    .as_str()
+                    .is_some_and(|address| address.eq_ignore_ascii_case(&input.signer)),
+            "wallet decline binding changed"
+        );
+        runtime_wallet_data(
+            state,
+            authority,
+            elastos_wallet_contract::WalletProviderOperationV2::RejectApproval {
+                request_id: request_id.to_string(),
+                reason: "Declined by wallet".to_string(),
+            },
+        )
+        .await?;
+        append_wallet_approval_audit(
+            &state.data_dir,
+            WalletApprovalAuditInput {
+                capsule_id,
+                event_type: "wallet.approval.declined",
+                principal_id: &context.principal_id,
+                session_id: &context.session_id,
+                request_id,
+                result: "declined",
+                reason: "Declined by wallet",
+            },
+        )?;
+        let mut summary = system_wallet_approvals_summary(state, authority, false).await;
+        summary.receipt_status = Some("declined".to_string());
+        return Ok(summary);
+    }
     let completed = runtime_wallet_data(
         state,
         authority,
@@ -559,6 +618,8 @@ pub(in crate::api::gateway) fn system_wallet_approval_summary(
         .get("signature_receipt")
         .filter(|value| value.is_object());
     Some(SystemWalletApprovalSummary {
+        wallet_outcome: (value["status"] == "rejected" && value["wallet_outcome"] == "declined")
+            .then(|| "declined".to_string()),
         requesting_app_name: Some(gateway_home_runtime::app_shell_title(
             value
                 .get("requested_by_actor")

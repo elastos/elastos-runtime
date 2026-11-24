@@ -46,6 +46,7 @@ export async function exerciseWalletConnect(scenario='valid',{savedAccounts=[],a
       binding:{principal_id:'fixture',requested_by_actor:'documents',account_id:'fixture-account',chain_namespace:'eip155:20',payload_hash:payloadHash,
       expires_at:scenario==='expired'?1:Math.floor(clock()/1000)+lifetime}};}
     if(path.endsWith('/complete')){const body=JSON.parse(input.body);assert.equal(body.payload_hash,payloadHash);assert.equal(body.signer,address);
+      if(body.declined){assert.equal(status,'approved');status='rejected';return {receipt_status:'declined'};}
       if(kind==='completion-window-expired')throw new Error('This wallet window expired. Close it and open WalletConnect again.');if(kind==='completion-refused')throw new Error('Completion refused');return {receipt_status:scenario==='dismissed-during-send'?'sent_after_dismissal':'completed'};}
     throw new Error('Unexpected Runtime resource');
   };

@@ -61,7 +61,7 @@ export async function openWalletSigninChooser({open,current,focus,listen=window,
     if(!valid()||event.source!==context.source||event.origin!=='null'||data?.type!=='home:wallet-signin-chooser-action'||data.homeToken!==context.homeToken||data.requestId!==requestId||Object.keys(data).length!==4)return;
     if(data.action==='ready'){acknowledged=true;return;}
     if(data.action==='cancel'&&!canCancel())return;
-    if(['metamask','unisat','walletconnect','cancel','retry','approve','check','refresh'].includes(data.action))onAction(data.action);
+    if(['metamask','unisat','walletconnect','cancel','retry','approve','check','refresh'].includes(data.action)||lastState?.stage==='options'&&lastState.methods?.some(m=>m.providerId&&data.action===`${m.connector}:${m.providerId}`))onAction(data.action);
   };
   listen.addEventListener('message',receive);
   monitor=setInterval(()=>{if(!stopped&&!current(context)&&canCancel()){onAction('cancel');}else if(!acknowledged&&lastState)send(lastState);},250);

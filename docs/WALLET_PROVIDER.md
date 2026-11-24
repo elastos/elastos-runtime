@@ -570,7 +570,7 @@ N7 changes no N1 destination. Home's ownership proof and an app's signing
 request remain distinct purposes; a fixture cannot turn one into the other.
 
 **Today.** Handoff changes pending to approved before the outside answer.
-Outside decline does not itself store Home rejection. Consumed message requests
+The admitted connector records an outside refusal through the completion route with `declined: true`, the exact payload hash and signer. Runtime stores a terminal rejection with `Declined by wallet`; Browser status and Wallet summaries expose `wallet_outcome: declined` separately from the retained owner approval time. Consumed message requests
 leave the pending feed; approved WalletConnect transactions remain in Wallet
 with Dismiss under [the existing receipt rules](#first-shippable-slice).
 
@@ -587,7 +587,7 @@ transaction matches the payload.
 #### N3 MetaMask transaction results
 
 **Today.** Handoff consumes a pending request before the wallet answers.
-An outside decline stores no settlement. MetaMask approval expires at its
+An outside refusal records the terminal wallet outcome described above. MetaMask approval expires at its
 original request expiry (maximum 30 minutes); WalletConnect alone has its
 existing grace/Dismiss rule. The active limit is 100 per principal. The
 provider's replay helper does not yet make hash completion idempotent.

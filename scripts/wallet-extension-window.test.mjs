@@ -165,7 +165,7 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
         assert.equal(await f.frame.getByRole('button', { name: 'Cancel', exact: true }).count(), 0);
         await f.action('stop-waiting').focus(); await f.top.keyboard.press('Enter'); await f.state('request-cancelled');
         assert.doesNotMatch(await f.frame.locator('body').innerText(), /ignore a later answer/);
-        assert.match(await f.frame.locator('body').innerText(), kind==='metamask'?/Check your wallet and Activity in Wallet/:/Check UniSat and Activity in Wallet/);
+        assert.match(await f.frame.locator('body').innerText(), /Check your wallet and Activity in Wallet/);
         await f.top.waitForFunction(() => testState.pending.length > 0);
         await f.top.evaluate(() => { const p = testState.pending.shift(); p.resolve(p.result); });
         await f.state('request-done');
@@ -232,8 +232,9 @@ for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'un
 test('both extension packages carry one presenter and existing v1 actions only', async () => {
   const mm = await readFile('capsules/wallet-metamask/browser/extension-window.mjs', 'utf8');
   assert.equal(mm, await readFile('capsules/wallet-unisat/browser/extension-window.mjs', 'utf8'));
+  assert.match(mm, /postMessage\(\{type:'home:open-target',target:'wallet',homeToken:frameHomeToken\},homeOrigin\)/);
   assert.match(mm, /mountConnection\(mount, view, presentation\)/);
-  assert.doesNotMatch(mm, /localStorage|sessionStorage|eth_requestAccounts|eth_sendTransaction|wallet-connector\/.*\/v2|home:open-target/);
+  assert.doesNotMatch(mm, /localStorage|sessionStorage|eth_requestAccounts|eth_sendTransaction|wallet-connector\/.*\/v2/);
 });
 
 for (const engine of ['chromium', 'webkit']) for (const kind of ['metamask', 'unisat']) {

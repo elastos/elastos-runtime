@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { exerciseWalletConnect,transactionHash,address } from './lib/walletconnect-capsule-fixture.mjs';
 import {createWalletConnectClient,walletConnectMessages as messages} from '../capsules/wallet-walletconnect/browser/walletconnect-client.mjs';
 const sent = r=>r.calls.filter(c=>c.method==='eth_sendTransaction');
-const completed = r=>r.routes.filter(c=>c.path.endsWith('/complete'));
+const completed = r=>r.routes.filter(c=>c.path.endsWith('/complete')&&!JSON.parse(c.input.body).declined);
 test('opaque capsule sends the exact Runtime transaction once',async()=>{const r=await exerciseWalletConnect();assert.equal(r.error,undefined);assert.equal(sent(r).length,1);assert.equal(completed(r).length,1);});
 for(const scenario of ['wrong-account','wrong-chain','expired','approved'])test(`capsule refuses ${scenario} before sending`,async()=>{const r=await exerciseWalletConnect(scenario);assert.equal(typeof r.error,'string');assert.equal(sent(r).length,0);assert.equal(completed(r).length,0);});
 for(const scenario of ['account-change-during-send','chain-change-during-send','expired-during-send'])test(`capsule preserves the returned hash after ${scenario}`,async()=>{const r=await exerciseWalletConnect(scenario);assert.equal(r.error,undefined);assert.equal(completed(r).length,1);assert.equal(JSON.parse(completed(r)[0].input.body).transaction_hash,transactionHash);});
@@ -94,6 +94,9 @@ for (const scope of ['signature','transaction','link','proposal']) for (const co
   const r=await exerciseWalletConnect(`${scope}-phone-declined:${code}`);
   assert.equal(r.error,messages[`${scope==='link'?'ownership':scope}Declined`]);
   assert.equal(r.tone,'muted');assert.equal(completed(r).length,0);
+  const declined=r.routes.filter(c=>c.path.endsWith('/complete')&&JSON.parse(c.input.body).declined);
+  assert.equal(declined.length,['signature','transaction'].includes(scope)?1:0);
+  if(declined.length){assert.equal(r.status,'rejected');const body=JSON.parse(declined[0].input.body);assert.equal(body.signature,undefined);assert.equal(body.transaction_hash,undefined);}
 });
 for (const scope of ['signature','transaction','link','proposal']) for (const [ending,key] of [['expired','Timeout'],['error:-32000','Error'],['error:5100','Error']]) test(`${scope} phone ${ending} gives a working next step`,async()=>{
   const r=await exerciseWalletConnect(`${scope}-phone-${ending}`);
@@ -102,7 +105,7 @@ for (const scope of ['signature','transaction','link','proposal']) for (const [e
 });
 for (const scope of ['signature','transaction']) for (const ending of ['declined:4001','expired','error:-32000','error:5100']) test(`${scope} second Review after ${ending} cannot dispatch again`,async()=>{
   const r=await exerciseWalletConnect(`${scope}-phone-${ending}`);
-  assert.equal(r.status,'approved');assert.equal(r.secondError,messages.consumed);
+  assert.equal(r.status,ending.startsWith('declined')?'rejected':'approved');assert.equal(r.secondError,messages.consumed);
   assert.equal(r.routes.filter(c=>c.path.endsWith('/approve')).length,1);
   assert.equal(r.calls.filter(c=>['personal_sign','eth_sendTransaction'].includes(c.method)).length,1);
 });

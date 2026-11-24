@@ -68,10 +68,10 @@ export function reduceSummary(summary, { connector, audience = connector } = {})
   return {
     id: summary.request_id, app, actor: summary.capsule_id,
     title: Object.hasOwn(requestTitles,summary.intent)?requestTitles[summary.intent]:'Review request', transaction,
-    detail: summary.capsule_id==='browser'&&/^Browser page requests (?:personal_sign|eth_signTypedData(?:_v4)?|eth_sendTransaction)(?: on [a-z0-9-]+)?$/.test(summary.reason)?'':bounded(summary.reason, 2048) ? summary.reason : '',
+    detail: summary.capsule_id==='browser'&&/^(?:Browser page requests (?:personal_sign|eth_signTypedData(?:_v4)?|eth_sendTransaction)(?: on [a-z0-9-]+)?|Browser asks you to (?:sign a message|sign the displayed data|send a payment on [^.]+)\.)$/.test(summary.reason)?'':bounded(summary.reason, 2048) ? summary.reason : '',
     site: summary.capsule_id === 'browser' ? displayOrigin(summary.requesting_origin) : null,
     address: bounded(summary.address, 128) ? summary.address : null,
-    status: summary.status==='rejected'&&Number.isSafeInteger(summary.approved_at)&&summary.approved_at>=0?'dismissed':['pending', 'approved', 'rejected', 'dismissed', 'completed','expired'].includes(summary.status) ? summary.status : 'unavailable',
+    status: summary.status==='rejected'&&Number.isSafeInteger(summary.approved_at)&&summary.wallet_outcome!=='declined'&&summary.approved_at>=0?'dismissed':['pending', 'approved', 'rejected', 'dismissed', 'completed','expired'].includes(summary.status) ? summary.status : 'unavailable',
     expiresAt: Number.isSafeInteger(summary.expires_at) ? summary.expires_at : null,
   };
 }
@@ -107,8 +107,8 @@ export function reduceConnection(input, { message, safetyMessage, summary, other
   if (message?.outcome === 'no_wallet') stage = input.window === 'metamask' && stage === 'other-ethereum-wallet' ? stage : 'extension-missing';
   const settled=message?.settled;
   // Refusing a network change before handoff is not a transaction-send result.
-  const transactionStage=stage.startsWith('transaction-');
-  const disposition=request?.transaction&&!transactionStage?null:settled?.result || ({declined:'declined',request_not_authorized:'refused'}[message?.outcome]) || null;
+  const transactionStage=stage.startsWith('transaction-')||summary?.wallet_outcome==='declined'&&request?.transaction;
+  const disposition=request?.transaction&&!transactionStage?null:settled?.result || ({declined:'declined',request_not_authorized:'refused'}[message?.outcome]) || (summary?.wallet_outcome==='declined'?'declined':null);
   const walletResult={disposition,receipt:settled?.receipt??null};
   if(request?.transaction&&transactionStage){
     if(disposition==='declined')stage='transaction-declined';
@@ -278,6 +278,15 @@ export function connectionView(input) {
     if(requestId&&removed.some(a=>['open-wallet','open-wallet-activity'].includes(a.id))&&!notice.includes('Open Wallet from Home'))notice+=window==='metamask'&&stage==='transaction-done'?' Open Wallet from Home and check Activity for this transaction.':' Open Wallet from Home to review this request.';
     if(removed.some(a=>a.id==='open-request-app')&&stage!=='request-unavailable'&&!notice.includes('{{app}}'))notice+=' Return to {{app}}.';
     if(!signinScreen&&!actions.some(a=>a.primary)&&!screen.qr&&!screen.walletPicker){const next=actions.find(a=>a.id==='close-window');if(next){next.primary=true;next.quiet=false;}}
+  }
+  // A dispatched payment keeps its warning and a working route to resolution.
+  if(window==='walletconnect'&&summary?.transaction&&!knownNotSent&&!answered&&input.localSafety===true){
+    if(!['transaction-phone','checking-response'].includes(stage)){
+      outcome=parts('The transaction may already have been sent.');
+      notice='To pair again, resolve this request in Wallet after checking {{wallet}} and Activity.';
+      actions=[{id:'open-wallet',label:parts('Open Wallet'),primary:true,quiet:false},{id:'close-window',label:parts('Close window'),primary:false,quiet:true}].filter(a=>!supported||supported.includes(a.id));
+      safetyNotice=null;
+    }
   }
   let effectiveNotice = safetyNotice ?? notice;
   if(!signinScreen&&supported&&!supported.includes('close-window')&&!(window==='walletconnect'&&stage==='disconnecting')&&!actions.some(a=>['cancel','stop-waiting','back-to-connection'].includes(a.id))&&!((summary?.site||context?.site)&&actions.some(a=>approves(a.id)))){

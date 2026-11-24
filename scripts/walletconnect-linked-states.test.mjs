@@ -153,7 +153,8 @@ for(const engine of ['chromium','webkit']){
   }
   await r.state('add-'+ending);await r.capture('add-'+ending);
   assert.equal(r.fixture.state.accounts.length,1);assert.equal(r.fixture.state.accounts[0].address.toLowerCase(),first.toLowerCase());
-  assert.match(await r.frame.locator('main').innerText(),/Your addresses stay in Wallet/);
+  if(ending!=='link-cancelled')assert.match(await r.frame.locator('main').innerText(),/Your addresses stay in Wallet/);
+  else assert.match(await r.frame.locator('main').innerText(),/The message may still be waiting there; get a new QR code/);
   if(['link-cancelled','link-timeout'].includes(ending)){
    assert.equal(await r.frame.locator('button.el-button-primary').getAttribute('data-action'),'start-over','the highlighted recovery gets the new QR code named by the notice');
    assert.match(await r.frame.locator('main').innerText(),/[Gg]et a new QR code/);

@@ -24,7 +24,7 @@ function installProvider({ kind, address, dualAlt = false, wallets }) {
       if (method === 'eth_accounts') return [s.walletAddress ?? s.address];
       if (method === 'eth_chainId') return s.chain;
       if (method === 'wallet_switchEthereumChain') { if(s.refuseSwitch === 'reject') throw {...s.switchRejection}; if(s.refuseSwitch) return null; if (!s.added) throw {code:4902}; s.chain=params[0].chainId; return null; }
-      if (method === 'wallet_addEthereumChain') { s.added=true; s.chain=params[0].chainId; return null; }
+      if (method === 'wallet_addEthereumChain') { s.added=true; if(s.addSelectsChain!==false)s.chain=params[0].chainId; return null; }
       if (method === 'eth_sendTransaction') return ask(method,'0x'+'aa'.repeat(32));
       return ask(method, method === 'eth_requestAccounts' ? [s.walletAddress ?? s.address] : '0x' + 'ab'.repeat(65));
     },
@@ -139,6 +139,7 @@ window.runtimeFetch=async(url,init)=>{
  if(url.includes('/link/verify')){state.linked=true;state.receipts.push(body);return {schema,action,connector_id:id,status:'linked'};}
  if(url.endsWith('/handoff')&&${JSON.stringify(requests)}==='transaction') return {schema,action,connector_id:id,request_id:requestId,evm_chains:[{chainId:'0x14',chainName:'Elastos Smart Chain',nativeCurrency:{name:'ELA',symbol:'ELA',decimals:18},rpcUrls:['https://api.elastos.io/esc']}],handoff:{schema:'elastos.wallet.webconnect_handoff/v1',request_id:requestId,intent:'transaction_intent',payload_hash:'0x'+'ab'.repeat(32),signer:signerAddress,status:'awaiting_wallet_transaction',transaction:{from:signerAddress,to:'0x'+'2'.repeat(40),value:'0x1',data:'0x',gas:'0x5208',gasPrice:'0x1',nonce:'0x0',chainId:'0x14'}}};
  if(url.endsWith('/handoff'))return {schema,action,connector_id:id,request_id:requestId,evm_chains:[],handoff:{schema:'elastos.wallet.webconnect_handoff/v1',request_id:requestId,intent:${JSON.stringify(requests)}==='transaction'?'transaction_intent':${JSON.stringify(requests)}==='typed'?'browser_typed_data_sign':kind==='metamask'?'browser_personal_sign':'bitcoin_bip322_proof',payload_hash:'0x'+'ab'.repeat(32),signer:signerAddress,status:'awaiting_wallet_signature',message:'Isolated app request',signature_type:kind==='metamask'?'personal_sign':'bip322_simple'}};
+ if(body.declined){state.requests.find(r=>r.request_id===requestId).status='rejected';state.declines||=[];state.declines.push(body);return {schema,action,connector_id:id,request_id:requestId,status:'rejected'};}
  state.receipts.push(body);state.requests=state.requests.filter(r=>r.request_id!==requestId);return {schema,action,connector_id:id,request_id:requestId,status:'completed'};
 };
 const frame=document.createElement('iframe');frame.style='width:480px;height:522px;border:0;display:block';frame.sandbox='allow-scripts';frame.src='/apps/'+id+'/?home_origin='+encodeURIComponent(location.origin)+${JSON.stringify(launch ? '#home_token=fixture-token' : '')};document.body.append(frame);

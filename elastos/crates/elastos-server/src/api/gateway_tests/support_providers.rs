@@ -6211,7 +6211,8 @@ impl MockWalletProvider {
                 let approved_send = approval["status"] == "approved"
                     && approval["intent"] == "transaction_intent"
                     && approval["connector_id"] == "wallet-walletconnect";
-                if approval["status"] != "pending" && !approved_send {
+                let wallet_decline = approval["status"] == "approved" && request["reason"] == "Declined by wallet";
+                if approval["status"] != "pending" && !approved_send && !wallet_decline {
                     return Ok(json!({
                         "status": "error",
                         "code": "invalid_request",
@@ -6219,6 +6220,8 @@ impl MockWalletProvider {
                     }));
                 }
                 approval["status"] = serde_json::Value::String("rejected".to_string());
+                approval["rejection_reason"] = request["reason"].clone();
+                if wallet_decline { approval["wallet_outcome"] = json!("declined"); }
                 Ok(json!({
                     "status": "ok",
                     "data": { "approval_request": approval.clone() }

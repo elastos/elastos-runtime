@@ -62,6 +62,8 @@ pub(super) struct HomeWalletConnectorBitcoinVerifyRequest {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct HomeWalletConnectorApprovalCompleteRequest {
+    #[serde(default)]
+    declined: bool,
     schema: String,
     connector_id: String,
     connector_token: String,
@@ -413,6 +415,7 @@ pub(super) async fn home_wallet_connector_approval_complete(
         &authority.wallet,
         &request_id,
         WalletApprovalCompleteRequest {
+            declined: input.declined,
             payload_hash: input.payload_hash,
             signature: input.signature,
             signature_type: input.signature_type,
@@ -430,7 +433,7 @@ pub(super) async fn home_wallet_connector_approval_complete(
             "action": "approval_complete",
             "connector_id": input.connector_id,
             "request_id": request_id,
-            "status": "completed",
+            "status": if input.declined { "rejected" } else { "completed" },
         }))
         .into_response(),
         Err(err) => system_error_response(err),

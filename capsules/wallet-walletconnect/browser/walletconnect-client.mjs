@@ -359,6 +359,15 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
         || !Number.isSafeInteger(binding.expires_at) || binding.expires_at <= Date.now()/1000) throw Object.assign(new Error(walletConnectMessages.consumed), {tone:'muted'});
       return Math.min(600,Math.max(binding.expires_at-Math.ceil(Date.now()/1000),300));
     };
+    const walletRequest = async (input,expiry,context) => {
+      try { return await request(input,expiry,context,signal); }
+      catch(error) {
+        if([walletConnectMessages.signatureDeclined,walletConnectMessages.transactionDeclined].includes(error.message)) {
+          await api(`${path}/complete`,{method:'POST',body:JSON.stringify({payload_hash:handoff.payload_hash,signer,declined:true})});
+        }
+        throw error;
+      }
+    };
     const expiry = await check();
     if (handoff.intent === 'transaction_intent') {
       const transaction = handoff.transaction;
@@ -366,7 +375,7 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
       if (!transaction || !same(transaction.from,signer) || `eip155:${Number.parseInt(transaction.chainId,16)}` !== namespace) throw new Error('Runtime returned an invalid transaction.');
       operationDispatched = true;
       onPhase('transaction',{expiresAt:Math.floor(Date.now()/1000)+expiry,name:String(provider.session?.peer?.metadata?.name || 'your wallet').replace(/[\u0000-\u001f\u007f]/g,'').slice(0,80)});
-      const hash = await request({method:'eth_sendTransaction',params:[transaction]},expiry,'transaction',signal);
+      const hash = await walletRequest({method:'eth_sendTransaction',params:[transaction]},expiry,'transaction');
       if (typeof hash !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(hash)) throw new Error('Wallet returned an invalid transaction hash. The wallet may have sent it. Check your wallet before sending again.');
       // A returned hash is retained even if the account, network or expiry changed while sending.
       let receipt;
@@ -378,7 +387,7 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
     operationDispatched = true;
     onPhase('signature',{expiresAt:Math.floor(Date.now()/1000)+expiry,name:String(provider.session?.peer?.metadata?.name || 'your wallet').replace(/[\u0000-\u001f\u007f]/g,'').slice(0,80)});
     const method = 'personal_sign';
-    const signature = await request({method,params:[signData(handoff.message),signer]},expiry,'signature',signal);
+    const signature = await walletRequest({method,params:[signData(handoff.message),signer]},expiry,'signature');
     await check();
     try { await api(`${path}/complete`,{method:'POST',body:JSON.stringify({payload_hash:handoff.payload_hash,signer,signature,signature_type:'personal_sign'})}); }
     catch (error) { if (error.message === 'This wallet window expired. Close it and open WalletConnect again.') throw error; throw Object.assign(new Error(walletConnectMessages.signatureError), {tone:'muted'}); }

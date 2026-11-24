@@ -137,6 +137,12 @@ pub(super) enum ApprovalStatus {
     Expired,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum WalletOutcome {
+    Declined,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub(super) struct WalletApprovalRequest {
     pub(super) schema: String,
@@ -147,6 +153,8 @@ pub(super) struct WalletApprovalRequest {
     pub(super) authority_binding: String,
     pub(super) kind: String,
     pub(super) status: ApprovalStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) wallet_outcome: Option<WalletOutcome>,
     pub(super) principal_id: String,
     pub(super) account_id: String,
     pub(super) proof_binding_id: String,

@@ -85,18 +85,19 @@ export function createWalletPreferences({
       if(signinRowsKey===key)return;
       signinRowsKey=key;
       methodsNode.replaceChildren();
-      for (const [connector,label,mark] of [['metamask','MetaMask','metamask'],['unisat','UniSat','btc'],['walletconnect','WalletConnect','wc']]) {
-        const method=signin.methods?.find(m=>m.connector===connector);
+      for (const method of signin.methods||[]) {
+        const {connector}=method,label=method.label||({metamask:'MetaMask',unisat:'UniSat',walletconnect:'WalletConnect'}[connector]),mark=connector==='unisat'?'btc':connector==='walletconnect'?'wc':method.providerId&&method.providerId!=='io.metamask'?'unknown':'metamask';
+        const choice=method.providerId?`${connector}:${method.providerId}`:connector;
         const row=document.createElement('article');row.className='wallet-method wallet-method-head';
-        row.append(methodMark(mark,METHOD_MONOGRAMS[mark],true,''));
+        row.append(methodMark(mark,METHOD_MONOGRAMS[mark]||label.slice(0,1),true,''));
         const copy=document.createElement('div');copy.append(textNode('strong',connector==='walletconnect'&&signin.walletName?signin.walletName:label));
         const used=method?.used===true;
         if(used)copy.append(textNode('span','Already signs in'));
         else if(connector==='walletconnect')copy.append(textNode('span',signin.walletName?'WalletConnect':"Connects through a relay that can see this computer's internet address."));
         row.append(copy);
-        const button=actionButton('Choose','walletSigninChoose',connector,true);
+        const button=actionButton('Choose','walletSigninChoose',choice,true);
         button.disabled=used||signin.stage!=='options';
-        button.onclick=()=>signin.act(connector);row.append(button);methodsNode.append(row);
+        button.onclick=()=>signin.act(choice);row.append(button);methodsNode.append(row);
       }
       return;
     }

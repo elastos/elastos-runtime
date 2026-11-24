@@ -221,9 +221,11 @@ pub(in crate::api::gateway) async fn wallet_connector_approval_complete(
                 .transaction_hash
                 .as_deref()
                 .is_some_and(|hash| !walletconnect_hash(hash))
-            || (binding["intent"] == "transaction_intent"
+            || (!input.declined
+                && binding["intent"] == "transaction_intent"
                 && (input.transaction_hash.is_none() || input.signature.is_some()))
-            || (binding["intent"] != "transaction_intent"
+            || (!input.declined
+                && binding["intent"] != "transaction_intent"
                 && (input.signature.is_none() || input.transaction_hash.is_some()))
         {
             return system_error_response(anyhow::anyhow!(
@@ -244,13 +246,13 @@ pub(in crate::api::gateway) async fn wallet_connector_approval_complete(
     .await
     {
         Ok(mut summary) => {
-            summary.note = Some(
-                if summary.receipt_status.as_deref() == Some("sent_after_dismissal") {
-                    "Request dismissed. Your wallet reported this transaction as sent.".to_string()
-                } else {
-                    format!("Signed by {connector_label}.")
-                },
-            );
+            summary.note = Some(if summary.receipt_status.as_deref() == Some("declined") {
+                "Declined by wallet".to_string()
+            } else if summary.receipt_status.as_deref() == Some("sent_after_dismissal") {
+                "Request dismissed. Your wallet reported this transaction as sent.".to_string()
+            } else {
+                format!("Signed by {connector_label}.")
+            });
             Json(summary).into_response()
         }
         Err(err) => system_error_response(err),
@@ -519,7 +521,9 @@ async fn walletconnect_request_binding(
         && request["status"] == "rejected"
         && request["approved_at"].as_u64().is_some()
         && request["intent"] == "transaction_intent"
-        && request["signed_result"].is_null();
+        && request["signed_result"].is_null()
+        && request["wallet_outcome"].is_null()
+        && request["rejection_reason"] == elastos_wallet_contract::WALLETCONNECT_DISMISSAL_REASON;
     anyhow::ensure!(
         request["principal_id"].as_str() == Some(authority.verified_context().principal_id())
             && request["connector_id"] == WALLET_WALLETCONNECT_CAPSULE_ID
