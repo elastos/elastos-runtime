@@ -406,6 +406,112 @@ async fn import_raw_full_recovery_bundle(
     .await
 }
 
+#[tokio::test]
+async fn full_recovery_import_rebuilds_profile_contexts_without_restart() {
+    use super::home_system::{home_test_get_json, home_test_post_json};
+
+    for register_sync_before_import in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let authority = passkey_authority_with_profile(dir.path(), "Saved Name");
+        let principal =
+            crate::auth::load_principal_for_proof_binding(dir.path(), &authority.proof_binding_id)
+                .unwrap();
+        let mut state = wallet_test_state(dir.path()).await;
+        let (key, _) = elastos_identity::load_or_create_did(dir.path()).unwrap();
+        let (trusted_key, _) = elastos_runtime::signature::generate_keypair();
+        let service = crate::collaboration_discovery_runtime::CollaborationDiscoveryService::new(
+            ed25519_dalek::SigningKey::from_bytes(&key.to_bytes()),
+            super::home_system::configured_discovery_network_profile_for_test(
+                &trusted_key,
+                "kit-import-profile",
+            ),
+            state.provider_registry.clone().unwrap(),
+        )
+        .await
+        .unwrap();
+        state.collaboration_discovery_service = Some(service.clone());
+        let app = gateway_router(state);
+        let exported =
+            export_full_recovery_bundle_response(&app, dir.path(), &authority, &principal).await;
+        assert_eq!(exported.status(), StatusCode::OK);
+        let exported: Value = serde_json::from_slice(
+            &axum::body::to_bytes(exported.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        let bundle = &exported["bundle"];
+        assert_eq!(exported["included"]["people_identity"], true);
+        let (status, body) = home_test_post_json(
+            &app,
+            "/api/apps/people/profile",
+            &authority.people_token,
+            "null",
+            json!({"display_name": "Changed Name"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            service.register_runtime_owned_contexts(dir.path()).unwrap(),
+            1
+        );
+        if register_sync_before_import {
+            let (status, body) = home_test_post_json(
+                &app,
+                "/api/apps/home/launch",
+                &authority.home_token,
+                "http://localhost:61180",
+                json!({"target": "people"}),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+        }
+        let before = service.registered_context_snapshot_for_test();
+        assert_eq!(before["direct"][0]["profile_revision"], 2);
+        assert_eq!(before["profile_updates"][0]["profile_revision"], 2);
+
+        let (status, body) = import_raw_full_recovery_bundle(
+            &app,
+            &authority.system_token,
+            &principal.principal_id,
+            &principal.localhost_root,
+            bundle,
+            false,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            body["people_identity_restore"]["status"], "restored",
+            "{body}"
+        );
+        // This is the tester's first failure after System reports success.
+        for target in ["desktop", "people"] {
+            let (status, body) = home_test_post_json(
+                &app,
+                "/api/apps/home/launch",
+                &authority.home_token,
+                "http://localhost:61180",
+                json!({"target": target}),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{target}: {body}");
+        }
+        let (status, body) = home_test_get_json(
+            &app,
+            "/api/apps/people/summary",
+            &authority.people_token,
+            "null",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["identity"]["profile"]["display_name"], "Saved Name");
+        let after = service.registered_context_snapshot_for_test();
+        for kind in ["sync", "direct", "profile_updates"] {
+            assert_eq!(after[kind][0]["profile_revision"], 1, "{after}");
+        }
+    }
+}
+
 async fn import_raw_full_recovery_bundle_with_terminal_retry(
     app: &axum::Router,
     token: &str,
