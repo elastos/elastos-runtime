@@ -51,7 +51,7 @@ async function setup(engine,width,{pictures=false}={}) {
   } catch(error) {await context?.close().catch(()=>{});await browser?.close().catch(()=>{});await fixture.close();throw error;}
 }
 async function show(f,target) {await f.page.evaluate(target=>document.querySelector('#show-'+target).click(),target);}
-async function refresh(f) {await f.wallet.locator('body').evaluate(()=>window.dispatchEvent(new Event('focus')));}
+async function refresh(f) {await f.page.evaluate(()=>document.querySelector('iframe[title=wallet]').contentWindow.postMessage({type:'home:wallet-signin-changed'},'*'));}
 for(const engine of ['chromium','webkit'])for(const width of [1440,390]) {
   test(`one wallet list: real Wallet list and entries in ${engine} at ${width}`,{timeout:90000},async()=>{
     const f=await setup(engine,width,{pictures:Boolean(output)});
@@ -133,10 +133,10 @@ for(const engine of ['chromium','webkit'])for(const width of [1440,390]) {
         await f.page.goto(f.fixture.origin+'/apps/wallet/');
         const measurements=await f.page.evaluate(async ({kind,connectedName})=>{
           const {connectionView,renderConnection}=await import('/apps/home/wallet-connection-view.mjs');
-          const sheet=document.createElement('link');sheet.rel='stylesheet';sheet.href='/apps/home/wallet-connection-view.css';document.head.append(sheet);await new Promise((resolve,reject)=>{sheet.onload=resolve;sheet.onerror=reject;});
+          const sheet=document.createElement('link');sheet.rel='stylesheet';sheet.href='/apps/home/wallet-signin-connection.css';document.head.append(sheet);await new Promise((resolve,reject)=>{sheet.onload=resolve;sheet.onerror=reject;});
           const name=connectedName;
           const view=connectionView({window:kind,stage:'linked',localSafety:false,account:{name,mark:kind==='walletconnect'?'wallet':kind,connection:kind==='walletconnect'?'WalletConnect':null,accounts:[{address:kind==='unisat'?'bc1qtestaddress':'0x'+'12'.repeat(20),networks:[kind==='unisat'?'Bitcoin':'Base']}]},supportedActions:['copy-address','close-window']});
-          const bar=document.createElement('header');bar.textContent=kind==='walletconnect'?'WalletConnect':name;
+          const bar=document.createElement('header');bar.textContent=kind==='walletconnect'?'WalletConnect':kind==='unisat'?'UniSat':'MetaMask';
           document.body.replaceChildren(bar,renderConnection(document,view));
           const visible=[...document.body.querySelectorAll('*')].filter(el=>!el.closest('.connection-sr-only')&&el.getClientRects().length&&getComputedStyle(el).visibility!=='hidden').flatMap(el=>[...el.childNodes].filter(n=>n.nodeType===Node.TEXT_NODE).map(n=>n.textContent)).join(' ');
           return {text:visible,peer:document.querySelector('.connection-account-name')?.textContent};
@@ -165,7 +165,7 @@ for(const engine of ['chromium','webkit'])test(`one wallet list: phone app use s
   const f=await setup(engine,390);
   try {
     const phone=f.fixture.state.connected.find(a=>a.connector_id==='wallet-walletconnect');
-    f.fixture.state.revokedAccounts=[phone];f.fixture.state.connected=f.fixture.state.connected.filter(a=>a!==phone);
+    f.fixture.state.revokedAccounts=[{...phone,chain_namespace:'eip155:20'}];f.fixture.state.connected=f.fixture.state.connected.filter(a=>a!==phone);
     f.fixture.state.methods.find(m=>m.connector==='walletconnect').chain_id=20;
     await show(f,'wallet');await refresh(f);await f.wallet.getByRole('button',{name:'Open Rainbow',exact:true}).click();
     const toggle=f.wallet.getByRole('switch',{name:'Apps and websites',exact:true});

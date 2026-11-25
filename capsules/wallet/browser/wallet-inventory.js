@@ -33,7 +33,7 @@ export function createWalletInventory({root, getApprovalMethods=()=>({}), openSy
     image.src = `/apps/home/connection-${kind(entry) === 'passkey' ? 'wallet' : kind(entry)}.png`;
     const copy = text('div', ''); const name = text('strong', inventoryWalletName(entry));
     name.dir = 'auto';
-    const meta = text('div', '', 'one-meta'), address = text('code', shortAddress(entry.address)); address.title = entry.address;
+    const meta = text('div', '', 'one-meta'), address = text('code', bitcoin(entry)?`${entry.address.slice(0,8)}…${entry.address.slice(-6)}`:shortAddress(entry.address)); address.title = entry.address;
     meta.append(address, text('span', (entry.chain_namespace === 'eip155:20' ? 'ESC' : chainLabel(entry.chain_namespace)) + (kind(entry) === 'walletconnect' ? ' · WalletConnect' : '')));
     copy.append(name, meta); node.append(image, copy); return node;
   }
