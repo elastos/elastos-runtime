@@ -123,6 +123,20 @@ class TwoHomeReceiptTests(unittest.TestCase):
                     self.assertIn('kernel.apparmor_restrict_unprivileged_userns=0', result.stderr)
                     self.assertIn('uid_map: Operation not permitted', result.stderr)
 
+    def test_namespace_policy_and_preflight_run_before_the_linux_build(self):
+        source = (ROOT/'.github/workflows/ci.yml').read_text()
+        linux = source.split('\n  source-home-linux:\n', 1)[1].split('\n  source-home-', 1)[0]
+        setup = linux.split('- name: allow rootless two-Home network fixtures', 1)[1].split('      - uses:', 1)[0]
+        self.assertIn("if: env.CI_TWO_HOME_NETWORK_MATRIX == 'true'", setup)
+        self.assertLess(setup.index('sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0'),
+                        setup.index('bash scripts/ci-two-home-namespace-preflight.sh'))
+        self.assertLess(linux.index('bash scripts/ci-two-home-namespace-preflight.sh'),
+                        linux.index('dtolnay/rust-toolchain@'))
+        shell = (ROOT/'scripts/ci-installed-journeys.sh').read_text()
+        matrix = shell.split('    two-home-messages)', 1)[1].split('    home)', 1)[0]
+        self.assertLess(matrix.index('bash scripts/ci-two-home-namespace-preflight.sh'),
+                        matrix.index('scripts/test-behaviour.sh inputs'))
+
     def test_network_matrix_scope_stays_with_the_existing_x64_job(self):
         source = (ROOT / '.github/workflows/ci.yml').read_text()
         for job, enabled in [('source-home-linux', 'true'), ('source-home-linux-arm64', 'false')]:
