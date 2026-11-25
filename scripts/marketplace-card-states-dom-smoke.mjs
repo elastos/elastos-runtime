@@ -72,7 +72,7 @@ function startServer() {
     }
     if (url.pathname === "/") {
       response.writeHead(200, { "content-type": "text/html" });
-      response.end('<!doctype html><html><head><link rel="stylesheet" href="/marketplace.css"></head><body><div id="card"></div></body></html>');
+      response.end('<!doctype html><html><head><link rel="stylesheet" href="/marketplace.css"><link rel="stylesheet" href="/media-studio.css"></head><body><div id="card"></div><main class="media-studio"><div class="grid videos" id="videos" style="width:640px"></div></main></body></html>');
       return;
     }
     const path = join(browserRoot, url.pathname);
@@ -253,12 +253,44 @@ async function run() {
     assert(cover.rawWidth === 0, "The raw /ipfs/ route stays refused on an ordinary Home", cover);
     assert(contentReads.length === 2 && contentReads.every((read) => read.token === HOME_TOKEN),
       "Every content read carries the Home token, once per CID", contentReads);
+    // PR5 point 2: a video card with no cover keeps its full-width 16:9
+    // picture area under the shipping CSS, and its placeholder glyph shows.
+    const coverless = await page.evaluate(async () => {
+      const { formatBadge } = await import("/src/market-card.js");
+      const grid = document.querySelector("#videos");
+      grid.innerHTML = `<article class="card video store-row-media">
+        <div class="thumb app-icon-raster">
+          <div class="video-fallback app-icon-glyph"><svg class="icon" viewBox="0 0 24 24"></svg></div>
+          <span class="tag left">${formatBadge({ mimeType: "video/*" })}</span>
+        </div>
+        <div class="card-body"><h3 class="card-title">No cover</h3></div>
+      </article>`;
+      const card = grid.querySelector(".card");
+      const thumb = card.querySelector(".thumb").getBoundingClientRect();
+      const glyph = getComputedStyle(card.querySelector(".video-fallback")).color;
+      const surface = getComputedStyle(card.querySelector(".thumb")).backgroundColor;
+      return {
+        card: card.getBoundingClientRect().width,
+        width: thumb.width,
+        height: thumb.height,
+        glyph,
+        surface,
+        badge: card.querySelector(".tag").textContent,
+      };
+    });
+    assert(coverless.width > 200 && Math.abs(coverless.width - coverless.card) <= 2,
+      "A coverless video card keeps its full-width picture area", coverless);
+    assert(Math.abs(coverless.width / coverless.height - 16 / 9) < 0.05,
+      "A coverless video card keeps its 16:9 picture area", coverless);
+    assert(coverless.glyph !== "rgb(58, 62, 74)" && coverless.glyph !== coverless.surface,
+      "The placeholder glyph is drawn in the theme's secondary text colour", coverless);
+    assert(coverless.badge === "VIDEO", "A wildcard MIME's badge names its kind", coverless);
     assert(pageErrors.length === 0, "The card module must render without page errors.", pageErrors);
   } finally {
     await browser.close();
     server.close();
   }
-  console.log(`marketplace-card-states-dom-smoke: OK (${cases.length} states, token cover and title)`);
+  console.log(`marketplace-card-states-dom-smoke: OK (${cases.length} states, token cover and title, coverless card layout)`);
 }
 
 await run();

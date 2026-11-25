@@ -4014,6 +4014,14 @@ async function run() {
     await page.goto(`http://127.0.0.1:${port}/fixture-media-pending-buy`);
     const pendingBuyFrame = await waitForMarketplaceFrame(page);
     await pendingBuyFrame.locator('[data-destination="media"]').click();
+    // A card is read for access only near the viewport, so the person
+    // scrolls to it first, as they would to press it.
+    // The shelf may repaint meanwhile, so the card is found afresh.
+    await pendingBuyFrame.waitForFunction((mint) => {
+      const card = document.querySelector(`.store-row-media[data-mint="${mint}"]`);
+      card?.scrollIntoView({ block: "center" });
+      return Boolean(card);
+    }, mediaAvailableMint);
     await pendingBuyFrame.locator(`.store-row-media[data-mint="${mediaAvailableMint}"] [data-action="buy-media"]`).click();
     await pendingBuyFrame.locator('[data-action="confirm-buy"]').click();
     await pendingBuyFrame.locator(`.store-row-media[data-mint="${mediaAvailableMint}"] [data-action="open-wallet"]`).waitFor();

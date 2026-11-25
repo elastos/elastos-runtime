@@ -45,7 +45,7 @@ import {
 // answer: an item they hold offers Open, never Buy.
 import { createAccessWatch, createReadSlots, listingReadOutcome } from "./src/market-access.js";
 // The one control each Explore card offers, from what the page knows.
-import { catalogCardControl } from "./src/market-card.js";
+import { catalogCardControl, formatBadge } from "./src/market-card.js";
 // Covers and metadata come from this Home's own content store, with its token.
 import { createContentReader, hydrateContentImages } from "./src/content-reads.js";
 import { sharedModelOffers, REMOTE_MODEL_ID, detailPublisher, rowSubtitle } from "./model-services.js?v=download-progress-20261112";
@@ -1955,30 +1955,6 @@ import { createHomeNavigationClient } from "/apps/home/home-navigation-client.js
 
   function exploreGroupId(listing) {
     return exploreGroupFor(listing).id;
-  }
-
-  // The format badge: what this item IS, in the shortest true word.
-  //
-  // Taken from the MIME's subtype rather than from a table of names, so an
-  // item of a kind nobody anticipated still gets a badge instead of nothing.
-  // Deliberately no resolution beside it: the design shows "MP4 · 720p", and
-  // this Home is told the codec but never the frame size, so it says the part
-  // it knows rather than a number it guessed.
-  function formatBadge(listing) {
-    const mime = String(listing.mimeType || "").toLowerCase();
-    const subtype = mime.slice(mime.indexOf("/") + 1);
-    const named = {
-      "quicktime": "MOV",
-      "x-matroska": "MKV",
-      "mpeg": mime.startsWith("audio/") ? "MP3" : "MPEG",
-      "svg+xml": "SVG",
-      "epub+zip": "EPUB",
-      "vnd.openxmlformats-officedocument.wordprocessingml.document": "DOCX",
-      "plain": "TXT",
-      "jpeg": "JPG",
-    }[subtype];
-    const badge = named || subtype.replace(/^x-/, "").toUpperCase();
-    return badge.length > 0 && badge.length <= 6 ? badge : "FILE";
   }
 
   // The state badge, top right, and only when there is something to say. An

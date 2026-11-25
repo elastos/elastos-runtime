@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { catalogCardControl } from "./market-card.js";
+import { catalogCardControl, formatBadge } from "./market-card.js";
 import { CUSTODY_ELSEWHERE_COPY } from "./market-listing.js";
 
 const LEDGER = `0x${"e".repeat(40)}`;
@@ -107,4 +107,17 @@ test("an item Base has not finalized keeps its control disabled with no action",
     const control = only(render(item(), { finalityPending: true, access }));
     assert.deepEqual([control.text, control.disabled, control.action], [text, true, null], access);
   }
+});
+
+// PR5 point 2: a catalog item is told only its kind (`video/*`).
+test("the format badge names a wildcard MIME's kind, and keeps concrete badges", () => {
+  const badge = (mimeType) => formatBadge({ mimeType });
+  assert.deepEqual(
+    ["video/*", "image/*", "audio/*", "application/*", "*/*"].map(badge),
+    ["VIDEO", "IMAGE", "AUDIO", "FILE", "FILE"],
+  );
+  assert.deepEqual(
+    ["video/mp4", "video/quicktime", "audio/mpeg", "image/jpeg", "application/epub+zip", ""].map(badge),
+    ["MP4", "MOV", "MP3", "JPG", "EPUB", "FILE"],
+  );
 });
