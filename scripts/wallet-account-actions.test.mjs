@@ -31,3 +31,33 @@ for (const [name, label, expected] of [
     assert.equal(refreshed, 1);
   });
 }
+
+for (const namespace of ['eip155:20', 'eip155:8453']) {
+  test(`grouped recovery key keeps a wallet and network label for ${namespace}`, async () => {
+    const records = ['eip155:20', 'eip155:8453'].map((chain_namespace, index) => ({
+      account_id: `built-${index}`, chain_namespace, address: '0x1234', proof_type: 'managed_evm',
+    }));
+    const view = {...records[0], name: 'Home address', account_records: records};
+    let rows, details;
+    const savedDocument = globalThis.document;
+    globalThis.document = {createElement: () => ({})};
+    try {
+      const actions = createWalletAccountActions({
+        buildViewAccounts: () => [view], getSelectedAccountId: () => '',
+        flowRow: (title, detail, action) => ({title, detail, action}),
+        flowStaticRow: (label, value) => ({label, value}), modalButton: () => ({}),
+        openFlowModal: (title, _subtitle, nodes) => {if (title === 'Recovery key' && nodes.some(n => n.label)) details = nodes; else rows = nodes;},
+        requestPasskeyStepUp: async () => 'fixture-approval',
+        fetchJson: async () => ({account_id:'fixture', chain_namespace:namespace, address:'0x1234'}),
+        shellHeaders: headers => headers,
+      });
+      await actions.onAccountClick({target:{closest:()=>({dataset:{walletAccountMenu:view.account_id}})}, stopPropagation(){}});
+      await rows.find(row => row.title === 'Recovery key').action();
+      await rows.find(row => row.title === (namespace === 'eip155:20' ? 'ESC' : 'Base')).action();
+      assert.equal(details.find(row => row.label === 'Network').value, namespace === 'eip155:20' ? 'ESC' : 'Base');
+      assert.equal(typeof details.find(row => row.label === 'Wallet').value, 'string');
+      assert(details.find(row => row.label === 'Wallet').value.length > 0);
+      assert.equal(details.some(row => row.value === undefined || row.value === 'undefined'), false);
+    } finally {globalThis.document = savedDocument;}
+  });
+}
