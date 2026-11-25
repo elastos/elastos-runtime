@@ -1,4 +1,5 @@
 import {
+  accountName,
   chainLabel,
   defaultIntentForAccount,
   defaultIntentLabel,
@@ -269,7 +270,7 @@ export function createWalletAccountActions({
     ]);
   }
 
-  async function setDefaultAccount(account) {
+  async function setDefaultAccount(account, displayName = account.name) {
     await fetchJson("/api/apps/wallet/wallet/default", {
       method: "POST",
       headers: shellHeaders({ "content-type": "application/json" }),
@@ -281,7 +282,7 @@ export function createWalletAccountActions({
     });
     closeModal();
     showStatus(
-      `${account.name} is now the default for ${defaultIntentLabel(account).toLowerCase()}.`,
+      `${readText(displayName) || accountName(account)} is now the default for ${defaultIntentLabel(account).toLowerCase()}.`,
       "success",
     );
     await refreshWalletState();
@@ -320,7 +321,7 @@ export function createWalletAccountActions({
         flowRow(
           exactRecordLabel(record),
           `${defaultIntentLabel(record)} · ${exactRecordDetail(record)}`,
-          () => setDefaultAccount(record),
+          () => setDefaultAccount(record, account.name),
         )),
     );
   }

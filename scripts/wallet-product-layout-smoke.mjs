@@ -728,6 +728,8 @@ async function run() {
       "Use by default must choose an exact grouped network record, not the primary grouped record.",
       server.state.defaultBodies.at(-1),
     );
+    await waitForCondition(async () => await frame.locator("#wallet-status").textContent() === "Family is now the default for transactions.",
+      5000, "default confirmation names the grouped address");
 
     await openAccountMenu(frame);await capture(frame,"wallet-address-actions","Wallet address actions.");
     const recoveryRequestCount = server.state.recoveryCalls.length;
