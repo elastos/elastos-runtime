@@ -15,6 +15,146 @@ pub(in crate::api::gateway) async fn system_wallet_accounts_summary(
     wallet_accounts_summary_from_response(response)
 }
 
+/// A projection of the two authority stores. Reading it grants neither use.
+#[derive(Serialize)]
+struct WalletInventoryEntry {
+    inventory_id: String,
+    address: String,
+    chain_namespace: String,
+    accounts: Vec<SystemWalletAccountSummary>,
+    sign_in: Option<serde_json::Value>,
+}
+
+fn wallet_inventory_identity(namespace: &str, address: &str) -> (String, String) {
+    let address = if namespace.starts_with("eip155:") {
+        address.to_ascii_lowercase()
+    } else {
+        address.to_string()
+    };
+    (namespace.to_string(), address)
+}
+
+fn wallet_inventory_entries(
+    principal: &str,
+    accounts: &[serde_json::Value],
+    methods: &[serde_json::Value],
+) -> Vec<WalletInventoryEntry> {
+    let mut entries: Vec<WalletInventoryEntry> = Vec::new();
+    for account in accounts {
+        // The provider scopes the read too. Retain the owner check at the join.
+        if account["principal_id"].as_str() != Some(principal) || !account["revoked_at"].is_null() {
+            continue;
+        }
+        let Some(account) = system_wallet_account_summary(account) else {
+            continue;
+        };
+        let (namespace, address) =
+            wallet_inventory_identity(&account.chain_namespace, &account.address);
+        if let Some(entry) = entries
+            .iter_mut()
+            .find(|entry| entry.chain_namespace == namespace && entry.address == address)
+        {
+            entry.accounts.push(account);
+        } else {
+            entries.push(WalletInventoryEntry {
+                inventory_id: format!("{namespace}:{address}"),
+                address,
+                chain_namespace: namespace,
+                accounts: vec![account],
+                sign_in: None,
+            });
+        }
+    }
+    for method in methods {
+        // Auth owns and filters these methods before returning this snapshot.
+        let Some(address) = method["address"].as_str() else {
+            continue;
+        };
+        let namespace = match (method["chain_id"].as_u64(), method["network"].as_str()) {
+            (Some(0), Some("bitcoin")) => "bip122:000000000019d6689c085ae165831e93".to_string(),
+            (Some(chain), Some("")) if chain > 0 => format!("eip155:{chain}"),
+            _ => continue,
+        };
+        let (namespace, address) = wallet_inventory_identity(&namespace, address);
+        if let Some(entry) = entries
+            .iter_mut()
+            .find(|entry| entry.chain_namespace == namespace && entry.address == address)
+        {
+            // A managed Home key is never an external sign-in method.
+            if !entry.accounts.iter().any(|account| {
+                matches!(
+                    account.proof_type.as_str(),
+                    "managed_evm" | "managed_btc_p2wpkh"
+                )
+            }) {
+                entry.sign_in = Some(method.clone());
+            }
+        } else {
+            entries.push(WalletInventoryEntry {
+                inventory_id: format!("{namespace}:{address}"),
+                address,
+                chain_namespace: namespace,
+                accounts: vec![],
+                sign_in: Some(method.clone()),
+            });
+        }
+    }
+    entries
+}
+
+pub(in crate::api::gateway) async fn wallet_inventory(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+) -> Response {
+    let result = async {
+        let launch = require_home_launch_token_binding(
+            &state.data_dir,
+            &headers,
+            &[HOME_CAPSULE_ID, SYSTEM_CAPSULE_ID, WALLET_CAPSULE_ID],
+        )?;
+        let authority = runtime_wallet_authority(&launch)?;
+        let auth_dir = home_launch_auth_data_dir(&state.data_dir);
+        let actor = crate::auth::load_active_session_grant(
+            &auth_dir,
+            &launch.context.session_id,
+            now_ts(),
+        )?;
+        let methods = crate::auth::wallet_signin::list(&auth_dir, &actor)?;
+        let accounts = runtime_wallet_data(
+            &state,
+            &authority,
+            elastos_wallet_contract::WalletProviderOperationV2::ListAccounts {
+                include_revoked: false,
+            },
+        )
+        .await?;
+        let entries = wallet_inventory_entries(
+            &actor.principal_id,
+            accounts["accounts"]
+                .as_array()
+                .ok_or_else(|| anyhow::anyhow!("Wallet accounts unavailable"))?,
+            methods["methods"]
+                .as_array()
+                .ok_or_else(|| anyhow::anyhow!("Wallet sign-in methods unavailable"))?,
+        );
+        Ok::<_, anyhow::Error>(serde_json::json!({
+            "schema": "elastos.wallet.inventory/v1",
+            "account_id": actor.principal_id,
+            "account_name": methods["account_name"],
+            "entries": entries,
+        }))
+    }
+    .await;
+    let mut response = match result {
+        Ok(value) => Json(value).into_response(),
+        Err(error) => system_error_response(error),
+    };
+    response
+        .headers_mut()
+        .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+}
+
 fn cleanup_removed_walletconnect_account(
     data_dir: &FsPath,
     data: &serde_json::Value,
@@ -389,6 +529,78 @@ mod walletconnect_cleanup_tests {
         assert_eq!(
             gateway_walletconnect::storage_revision(data.path(), "caller").unwrap(),
             "\"0\""
+        );
+    }
+}
+
+#[cfg(test)]
+mod wallet_inventory_tests {
+    use super::*;
+    use serde_json::{json, Value};
+
+    fn account(owner: &str, namespace: &str, address: &str) -> Value {
+        json!({"account_id":"app-link", "principal_id":owner,
+            "chain_namespace":namespace, "address":address, "proof_type":"eip191",
+            "connector_id":"wallet-metamask", "linked_at":1})
+    }
+
+    #[test]
+    fn wallet_inventory_projects_each_use_and_removal_without_changing_authority() {
+        let f = crate::auth::wallet_signin::tests::fixture();
+        crate::auth::wallet_signin::tests::enabled(&f);
+        let methods = crate::auth::wallet_signin::list(f.data.path(), &f.actor).unwrap();
+        let methods = methods["methods"].as_array().unwrap();
+        let accounts = vec![account(
+            &f.actor.principal_id,
+            "eip155:20",
+            &f.address.to_uppercase().replace("0X", "0x"),
+        )];
+        let project = |accounts: &[Value], methods: &[Value]| {
+            wallet_inventory_entries(&f.actor.principal_id, accounts, methods)
+        };
+        let signin_only = project(&[], methods);
+        assert_eq!(signin_only.len(), 1);
+        assert!(signin_only[0].accounts.is_empty());
+        assert!(signin_only[0].sign_in.is_some());
+        let app_only = project(&accounts, &[]);
+        assert_eq!(app_only.len(), 1);
+        assert!(app_only[0].sign_in.is_none());
+        let both = project(&accounts, methods);
+        assert_eq!(both.len(), 1);
+        assert_eq!(both[0].accounts.len(), 1);
+        assert!(both[0].sign_in.is_some());
+        assert_eq!(both[0].inventory_id, signin_only[0].inventory_id);
+        // The same identity remains after either owner removes its own use.
+        assert_eq!(project(&[], methods)[0].inventory_id, both[0].inventory_id);
+        assert_eq!(
+            project(&accounts, &[])[0].inventory_id,
+            both[0].inventory_id
+        );
+        assert!(project(&[], &[]).is_empty());
+        let other_network = vec![account(&f.actor.principal_id, "eip155:8453", &f.address)];
+        assert_eq!(project(&other_network, methods).len(), 2);
+        let mut revoked = accounts[0].clone();
+        revoked["revoked_at"] = json!(2);
+        assert!(project(&[revoked], &[]).is_empty());
+        assert!(project(&[account("another-account", "eip155:20", &f.address)], &[]).is_empty());
+    }
+
+    #[test]
+    fn wallet_inventory_keeps_bitcoin_network_and_connector_identity_separate() {
+        let method = json!({"method_id":"signin", "connector":"unisat", "address":"bc1qverified", "chain_id":0, "network":"bitcoin"});
+        let mut app = account(
+            "owner",
+            "bip122:000000000019d6689c085ae165831e93",
+            "bc1qverified",
+        );
+        app["connector_id"] = json!("wallet-unisat");
+        let entries = wallet_inventory_entries("owner", &[app.clone()], &[method.clone()]);
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].sign_in.is_some());
+        app["chain_namespace"] = json!("bip122:testnet");
+        assert_eq!(
+            wallet_inventory_entries("owner", &[app], &[method]).len(),
+            2
         );
     }
 }

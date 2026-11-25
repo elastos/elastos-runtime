@@ -477,7 +477,7 @@ pub(crate) fn list(data: &Path, actor: &AuthSessionGrantV1) -> anyhow::Result<Va
             .map(|p| &p.id)
             .collect();
         Ok(
-            serde_json::json!({"account_id":actor.principal_id,"open_changes":open_changes,"methods":store.methods.iter().filter(|m| m.account_id == actor.principal_id).map(|m| serde_json::json!({"method_id":m.method_id,"connector":m.connector,"address":m.address,"chain_id":m.chain_id,"network":m.network,"sign_in_enabled":true,"created_at":m.created_at,"last_used_at":m.last_used_at})).collect::<Vec<_>>()}),
+            serde_json::json!({"account_id":actor.principal_id,"account_name":auth.principals.iter().find(|p| p.principal_id == actor.principal_id && active_passkey(p)).map(|p| &p.display_name),"open_changes":open_changes,"methods":store.methods.iter().filter(|m| m.account_id == actor.principal_id).map(|m| serde_json::json!({"method_id":m.method_id,"connector":m.connector,"address":m.address,"chain_id":m.chain_id,"network":m.network,"sign_in_enabled":true,"created_at":m.created_at,"last_used_at":m.last_used_at})).collect::<Vec<_>>()}),
         )
     })
 }
@@ -1494,6 +1494,30 @@ pub(crate) mod tests {
         .unwrap();
         out["method_id"].as_str().unwrap().into()
     }
+    #[test]
+    fn wallet_inventory_signin_snapshot_is_account_scoped_after_removal() {
+        let f = fixture();
+        let id = enabled(&f);
+        let other = add_account(f.data.path(), "bob", "bob-key");
+        assert!(list(f.data.path(), &other).unwrap()["methods"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            list(f.data.path(), &f.actor).unwrap()["methods"][0]["method_id"],
+            id
+        );
+        change(&f, "remove", &id);
+        assert!(list(f.data.path(), &f.actor).unwrap()["methods"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert!(list(f.data.path(), &other).unwrap()["methods"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+    }
+
     #[test]
     fn wallet_metamask_does_not_admit_anonymous_phone_pairing() {
         let f = fixture();

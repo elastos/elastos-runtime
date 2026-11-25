@@ -925,6 +925,7 @@ fn gateway_router_with_api_url(state: GatewayState, gateway_api_url: String) -> 
             post(system_wallet_approval_approve),
         )
         .route("/api/apps/wallet/wallet/summary", get(wallet_app_summary))
+        .route("/api/apps/wallet/wallet/inventory", get(wallet_inventory))
         .route("/api/wallet/prices", get(wallet_prices))
         .route(
             "/api/apps/wallet-walletconnect/internet",
