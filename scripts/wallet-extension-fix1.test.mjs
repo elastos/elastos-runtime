@@ -51,12 +51,12 @@ async function unisatIdentity(f, saved) {
   assert.equal(await f.top.evaluate(() => testState.calls.length), 0, 'a saved link is not fresh discovery');
   assert.equal(await visibleBrandMarkCount(f.frame, 'unisat'), 0, 'no visible UniSat mark before fresh Home discovery');
   if (saved) {
-    assert.match(await f.frame.locator('.connection-account-header img').getAttribute('src'), /connection-wallet\.png$/);
+    assert.equal(await f.frame.locator('.connection-account-header').count(), 0);
     // The same validated Home event that the real host sends after discovery.
     await f.top.evaluate(() => document.querySelector('iframe').contentWindow.postMessage({
       type:'home:wallet-connector-event', connectorId:'wallet-unisat', event:'accountsChanged', value:[testState.address],
     }, '*'));
-    await f.frame.locator('.connection-account-header img[src$="connection-unisat.png"]').waitFor();
+    assert.equal(await f.frame.locator('.connection-account-header').count(), 0);
   } else {
     assert.equal(await f.frame.locator('.connection-account').count(), 0, 'no account before connection');
     await f.action('connect').click();

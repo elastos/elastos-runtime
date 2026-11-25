@@ -407,7 +407,7 @@ export function renderConnection(document, view) {
     }
     h.append(el('h2',selected ? (view.stage==='site-access-ended'?'Required account':'Account to confirm') : isolated(matchesAction ? account.name : 'Your wallet','wallet'),'connection-account-name'));
     if(view.panel&&supports('open-wallet'))h.append(button({id:'open-wallet',label:isolated('Manage','copy'),quiet:true}));
-    card.append(h);
+    if (selected || view.panel || view.window === 'walletconnect') card.append(h);
     if(account.connection && (view.panel||view.window!=='walletconnect'))card.append(el('p','WalletConnect','connection-note connection-via'));
     for (const row of account.accounts) {
       const r=el('div',null,'connection-address-row');r.append(el('code',isolated(short(row.address),'address'),'connection-address'));
@@ -457,7 +457,7 @@ export function renderConnection(document, view) {
     let destination=content;
     if(!view.panel&&!view.request&&!view.context&&!view.qrData){
       destination=el('article',null,'connection-card connection-step');
-      destination.append(el('h2',view.title));content.append(destination);
+      content.append(destination);
     }
     if(view.showAccount&&view.account&&!view.request){const card=accountCard(view.account);if(destination!==content&&card.nodeType!==11){destination.classList.add('connection-account');destination.append(...card.childNodes);}else destination.append(card);}
     if(view.selectedAccount&&view.account&&!view.request)destination.append(accountCard(view.account,true));
