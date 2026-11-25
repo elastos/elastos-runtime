@@ -132,25 +132,17 @@ test('W2 sign-in presentation uses purpose instead of an English heading',()=>{
 });
 
 
-test('W2 Wallet chooser shows only state below names and one refusal with recovery controls',{timeout:30000},async()=>{
+test('W2 System chooser shows wallet choices and one refusal with recovery controls',{timeout:30000},async()=>{
   const {signinFixture,installSigninProviders,evmAddress,bitcoinAddress}=await import('./lib/wallet-signin-fixture.mjs');
-  const source=await signinFixture(),browser=await requireProductSmokePlaywright().chromium.launch({headless:true});
-  const context=await browser.newContext();await context.addInitScript(installSigninProviders,{evmAddress,bitcoinAddress,theme:'light'});
-  const page=await context.newPage();
+  const source=await signinFixture(),browser=await requireProductSmokePlaywright().chromium.launch({headless:true});source.state.methods=[];
+  const context=await browser.newContext();await context.addInitScript(installSigninProviders,{evmAddress,bitcoinAddress,theme:'light'});const page=await context.newPage();
   try{
     await page.goto(source.origin+'/home/');await page.waitForFunction(()=>window.fixtureReady);await page.evaluate(()=>window.showFixtureApps());
-    const frame=page.frameLocator('iframe[title=wallet]');await page.evaluate(()=>document.querySelector('#show-wallet').click());await frame.locator('#wallet-methods').waitFor();
-    for(const width of [480,390])for(const stage of ['options','error']){
-      await page.setViewportSize({width,height:680});
-      await page.evaluate(stage=>document.querySelector('iframe[title=wallet]').contentWindow.postMessage({type:'home:wallet-signin-chooser',homeToken:'fixture-wallet',requestId:'w2-chooser',state:{stage,message:stage==='error'?'Your wallet declined the request.':'',methods:[{connector:'metamask',used:true,connected:true},{connector:'unisat',connected:false},{connector:'walletconnect',connected:true}]}},'*'),stage);
-      await frame.locator('#wallet-signers[data-signin='+stage+']').waitFor();
-      const rows=frame.locator('#wallet-methods .wallet-method-head');
-      assert.deepEqual(await rows.locator('div > span').allTextContents(),['Already signs in',"Connects through a relay that can see this computer's internet address."]);
-      assert.deepEqual(await rows.locator('button').allTextContents(),['Choose','Choose','Choose']);
-      assert.equal(await rows.nth(0).getByRole('button',{name:'Choose',exact:true}).isDisabled(),true);
-      if(stage==='error'){assert.equal(await frame.getByText('Your wallet declined the request.',{exact:true}).count(),1);assert.equal(await frame.getByRole('button',{name:'Try again',exact:true}).count(),1);}
-      assert.equal(await frame.getByRole('button',{name:'Cancel',exact:true}).count(),1);
-      await frame.locator('#wallet-signers').scrollIntoViewIfNeeded();await capture(page,`wallet-chooser-${stage}-${width}`,`Wallet chooser ${stage==='options'?'shows each wallet state':'offers Try again and Cancel after refusal'} at ${width} pixels.`);
-    }
+    await page.frameLocator('iframe[title=system]').getByRole('button',{name:'Add wallet',exact:true}).click();
+    const dialog=page.locator('.signin-dialog');await dialog.locator('.connection-option').nth(2).waitFor();assert.equal(await dialog.locator('.connection-option').count(),3);
+    await page.evaluate(()=>walletFixture.mode='rejected');await dialog.locator('.connection-option').filter({hasText:'MetaMask'}).click();await dialog.getByRole('button',{name:'Sign message',exact:true}).click();
+    await page.locator('.signin-dialog[data-state=error]').waitFor();assert.equal(await dialog.getByText('Your wallet declined the request.',{exact:true}).count(),1);
+    assert.equal(await dialog.getByRole('button',{name:'Try again',exact:true}).count(),1);assert.equal(await dialog.getByRole('button',{name:'Cancel',exact:true}).count(),1);
+    await capture(page,'system-chooser-refusal','System keeps the wallet refusal and recovery controls together.');
   }finally{await context.close();await browser.close();await source.close();}
 });

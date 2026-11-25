@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createWalletAccountActions } from "../capsules/wallet/browser/wallet-account-actions.js";
+const {createWalletAccountActions} = await import(process.env.WALLET_ACTIONS_TEST_MODULE || new URL('../capsules/wallet/browser/wallet-account-actions.js', import.meta.url).href);
 
 for (const [name, label, expected] of [
   ["Holiday wallet", "External account", "Holiday wallet"],
@@ -57,7 +57,7 @@ for (const namespace of ['eip155:20', 'eip155:8453']) {
       assert.equal(details.find(row => row.label === 'Network').value, namespace === 'eip155:20' ? 'ESC' : 'Base');
       assert.equal(typeof details.find(row => row.label === 'Wallet').value, 'string');
       assert(details.find(row => row.label === 'Wallet').value.length > 0);
-      assert.equal(details.some(row => row.value === undefined || row.value === 'undefined'), false);
+      assert.equal(details.filter(row => row.label).some(row => row.value === undefined || row.value === 'undefined'), false);
     } finally {globalThis.document = savedDocument;}
   });
 }

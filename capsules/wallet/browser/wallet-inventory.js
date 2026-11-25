@@ -127,7 +127,9 @@ export function createWalletInventory({root, openSystem, connectApps, removeApps
     const wallet = text('div', '', 'one-proof-wallet'); wallet.append(identity(entry));
     const note = text('p', '', 'one-muted');
     note.textContent = entry.sign_in ? `System still uses this wallet to sign in to ${inventory.account_name || 'your'}${inventory.account_name ? "'s" : ''} account.` : 'System manages sign-in use.';
-    modal('Turn off app use?', [wallet, text('p', bitcoin(entry) ? 'This ends Bitcoin proof requests through this Home.' : `This ends app and website requests for this wallet only (${inventoryWalletName(entry)}) on this Home.`), note, text('p', 'Passkey approval', 'one-step')], async () => {
+    const scope = text('p', bitcoin(entry) ? 'This ends Bitcoin proof requests through this Home.' : '');
+    if (!bitcoin(entry)) {const name=text('bdi',inventoryWalletName(entry));name.dir='auto';scope.append('This ends app and website requests for this wallet only (',name,') on this Home.');}
+    modal('Turn off app use?', [wallet, scope, note, text('p', 'Passkey approval', 'one-step')], async () => {
       if (busy) return; busy = true; const epoch = operation; render();
       try {await removeApps(entry, () => epoch === operation); if (epoch !== operation) return; close(); result = 'App use turned off.'; render();}
       catch (error) {if (epoch === operation) {busy = false; bodyError(error); render();}}

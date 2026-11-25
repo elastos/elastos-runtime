@@ -92,6 +92,7 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
     }
   }
   function cancel() {
+    if(initial.action==='add'&&['completing','unknown'].includes(currentState?.stage))return;
     if(passkeyController){epoch++;passkeyController.abort();passkeyController=null;options(initial.signinMethods);return;}
     if(initial.action==='signin'&&currentState?.stage==='options'){close();return;}
     epoch++;void flow.cancel();

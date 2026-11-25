@@ -99,24 +99,21 @@ test("fix1 Wallet accounts remain visible when only requests are unavailable",as
   const r=await runtimeView(t,"wallet",{approvalsUnavailable:true,accounts:[{account_id:"external",chain_namespace:"eip155:20",address:request().address,
     connector_id:"wallet-walletconnect",proof_type:"siwe",wallet_display_name:"Trust Wallet",wallet_mark:"wallet"}]});
   await r.frame.locator("#wallet-status").filter({hasText:"Wallet could not load your requests."}).waitFor();
-  assert.equal(await r.frame.locator('.wallet-account .wallet-card-name').count(),1,"the independent account read is rendered before the request-read error");
-  assert.equal(await r.frame.locator('.wallet-account .wallet-card-name').textContent(),"Trust Wallet");
-  assert.equal(await r.frame.getByRole("button",{name:/Send/}).first().isEnabled(),true);
+  assert.equal(await r.frame.locator('.one-identity strong').count(),1,"the independent account read is rendered before the request-read error");
+  assert.equal(await r.frame.locator('.one-identity strong').textContent(),"Trust Wallet");
+  assert.equal(await r.frame.getByRole("button",{name:"Open Trust Wallet",exact:true}).isEnabled(),true);
   await r.capture("wallet-requests-unavailable-light-window.png");
 });
 
 test("fix1 removal dialog names its row and uses the shared removal sentence",async t=>{
   const r=await runtimeView(t,"wallet",{accounts:[{account_id:"external",chain_namespace:"eip155:20",address:request().address,
     connector_id:"wallet-walletconnect",proof_type:"siwe",wallet_display_name:"Trust Wallet",wallet_mark:"wallet"}]});
-  await r.frame.getByRole("button",{name:"Remove",exact:true}).click();
-  await r.frame.locator(".wallet-modal-header").waitFor();
-  assert.equal(await r.frame.locator(".wallet-modal-header h2").textContent(),"Remove Trust Wallet?");
-  const identity=r.frame.locator(".wallet-modal-header h2 bdi");
-  assert.equal(await identity.textContent(),"Trust Wallet");
-  assert.equal(await identity.evaluate(el=>el.dir),"auto");
-  assert.equal(await identity.evaluate(el=>getComputedStyle(el).unicodeBidi),"isolate");
-  assert.equal(await r.frame.getByText("Remove this address from Wallet. Your funds stay unchanged. This does not cancel a transaction in your wallet. Removing the last address connected through your wallet also clears Home's saved connection. Confirm with your passkey to remove the address.",{exact:true}).count(),1);
-  await r.capture("wallet-external-account-removal-light-window.png");
+  await r.frame.getByRole('button',{name:'Open Trust Wallet',exact:true}).click();await r.frame.getByRole('switch',{name:'Apps and websites'}).click();
+  const dialog=r.frame.getByRole('dialog',{name:'Turn off app use?'});await dialog.waitFor();
+  const identity=dialog.locator('p bdi');assert.equal(await identity.textContent(),'Trust Wallet');assert.equal(await identity.evaluate(el=>el.dir),'auto');
+  assert.equal(await identity.evaluate(el=>getComputedStyle(el).unicodeBidi),'isolate');
+  assert.equal(await dialog.getByText('This ends app and website requests for this wallet only (Trust Wallet) on this Home.',{exact:true}).count(),1);
+  await r.capture('wallet-external-account-removal-light-window.png');
 });
 
 test("fix1 passkey-begin consent conflict keeps the fixed Inbox sentence",async t=>{

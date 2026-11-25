@@ -309,12 +309,14 @@ other wallet choices stay available during the request. With Remember my choice
 ticked, choosing another option saves that choice; unticking it clears the saved
 choice. Cancel on the idle list closes the sheet.
 
-Accounts groups sign-in methods under each person. Add wallet uses Wallet's
-chooser. A wallet that already signs in is marked Already signs in and disabled.
+Accounts groups sign-in methods under each person. Add wallet uses Home's shared
+chooser over Accounts. A wallet that already signs in is marked Already signs in and disabled.
 Choose MetaMask, UniSat or WalletConnect to share its address, sign the Runtime
 `add` message once, then approve with a passkey. Runtime adds the sign-in method
-atomically and Home closes the request. Each wallet row has one Remove action.
-Wallet owns payment connections; adding a sign-in method creates only sign-in access.
+atomically and Home closes the request. Each wallet row has Remove from sign-in and Open Wallet. Open Wallet selects
+that address and network in Wallet's inventory. Wallet owns app connections;
+adding a sign-in method creates only sign-in access and makes the wallet visible
+in Wallet's list.
 
 A wallet already connected in Wallet can use its existing connection for Add.
 Other WalletConnect choices show the relay disclosure before pairing and use a
@@ -395,4 +397,23 @@ limits remain bound in the message fields. Runtime verifies the exact message.
 Every Add takes one wallet signature, followed by one passkey approval. The wallet
 shares its address through extension approval or WalletConnect pairing before
 signing the Add proof. This path creates a sign-in method. To use the wallet for
-payments, connect it separately in Wallet.
+apps and websites, open its Wallet entry and turn on Apps and websites.
+
+## Account wallet inventory
+
+`GET /api/apps/wallet/wallet/inventory` accepts the current Home, System or
+Wallet launch authority. Runtime projects wallet-provider's active linked
+accounts and auth's current account sign-in methods. It matches verified
+address and network within that principal. EVM checksum case shares an identity;
+Bitcoin address case and network remain exact. The response contains the account
+ID and name, and entries with `inventory_id`, address, chain namespace, app-use
+`accounts`, and optional `sign_in` metadata. The identity ID is a navigation key.
+Each source record keeps its own authority and removal path.
+
+Wallet reads this projection on refresh. A sign-in-only entry shows System's
+existing use and Manage in System. Its app switch starts a separate ownership
+signature. Home selects the existing connector authority, checks the selected
+address and network, and retires a cancelled request before proof completion.
+System reads the same inventory and shows its `sign_in` entries under the
+current account. Sign-in enrollment, removal, sessions and passkey gates remain
+owned by auth. Removing either use leaves the other use visible.

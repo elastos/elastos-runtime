@@ -29,6 +29,42 @@ component, capability-request, and Inspect callers cannot select a principal,
 forward a local bearer token, dispatch `wallet_contract`, or request any Wallet
 account, proof, approval, signing, secret, Recovery, or transaction operation.
 
+## Wallet list and uses
+
+Runtime supplies one account-scoped read-only inventory at
+`GET /api/apps/wallet/wallet/inventory`. It joins active wallet-provider account
+links and auth wallet sign-in methods by verified address and network. The
+projection creates neither a store nor a new proof binding. Auth owns sign-in;
+wallet-provider owns app use, defaults and approval requests.
+
+Wallet shows each inventory entry once. Its Used by section links System use
+to System > Accounts and gives Wallet one Apps and websites switch. One
+ownership signature enables app use. A fresh passkey approval removes the
+selected entry's app-use records. The switch keeps the saved value until
+completion, and Cancel preserves that value. Every later app request has its
+own approval. Built-in addresses keep their balances, Send, Receive and key
+management controls. UniSat proves Bitcoin address ownership to apps. Sending
+Bitcoin from this Home is not available yet.
+
+For a sign-in-only extension wallet, Wallet sends Home the inventory identity.
+Home reads its own account inventory, obtains a live connector launch, and uses
+the existing ownership challenge and verification endpoints with that connector's
+authority. Home checks the selected address and network before signing and the
+request lifetime before submission. WalletConnect retains its connector window,
+pairing and persistent internet permission steps. These transport permissions
+remain separate from sign-in enrollment.
+
+### General approval-method interface (proposed)
+
+A future `proof.sign` interface can declare supported purposes:
+`sign-in-enrollment`, `sign-in`, `wallet-ownership`, and `app-request`. Runtime
+would bind the caller, account, Home, address, network, exact purpose, payload,
+nonce and expiry. The approval method would obtain one purpose-specific
+signature, and Runtime would verify and settle only that operation. Such an
+interface would let System use a method directly while Wallet supplies the list.
+The current manifests keep their existing Wallet-specific methods. This proposed
+interface adds zero callable operations or authority to those manifests.
+
 ## Authority Model
 
 Runtime authority comes first:
