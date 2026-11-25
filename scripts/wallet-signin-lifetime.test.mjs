@@ -8,21 +8,21 @@ test('Add wallet releases Home and System after list failure, close, or the mana
   const fixture=await signinFixture(),browser=await requireProductSmokePlaywright().chromium.launch({headless:true});
   const context=await browser.newContext();await context.addInitScript(installSigninProviders,{evmAddress,bitcoinAddress,theme:'light'});
   const page=await context.newPage();page.setDefaultTimeout(10000);let failSummary=false;
-  await page.route('**/api/apps/system/summary',route=>failSummary?route.fulfill({status:503,contentType:'application/json',body:'{}'}):route.continue());
+  await page.route('**/api/apps/wallet/wallet/inventory',route=>failSummary?route.fulfill({status:503,contentType:'application/json',body:'{}'}):route.continue());
   try {
     fixture.state.methods=[];fixture.state.connected=[];
     await page.goto(fixture.origin+'/home/');await page.waitForFunction(()=>window.fixtureReady);await page.evaluate(()=>window.showFixtureApps());
-    const system=page.frameLocator('iframe[title=system]'),wallet=page.frameLocator('iframe[title=wallet]'),add=system.getByRole('button',{name:'Add wallet',exact:true});
-    await add.waitFor();failSummary=true;await add.click();await wallet.locator('#wallet-signers[data-signin=list-error]').waitFor();
-    failSummary=false;await wallet.getByRole('button',{name:'Try again',exact:true}).click();await wallet.locator('#wallet-signers[data-signin=options]').waitFor();
+    const system=page.frameLocator('iframe[title=system]'),wallet=page,add=system.getByRole('button',{name:'Add wallet',exact:true});
+    await add.waitFor();failSummary=true;await add.click();await wallet.locator('.signin-dialog[data-state=list-error]').waitFor();
+    failSummary=false;await wallet.getByRole('button',{name:'Try again',exact:true}).click();await wallet.locator('.signin-dialog[data-state=options]').waitFor();
     await wallet.getByRole('button',{name:'Cancel',exact:true}).click();await add.waitFor();
-    await page.clock.install();await add.click();await wallet.locator('#wallet-signers[data-signin=options]').waitFor();
+    await page.clock.install();await add.click();await wallet.locator('.signin-dialog[data-state=options]').waitFor();
     assert(await system.locator('#wallet-signin-add').isEnabled(),'a second click can focus the active journey');
-    await page.clock.fastForward(walletSigninRequestTimeoutMs-15000);await wallet.locator('#wallet-signers[data-signin]').waitFor({state:'detached'});await add.waitFor();
-    await add.click();await wallet.locator('#wallet-signers[data-signin=options]').waitFor();
-    await page.locator('iframe[title=wallet]').evaluate(f=>f.remove());await page.locator('#show-system').evaluate(el=>el.click());await add.waitFor();
-    await add.click();await page.frameLocator('iframe[title=wallet]').locator('#wallet-signers[data-signin=options]').waitFor();
-    await page.frameLocator('iframe[title=wallet]').getByRole('button',{name:'Cancel',exact:true}).click();
+    await page.clock.fastForward(walletSigninRequestTimeoutMs-15000);await wallet.locator('.signin-dialog[data-state]').waitFor({state:'detached'});await add.waitFor();
+    await add.click();await wallet.locator('.signin-dialog[data-state=options]').waitFor();
+    await page.getByRole('button',{name:'Cancel',exact:true}).click();await page.locator('#show-system').evaluate(el=>el.click());await add.waitFor();
+    await add.click();await page.locator('.signin-dialog[data-state=options]').waitFor();
+    await page.getByRole('button',{name:'Cancel',exact:true}).click();
   }finally{await context.close();await browser.close();await fixture.close();}
 });
 
@@ -55,8 +55,9 @@ test('a declined extension signature keeps the wallet refusal instead of a disco
     await page.goto(fixture.origin+'/home/');await page.waitForFunction(()=>window.fixtureReady);await page.evaluate(()=>window.showFixtureApps());
     const system=page.frameLocator('iframe[title=system]');await system.getByRole('button',{name:'Add wallet',exact:true}).click();
     await page.evaluate(()=>window.walletFixture.mode='rejected');
-    await page.frameLocator('iframe[title=wallet]').locator('.wallet-method-head').filter({hasText:'MetaMask'}).getByRole('button',{name:'Choose',exact:true}).click();
-    const error=page.frameLocator('iframe[title=wallet]').locator('#wallet-signers[data-signin=error]');await error.waitFor();
+    await page.locator('.signin-dialog .connection-option').filter({hasText:'MetaMask'}).click();
+    await page.getByRole('button',{name:'Sign message',exact:true}).click();
+    const error=page.locator('.signin-dialog[data-state=error]');await error.waitFor();
     assert.match(await error.innerText(),/Your wallet declined the request/);assert.equal(fixture.state.methods.length,0);
   }finally{await context.close();await browser.close();await fixture.close();}
 });
@@ -84,15 +85,16 @@ test('expired address selection retries Add with one proof and zero payment reco
   try {
     fixture.state.methods=[];fixture.state.connected=[];
     await page.goto(fixture.origin+'/home/');await page.waitForFunction(()=>window.fixtureReady);await page.evaluate(()=>window.showFixtureApps());
-    await page.clock.install();const system=page.frameLocator('iframe[title=system]'),wallet=page.frameLocator('iframe[title=wallet]');
-    await system.getByRole('button',{name:'Add wallet',exact:true}).click();await wallet.locator('#wallet-signers[data-signin=options]').waitFor();
+    await page.clock.install();const system=page.frameLocator('iframe[title=system]'),wallet=page;
+    await system.getByRole('button',{name:'Add wallet',exact:true}).click();await wallet.locator('.signin-dialog[data-state=options]').waitFor();
     await page.evaluate(()=>window.walletFixture.mode='pending');
-    await wallet.locator('.wallet-method-head').filter({hasText:'MetaMask'}).getByRole('button',{name:'Choose',exact:true}).click();
-    await wallet.locator('#wallet-signers[data-signin=connecting]').waitFor();
+    await wallet.locator('.connection-option').filter({hasText:'MetaMask'}).click();
+    await wallet.locator('.signin-dialog[data-state=connecting]').waitFor();
     await page.clock.fastForward(180001);fixture.state.clockOffsetMs=180001;
-    await wallet.locator('#wallet-signers[data-signin=error]').waitFor();
+    await wallet.locator('.signin-dialog[data-state=error]').waitFor();
     await page.evaluate(()=>{window.walletFixture.mode='normal';for(const job of window.walletFixture.pending.splice(0))job.resolve(job.result);});
     await wallet.getByRole('button',{name:'Try again',exact:true}).click();
+    await page.getByRole('button',{name:'Sign message',exact:true}).click();await page.getByRole('button',{name:'Approve with passkey',exact:true}).click();
     await system.locator('[data-wallet-method]').waitFor();assert.equal(fixture.state.methods.length,1);
     assert.equal(fixture.state.connected.length,0);assert.equal(await page.locator('iframe[title=wallet-metamask]').count(),0);
     assert.equal(await page.evaluate(()=>window.walletFixture.calls.filter(c=>c.method==='personal_sign').length),1);

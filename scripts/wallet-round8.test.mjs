@@ -19,17 +19,18 @@ for(const engine of ['chromium','webkit'])for(const width of [1280,390])for(cons
   try{
     await page.goto(f.origin+'/home/');await page.waitForFunction(()=>window.fixtureReady);
     await page.evaluate(()=>{window.showFixtureApps();walletFixture.passkeyMode='pending';});
-    const system=page.frameLocator('iframe[title=system]'),wallet=page.frameLocator('iframe[title=wallet]');
+    const system=page.frameLocator('iframe[title=system]'),wallet=page;
     await system.getByRole('button',{name:'Add wallet',exact:true}).click();
-    await wallet.locator('#wallet-signers[data-signin=options]').waitFor();
-    await wallet.locator('.wallet-method-head').filter({hasText:kind}).getByRole('button',{name:'Choose',exact:true}).click();
+    await wallet.locator('.signin-dialog[data-state=options]').waitFor();
+    await wallet.locator('.connection-option').filter({hasText:kind}).click();
     if(kind==='WalletConnect'){
       await page.locator('.signin-dialog[data-state=pairing]').waitFor();
       await page.locator('iframe[title=WalletConnect]').evaluate(frame=>frame.contentWindow.postMessage('fixture-pair','*'));
     }
-    await wallet.locator('#wallet-signers[data-signin=passkey]').waitFor();
-    const copy=await wallet.locator('#wallet-signin-actions .wallet-state').allTextContents();
-    assert.deepEqual(copy,kind==='WalletConnect'?['Confirm with your passkey.',relayNotice]:['Confirm with your passkey.']);
+    await wallet.getByRole('button',{name:'Sign message',exact:true}).click();await wallet.getByRole('button',{name:'Approve with passkey',exact:true}).click();
+    await wallet.locator('.signin-dialog[data-state=passkey]').waitFor();
+    const copy=await wallet.locator('.signin-dialog .signin-body').innerText();
+    assert(copy.includes("Allow this wallet to sign in to Alex's account."));if(kind==='WalletConnect')assert(copy.indexOf("Allow this wallet")<copy.indexOf(relayNotice));
     assert.equal(f.state.methods.length,0,'the instruction is visible before the change completes');
     if(pictures){
       assert.equal(execFileSync('git',['status','--porcelain'],{encoding:'utf8'}).trim(),'','pictures bind a clean candidate');

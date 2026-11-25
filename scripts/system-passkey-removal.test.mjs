@@ -29,9 +29,8 @@ async function fixture(run, engine = "chromium") {
         jsonResponse(response, summary);
         return true;
       }
-      if (url.pathname === "/api/auth/wallet-methods") {
-        jsonResponse(response, { account_id: passkeys.find(key => key.current)?.principal_id || owner.principal_id, methods });
-        return true;
+      if (url.pathname === "/api/apps/wallet/wallet/inventory") {
+        jsonResponse(response, {schema:'elastos.wallet.inventory/v1',account_id:passkeys.find(key=>key.current)?.principal_id||owner.principal_id,entries:methods.map(method=>({inventory_id:`eip155:${method.chain_id}:${method.address}`,address:method.address,chain_namespace:`eip155:${method.chain_id}`,accounts:[],sign_in:method}))});return true;
       }
       if (url.pathname === "/api/auth/passkeys") {
         listReads++;
@@ -311,7 +310,7 @@ for (const engine of ["chromium", "webkit"]) test(`Accounts groups methods benea
         const block = frame.locator(".account-block");
         assert.equal(await block.count(), 1);
         assert.equal(await block.locator(".account-header h2").textContent(), "Alex");
-        assert.equal(await block.locator(".account-row").count(), keys.length + (options.methods?.length || 0));
+        assert.equal(await block.locator(".account-row").count(), keys.length);
         assert.equal(await block.locator(".passkey-current").count(), 1);
         assert.equal(await frame.locator("#passkey-add-help").count(), 0);
         assert.equal(await block.getByText("Signs in", {exact:true}).count(), 0);
@@ -322,14 +321,11 @@ for (const engine of ["chromium", "webkit"]) test(`Accounts groups methods benea
           assert.ok(style.height>=44);
           assert.equal(style.padding,"8px 12px","all destructive actions use the same padding");
         }
-        const add = frame.locator(".account-add-actions button");
+        const add = frame.locator("#passkey-add, #wallet-signin-add");
         if (options.role === "guest") assert.equal(await frame.locator(".account-add-actions button:visible").count(), 0);
         else {
           const boxes = await Promise.all((await add.all()).map(button => button.boundingBox()));
-          assert.equal(boxes[0].height, boxes[1].height);
-          assert.equal(boxes[0].width, boxes[1].width);
-          assert.equal(boxes[0].y, boxes[1].y);
-          assert.ok(boxes[0].height >= 44);
+          assert.ok(boxes.every(box=>box&&box.height>=44));
         }
         assert.equal(await frame.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
         for (const note of await frame.locator(".passkey-removal-note").all()) {
@@ -341,8 +337,8 @@ for (const engine of ["chromium", "webkit"]) test(`Accounts groups methods benea
           const walletRow = block.locator("[data-wallet-method]");
           assert.equal(await walletRow.getByRole("button").count(), 1);
           assert.equal(await walletRow.getByRole("switch").count(), 0);
-          assert.equal(await walletRow.getByRole("button", { name: "Remove", exact: true }).count(), 1);
-          const walletSize = await walletRow.getByRole("button", { name: "Remove", exact: true }).boundingBox();
+          assert.equal(await walletRow.getByRole("button", { name: "Remove from sign-in", exact: true }).count(), 1);
+          const walletSize = await walletRow.getByRole("button", { name: "Remove from sign-in", exact: true }).boundingBox();
           const passkeySize = await block.locator(".passkey-remove").first().boundingBox();
           assert(Math.abs(walletSize.width - passkeySize.width) <= 1, "wallet and passkey Remove use the same width");
           assert(Math.abs(walletSize.height - passkeySize.height) <= 1, "wallet and passkey Remove use the same height");

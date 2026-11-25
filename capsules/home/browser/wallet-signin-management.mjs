@@ -16,6 +16,8 @@ export function renderWalletSigninManagement(body, footer, state, {account, choo
       row.append(icon,label,node('span','›'));list.append(row);
     }
     body.append(list);
+  } else if(['loading','choice','connecting','error','list-error','unknown'].includes(state.stage)) {
+    const status=node('p',state.message || (state.stage==='connecting'?'Continue in your wallet.':'Loading wallets…'),'connection-note');status.setAttribute('role','status');body.append(status);
   } else {
     const signing=['review','signing'].includes(state.stage);
     body.append(node('p',signing?'1 of 2 · Wallet signature':'2 of 2 · Passkey','one-step'));

@@ -24,18 +24,19 @@ for(const engine of ['chromium','webkit'])for(const name of ['Rabby Wallet','Bra
  try{
   await page.goto(f.origin+'/home/');await page.waitForFunction(()=>window.fixtureReady);await page.evaluate(()=>window.showFixtureApps());
   await page.frameLocator('iframe[title=system]').getByRole('button',{name:'Add wallet',exact:true}).click();
-  const wallet=page.frameLocator('iframe[title=wallet]');await wallet.locator('#wallet-signers[data-signin=options]').waitFor();
-  assert.equal(await wallet.locator('.wallet-method-head').filter({hasText:'Rabby Wallet'}).count(),1);assert.equal(await wallet.locator('.wallet-method-head').filter({hasText:'Brave Wallet'}).count(),1);
+  const wallet=page;await wallet.locator('.signin-dialog[data-state=options]').waitFor();
+  assert.equal(await wallet.locator('.connection-option').filter({hasText:'Rabby Wallet'}).count(),1);assert.equal(await wallet.locator('.connection-option').filter({hasText:'Brave Wallet'}).count(),1);
   assert.equal(await wallet.locator('.wallet-method-head .wallet-method-metamask').count(),0);
   await shot(page,`chooser-${engine}-${name.split(' ')[0]}-1280`);await page.setViewportSize({width:390,height:900});await shot(page,`chooser-${engine}-${name.split(' ')[0]}-390`);
   await page.evaluate(()=>walletFixture.mode='pending');
-  await wallet.locator('.wallet-method-head').filter({hasText:name}).getByRole('button',{name:'Choose',exact:true}).click();
-  await wallet.locator('#wallet-signers[data-signin=connecting]').waitFor();assert.match(await wallet.locator('#wallet-signin-actions').innerText(),/Continue in your wallet/);
+  await wallet.locator('.connection-option').filter({hasText:name}).click();
+  await wallet.locator('.signin-dialog[data-state=connecting]').waitFor();assert.match(await wallet.locator('.signin-dialog').innerText(),/Continue in/);
   await shot(page,`connecting-${engine}-${name.split(' ')[0]}-390`);await page.setViewportSize({width:1280,height:900});await shot(page,`connecting-${engine}-${name.split(' ')[0]}-1280`);await page.setViewportSize({width:390,height:900});
   await page.waitForFunction(()=>walletFixture.pending.length>0);await page.evaluate(()=>{walletFixture.mode='normal';for(const job of walletFixture.pending.splice(0))job.resolve(job.result);});
-  await wallet.locator('#wallet-signers[data-signin=passkey]').waitFor();assert.equal(await page.evaluate(()=>walletFixture.calls.filter(c=>c.method==='personal_sign').length),1);assert.equal(f.state.connected.length,0);
+  await wallet.getByRole('button',{name:'Sign message',exact:true}).click();await wallet.getByRole('button',{name:'Approve with passkey',exact:true}).click();
+  await wallet.locator('.signin-dialog[data-state=passkey]').waitFor();assert.equal(await page.evaluate(()=>walletFixture.calls.filter(c=>c.method==='personal_sign').length),1);assert.equal(f.state.connected.length,0);
   assert.equal(await page.evaluate(()=>walletFixture.calls.find(c=>c.method==='personal_sign').providerId),name==='Rabby Wallet'?'io.rabby':'com.brave.wallet');
-  assert.equal(await wallet.locator('#wallet-signin-actions').innerText(),'Confirm with your passkey.\n\nCancel');
+  assert.match(await wallet.locator('.signin-dialog').innerText(),/Allow this wallet to sign in to Alex's account/);
   await shot(page,`passkey-${engine}-${name.split(' ')[0]}-390`);await page.setViewportSize({width:1280,height:900});await shot(page,`passkey-${engine}-${name.split(' ')[0]}-1280`);
   await page.evaluate(()=>{walletFixture.passkeyMode='normal';for(const job of walletFixture.pending.splice(0))job.resolve(job.result);});
   await page.frameLocator('iframe[title=system]').locator('[data-wallet-method]').waitFor();assert.equal(f.state.methods.length,1);

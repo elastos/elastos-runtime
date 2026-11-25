@@ -22,6 +22,7 @@ struct WalletInventoryEntry {
     address: String,
     chain_namespace: String,
     accounts: Vec<SystemWalletAccountSummary>,
+    wallet_display_name: Option<String>,
     sign_in: Option<serde_json::Value>,
 }
 
@@ -61,6 +62,7 @@ fn wallet_inventory_entries(
                 address,
                 chain_namespace: namespace,
                 accounts: vec![account],
+                wallet_display_name: None,
                 sign_in: None,
             });
         }
@@ -95,9 +97,42 @@ fn wallet_inventory_entries(
                 address,
                 chain_namespace: namespace,
                 accounts: vec![],
+                wallet_display_name: None,
                 sign_in: Some(method.clone()),
             });
         }
+    }
+    for entry in &mut entries {
+        // Revoked app links retain display data, while auth still owns sign-in.
+        // They contribute zero app-use records to this projection.
+        entry.wallet_display_name = entry
+            .accounts
+            .first()
+            .and_then(|account| account.wallet_display_name.clone())
+            .or_else(|| {
+                let method = entry.sign_in.as_ref()?;
+                accounts
+                    .iter()
+                    .filter(|account| {
+                        account["principal_id"].as_str() == Some(principal)
+                            && account["connector_id"].as_str()
+                                == method["connector"]
+                                    .as_str()
+                                    .map(|connector| match connector {
+                                        "metamask" => "wallet-metamask",
+                                        "unisat" => "wallet-unisat",
+                                        "walletconnect" => "wallet-walletconnect",
+                                        _ => "",
+                                    })
+                            && account["chain_namespace"].as_str() == Some(&entry.chain_namespace)
+                            && account["address"].as_str().is_some_and(|address| {
+                                wallet_inventory_identity(&entry.chain_namespace, address).1
+                                    == entry.address
+                            })
+                    })
+                    .max_by_key(|account| account["linked_at"].as_u64().unwrap_or(0))
+                    .and_then(|account| system_wallet_account_summary(account)?.wallet_display_name)
+            });
     }
     entries.sort_by_key(|entry| {
         let connector = entry
@@ -142,7 +177,7 @@ pub(in crate::api::gateway) async fn wallet_inventory(
             &state,
             &authority,
             elastos_wallet_contract::WalletProviderOperationV2::ListAccounts {
-                include_revoked: false,
+                include_revoked: true,
             },
         )
         .await?;
@@ -604,6 +639,27 @@ mod wallet_inventory_tests {
     }
 
     #[test]
+    fn wallet_inventory_removal_keeps_peer_display_without_app_authority() {
+        let mut app = account("owner", "eip155:8453", "0x1234");
+        app["connector_id"] = json!("wallet-walletconnect");
+        app["wallet_display_name"] = json!("Rainbow");
+        app["revoked_at"] = json!(2);
+        let method = json!({"method_id":"signin", "connector":"walletconnect", "address":"0x1234", "chain_id":8453, "network":""});
+        let entries = wallet_inventory_entries(
+            "owner",
+            std::slice::from_ref(&app),
+            std::slice::from_ref(&method),
+        );
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].accounts.is_empty());
+        assert_eq!(entries[0].wallet_display_name.as_deref(), Some("Rainbow"));
+        app["principal_id"] = json!("another-account");
+        assert!(wallet_inventory_entries("owner", &[app], &[method])[0]
+            .wallet_display_name
+            .is_none());
+    }
+
+    #[test]
     fn wallet_inventory_keeps_bitcoin_network_and_connector_identity_separate() {
         let method = json!({"method_id":"signin", "connector":"unisat", "address":"bc1qverified", "chain_id":0, "network":"bitcoin"});
         let mut app = account(
@@ -612,7 +668,11 @@ mod wallet_inventory_tests {
             "bc1qverified",
         );
         app["connector_id"] = json!("wallet-unisat");
-        let entries = wallet_inventory_entries("owner", &[app.clone()], &[method.clone()]);
+        let entries = wallet_inventory_entries(
+            "owner",
+            std::slice::from_ref(&app),
+            std::slice::from_ref(&method),
+        );
         assert_eq!(entries.len(), 1);
         assert!(entries[0].sign_in.is_some());
         app["chain_namespace"] = json!("bip122:testnet");

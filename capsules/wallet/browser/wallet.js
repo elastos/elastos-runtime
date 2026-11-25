@@ -155,6 +155,7 @@ async function connectInventoryApps(entry, current, method, signal) {
     return;
   }
   openApprovalMethod(`wallet-${connector}`);
+  if (!entry) return;
   // The connector owns the existing ownership proof and transport permissions.
   // Observe only the exact selected identity, then refresh the saved projection.
   const deadline = Date.now() + 180000;
@@ -540,6 +541,9 @@ function onRuntimeEvents(event) {
     return;
   }
   const message = event.data || {};
+  if (message.type === 'home:wallet-signin-changed' && Object.keys(message).length === 1) {
+    refreshWalletState().catch(error=>showStatus(String(error.message || error),'error')); return;
+  }
   if (message.type !== "elastos:runtime-events" || !Array.isArray(message.events)) {
     return;
   }

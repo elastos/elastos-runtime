@@ -13,21 +13,16 @@ test('Home session check survives token renewal and rejects a replacement or cle
  const next=home.createHomeAuthorityCheck();home.clearHomeAuthorityToken();assert.equal(next(),false);
 });
 
-test('System connected-wallet callback accepts only the current Home request and parent',async()=>{
- const {requestWalletSigninChange,requestConnectedSigninWallets}=await import('../capsules/home/browser/wallet-signin-methods.mjs');
- const listen=new EventTarget();let reads=0,request;
- const top={postMessage(data){request=data;}};
- globalThis.window=Object.assign(listen,{top});
- const emit=(data,{source=top,origin='http://localhost:8093',ports=[]}={})=>listen.dispatchEvent(Object.assign(new Event('message'),{data,source,origin,ports}));
- try{
-  const pending=requestWalletSigninChange({action:'add',token:'system-token',origin:'http://localhost:8093',loadConnected:async()=>{reads++;return [{address:'owned'}];}});
-  const data={type:'home:wallet-signin-accounts-request',requestId:request.requestId};
-  for(const options of [{source:{}},{origin:'https://other.example'}])emit(data,options);
-  emit({...data,requestId:'retired'});emit({...data,extra:true});assert.equal(reads,0);
-  const accounts=await requestConnectedSigninWallets({postMessage(message,_target,ports){emit(message,{ports});}},request.requestId);
-  assert.deepEqual(accounts,[{address:'owned'}]);assert.equal(reads,1);
-  emit({type:'home:wallet-signin-result',requestId:request.requestId,result:{status:'cancelled'}});
-  assert.deepEqual(await pending,{status:'cancelled'});
-  await assert.rejects(requestConnectedSigninWallets({postMessage(){}},'expired',{timeoutMs:1}),/could not load/);
+test('System receives only the current Home result and sends zero client inventory rows',async()=>{
+ const {requestWalletSigninChange}=await import('../capsules/home/browser/wallet-signin-methods.mjs');
+ const listen=new EventTarget();let request,settled=false;
+ const top={postMessage(data){request=data;}};globalThis.window=Object.assign(listen,{top});
+ const emit=(data,{source=top,origin='http://localhost:8093'}={})=>listen.dispatchEvent(Object.assign(new Event('message'),{data,source,origin}));
+ try {
+  const pending=requestWalletSigninChange({action:'add',token:'system-token',origin:'http://localhost:8093'}).then(value=>{settled=true;return value;});
+  const result={type:'home:wallet-signin-result',requestId:request.requestId,result:{status:'cancelled'}};
+  emit(result,{source:{}});emit(result,{origin:'https://other.example'});emit({...result,requestId:'retired'});
+  await Promise.resolve();assert.equal(settled,false);assert.deepEqual(Object.keys(request).sort(),['action','homeToken','methodId','requestId','type']);
+  emit(result);assert.deepEqual(await pending,{status:'cancelled'});
  }finally{delete globalThis.window;}
 });

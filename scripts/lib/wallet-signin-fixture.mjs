@@ -22,6 +22,7 @@ export function fixtureInventory(state) {
     const id = identity(namespace, method.address);
     if (!entries.has(id)) entries.set(id, {inventory_id:id,address:method.address,chain_namespace:namespace,accounts:[],sign_in:null});
     entries.get(id).sign_in = method;
+    entries.get(id).wallet_display_name ||= state.revokedAccounts?.find(a=>a.chain_namespace===namespace&&a.address===method.address)?.wallet_display_name;
   }
   const rank=entry=>({metamask:1,unisat:2,walletconnect:3}[entry.accounts[0]?.connector_id?.replace('wallet-','')||entry.sign_in?.connector]||0);
   return {schema:'elastos.wallet.inventory/v1',account_id:'principal:alex',account_name:'Alex',entries:[...entries.values()].sort((a,b)=>rank(a)-rank(b))};
@@ -170,7 +171,7 @@ export async function signinFixture() {
         if(removeWallet && req.method==='DELETE') {
           const id=decodeURIComponent(removeWallet[1]);
           if(JSON.stringify(state.stepUps.get(body.step_up_token))!==JSON.stringify({operation:'wallet.account.delete',request:{account_id:id}}))return json({},403);
-          state.connected=state.connected.filter(a=>a.account_id!==id);return json({});
+          state.revokedAccounts=[...(state.revokedAccounts||[]),...state.connected.filter(a=>a.account_id===id)];state.connected=state.connected.filter(a=>a.account_id!==id);return json({});
         }
         if(path==='/api/provider/chain/balance')return json({status:'ok',data:{balance_hex:'0x'+BigInt(state.balanceValues?.[body.address]?.[body.network] || 0).toString(16)}});
         if(path==='/api/wallet/prices')return json({prices:{},stale:false});

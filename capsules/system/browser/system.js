@@ -2549,7 +2549,7 @@ async function refreshAccountList() {
   }
   try {
     const inventory = await readWalletInventory(apiHomeToken);
-    const methods = {account_id: inventory.account_id, methods: inventory.entries.filter(entry => entry.sign_in).map(entry => ({...entry.sign_in, inventory_id:entry.inventory_id, wallet_display_name:entry.accounts[0]?.wallet_display_name}))};
+    const methods = {account_id: inventory.account_id, methods: inventory.entries.filter(entry => entry.sign_in).map(entry => ({...entry.sign_in, inventory_id:entry.inventory_id, wallet_display_name:entry.wallet_display_name || entry.accounts[0]?.wallet_display_name}))};
     if (version !== walletSigninListVersion) return;
     walletSigninMethods = methods;
     renderAccounts(Array.isArray(data.passkeys) ? data.passkeys : []);
