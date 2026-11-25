@@ -1968,7 +1968,19 @@ async function bootHome(context, origin) {
       })),
       recovery: document.querySelector("#shell-host-recovery:not([hidden])")?.textContent?.trim() || null,
     })).catch(() => null);
-    throw new Error(`${error.message}\nhost state: ${JSON.stringify(hostState, null, 2)}\nconsole: ${JSON.stringify(consoleErrors.slice(-5), null, 2)}`);
+    const observedFrames = await Promise.all(page.frames().map(async (frame) => ({
+      name: frame.name(),
+      url: frame.url(),
+      document: await Promise.race([
+        frame.evaluate(() => ({
+          href: location.href,
+          ready: document.readyState,
+          dock: Boolean(document.querySelector(".taskbar")),
+        })).catch((failure) => ({ error: String(failure.message).slice(0, 200) })),
+        sleep(1_000).then(() => ({ error: "frame document unavailable" })),
+      ]),
+    })));
+    throw new Error(`${error.message}\nhost state: ${JSON.stringify(hostState, null, 2)}\nobserved frames: ${JSON.stringify(observedFrames, null, 2)}\nconsole: ${JSON.stringify(consoleErrors.slice(-5), null, 2)}`);
   }
   const frame = homeGuiFrame(page);
   await waitFor(() => frame.locator(".taskbar").isVisible(), BOOT_TIMEOUT_MS, "Home GUI dock");
