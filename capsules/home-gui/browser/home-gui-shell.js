@@ -16,7 +16,7 @@ import {
   setHomeGuiMounted,
   showHomeGuiDesktop,
   syncHomeGuiProjection,
-} from "./home-gui.js?v=home-20261101d";
+} from "./home-gui.js?v=home-20261110a";
 import {
   acceptHomeBrowserContextId,
   desktopBackdrop,

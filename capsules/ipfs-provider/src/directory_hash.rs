@@ -1474,6 +1474,7 @@ mod tests {
             kubo_child: None,
             data_dir: fixture.root.path().into(),
             repo_dir: fixture.repo.clone(),
+            public: None,
         };
         // Exercise the production wire handler from Cold while the fixture owns
         // the real isolated daemon. Readiness must reuse that lifecycle, not Cat/pin.
@@ -1603,6 +1604,7 @@ mod tests {
             kubo_child: None,
             data_dir: root.into(),
             repo_dir: root.join("unused-repo"),
+            public: None,
         }
     }
 

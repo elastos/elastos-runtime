@@ -11,13 +11,6 @@ use elastos_model_contract::{
     RUNTIME_CREATE_BINDING_SCHEMA,
 };
 
-const LIBRARY_EVENTS_STREAM_KEEPALIVE_SECS: u64 = 15;
-const LIBRARY_TRANSFER_RECEIPT_SCHEMA: &str = "elastos.object.transfer.receipt/v1";
-const LIBRARY_TRANSFER_REQUEST_ID_HEADER: &str = "x-elastos-request-id";
-const LIBRARY_TRANSFER_RECEIPT_HEADER: &str = "x-elastos-transfer-receipt";
-const LIBRARY_DOWNLOAD_STREAM_CHUNK_BYTES: usize = 64 * 1024;
-const LIBRARY_UPLOAD_SESSION_SCHEMA: &str = "elastos.object.upload-session/v1";
-const LIBRARY_UPLOAD_SESSION_TTL_SECS: u64 = 24 * 60 * 60;
 const ASSISTANT_CAPSULE_ID: &str = "assistant";
 /// The Home Agent capsule reaches the model provider through the same typed
 /// contract as Assistant; every run is bound and audited to the capsule the
@@ -27,8 +20,7 @@ const MODEL_TEXT_OUTPUT_SCHEMA: &str = "elastos.model.output.text/v1";
 const MODEL_OBJECT_OUTPUT_SCHEMA: &str = "elastos.model.output.object/v1";
 const MODEL_CONTENT_OUTPUT_SCHEMA: &str = "elastos.model.output.content/v1";
 const MODEL_OUTPUT_URI_MAX_BYTES: usize = 4 * 1024;
-use crate::protected_content_runtime::ELACITY_PLAYER_CAPSULE_ID;
-static LIBRARY_UPLOAD_SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
+use crate::protected_content_runtime::{ELACITY_PLAYER_CAPSULE_ID, ELACITY_READER_CAPSULE_ID};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -65,48 +57,6 @@ struct ModelProviderEffectAudit<'a> {
     failed_reason: &'static str,
 }
 
-#[derive(Debug, Deserialize)]
-pub(super) struct LibraryUploadQuery {
-    uri: String,
-    #[serde(default)]
-    if_revision: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct LibraryUploadStartBody {
-    uri: String,
-    #[serde(default)]
-    mime: Option<String>,
-    #[serde(default)]
-    size_bytes: Option<u64>,
-    #[serde(default)]
-    if_revision: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct LibraryUploadSession {
-    schema: String,
-    upload_id: String,
-    principal_id: String,
-    session_id: String,
-    uri: String,
-    #[serde(default)]
-    mime: Option<String>,
-    #[serde(default)]
-    if_revision: Option<String>,
-    #[serde(default)]
-    total_bytes: Option<u64>,
-    received_bytes: u64,
-    chunk_count: u64,
-    created_at: u64,
-    updated_at: u64,
-}
-
-const RUNTIME_CUSTODY_CREATOR_PENDING_MESSAGE: &str =
-    "Runtime custody creator mint is pending exact Wallet or Chain settlement";
-const RUNTIME_CUSTODY_CREATOR_UNAVAILABLE_MESSAGE: &str =
-    "Runtime custody creator mint is unavailable";
-
 /// The creator tail fails closed with one opaque message; keep the actual
 /// cause and its source line in the operator log so a live failure can be
 /// located without re-instrumenting.
@@ -125,26 +75,62 @@ macro_rules! creator_mint_unavailable {
     };
 }
 
-/// Chain-provider answers on the creator tail. A `*_pending` code (the
-/// mint receipt or verified listing not yet finalized on enough evidence
-/// sources) is the Chain half of "pending exact Wallet or Chain settlement":
-/// the caller re-polls, exactly as it does while the Wallet approval is
-/// outstanding. Anything else fails closed with the cause in the log.
-fn creator_mint_chain_error(error: (StatusCode, String), line: u32) -> anyhow::Error {
-    let (status, message) = error;
-    let code = message.split(':').next().unwrap_or_default().trim();
-    if status == StatusCode::BAD_REQUEST && code.ends_with("_pending") {
-        return anyhow::anyhow!(RUNTIME_CUSTODY_CREATOR_PENDING_MESSAGE);
-    }
-    tracing::warn!(
-        line,
-        status = status.as_u16(),
-        error = %message,
-        "Runtime custody creator mint failed closed"
-    );
-    anyhow::anyhow!("({}, {message})", status.as_u16())
-        .context(format!("{}:{line}", file!()))
-        .context(RUNTIME_CUSTODY_CREATOR_UNAVAILABLE_MESSAGE)
+/// Download refuses for one reason a person can act on -- the copy is not
+/// theirs -- and fails closed for everything else, with the cause in the log.
+macro_rules! download_denied {
+    () => {
+        |error| {
+            tracing::warn!(
+                line = line!(),
+                error = ?error,
+                "Runtime custody download denied without an owned copy"
+            );
+            anyhow::anyhow!("{:?}", error)
+                .context(format!("{}:{}", file!(), line!()))
+                .context(crate::protected_content_runtime::RUNTIME_CUSTODY_DOWNLOAD_DENIED_MESSAGE)
+        }
+    };
+}
+
+macro_rules! download_denied_missing {
+    () => {
+        || {
+            tracing::warn!(
+                line = line!(),
+                "Runtime custody download denied without an owned copy"
+            );
+            anyhow::anyhow!("{}:{}", file!(), line!())
+                .context(crate::protected_content_runtime::RUNTIME_CUSTODY_DOWNLOAD_DENIED_MESSAGE)
+        }
+    };
+}
+
+macro_rules! download_unavailable {
+    () => {
+        |error| {
+            tracing::warn!(
+                line = line!(),
+                error = ?error,
+                "Runtime custody download failed closed"
+            );
+            anyhow::anyhow!("{:?}", error)
+                .context(format!("{}:{}", file!(), line!()))
+                .context(
+                    crate::protected_content_runtime::RUNTIME_CUSTODY_DOWNLOAD_UNAVAILABLE_MESSAGE,
+                )
+        }
+    };
+}
+
+macro_rules! download_unavailable_missing {
+    () => {
+        || {
+            tracing::warn!(line = line!(), "Runtime custody download failed closed");
+            anyhow::anyhow!("{}:{}", file!(), line!()).context(
+                crate::protected_content_runtime::RUNTIME_CUSTODY_DOWNLOAD_UNAVAILABLE_MESSAGE,
+            )
+        }
+    };
 }
 
 /// Same operator-log discipline for the buyer side: "purchase is denied
@@ -200,6 +186,12 @@ macro_rules! purchase_unavailable_missing {
     };
 }
 
+// The buy-side refusal helpers, shared with `gateway_marketplace_buy`.
+pub(super) use purchase_denied;
+pub(super) use purchase_denied_missing;
+pub(super) use purchase_unavailable;
+pub(super) use purchase_unavailable_missing;
+
 macro_rules! creator_mint_unavailable_missing {
     () => {
         || {
@@ -209,1397 +201,42 @@ macro_rules! creator_mint_unavailable_missing {
         }
     };
 }
-const RUNTIME_CUSTODY_CREATOR_OP_TYPE_CODE: u16 = 1;
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ResolvedProtectedContentCreatorMint {
-    schema: String,
-    network: String,
-    chain_namespace: String,
-    function: String,
-    ledger: String,
-    pay_token: String,
-    to: String,
-    data: String,
-    value: String,
-    content_access_id: String,
-    signed: bool,
-}
+#[path = "gateway_provider_proxy/creator_publish.rs"]
+mod creator_publish;
+#[path = "gateway_provider_proxy/custody_buy.rs"]
+mod custody_buy;
+#[path = "gateway_provider_proxy/library_transfer.rs"]
+mod library_transfer;
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ResolvedProtectedContentMintReceipt {
-    pub(crate) schema: String,
-    pub(crate) network: String,
-    pub(crate) chain_id: u64,
-    pub(crate) token_id: String,
-    pub(crate) operative: String,
-}
+pub(crate) use self::creator_publish::*;
+pub(crate) use self::custody_buy::*;
+pub(super) use self::library_transfer::*;
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ResolvedProtectedContentVerifiedListing {
-    pub(crate) schema: String,
-    pub(crate) network: String,
-    pub(crate) chain_id: u64,
-    pub(crate) seller: String,
-    pub(crate) ledger: String,
-    pub(crate) token_id: String,
-    pub(crate) operative: String,
-    pub(crate) quantity: String,
-    pub(crate) price: String,
-    pub(crate) pay_token: String,
-    #[serde(default)]
-    pub(crate) payment_processor: Option<String>,
-}
+// The creator-mint wire, defined once in the contracts crate and used by both
+// sides of it. These aliases keep the names this file already reads by.
+//
+// Declaring these shapes here as well is what let four field mismatches reach
+// a person: `deny_unknown_fields` on one side and a JSON literal on the other,
+// reconciled only by a hand-written mock that the tests answered with instead
+// of the capsule.
+pub(crate) use elastos_protected_content_contracts::{
+    ProtectedContentCreatorMintSourceV1 as ResolvedProtectedContentCreatorMintSource,
+    ProtectedContentCreatorMintV1 as ResolvedProtectedContentCreatorMint,
+    ProtectedContentMintReceiptV1 as ResolvedProtectedContentMintReceipt,
+};
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ResolvedProtectedContentPurchase {
-    schema: String,
-    network: String,
-    purchase_quantity: String,
-    verified_listing: ResolvedProtectedContentPurchaseListing,
-    steps: Vec<ResolvedProtectedContentPurchaseStep>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ResolvedProtectedContentPurchaseListing {
-    chain_id: u64,
-    seller: String,
-    ledger: String,
-    token_id: String,
-    operative: String,
-    available_quantity: String,
-    price: String,
-    pay_token: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    payment_processor: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ResolvedProtectedContentPurchaseStep {
-    stage: String,
-    to: String,
-    value: String,
-    data: String,
-}
-
-type ResolvedProtectedContentPurchaseAccess =
-    crate::protected_content_runtime::RuntimeCustodyPurchaseAccessEvidenceRecord;
-
-#[derive(Serialize)]
-struct RuntimeCustodyCreatorMetadata<'a> {
-    schema: &'static str,
-    name: &'a str,
-    mime_type: &'a str,
-    codecs: &'a str,
-    encrypted_content_cid: &'a str,
-    content_access_id: String,
-    protected_content_identity: &'a str,
-    mint_id: String,
-    publisher_profile_did: &'a str,
-    media_identity_base64: String,
-    key_envelope_identity_base64: String,
-    rights_policy_identity_base64: String,
-    content_key_commitment_base64: String,
-}
+/// One pay token the deployment offers, as the capsule describes it.
 
 #[derive(Clone)]
-struct RuntimeCustodyCreatorAccount {
-    account_id: String,
-    address: String,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct RuntimeCustodyCreatorPublishBinding {
-    pub account_id: String,
-    pub address: String,
-    pub source_digest: Digest32,
-}
-
-#[derive(Clone)]
-struct RuntimeCustodyCreatorChainPlan {
-    network: String,
-    chain_namespace: String,
-    ledger: String,
-    pay_token: String,
-    to: String,
-    data: String,
-    value: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ResolvedProtectedContentCreatorMintSource {
-    schema: String,
-    network: String,
-    chain_namespace: String,
-    ledger: String,
-    pay_token: String,
-    abi: String,
-    function: String,
-}
-
-fn runtime_custody_creator_mint_source_digest(
-    network: &str,
-    chain_namespace: &str,
-    ledger: &str,
-    pay_token: &str,
-    abi: &str,
-    function: &str,
-) -> Digest32 {
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(b"elastos.runtime-custody.creator-mint-source/v1");
-    for field in [network, chain_namespace, ledger, pay_token, abi, function] {
-        hasher.update((field.len() as u32).to_be_bytes());
-        hasher.update(field.as_bytes());
-    }
-    Digest32::new(hasher.finalize().into())
-}
-
-fn runtime_custody_creator_mint_source_digest_for_source(
-    source: &ResolvedProtectedContentCreatorMintSource,
-) -> Digest32 {
-    runtime_custody_creator_mint_source_digest(
-        &source.network,
-        &source.chain_namespace,
-        &source.ledger,
-        &source.pay_token,
-        &source.abi,
-        &source.function,
-    )
-}
-
-pub(super) async fn gateway_library_upload(
-    State(state): State<GatewayState>,
-    headers: HeaderMap,
-    Query(query): Query<LibraryUploadQuery>,
-    body: Bytes,
-) -> Response {
-    let uri = query.uri.trim();
-    if uri.is_empty() {
-        return (StatusCode::BAD_REQUEST, "library upload uri is required").into_response();
-    }
-    let context = match require_home_launch_token_for_any_context(
-        &state.data_dir,
-        &headers,
-        &[LIBRARY_CAPSULE_ID],
-    ) {
-        Ok(context) => context,
-        Err(err) => return gateway_provider_error_response("object", err),
-    };
-    let registry = match state.provider_registry.as_ref().cloned() {
-        Some(registry) => registry,
-        None => {
-            return gateway_provider_error_response(
-                "object",
-                anyhow::anyhow!("object provider unavailable"),
-            )
-        }
-    };
-    if registry
-        .registration_for_uri("elastos://object/*")
-        .await
-        .is_none()
-    {
-        return gateway_provider_error_response(
-            "object",
-            anyhow::anyhow!("object provider unavailable"),
-        );
-    }
-
-    let request_id = format!("object:upload:{}", now_ts());
-    if let Err(err) = append_provider_effect_audit(
-        &state.data_dir,
-        ProviderEffectAuditInput {
-            capsule_id: LIBRARY_CAPSULE_ID,
-            event_type: "object.provider.requested",
-            principal_id: &context.principal_id,
-            session_id: &context.session_id,
-            request_id: &request_id,
-            result: "requested",
-            reason: "Library requested object provider operation upload",
-        },
-    ) {
-        return gateway_provider_error_response(
-            "object",
-            anyhow::anyhow!("object provider audit failed: {}", err),
-        );
-    }
-
-    let mime = headers
-        .get(CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    let mut response = match crate::library::handle_library_upload_bytes_runtime(
-        &state.data_dir,
-        registry,
-        &context.principal_id,
-        uri,
-        mime,
-        query.if_revision.as_deref(),
-        &body,
-    )
-    .await
-    {
-        Ok(value) => value,
-        Err(err) => serde_json::json!({
-            "status": "error",
-            "code": "library_error",
-            "message": err.to_string(),
-        }),
-    };
-    let completed = response.get("status").and_then(|value| value.as_str()) == Some("ok");
-    let transfer_receipt = if completed {
-        let receipt = library_transfer_receipt(
-            "upload",
-            &request_id,
-            uri,
-            body.len(),
-            Some(body.len()),
-            None,
-            "completed",
-        );
-        if let Some(data) = response
-            .get_mut("data")
-            .and_then(serde_json::Value::as_object_mut)
-        {
-            data.insert("request_id".to_string(), serde_json::json!(request_id));
-            data.insert("receipt".to_string(), receipt.clone());
-        }
-        Some(receipt)
-    } else {
-        None
-    };
-    if completed {
-        crate::library::library_event_notifier().notify_waiters();
-    }
-    if let Err(err) = append_provider_effect_audit(
-        &state.data_dir,
-        ProviderEffectAuditInput {
-            capsule_id: LIBRARY_CAPSULE_ID,
-            event_type: if completed {
-                "object.provider.completed"
-            } else {
-                "object.provider.failed"
-            },
-            principal_id: &context.principal_id,
-            session_id: &context.session_id,
-            request_id: &request_id,
-            result: if completed { "completed" } else { "failed" },
-            reason: if completed {
-                "Library completed object provider operation upload"
-            } else {
-                "Library failed object provider operation upload"
-            },
-        },
-    ) {
-        return gateway_provider_error_response(
-            "object",
-            anyhow::anyhow!("object provider audit failed: {}", err),
-        );
-    }
-
-    let mut response = Json(response).into_response();
-    if let Some(receipt) = transfer_receipt.as_ref() {
-        insert_library_transfer_headers(response.headers_mut(), receipt);
-    }
-    response
-}
-
-pub(super) async fn gateway_library_upload_start(
-    State(state): State<GatewayState>,
-    headers: HeaderMap,
-    Json(body): Json<LibraryUploadStartBody>,
-) -> Response {
-    let uri = body.uri.trim();
-    if uri.is_empty() {
-        return library_upload_json_error(
-            StatusCode::BAD_REQUEST,
-            "missing_uri",
-            "library upload uri is required",
-        );
-    }
-    if let Some(size) = body.size_bytes {
-        if size as usize > MAX_GATEWAY_FILE_SIZE {
-            return library_upload_json_error(
-                StatusCode::PAYLOAD_TOO_LARGE,
-                "object_too_large",
-                format!(
-                    "Library upload exceeds Runtime object upload limit of {} bytes",
-                    MAX_GATEWAY_FILE_SIZE
-                ),
-            );
-        }
-    }
-    let context = match require_home_launch_token_for_any_context(
-        &state.data_dir,
-        &headers,
-        &[LIBRARY_CAPSULE_ID],
-    ) {
-        Ok(context) => context,
-        Err(err) => return gateway_provider_error_response("object", err),
-    };
-    let registry = match state.provider_registry.as_ref().cloned() {
-        Some(registry) => registry,
-        None => {
-            return gateway_provider_error_response(
-                "object",
-                anyhow::anyhow!("object provider unavailable"),
-            )
-        }
-    };
-    if registry
-        .registration_for_uri("elastos://object/*")
-        .await
-        .is_none()
-    {
-        return gateway_provider_error_response(
-            "object",
-            anyhow::anyhow!("object provider unavailable"),
-        );
-    }
-
-    let upload_id = new_library_upload_session_id();
-    let now = now_ts();
-    let _ = cleanup_expired_library_upload_sessions(&state.data_dir, now);
-    let session = LibraryUploadSession {
-        schema: LIBRARY_UPLOAD_SESSION_SCHEMA.to_string(),
-        upload_id: upload_id.clone(),
-        principal_id: context.principal_id.clone(),
-        session_id: context.session_id.clone(),
-        uri: uri.to_string(),
-        mime: body
-            .mime
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string),
-        if_revision: body
-            .if_revision
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string),
-        total_bytes: body.size_bytes,
-        received_bytes: 0,
-        chunk_count: 0,
-        created_at: now,
-        updated_at: now,
-    };
-    if let Err(err) = create_library_upload_session(&state.data_dir, &session) {
-        return library_upload_json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "upload_session_error",
-            err.to_string(),
-        );
-    }
-    let _ = append_provider_effect_audit(
-        &state.data_dir,
-        ProviderEffectAuditInput {
-            capsule_id: LIBRARY_CAPSULE_ID,
-            event_type: "object.provider.upload_session_started",
-            principal_id: &context.principal_id,
-            session_id: &context.session_id,
-            request_id: &upload_id,
-            result: "started",
-            reason: "Library started chunked object provider upload session",
-        },
-    );
-    Json(serde_json::json!({
-        "status": "ok",
-        "data": library_upload_session_status(&session),
-    }))
-    .into_response()
-}
-
-pub(super) async fn gateway_library_upload_chunk(
-    State(state): State<GatewayState>,
-    Path(upload_id): Path<String>,
-    headers: HeaderMap,
-    body: Bytes,
-) -> Response {
-    if body.len() > LIBRARY_UPLOAD_CHUNK_MAX_BYTES {
-        return library_upload_json_error(
-            StatusCode::PAYLOAD_TOO_LARGE,
-            "chunk_too_large",
-            format!(
-                "Library upload chunk exceeds Runtime chunk limit of {} bytes",
-                LIBRARY_UPLOAD_CHUNK_MAX_BYTES
-            ),
-        );
-    }
-    let context = match require_home_launch_token_for_any_context(
-        &state.data_dir,
-        &headers,
-        &[LIBRARY_CAPSULE_ID],
-    ) {
-        Ok(context) => context,
-        Err(err) => return gateway_provider_error_response("object", err),
-    };
-    let offset = match library_upload_offset_from_headers(&headers) {
-        Ok(offset) => offset,
-        Err(err) => {
-            return library_upload_json_error(StatusCode::BAD_REQUEST, "invalid_offset", err)
-        }
-    };
-    let mut session = match read_library_upload_session(&state.data_dir, &upload_id) {
-        Ok(session) => session,
-        Err(err) => {
-            return library_upload_json_error(
-                StatusCode::NOT_FOUND,
-                "upload_session_not_found",
-                err.to_string(),
-            )
-        }
-    };
-    if let Err(err) = require_library_upload_session_context(&session, &context) {
-        return library_upload_json_error(StatusCode::FORBIDDEN, "upload_session_forbidden", err);
-    }
-    if offset != session.received_bytes {
-        return library_upload_json_error(
-            StatusCode::BAD_REQUEST,
-            "upload_offset_mismatch",
-            format!(
-                "expected upload offset {}, got {}",
-                session.received_bytes, offset
-            ),
-        );
-    }
-    let projected = session.received_bytes.saturating_add(body.len() as u64);
-    if projected as usize > MAX_GATEWAY_FILE_SIZE {
-        return library_upload_json_error(
-            StatusCode::PAYLOAD_TOO_LARGE,
-            "object_too_large",
-            format!(
-                "Library upload exceeds Runtime object upload limit of {} bytes",
-                MAX_GATEWAY_FILE_SIZE
-            ),
-        );
-    }
-    if let Some(total) = session.total_bytes {
-        if projected > total {
-            return library_upload_json_error(
-                StatusCode::BAD_REQUEST,
-                "upload_exceeds_declared_size",
-                "upload chunk exceeds declared total size",
-            );
-        }
-    }
-    if let Err(err) = append_library_upload_chunk(&state.data_dir, &mut session, &body) {
-        return library_upload_json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "upload_session_error",
-            err.to_string(),
-        );
-    }
-    Json(serde_json::json!({
-        "status": "ok",
-        "data": library_upload_session_status(&session),
-    }))
-    .into_response()
-}
-
-pub(super) async fn gateway_library_upload_finish(
-    State(state): State<GatewayState>,
-    Path(upload_id): Path<String>,
-    headers: HeaderMap,
-) -> Response {
-    let context = match require_home_launch_token_for_any_context(
-        &state.data_dir,
-        &headers,
-        &[LIBRARY_CAPSULE_ID],
-    ) {
-        Ok(context) => context,
-        Err(err) => return gateway_provider_error_response("object", err),
-    };
-    let registry = match state.provider_registry.as_ref().cloned() {
-        Some(registry) => registry,
-        None => {
-            return gateway_provider_error_response(
-                "object",
-                anyhow::anyhow!("object provider unavailable"),
-            )
-        }
-    };
-    if registry
-        .registration_for_uri("elastos://object/*")
-        .await
-        .is_none()
-    {
-        return gateway_provider_error_response(
-            "object",
-            anyhow::anyhow!("object provider unavailable"),
-        );
-    }
-    let session = match read_library_upload_session(&state.data_dir, &upload_id) {
-        Ok(session) => session,
-        Err(err) => {
-            return library_upload_json_error(
-                StatusCode::NOT_FOUND,
-                "upload_session_not_found",
-                err.to_string(),
-            )
-        }
-    };
-    if let Err(err) = require_library_upload_session_context(&session, &context) {
-        return library_upload_json_error(StatusCode::FORBIDDEN, "upload_session_forbidden", err);
-    }
-    if let Some(total) = session.total_bytes {
-        if session.received_bytes != total {
-            return library_upload_json_error(
-                StatusCode::BAD_REQUEST,
-                "upload_incomplete",
-                format!(
-                    "upload received {} bytes but expected {}",
-                    session.received_bytes, total
-                ),
-            );
-        }
-    }
-    let bytes = match read_library_upload_session_bytes(&state.data_dir, &upload_id) {
-        Ok(bytes) => bytes,
-        Err(err) => {
-            return library_upload_json_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "upload_session_error",
-                err.to_string(),
-            )
-        }
-    };
-    if bytes.len() as u64 != session.received_bytes {
-        return library_upload_json_error(
-            StatusCode::BAD_REQUEST,
-            "upload_incomplete",
-            "upload session byte count does not match received count",
-        );
-    }
-
-    let request_id = format!("object:upload:{}", now_ts());
-    if let Err(err) = append_provider_effect_audit(
-        &state.data_dir,
-        ProviderEffectAuditInput {
-            capsule_id: LIBRARY_CAPSULE_ID,
-            event_type: "object.provider.requested",
-            principal_id: &context.principal_id,
-            session_id: &context.session_id,
-            request_id: &request_id,
-            result: "requested",
-            reason: "Library requested chunked object provider operation upload",
-        },
-    ) {
-        return gateway_provider_error_response(
-            "object",
-            anyhow::anyhow!("object provider audit failed: {}", err),
-        );
-    }
-
-    let mut response = match crate::library::handle_library_upload_bytes_runtime(
-        &state.data_dir,
-        registry,
-        &context.principal_id,
-        &session.uri,
-        session.mime.as_deref(),
-        session.if_revision.as_deref(),
-        &bytes,
-    )
-    .await
-    {
-        Ok(value) => value,
-        Err(err) => serde_json::json!({
-            "status": "error",
-            "code": "library_error",
-            "message": err.to_string(),
-        }),
-    };
-    let completed = response.get("status").and_then(|value| value.as_str()) == Some("ok");
-    let transfer_receipt = if completed {
-        let receipt = library_chunked_upload_transfer_receipt(&request_id, &session);
-        if let Some(data) = response
-            .get_mut("data")
-            .and_then(serde_json::Value::as_object_mut)
-        {
-            data.insert("request_id".to_string(), serde_json::json!(request_id));
-            data.insert("receipt".to_string(), receipt.clone());
-            data.insert(
-                "upload_session".to_string(),
-                library_upload_session_status(&session),
-            );
-            data.insert(
-                "browser_transport".to_string(),
-                serde_json::json!("http-chunk-session"),
-            );
-        }
-        Some(receipt)
-    } else {
-        None
-    };
-    if completed {
-        let _ = remove_library_upload_session(&state.data_dir, &upload_id);
-        crate::library::library_event_notifier().notify_waiters();
-    }
-    if let Err(err) = append_provider_effect_audit(
-        &state.data_dir,
-        ProviderEffectAuditInput {
-            capsule_id: LIBRARY_CAPSULE_ID,
-            event_type: if completed {
-                "object.provider.completed"
-            } else {
-                "object.provider.failed"
-            },
-            principal_id: &context.principal_id,
-            session_id: &context.session_id,
-            request_id: &request_id,
-            result: if completed { "completed" } else { "failed" },
-            reason: if completed {
-                "Library completed chunked object provider operation upload"
-            } else {
-                "Library failed chunked object provider operation upload"
-            },
-        },
-    ) {
-        return gateway_provider_error_response(
-            "object",
-            anyhow::anyhow!("object provider audit failed: {}", err),
-        );
-    }
-
-    let mut response = Json(response).into_response();
-    if let Some(receipt) = transfer_receipt.as_ref() {
-        insert_library_transfer_headers(response.headers_mut(), receipt);
-    }
-    response
-}
-
-pub(super) async fn gateway_library_upload_cancel(
-    State(state): State<GatewayState>,
-    Path(upload_id): Path<String>,
-    headers: HeaderMap,
-) -> Response {
-    let context = match require_home_launch_token_for_any_context(
-        &state.data_dir,
-        &headers,
-        &[LIBRARY_CAPSULE_ID],
-    ) {
-        Ok(context) => context,
-        Err(err) => return gateway_provider_error_response("object", err),
-    };
-    let session = match read_library_upload_session(&state.data_dir, &upload_id) {
-        Ok(session) => session,
-        Err(err) => {
-            return library_upload_json_error(
-                StatusCode::NOT_FOUND,
-                "upload_session_not_found",
-                err.to_string(),
-            )
-        }
-    };
-    if let Err(err) = require_library_upload_session_context(&session, &context) {
-        return library_upload_json_error(StatusCode::FORBIDDEN, "upload_session_forbidden", err);
-    }
-    if let Err(err) = remove_library_upload_session(&state.data_dir, &upload_id) {
-        return library_upload_json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "upload_session_error",
-            err.to_string(),
-        );
-    }
-    Json(serde_json::json!({
-        "status": "ok",
-        "data": {
-            "schema": LIBRARY_UPLOAD_SESSION_SCHEMA,
-            "upload_id": upload_id,
-            "status": "cancelled",
-        },
-    }))
-    .into_response()
-}
-
-pub(super) async fn gateway_library_download(
-    State(state): State<GatewayState>,
-    headers: HeaderMap,
-    RawQuery(raw_query): RawQuery,
-) -> Response {
-    let mut uris = Vec::new();
-    let mut archive_format_value = None;
-    for (key, value) in form_urlencoded::parse(raw_query.as_deref().unwrap_or_default().as_bytes())
-    {
-        match key.as_ref() {
-            "uri" => {
-                let uri = value.trim().to_string();
-                if !uri.is_empty() {
-                    uris.push(uri);
-                }
-            }
-            "archive" => archive_format_value = Some(value.into_owned()),
-            _ => {}
-        }
-    }
-    if uris.is_empty() {
-        return (StatusCode::BAD_REQUEST, "library download uri is required").into_response();
-    }
-    let archive_format =
-        match crate::library::LibraryArchiveFormat::parse(archive_format_value.as_deref()) {
-            Ok(format) => format,
-            Err(err) => return (StatusCode::BAD_REQUEST, err.to_string()).into_response(),
-        };
-    let context = match require_home_launch_token_for_any_context(
-        &state.data_dir,
-        &headers,
-        &[LIBRARY_CAPSULE_ID],
-    ) {
-        Ok(context) => context,
-        Err(err) => return gateway_provider_error_response("object", err),
-    };
-    let registry = match state.provider_registry.as_ref().cloned() {
-        Some(registry) => registry,
-        None => {
-            return gateway_provider_error_response(
-                "object",
-                anyhow::anyhow!("object provider unavailable"),
-            )
-        }
-    };
-    if registry
-        .registration_for_uri("elastos://object/*")
-        .await
-        .is_none()
-    {
-        return gateway_provider_error_response(
-            "object",
-            anyhow::anyhow!("object provider unavailable"),
-        );
-    }
-
-    let request_id = format!("object:download:{}", now_ts());
-    if let Err(err) = append_provider_effect_audit(
-        &state.data_dir,
-        ProviderEffectAuditInput {
-            capsule_id: LIBRARY_CAPSULE_ID,
-            event_type: "object.provider.requested",
-            principal_id: &context.principal_id,
-            session_id: &context.session_id,
-            request_id: &request_id,
-            result: "requested",
-            reason: "Library requested object provider operation download",
-        },
-    ) {
-        return gateway_provider_error_response(
-            "object",
-            anyhow::anyhow!("object provider audit failed: {}", err),
-        );
-    }
-
-    let receipt_uri = if uris.len() == 1 {
-        uris[0].clone()
-    } else {
-        format!("selection:{}", uris.len())
-    };
-    let download_result = if uris.len() == 1 {
-        crate::library::handle_library_download_bytes_runtime(
-            &state.data_dir,
-            registry,
-            &context.principal_id,
-            &uris[0],
-            archive_format,
-        )
-        .await
-    } else {
-        crate::library::handle_library_download_selection_bytes_runtime(
-            &state.data_dir,
-            &context.principal_id,
-            &uris,
-            archive_format,
-        )
-        .await
-    };
-    let download = match download_result {
-        Ok(download) => download,
-        Err(err) => {
-            let _ = append_provider_effect_audit(
-                &state.data_dir,
-                ProviderEffectAuditInput {
-                    capsule_id: LIBRARY_CAPSULE_ID,
-                    event_type: "object.provider.failed",
-                    principal_id: &context.principal_id,
-                    session_id: &context.session_id,
-                    request_id: &request_id,
-                    result: "failed",
-                    reason: "Library failed object provider operation download",
-                },
-            );
-            return gateway_provider_error_response("object", err);
-        }
-    };
-
-    let (response, range_ok) =
-        library_download_response(download, headers.get(RANGE), &request_id, &receipt_uri);
-    if !range_ok {
-        let _ = append_provider_effect_audit(
-            &state.data_dir,
-            ProviderEffectAuditInput {
-                capsule_id: LIBRARY_CAPSULE_ID,
-                event_type: "object.provider.failed",
-                principal_id: &context.principal_id,
-                session_id: &context.session_id,
-                request_id: &request_id,
-                result: "failed",
-                reason: "Library failed object provider operation download",
-            },
-        );
-        return response;
-    }
-
-    if let Err(err) = append_provider_effect_audit(
-        &state.data_dir,
-        ProviderEffectAuditInput {
-            capsule_id: LIBRARY_CAPSULE_ID,
-            event_type: "object.provider.completed",
-            principal_id: &context.principal_id,
-            session_id: &context.session_id,
-            request_id: &request_id,
-            result: "completed",
-            reason: "Library completed object provider operation download",
-        },
-    ) {
-        return gateway_provider_error_response(
-            "object",
-            anyhow::anyhow!("object provider audit failed: {}", err),
-        );
-    }
-
-    response
-}
-
-fn library_download_response(
-    download: crate::library::LibraryDownloadBytes,
-    range_header: Option<&HeaderValue>,
-    request_id: &str,
-    uri: &str,
-) -> (Response, bool) {
-    let byte_range = match range_header {
-        Some(value) => match library_download_byte_range(value, download.bytes.len()) {
-            Ok(range) => Some(range),
-            Err(()) => {
-                return (
-                    library_download_range_not_satisfiable(
-                        download.bytes.len(),
-                        request_id,
-                        uri,
-                        value.to_str().unwrap_or_default(),
-                    ),
-                    false,
-                )
-            }
-        },
-        None => None,
-    };
-    let total_bytes = download.bytes.len();
-    let mut response = if let Some((start, end)) = byte_range {
-        let bytes = download.bytes[start..=end].to_vec();
-        let mut response = Response::new(library_download_stream_body(bytes));
-        *response.status_mut() = StatusCode::PARTIAL_CONTENT;
-        response.headers_mut().insert(
-            CONTENT_RANGE,
-            HeaderValue::from_str(&format!("bytes {start}-{end}/{total_bytes}"))
-                .unwrap_or_else(|_| HeaderValue::from_static("bytes */0")),
-        );
-        response.headers_mut().insert(
-            CONTENT_LENGTH,
-            HeaderValue::from_str(&(end - start + 1).to_string())
-                .unwrap_or_else(|_| HeaderValue::from_static("0")),
-        );
-        response
-    } else {
-        let length = total_bytes;
-        let mut response = Response::new(library_download_stream_body(download.bytes));
-        response.headers_mut().insert(
-            CONTENT_LENGTH,
-            HeaderValue::from_str(&length.to_string())
-                .unwrap_or_else(|_| HeaderValue::from_static("0")),
-        );
-        response
-    };
-    let headers = response.headers_mut();
-    headers.insert(ACCEPT_RANGES, HeaderValue::from_static("bytes"));
-    headers.insert(
-        CONTENT_TYPE,
-        HeaderValue::from_str(&download.mime)
-            .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
-    );
-    headers.insert(
-        CONTENT_DISPOSITION,
-        HeaderValue::from_str(&library_download_content_disposition(&download.filename))
-            .unwrap_or_else(|_| HeaderValue::from_static("attachment; filename=\"download\"")),
-    );
-    let served_bytes = byte_range
-        .map(|(start, end)| end - start + 1)
-        .unwrap_or(total_bytes);
-    let receipt = library_transfer_receipt(
-        "download",
-        request_id,
-        uri,
-        served_bytes,
-        Some(total_bytes),
-        byte_range,
-        "completed",
-    );
-    insert_library_transfer_headers(headers, &receipt);
-    (response, true)
-}
-
-fn library_download_stream_body(bytes: Vec<u8>) -> axum::body::Body {
-    let bytes = Bytes::from(bytes);
-    let stream = futures_lite::stream::unfold((bytes, 0usize), |(bytes, offset)| async move {
-        if offset >= bytes.len() {
-            return None;
-        }
-        let end = (offset + LIBRARY_DOWNLOAD_STREAM_CHUNK_BYTES).min(bytes.len());
-        let chunk = bytes.slice(offset..end);
-        Some((Ok::<Bytes, Infallible>(chunk), (bytes, end)))
-    });
-    axum::body::Body::from_stream(stream)
-}
-
-fn library_download_range_not_satisfiable(
-    total_len: usize,
-    request_id: &str,
-    uri: &str,
-    requested_range: &str,
-) -> Response {
-    let mut response = StatusCode::RANGE_NOT_SATISFIABLE.into_response();
-    response
-        .headers_mut()
-        .insert(ACCEPT_RANGES, HeaderValue::from_static("bytes"));
-    response.headers_mut().insert(
-        CONTENT_RANGE,
-        HeaderValue::from_str(&format!("bytes */{total_len}"))
-            .unwrap_or_else(|_| HeaderValue::from_static("bytes */0")),
-    );
-    let receipt = serde_json::json!({
-        "schema": LIBRARY_TRANSFER_RECEIPT_SCHEMA,
-        "op": "download",
-        "request_id": request_id,
-        "uri": uri,
-        "transport": "raw-body",
-        "status": "failed",
-        "bytes": 0,
-        "total_bytes": total_len,
-        "requested_range": requested_range,
-        "error": "range_not_satisfiable",
-    });
-    insert_library_transfer_headers(response.headers_mut(), &receipt);
-    response
-}
-
-fn library_transfer_receipt(
-    op: &str,
-    request_id: &str,
-    uri: &str,
-    bytes: usize,
-    total_bytes: Option<usize>,
-    range: Option<(usize, usize)>,
-    status: &str,
-) -> serde_json::Value {
-    serde_json::json!({
-        "schema": LIBRARY_TRANSFER_RECEIPT_SCHEMA,
-        "op": op,
-        "request_id": request_id,
-        "uri": uri,
-        "transport": if op == "download" {
-            "http-body-stream"
-        } else {
-            "raw-body"
-        },
-        "stream": if op == "download" {
-            serde_json::json!({
-                "schema": "elastos.object.download-stream/v1",
-                "mode": "response_body_chunks",
-                "chunk_size": LIBRARY_DOWNLOAD_STREAM_CHUNK_BYTES,
-                "backpressure": "http_body_poll",
-                "cancel": "drop_body",
-                "progress_mode": "transfer_receipt",
-            })
-        } else {
-            serde_json::Value::Null
-        },
-        "status": status,
-        "bytes": bytes,
-        "total_bytes": total_bytes,
-        "range": range.map(|(start, end)| serde_json::json!({
-            "start": start,
-            "end": end,
-        })),
-    })
-}
-
-fn insert_library_transfer_headers(headers: &mut HeaderMap, receipt: &serde_json::Value) {
-    if let Some(request_id) = receipt
-        .get("request_id")
-        .and_then(serde_json::Value::as_str)
-    {
-        if let Ok(value) = HeaderValue::from_str(request_id) {
-            headers.insert(LIBRARY_TRANSFER_REQUEST_ID_HEADER, value);
-        }
-    }
-    if let Ok(value) = HeaderValue::from_str(&receipt.to_string()) {
-        headers.insert(LIBRARY_TRANSFER_RECEIPT_HEADER, value);
-    }
-}
-
-fn new_library_upload_session_id() -> String {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or_default();
-    let counter = LIBRARY_UPLOAD_SESSION_COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!("object-upload-{nanos}-{counter}")
-}
-
-fn library_upload_sessions_dir(data_dir: &FsPath) -> PathBuf {
-    data_dir.join("Runtime").join("ObjectUploadSessions")
-}
-
-fn library_upload_session_dir(data_dir: &FsPath, upload_id: &str) -> anyhow::Result<PathBuf> {
-    if !library_upload_safe_id(upload_id) {
-        anyhow::bail!("invalid upload session id");
-    }
-    Ok(library_upload_sessions_dir(data_dir).join(upload_id))
-}
-
-fn library_upload_safe_id(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 120
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
-}
-
-fn library_upload_session_metadata_path(
-    data_dir: &FsPath,
-    upload_id: &str,
-) -> anyhow::Result<PathBuf> {
-    Ok(library_upload_session_dir(data_dir, upload_id)?.join("session.json"))
-}
-
-fn library_upload_session_data_path(data_dir: &FsPath, upload_id: &str) -> anyhow::Result<PathBuf> {
-    Ok(library_upload_session_dir(data_dir, upload_id)?.join("payload.bin"))
-}
-
-fn create_library_upload_session(
-    data_dir: &FsPath,
-    session: &LibraryUploadSession,
-) -> anyhow::Result<()> {
-    let dir = library_upload_session_dir(data_dir, &session.upload_id)?;
-    std::fs::create_dir_all(&dir)?;
-    std::fs::File::create(dir.join("payload.bin"))?;
-    write_library_upload_session(data_dir, session)
-}
-
-fn read_library_upload_session(
-    data_dir: &FsPath,
-    upload_id: &str,
-) -> anyhow::Result<LibraryUploadSession> {
-    let path = library_upload_session_metadata_path(data_dir, upload_id)?;
-    let bytes = std::fs::read(path)?;
-    serde_json::from_slice(&bytes).map_err(|err| anyhow::anyhow!("invalid upload session: {err}"))
-}
-
-fn write_library_upload_session(
-    data_dir: &FsPath,
-    session: &LibraryUploadSession,
-) -> anyhow::Result<()> {
-    let path = library_upload_session_metadata_path(data_dir, &session.upload_id)?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_vec_pretty(session)?)?;
-    std::fs::rename(tmp, path)?;
-    Ok(())
-}
-
-fn append_library_upload_chunk(
-    data_dir: &FsPath,
-    session: &mut LibraryUploadSession,
-    bytes: &[u8],
-) -> anyhow::Result<()> {
-    let path = library_upload_session_data_path(data_dir, &session.upload_id)?;
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .read(true)
-        .open(&path)?;
-    file.seek(SeekFrom::Start(session.received_bytes))?;
-    file.write_all(bytes)?;
-    session.received_bytes = session.received_bytes.saturating_add(bytes.len() as u64);
-    session.chunk_count = session.chunk_count.saturating_add(1);
-    session.updated_at = now_ts();
-    write_library_upload_session(data_dir, session)
-}
-
-fn read_library_upload_session_bytes(
-    data_dir: &FsPath,
-    upload_id: &str,
-) -> anyhow::Result<Vec<u8>> {
-    let path = library_upload_session_data_path(data_dir, upload_id)?;
-    let mut file = std::fs::File::open(path)?;
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)?;
-    Ok(bytes)
-}
-
-fn remove_library_upload_session(data_dir: &FsPath, upload_id: &str) -> anyhow::Result<()> {
-    let dir = library_upload_session_dir(data_dir, upload_id)?;
-    if dir.exists() {
-        std::fs::remove_dir_all(dir)?;
-    }
-    Ok(())
-}
-
-fn cleanup_expired_library_upload_sessions(data_dir: &FsPath, now: u64) -> anyhow::Result<()> {
-    let dir = library_upload_sessions_dir(data_dir);
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Ok(());
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-        let Some(upload_id) = path.file_name().and_then(|value| value.to_str()) else {
-            continue;
-        };
-        if !library_upload_safe_id(upload_id) {
-            continue;
-        }
-        let Ok(session) = read_library_upload_session(data_dir, upload_id) else {
-            continue;
-        };
-        if now.saturating_sub(session.updated_at) > LIBRARY_UPLOAD_SESSION_TTL_SECS {
-            let _ = std::fs::remove_dir_all(path);
-        }
-    }
-    Ok(())
-}
-
-fn require_library_upload_session_context(
-    session: &LibraryUploadSession,
-    context: &HomeLaunchTokenContext,
-) -> Result<(), String> {
-    if session.principal_id != context.principal_id || session.session_id != context.session_id {
-        return Err("upload session belongs to a different Runtime launch context".to_string());
-    }
-    Ok(())
-}
-
-fn library_upload_offset_from_headers(headers: &HeaderMap) -> Result<u64, String> {
-    headers
-        .get("x-elastos-upload-offset")
-        .and_then(|value| value.to_str().ok())
-        .ok_or_else(|| "missing x-elastos-upload-offset header".to_string())?
-        .parse::<u64>()
-        .map_err(|_| "invalid x-elastos-upload-offset header".to_string())
-}
-
-fn library_upload_session_status(session: &LibraryUploadSession) -> serde_json::Value {
-    serde_json::json!({
-        "schema": LIBRARY_UPLOAD_SESSION_SCHEMA,
-        "upload_id": session.upload_id,
-        "uri": session.uri,
-        "received_bytes": session.received_bytes,
-        "total_bytes": session.total_bytes,
-        "chunk_count": session.chunk_count,
-        "chunk_size": LIBRARY_UPLOAD_CHUNK_MAX_BYTES,
-        "transport": "http-chunk-session",
-        "backpressure": "client_waits_for_chunk_ack",
-        "cancel": "DELETE /api/provider/object/upload/:upload_id",
-    })
-}
-
-fn library_chunked_upload_transfer_receipt(
-    request_id: &str,
-    session: &LibraryUploadSession,
-) -> serde_json::Value {
-    let mut receipt = library_transfer_receipt(
-        "upload",
-        request_id,
-        &session.uri,
-        session.received_bytes as usize,
-        session.total_bytes.map(|value| value as usize),
-        None,
-        "completed",
-    );
-    if let Some(receipt) = receipt.as_object_mut() {
-        receipt.insert(
-            "transport".to_string(),
-            serde_json::json!("http-chunk-session"),
-        );
-        receipt.insert("stream".to_string(), library_upload_session_status(session));
-    }
-    receipt
-}
-
-fn library_upload_json_error(
-    status: StatusCode,
-    code: &str,
-    message: impl Into<String>,
-) -> Response {
-    let mut response = Json(serde_json::json!({
-        "status": "error",
-        "code": code,
-        "message": message.into(),
-    }))
-    .into_response();
-    *response.status_mut() = status;
-    response
-}
-
-fn library_download_byte_range(
-    header: &HeaderValue,
-    total_len: usize,
-) -> Result<(usize, usize), ()> {
-    let value = header.to_str().map_err(|_| ())?.trim();
-    let Some(spec) = value.strip_prefix("bytes=") else {
-        return Err(());
-    };
-    if spec.contains(',') {
-        return Err(());
-    }
-    let (start, end) = spec.split_once('-').ok_or(())?;
-    if total_len == 0 {
-        return Err(());
-    }
-    if start.is_empty() {
-        let suffix_len = end.parse::<usize>().map_err(|_| ())?;
-        if suffix_len == 0 {
-            return Err(());
-        }
-        let start = total_len.saturating_sub(suffix_len);
-        return Ok((start, total_len - 1));
-    }
-    let start = start.parse::<usize>().map_err(|_| ())?;
-    if start >= total_len {
-        return Err(());
-    }
-    let end = if end.is_empty() {
-        total_len - 1
-    } else {
-        end.parse::<usize>().map_err(|_| ())?.min(total_len - 1)
-    };
-    if start > end {
-        return Err(());
-    }
-    Ok((start, end))
-}
-
-fn library_download_content_disposition(filename: &str) -> String {
-    let clean = filename
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii() && !ch.is_ascii_control() && ch != '"' && ch != '\\' {
-                ch
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>();
-    let clean = clean.trim();
-    if clean.is_empty() {
-        "attachment; filename=\"download\"".to_string()
-    } else {
-        format!("attachment; filename=\"{clean}\"")
-    }
-}
-
-pub(super) async fn gateway_library_events_stream(
-    State(state): State<GatewayState>,
-    headers: HeaderMap,
-) -> Response {
-    let context = match require_home_launch_token_for_any_context(
-        &state.data_dir,
-        &headers,
-        &[LIBRARY_CAPSULE_ID],
-    ) {
-        Ok(context) => context,
-        Err(err) => return gateway_provider_error_response("object", err),
-    };
-    let registry = match state.provider_registry.as_ref().cloned() {
-        Some(registry) => registry,
-        None => {
-            return gateway_provider_error_response(
-                "object",
-                anyhow::anyhow!("object provider unavailable"),
-            )
-        }
-    };
-
-    let stream_state = LibraryEventsStreamState {
-        registry,
-        principal_id: context.principal_id,
-        cursor: String::new(),
-        initialized: false,
-    };
-    let stream = futures_lite::stream::unfold(stream_state, |mut stream_state| async move {
-        loop {
-            match library_events_since_cursor(
-                &stream_state.registry,
-                &stream_state.principal_id,
-                &stream_state.cursor,
-            )
-            .await
-            {
-                Ok((_events, cursor)) if !stream_state.initialized => {
-                    stream_state.cursor = cursor;
-                    stream_state.initialized = true;
-                }
-                Ok((events, cursor)) if !events.is_empty() => {
-                    stream_state.cursor = cursor.clone();
-                    let event = library_events_sse_event(serde_json::json!({
-                        "schema": "elastos.library.events/v1",
-                        "cursor": cursor,
-                        "events": events,
-                    }));
-                    return Some((Ok::<SseEvent, Infallible>(event), stream_state));
-                }
-                Ok(_) => {}
-                Err(err) => {
-                    let event = library_events_sse_event(serde_json::json!({
-                        "schema": "elastos.library.events/v1",
-                        "status": "error",
-                        "message": err.to_string(),
-                        "events": [],
-                    }));
-                    return Some((Ok::<SseEvent, Infallible>(event), stream_state));
-                }
-            }
-            crate::library::library_event_notifier().notified().await;
-        }
-    });
-
-    let mut response = Sse::new(stream)
-        .keep_alive(
-            KeepAlive::new()
-                .interval(Duration::from_secs(LIBRARY_EVENTS_STREAM_KEEPALIVE_SECS))
-                .text("keepalive"),
-        )
-        .into_response();
-    let headers = response.headers_mut();
-    headers.insert(
-        axum::http::header::CACHE_CONTROL,
-        HeaderValue::from_static("no-cache, no-transform"),
-    );
-    headers.insert(
-        axum::http::HeaderName::from_static("x-accel-buffering"),
-        HeaderValue::from_static("no"),
-    );
-    response
+pub(in crate::api::gateway) struct RuntimeCustodyCreatorAccount {
+    pub(super) account_id: String,
+    pub(super) address: String,
+    /// Not an authority decision -- `signing_available` already made that. This
+    /// only lets a pending answer say whose turn it is: an external signer's
+    /// outstanding approval is waiting on the person, a managed one is not.
+    pub(super) external_signer: bool,
+    pub(super) connector_id: Option<String>,
 }
 
 pub(super) async fn gateway_provider_proxy(
@@ -1608,1332 +245,377 @@ pub(super) async fn gateway_provider_proxy(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let allowed_apps: &[&str] = match scheme.as_str() {
-        "documents" => match op.as_str() {
-            "summary" | "get" => &[DOCUMENTS_CAPSULE_ID, LIBRARY_CAPSULE_ID],
-            _ => &[DOCUMENTS_CAPSULE_ID],
-        },
-        "object" => match op.as_str() {
-            "roots"
-            | "list"
-            | "stat"
-            | "read"
-            | "download"
-            | "write"
-            | "mkdir"
-            | "rename"
-            | "move"
-            | "copy"
-            | "trash"
-            | "restore"
-            | "delete_permanently"
-            | "empty_trash"
-            | "status"
-            | "sync"
-            | "extract_archive"
-            | "archive_entries"
-            | "archive_preview_entry"
-            | "archive_extract_entries"
-            | "compress_archive"
-            | "publish"
-            | "unpublish"
-            | "repair"
-            | "share"
-            | "shared_access"
-            | "events" => &[LIBRARY_CAPSULE_ID],
-            "open_viewer" | "read_viewer" | "close_viewer" => &[ELACITY_PLAYER_CAPSULE_ID],
-            "import_runtime_custody" => &[LIBRARY_CAPSULE_ID, MARKETPLACE_CAPSULE_ID],
-            "list_runtime_custody" | "buy" => &[LIBRARY_CAPSULE_ID, MARKETPLACE_CAPSULE_ID],
-            _ => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    "Gateway provider operation not found",
-                )
-                    .into_response()
-            }
-        },
-        "chain" => match op.as_str() {
-            "networks" | "status" | "block_number" | "sync_health" | "node_lifecycle" => {
-                &[SYSTEM_CAPSULE_ID]
-            }
-            "balance" => &[SYSTEM_CAPSULE_ID, WALLET_CAPSULE_ID],
-            _ => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    "Gateway provider operation not found",
-                )
-                    .into_response()
-            }
-        },
-        "net" => match op.as_str() {
-            "status" | "resolve" | "connect" | "stream" | "http" => &[BROWSER_CAPSULE_ID],
-            _ => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    "Gateway provider operation not found",
-                )
-                    .into_response()
-            }
-        },
-        "inspect" => match op.as_str() {
-            "capsules" | "capsule" | "self" | "plan" | "request_act" => &[SYSTEM_CAPSULE_ID],
-            _ => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    "Gateway provider operation not found",
-                )
-                    .into_response()
-            }
-        },
-        "model" => match op.as_str() {
-            "offers_list" => &[
-                ASSISTANT_CAPSULE_ID,
-                HOME_AGENT_CAPSULE_ID,
-                MARKETPLACE_CAPSULE_ID,
-            ],
-            "runs_create" | "runs_get" | "runs_events" | "runs_cancel" => {
-                &[ASSISTANT_CAPSULE_ID, HOME_AGENT_CAPSULE_ID]
-            }
-            _ => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    "Gateway provider operation not found",
-                )
-                    .into_response()
-            }
-        },
-        _ => return (StatusCode::NOT_FOUND, "Gateway provider not found").into_response(),
-    };
-    let required = match require_home_launch_token_binding(&state.data_dir, &headers, allowed_apps)
-    {
-        Ok(required) => required,
-        Err(err) => return gateway_provider_error_response(&scheme, err),
-    };
-    let is_protected_viewer_op =
-        scheme == "object" && matches!(op.as_str(), "open_viewer" | "read_viewer" | "close_viewer");
-    if is_protected_viewer_op
-        && (required.launch_context.selected_resource != ELACITY_PLAYER_CAPSULE_ID
-            || required.launch_context.executable_actor != ELACITY_PLAYER_CAPSULE_ID)
-    {
-        return (
-            StatusCode::FORBIDDEN,
-            "home launch token is not authorized for this viewer",
-        )
-            .into_response();
+    // Keep the large coordinator future out of this additional tracing frame.
+    // Both traced and untraced operations retain their existing dispatch.
+    if scheme != "object" || op != "import_runtime_custody" {
+        return Box::pin(gateway_provider_proxy_inner(
+            State(state),
+            Path((scheme, op)),
+            headers,
+            body,
+        ))
+        .await;
     }
-    let context = required.context.clone();
-    let principal_id = context.principal_id.clone();
-    let session_id = context.session_id.clone();
-    /* The verified capsule behind the launch token: model runs are bound and
-    audited to it, never to a fixed name. */
-    let launch_capsule_id = required.launch_context.executable_actor.clone();
-    if scheme == "net" && matches!(op.as_str(), "http" | "connect" | "resolve" | "stream") {
-        return (
-            StatusCode::GONE,
-            format!("legacy /api/provider/net/{op} is disabled; Browser streams must be opened through /api/apps/browser/open"),
-        ).into_response();
-    }
-    let registry = match state.provider_registry.as_ref().cloned() {
-        Some(registry) => registry,
-        None => {
-            return gateway_provider_error_response(
-                &scheme,
-                anyhow::anyhow!("{} provider unavailable", scheme),
-            )
-        }
-    };
-    let mut request = if body.is_empty() {
-        serde_json::json!({})
-    } else {
-        match serde_json::from_slice::<serde_json::Value>(&body) {
-            Ok(value) if value.is_object() => value,
-            Ok(_) => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    "provider request body must be a JSON object",
-                )
-                    .into_response();
-            }
-            Err(err) => return (StatusCode::BAD_REQUEST, err.to_string()).into_response(),
-        }
-    };
-    if let Some(field) = provider_proxy_runtime_metadata_field(&request) {
-        return (
-            StatusCode::BAD_REQUEST,
-            format!("provider request must not predeclare Runtime metadata field {field}"),
-        )
-            .into_response();
-    }
-    let mut remote_model_grants = Vec::new();
-    if scheme == "model" {
-        request =
-            match normalize_model_provider_request(&op, &request, &context, &launch_capsule_id) {
-                Ok(value) => value,
-                Err((status, message)) => return (status, message).into_response(),
-            };
-        if op == "runs_create" && !hosted_run_allowed(&state.data_dir, &context, &request) {
-            return (StatusCode::FORBIDDEN, HOSTED_RUN_ADMIN_ONLY).into_response();
-        }
-        // Approved remote model grants route new runs to the granting Runtime.
-        // A grant lookup failure keeps the local path; it cannot widen
-        // authority. Runs already routed remotely settle through their stored
-        // route even after the grant expired or was denied, so every run
-        // operation consults the route; a local run returns to the local path.
-        remote_model_grants = super::gateway_model_remote::consumer_grants(
-            &state.data_dir,
-            &context,
-            state.collaboration_discovery_service.as_ref(),
-        )
-        .unwrap_or_default();
-        if op != "offers_list" {
-            match super::gateway_model_remote::route_run_operation(
-                Arc::clone(&registry),
-                &state.data_dir,
-                &remote_model_grants,
-                &context,
-                &launch_capsule_id,
-                (&op, &request),
-                crate::auth::now_ts(),
-            )
-            .await
-            {
-                Ok(Some(mut remote_response)) => {
-                    if let Err(err) = project_model_provider_response(&op, &mut remote_response) {
-                        return gateway_provider_error_response(
-                            &scheme,
-                            anyhow::anyhow!(
-                                "remote model service returned an invalid typed response: {err}"
-                            ),
-                        );
-                    }
-                    return (StatusCode::OK, Json(remote_response)).into_response();
-                }
-                Ok(None) => {}
-                Err(super::gateway_model_remote::RemoteRouteError::InvocationRefused {
-                    binding,
-                    reason,
-                }) => {
-                    return (
-                        StatusCode::CONFLICT,
-                        Json(serde_json::json!({
-                            "status": "error", "code": "remote_model_invocation_refused",
-                            "message": super::gateway_model_service::invocation_refusal_message(&reason),
-                            "reason": reason, "refusal": binding,
-                        })),
-                    )
-                        .into_response();
-                }
-                Err(super::gateway_model_remote::RemoteRouteError::Transport(message)) => {
-                    return (
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        Json(serde_json::json!({
-                            "status": "error",
-                            "code": super::gateway_model_remote::TRANSPORT_INTERRUPTED,
-                            "message": format!("remote model service unreachable: {message}"),
-                        })),
-                    )
-                        .into_response();
-                }
-                Err(err) => {
-                    return gateway_provider_error_response(&scheme, anyhow::anyhow!("{err}"));
-                }
-            }
-        }
-    } else {
-        request["op"] = serde_json::Value::String(op.clone());
-    }
-    if scheme == "documents" || scheme == "object" || scheme == "net" {
-        request["principal_id"] = serde_json::Value::String(principal_id.clone());
-    }
-    if is_protected_viewer_op {
-        if let Some(object) = request.as_object_mut() {
-            object.remove("launch_id");
-            object.remove("proof_binding_id");
-            object.remove("session_id");
-            object.remove("grant_id");
-            object.remove("wallet_request_hex");
-            object.remove("wallet_response_hex");
-            if let Some(proof) = context
-                .proof_binding_id
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            {
-                object.insert(
-                    "proof_binding_id".to_string(),
-                    serde_json::Value::String(proof.to_string()),
-                );
-            }
-            if !context.session_id.trim().is_empty() {
-                object.insert(
-                    "session_id".to_string(),
-                    serde_json::Value::String(context.session_id.clone()),
-                );
-            }
-            if !context.grant_id.trim().is_empty() {
-                object.insert(
-                    "grant_id".to_string(),
-                    serde_json::Value::String(context.grant_id.clone()),
-                );
-            }
-            object.insert(
-                "launch_id".to_string(),
-                serde_json::Value::String(required.launch_id.clone()),
-            );
-        }
-    }
-    if scheme == "object" && op == "shared_access" {
-        if let Some(object) = request.as_object_mut() {
-            object.remove("recipient_proof");
-            if object
-                .get("recipient")
-                .and_then(serde_json::Value::as_str)
-                .map(str::trim)
-                == Some(principal_id.as_str())
-                && context.proof_binding_id.is_some()
-            {
-                object.insert(
-                    "recipient_proof".to_string(),
-                    serde_json::json!({
-                        "schema": "elastos.library.recipient-proof/v1",
-                        "source": "runtime-launch-grant",
-                        "recipient": principal_id,
-                        "principal_id": principal_id,
-                        "proof_binding_id": context.proof_binding_id.as_deref().unwrap_or_default(),
-                        "session_id": session_id,
-                    }),
-                );
-            }
-        }
-    }
-
-    if scheme == "inspect" && op == "request_act" {
-        return gateway_inspect_action_request(&state, &context, &request).await;
-    }
-
-    let chain_lifecycle_audit = chain_lifecycle_effect_audit(&scheme, &op, &request);
-    let library_audit = (scheme == "object").then(|| format!("object:{op}:{}", now_ts()));
-    let model_audit = model_provider_effect_audit(&scheme, &op, &request);
-    if let Some(audit) = &chain_lifecycle_audit {
-        if let Err(err) = append_provider_effect_audit(
-            &state.data_dir,
-            ProviderEffectAuditInput {
-                capsule_id: SYSTEM_CAPSULE_ID,
-                event_type: "chain.node_lifecycle.requested",
-                principal_id: &principal_id,
-                session_id: &session_id,
-                request_id: &audit.request_id,
-                result: "requested",
-                reason: &format!(
-                    "System requested chain node lifecycle action {} for {}",
-                    audit.action, audit.network
-                ),
-            },
-        ) {
-            return gateway_provider_error_response(
-                &scheme,
-                anyhow::anyhow!("chain node lifecycle audit failed: {}", err),
-            );
-        }
-    }
-    if let Some(request_id) = &library_audit {
-        if let Err(err) = append_provider_effect_audit(
-            &state.data_dir,
-            ProviderEffectAuditInput {
-                capsule_id: LIBRARY_CAPSULE_ID,
-                event_type: "object.provider.requested",
-                principal_id: &principal_id,
-                session_id: &session_id,
-                request_id,
-                result: "requested",
-                reason: &format!("Library requested object provider operation {op}"),
-            },
-        ) {
-            return gateway_provider_error_response(
-                &scheme,
-                anyhow::anyhow!("object provider audit failed: {}", err),
-            );
-        }
-    }
-    if let Some(audit) = &model_audit {
-        if let Err(err) = append_provider_effect_audit(
-            &state.data_dir,
-            ProviderEffectAuditInput {
-                capsule_id: &launch_capsule_id,
-                event_type: audit.requested_event,
-                principal_id: &principal_id,
-                session_id: &session_id,
-                request_id: audit.request_id,
-                result: "requested",
-                reason: audit.requested_reason,
-            },
-        ) {
-            return gateway_provider_error_response(
-                &scheme,
-                anyhow::anyhow!("model provider audit failed: {}", err),
-            );
-        }
-        if launch_capsule_id == "assistant" && op == "runs_create" {
-            if let Some(offer_id) = request.get("offer_id").and_then(serde_json::Value::as_str) {
-                if let Some(hint) = crate::api::hosted_model_offer_hint(&state.data_dir, offer_id) {
-                    // No evaluator acts while Approval Lens is hidden: log the
-                    // hosted request and let it through to its own Inbox approval.
-                    let _ = crate::jev_approval_lens::record_assistant_hosted_http_shadow(
-                        &state.data_dir,
-                        &crate::jev_approval_lens::AssistantHostedHttpContext {
-                            request_id: audit.request_id,
-                            principal_id: &principal_id,
-                            session_id: &session_id,
-                            capsule_id: &launch_capsule_id,
-                            grant_id: &context.grant_id,
-                            offer_id,
-                            hint,
-                        },
-                    );
-                }
-            }
-        }
-    }
-
-    let mut response = if scheme == "object"
-        && (library_operation_needs_runtime_coordinator(&op)
-            || library_request_targets_webspace(&request))
-    {
-        let wallet_authority =
-            if (op == "publish" && request.get("protection").is_some()) || op == "buy" {
-                match runtime_wallet_authority(&required) {
-                    Ok(authority) => Some(authority),
-                    Err(err) => return gateway_provider_error_response(&scheme, err),
-                }
-            } else {
-                None
-            };
-        crate::library::handle_object_provider_runtime_request_with_gateway(
-            &state.data_dir,
-            Arc::clone(&registry),
-            &request,
-            wallet_authority
-                .as_ref()
-                .map(|authority| (&state, authority)),
-        )
-        .await
-    } else {
-        match registry.send_raw(&scheme, &request).await {
-            Ok(value)
-                if scheme == "net"
-                    && value.get("status").and_then(|v| v.as_str()) == Some("error") =>
-            {
-                let message = value
-                    .get("message")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("net provider unavailable");
-                return gateway_provider_error_response(
-                    &scheme,
-                    anyhow::anyhow!("net provider unavailable: {}", message),
-                );
-            }
-            Ok(value) => value,
-            Err(err) if scheme == "net" => {
-                return gateway_provider_error_response(
-                    &scheme,
-                    anyhow::anyhow!("net provider unavailable: {}", err),
-                )
-            }
-            Err(err) => serde_json::json!({
-            "status": "error",
-            "code": "provider_error",
-                "message": err.to_string(),
-            }),
-        }
-    };
-    let mut response_status = StatusCode::OK;
-    if scheme == "model" {
-        if let Some(refusal) = local_model_request_expiry_refusal(&request, &response) {
-            response = refusal;
-            response_status = StatusCode::CONFLICT;
-        }
-        if op == "offers_list" && !remote_model_grants.is_empty() {
-            // A consumer Home may run no local model provider at all; granted
-            // remote offers still form its list.
-            if response.get("status").and_then(serde_json::Value::as_str) != Some("ok") {
-                response = super::gateway_model_remote::offers_list_without_local_provider();
-            }
-            super::gateway_model_remote::append_remote_offers(
-                &registry,
-                &remote_model_grants,
-                &context,
-                &launch_capsule_id,
-                &mut response,
-            )
-            .await;
-        }
-        if let Err(err) = project_model_provider_response(&op, &mut response) {
-            return gateway_provider_error_response(
-                &scheme,
-                anyhow::anyhow!("model provider returned an invalid typed response: {err}"),
-            );
-        }
-    }
-
-    if let Some(audit) = &chain_lifecycle_audit {
-        let completed = response.get("status").and_then(|value| value.as_str()) == Some("ok");
-        if let Err(err) = append_provider_effect_audit(
-            &state.data_dir,
-            ProviderEffectAuditInput {
-                capsule_id: SYSTEM_CAPSULE_ID,
-                event_type: if completed {
-                    "chain.node_lifecycle.completed"
-                } else {
-                    "chain.node_lifecycle.failed"
-                },
-                principal_id: &principal_id,
-                session_id: &session_id,
-                request_id: &audit.request_id,
-                result: if completed { "completed" } else { "failed" },
-                reason: &format!(
-                    "System {} chain node lifecycle action {} for {}",
-                    if completed { "completed" } else { "failed" },
-                    audit.action,
-                    audit.network
-                ),
-            },
-        ) {
-            return gateway_provider_error_response(
-                &scheme,
-                anyhow::anyhow!("chain node lifecycle audit failed: {}", err),
-            );
-        }
-    }
-    if let Some(request_id) = &library_audit {
-        let completed = response.get("status").and_then(|value| value.as_str()) == Some("ok");
-        if completed && library_operation_emits_events(&op) {
-            crate::library::library_event_notifier().notify_waiters();
-        }
-        if let Err(err) = append_provider_effect_audit(
-            &state.data_dir,
-            ProviderEffectAuditInput {
-                capsule_id: LIBRARY_CAPSULE_ID,
-                event_type: if completed {
-                    "object.provider.completed"
-                } else {
-                    "object.provider.failed"
-                },
-                principal_id: &principal_id,
-                session_id: &session_id,
-                request_id,
-                result: if completed { "completed" } else { "failed" },
-                reason: &format!(
-                    "Library {} object provider operation {op}",
-                    if completed { "completed" } else { "failed" }
-                ),
-            },
-        ) {
-            return gateway_provider_error_response(
-                &scheme,
-                anyhow::anyhow!("object provider audit failed: {}", err),
-            );
-        }
-    }
-    if let Some(audit) = &model_audit {
-        let completed = response.get("status").and_then(|value| value.as_str()) == Some("ok");
-        if let Err(err) = append_provider_effect_audit(
-            &state.data_dir,
-            ProviderEffectAuditInput {
-                capsule_id: &launch_capsule_id,
-                event_type: if completed {
-                    audit.completed_event
-                } else {
-                    audit.failed_event
-                },
-                principal_id: &principal_id,
-                session_id: &session_id,
-                request_id: audit.request_id,
-                result: if completed { "completed" } else { "failed" },
-                reason: if completed {
-                    audit.completed_reason
-                } else {
-                    audit.failed_reason
-                },
-            },
-        ) {
-            return gateway_provider_error_response(
-                &scheme,
-                anyhow::anyhow!("model provider audit failed: {}", err),
-            );
-        }
-        if launch_capsule_id == "assistant" && op == "runs_create" {
-            let outcome = if completed { "accepted" } else { "failed" };
-            let request_id = request
-                .get("offer_id")
-                .and_then(serde_json::Value::as_str)
-                .map(|offer_id| {
-                    crate::jev_approval_lens::outcome_request_id(
-                        &state.data_dir,
-                        offer_id,
-                        audit.request_id,
-                    )
-                })
-                .unwrap_or_else(|| audit.request_id.to_string());
-            let _ = crate::jev_approval_lens::record_actual_outcome(
-                &state.data_dir,
-                &request_id,
-                outcome,
-            );
-        }
-    }
-
-    (response_status, Json(response)).into_response()
+    let mut trace = crate::action_trace::ActionTrace::new(
+        headers
+            .get("x-elastos-action-id")
+            .and_then(|value| value.to_str().ok()),
+        "import_runtime_custody",
+        "",
+        "",
+    );
+    let mut response = tracing::Instrument::instrument(
+        Box::pin(gateway_provider_proxy_inner(
+            State(state),
+            Path((scheme, op)),
+            headers,
+            body,
+        )),
+        trace.span(),
+    )
+    .await;
+    trace.complete(&mut response);
+    response
 }
 
-async fn resolve_runtime_custody_creator_account(
-    state: &GatewayState,
-    authority: &RuntimeWalletAuthority,
-    wallet_account_id: &str,
-) -> anyhow::Result<RuntimeCustodyCreatorAccount> {
-    let accounts = system_wallet_accounts_summary(state, authority).await;
-    let account = accounts
-        .accounts
-        .iter()
-        .find(|account| account.account_id == wallet_account_id)
-        .ok_or_else(creator_mint_unavailable_missing!())?;
-    if !account.signing_available || !is_managed_wallet_proof_type(&account.proof_type) {
-        return Err(creator_mint_unavailable_missing!()());
-    }
-    validate_wallet_evm_address(&account.address, "creator")
-        .map_err(|(_, message)| anyhow::anyhow!(message))?;
-    Ok(RuntimeCustodyCreatorAccount {
-        account_id: account.account_id.clone(),
-        address: account.address.to_ascii_lowercase(),
-    })
-}
-
-async fn resolve_runtime_custody_wallet_default_account(
+pub(in crate::api::gateway) async fn resolve_runtime_custody_wallet_default_account(
     state: &GatewayState,
     authority: &RuntimeWalletAuthority,
     chain_namespace: &str,
     unavailable_message: &'static str,
 ) -> anyhow::Result<RuntimeCustodyCreatorAccount> {
+    // Every arm below fails closed with the caller's one opaque message, per
+    // this file's discipline, and keeps it outermost so nothing that matches on
+    // that sentence breaks. Each arm names WHICH precondition failed twice over,
+    // because the two readers differ: in the operator log, without which the
+    // five causes are indistinguishable and a live failure reads as an
+    // unexplained "unavailable"; and as a typed reason beneath the sentence,
+    // which is what an app branches on to offer the one action that fixes it.
+    // Reason codes and the chain namespace only -- never an account id,
+    // address, or balance.
+    use crate::protected_content_runtime::{
+        RuntimeCustodyWalletDefaultReason, RuntimeCustodyWalletDefaultUnusable,
+    };
+    use elastos_wallet_contract::{
+        account_serves_chain_namespace, chain_namespaces_compatible, is_evm_eoa_proof_type,
+    };
     let accounts = system_wallet_accounts_summary(state, authority).await;
-    let latest_default = accounts
-        .default_accounts
+    let namespace_accounts = accounts
+        .accounts
         .iter()
-        .filter(|default| {
-            default.intent == "transaction_intent" && default.chain_namespace == chain_namespace
-        })
+        .filter(|account| chain_namespaces_compatible(&account.chain_namespace, chain_namespace))
+        .count();
+    // A default set on this chain itself wins. Without one, the Wallet's EVM
+    // default serves it: the Wallet keeps a single EVM default for every EVM
+    // chain, so the native EVM account a fresh Home creates is the creator's
+    // Base account too. That reuse holds only for an externally owned
+    // account; a contract account exists only on the chain it was deployed to.
+    let transaction_defaults = || {
+        accounts
+            .default_accounts
+            .iter()
+            .filter(|default| default.intent == "transaction_intent")
+    };
+    let exact_default_exists =
+        transaction_defaults().any(|default| default.chain_namespace == chain_namespace);
+    let serves_chain = |default: &&SystemWalletDefaultSummary| {
+        if exact_default_exists {
+            default.chain_namespace == chain_namespace
+        } else {
+            chain_namespaces_compatible(&default.chain_namespace, chain_namespace)
+                && accounts
+                    .accounts
+                    .iter()
+                    .find(|account| account.account_id == default.account_id)
+                    // A missing account is refused below with its own reason.
+                    .is_none_or(|account| is_evm_eoa_proof_type(&account.proof_type))
+        }
+    };
+    let latest_default = transaction_defaults()
+        .filter(serves_chain)
         .max_by_key(|default| default.set_at)
-        .ok_or_else(|| anyhow::anyhow!(unavailable_message))?;
-    if accounts.default_accounts.iter().any(|default| {
-        default.intent == "transaction_intent"
-            && default.chain_namespace == chain_namespace
-            && default.set_at == latest_default.set_at
-            && default.account_id != latest_default.account_id
+        .ok_or_else(|| {
+            let unusable = RuntimeCustodyWalletDefaultUnusable::new(
+                RuntimeCustodyWalletDefaultReason::NoTransactionDefaultForChainNamespace,
+                chain_namespace,
+            );
+            tracing::warn!(
+                line = line!(),
+                reason = unusable.reason_label(),
+                chain_namespace,
+                wallet_accounts_total = accounts.accounts.len(),
+                wallet_accounts_on_chain_namespace = namespace_accounts,
+                "Runtime custody wallet default account failed closed"
+            );
+            anyhow::Error::new(unusable).context(unavailable_message)
+        })?;
+    if transaction_defaults().filter(serves_chain).any(|default| {
+        default.set_at == latest_default.set_at && default.account_id != latest_default.account_id
     }) {
-        anyhow::bail!(unavailable_message);
+        let unusable = RuntimeCustodyWalletDefaultUnusable::new(
+            RuntimeCustodyWalletDefaultReason::AmbiguousTransactionDefault,
+            chain_namespace,
+        );
+        tracing::warn!(
+            line = line!(),
+            reason = unusable.reason_label(),
+            chain_namespace,
+            "Runtime custody wallet default account failed closed"
+        );
+        return Err(anyhow::Error::new(unusable).context(unavailable_message));
     }
     let account = accounts
         .accounts
         .iter()
+        // The default must name an account that serves both the chain it was
+        // set for, as the Wallet only ever records, and this one. An
+        // externally owned account serves every EVM chain; a record naming
+        // any other account off its own chain is not trusted.
         .find(|account| {
             account.account_id == latest_default.account_id
-                && account.chain_namespace == chain_namespace
+                && account_serves_chain_namespace(
+                    &account.chain_namespace,
+                    &account.proof_type,
+                    &latest_default.chain_namespace,
+                )
+                && account_serves_chain_namespace(
+                    &account.chain_namespace,
+                    &account.proof_type,
+                    chain_namespace,
+                )
         })
-        .ok_or_else(|| anyhow::anyhow!(unavailable_message))?;
-    if !account.signing_available || !is_managed_wallet_proof_type(&account.proof_type) {
-        anyhow::bail!(unavailable_message);
+        .ok_or_else(|| {
+            let unusable = RuntimeCustodyWalletDefaultUnusable::new(
+                RuntimeCustodyWalletDefaultReason::DefaultAccountNotInWallet,
+                chain_namespace,
+            );
+            tracing::warn!(
+                line = line!(),
+                reason = unusable.reason_label(),
+                chain_namespace,
+                wallet_accounts_on_chain_namespace = namespace_accounts,
+                "Runtime custody wallet default account failed closed"
+            );
+            anyhow::Error::new(unusable).context(unavailable_message)
+        })?;
+    // `signing_available` is the whole precondition, and it already tells a
+    // connector-linked external account (signable through the handoff) apart
+    // from an unlinked one (not signable). The tail past this point needs an
+    // address and a completed approval — it never asks the Wallet to sign — so
+    // requiring a managed proof type here only shut out linked external wallets.
+    if !account.signing_available {
+        let unusable = RuntimeCustodyWalletDefaultUnusable::new(
+            RuntimeCustodyWalletDefaultReason::DefaultAccountSigningUnavailable,
+            chain_namespace,
+        );
+        tracing::warn!(
+            line = line!(),
+            reason = unusable.reason_label(),
+            chain_namespace,
+            "Runtime custody wallet default account failed closed"
+        );
+        return Err(anyhow::Error::new(unusable).context(unavailable_message));
     }
-    validate_wallet_evm_address(&account.address, "wallet")
-        .map_err(|_| anyhow::anyhow!(unavailable_message))?;
+    validate_wallet_evm_address(&account.address, "wallet").map_err(|_| {
+        let unusable = RuntimeCustodyWalletDefaultUnusable::new(
+            RuntimeCustodyWalletDefaultReason::DefaultAccountAddressInvalid,
+            chain_namespace,
+        );
+        tracing::warn!(
+            line = line!(),
+            reason = unusable.reason_label(),
+            chain_namespace,
+            "Runtime custody wallet default account failed closed"
+        );
+        anyhow::Error::new(unusable).context(unavailable_message)
+    })?;
     Ok(RuntimeCustodyCreatorAccount {
         account_id: account.account_id.clone(),
         address: account.address.to_ascii_lowercase(),
+        external_signer: !is_managed_wallet_proof_type(&account.proof_type),
+        connector_id: account.connector_id.clone(),
     })
 }
 
-async fn resolve_runtime_custody_buyer_account(
-    state: &GatewayState,
-    authority: &RuntimeWalletAuthority,
-    chain_namespace: &str,
-) -> anyhow::Result<RuntimeCustodyCreatorAccount> {
-    resolve_runtime_custody_wallet_default_account(
-        state,
-        authority,
-        chain_namespace,
-        crate::protected_content_runtime::RUNTIME_CUSTODY_PURCHASE_DENIED_MESSAGE,
-    )
-    .await
-}
-
-async fn resolve_runtime_custody_creator_mint_source(
-    state: &GatewayState,
-) -> anyhow::Result<ResolvedProtectedContentCreatorMintSource> {
-    let response = wallet_chain_provider_data(
-        state,
-        serde_json::json!({
-            "op": "describe_protected_content_creator_mint_source",
-        }),
-    )
-    .await
-    .map_err(creator_mint_unavailable!())?;
-    let source: ResolvedProtectedContentCreatorMintSource =
-        serde_json::from_value(response).map_err(creator_mint_unavailable!())?;
-    if source.schema != "elastos.chain.protected-content-creator-mint-source/v1"
-        || source.abi != "elacity_mint_v1"
-        || source.function != "mint(string,uint16,bytes,bytes)"
-        || wallet_chain_namespace_network(&source.chain_namespace) != Some(source.network.as_str())
-    {
-        return Err(creator_mint_unavailable_missing!()());
-    }
-    validate_wallet_evm_address(&source.ledger, "creator ledger")
-        .map_err(creator_mint_unavailable!())?;
-    validate_wallet_evm_address(&source.pay_token, "creator pay token")
-        .map_err(creator_mint_unavailable!())?;
-    Ok(source)
-}
-
-async fn resolve_runtime_custody_bound_creator_account(
-    state: &GatewayState,
-    authority: &RuntimeWalletAuthority,
-    account_id: &str,
-    expected_address: &str,
-) -> anyhow::Result<RuntimeCustodyCreatorAccount> {
-    let account = resolve_runtime_custody_creator_account(state, authority, account_id).await?;
-    if account.address != expected_address {
-        return Err(creator_mint_unavailable_missing!()());
-    }
-    Ok(account)
-}
-
-pub(crate) async fn resolve_runtime_custody_creator_publish_binding(
-    state: &GatewayState,
-    authority: &RuntimeWalletAuthority,
-    principal_id: &str,
-    object_uri: &str,
-    source_storage: &str,
-) -> anyhow::Result<RuntimeCustodyCreatorPublishBinding> {
-    let request_id = elastos_protected_content_runtime::RuntimeMintIntent::request_id_for_source(
-        principal_id,
-        object_uri,
-        source_storage,
-    )
-    .map_err(creator_mint_unavailable!())?;
-    let mint_journal = crate::protected_content_runtime::runtime_mint_journal(&state.data_dir);
-    let mint_journal_root =
-        crate::protected_content_runtime::runtime_mint_journal_root(&state.data_dir);
-    let source = resolve_runtime_custody_creator_mint_source(state).await?;
-    let source_digest = runtime_custody_creator_mint_source_digest_for_source(&source);
-    match std::fs::symlink_metadata(&mint_journal_root) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(_) => return Err(creator_mint_unavailable_missing!()()),
-        Ok(_) => {
-            match mint_journal.load_intent(request_id) {
-                Ok(intent) => {
-                    if intent.creator_mint_source_digest() != source_digest {
-                        return Err(creator_mint_unavailable_missing!()());
-                    }
-                    let account = resolve_runtime_custody_bound_creator_account(
-                        state,
-                        authority,
-                        intent.creator_wallet_account_id(),
-                        intent.creator_wallet_address(),
-                    )
-                    .await?;
-                    return Ok(RuntimeCustodyCreatorPublishBinding {
-                        account_id: account.account_id,
-                        address: account.address,
-                        source_digest,
-                    });
-                }
-                Err(elastos_protected_content_runtime::RuntimeMintJournalError::NotFound) => {}
-                Err(_) => return Err(creator_mint_unavailable_missing!()()),
-            }
-            match mint_journal.load_media_preparation(request_id) {
-                Ok(preparation) => {
-                    if preparation.creator_mint_source_digest() != source_digest {
-                        return Err(creator_mint_unavailable_missing!()());
-                    }
-                    let account = resolve_runtime_custody_bound_creator_account(
-                        state,
-                        authority,
-                        preparation.creator_wallet_account_id(),
-                        preparation.creator_wallet_address(),
-                    )
-                    .await?;
-                    return Ok(RuntimeCustodyCreatorPublishBinding {
-                        account_id: account.account_id,
-                        address: account.address,
-                        source_digest,
-                    });
-                }
-                Err(elastos_protected_content_runtime::RuntimeMintJournalError::NotFound) => {}
-                Err(_) => return Err(creator_mint_unavailable_missing!()()),
-            }
-        }
-    }
-    let account = resolve_runtime_custody_wallet_default_account(
-        state,
-        authority,
-        &source.chain_namespace,
-        RUNTIME_CUSTODY_CREATOR_UNAVAILABLE_MESSAGE,
-    )
-    .await?;
-    Ok(RuntimeCustodyCreatorPublishBinding {
-        account_id: account.account_id,
-        address: account.address,
-        source_digest,
-    })
-}
-
-fn runtime_custody_purchase_chain_id(chain_namespace: &str) -> anyhow::Result<u64> {
-    runtime_custody_creator_chain_id(chain_namespace).map_err(purchase_unavailable!())
-}
-
-fn runtime_custody_purchase_availability_receipt_digest(
-    availability: &elastos_protected_content_runtime::RuntimeVerifiedContentAvailability,
-) -> String {
-    format!(
-        "sha256:{}",
-        hex::encode(availability.receipt_digest().as_bytes())
-    )
-}
-
-fn runtime_custody_buy_terminal_response(
-    purchase: &crate::protected_content_runtime::RuntimeCustodyPurchaseRecord,
-) -> serde_json::Value {
-    serde_json::json!({
-        "schema": crate::protected_content_runtime::RUNTIME_PURCHASE_SCHEMA_V1,
-        "mint_id": purchase.mint_id,
-        "content_id": purchase.content_id,
-        "cid": purchase.cid,
-        "availability": {
-            "schema": "elastos.library.runtime-custody-availability/v1",
-            "status": "buyer_owned",
-            "cid": purchase.cid,
-            "content_id": purchase.content_id,
-            "mint_id": purchase.mint_id,
-        },
-    })
-}
-
-fn runtime_custody_purchase_stage_record(
-    stage: &str,
-    request: &RuntimeTransactionRequest,
-) -> anyhow::Result<crate::protected_content_runtime::RuntimeCustodyPurchaseStageRecord> {
-    Ok(
-        crate::protected_content_runtime::RuntimeCustodyPurchaseStageRecord {
-            stage: stage.to_string(),
-            effect_id: request.effect_id.clone(),
-            approval_request_id: wallet_request_id(&request.effect_id, "approval"),
-            request_sha256: request.request_sha256.clone(),
-            chain_namespace: request.chain_namespace.clone(),
-            network: request.network.clone(),
-            to: request.to.clone(),
-            value: request.value.clone(),
-            data: request.data.clone(),
+/// Build the confirmed-stage record for a purchase stage from its Runtime
+/// transaction completion, or `None` if the completion has no validated
+/// Chain outcome attached yet (the caller must treat that the same as
+/// pending -- `RUNTIME_CUSTODY_PURCHASE_PENDING_MESSAGE`/`purchase_unavailable_missing!`).
+pub(super) fn confirmed_stage(
+    completion: RuntimeTransactionCompletion,
+) -> Option<crate::protected_content_runtime::RuntimeCustodyConfirmedPurchaseStage> {
+    let outcome = completion.validated_chain_outcome?;
+    Some(
+        crate::protected_content_runtime::RuntimeCustodyConfirmedPurchaseStage {
+            chain_transaction: completion.transaction_hash,
+            wallet_binding: outcome.binding,
+            chain_observation: outcome.chain_observation,
+            confirmed_at: outcome.confirmed_at,
         },
     )
 }
 
-fn runtime_custody_purchase_transaction_request(
-    principal_id: &str,
-    buyer_account: &RuntimeCustodyCreatorAccount,
-    listing: &crate::protected_content_runtime::RuntimePortableListingPackage,
-    listing_sha256: &str,
-    mint_id: elastos_protected_content_contracts::Digest32,
-    stage: &ResolvedProtectedContentPurchaseStep,
-) -> anyhow::Result<RuntimeTransactionRequest> {
-    let stable_request = serde_json::json!({
-        "domain": "elastos.protected-content.purchase-request/v1",
-        "effect_id": "",
-        "wallet_account_id": buyer_account.account_id,
-        "address": buyer_account.address,
-        "chain_namespace": listing.chain_namespace,
-        "network": listing.network,
-        "to": stage.to,
-        "value": stage.value,
-        "data": stage.data,
-        "listing_sha256": listing_sha256,
-        "mint_id": hex::encode(mint_id.as_bytes()),
-        "seller": listing.seller_address,
-        "ledger": listing.ledger,
-        "token_id": listing.token_id,
-        "operative": listing.operative,
-        "price": listing.price,
-        "pay_token": listing.pay_token,
-        "purchase_quantity": "0x1",
-        "stage": stage.stage,
-    });
-    let request_sha256 = runtime_transaction_request_sha256(&stable_request)?;
-    let mut request = RuntimeTransactionRequest {
-        source: NATIVE_TRANSACTION_SOURCE,
-        effect_id: String::new(),
-        request_sha256,
-        account_id: buyer_account.account_id.clone(),
-        address: buyer_account.address.clone(),
-        chain_namespace: listing.chain_namespace.clone(),
-        network: listing.network.clone(),
-        to: stage.to.clone(),
-        value: stage.value.clone(),
-        data: stage.data.clone(),
-        approval_reason: "Buy protected content access".to_string(),
-        metadata: serde_json::json!({
-            "product_operation": format!("protected_content_purchase_{}", stage.stage),
-            "mint_id": hex::encode(mint_id.as_bytes()),
-            "listing_sha256": listing_sha256,
-            "seller": listing.seller_address,
-            "ledger": listing.ledger,
-            "token_id": listing.token_id,
-            "price": listing.price,
-            "pay_token": listing.pay_token,
-            "purchase_quantity": "0x1",
-        }),
-    };
-    let request_binding = transaction_request_binding(&request);
-    request.effect_id = exact_runtime_transaction_effect_id(
-        NATIVE_TRANSACTION_SOURCE,
-        principal_id,
-        &request.request_sha256,
-        &request_binding,
-    )?;
-    Ok(request)
-}
-
-fn validate_runtime_custody_purchase_stage_request(
-    principal_id: &str,
-    buyer_account: &RuntimeCustodyCreatorAccount,
-    listing: &crate::protected_content_runtime::RuntimePortableListingPackage,
-    listing_sha256: &str,
-    mint_id: elastos_protected_content_contracts::Digest32,
-    stage: &crate::protected_content_runtime::RuntimeCustodyPurchaseStageRecord,
-    expected_stage: &str,
-) -> anyhow::Result<RuntimeTransactionRequest> {
-    let request = runtime_custody_purchase_transaction_request(
-        principal_id,
-        buyer_account,
-        listing,
-        listing_sha256,
-        mint_id,
-        &ResolvedProtectedContentPurchaseStep {
-            stage: stage.stage.clone(),
-            to: stage.to.clone(),
-            value: stage.value.clone(),
-            data: stage.data.clone(),
-        },
-    )?;
-    if stage.stage != expected_stage
-        || stage.effect_id != request.effect_id
-        || stage.approval_request_id != wallet_request_id(&request.effect_id, "approval")
-        || stage.request_sha256 != request.request_sha256
-        || stage.chain_namespace != request.chain_namespace
-        || stage.network != request.network
-        || stage.to != request.to
-        || stage.value != request.value
-        || stage.data != request.data
-    {
-        return Err(purchase_denied_missing!()());
+#[cfg(test)]
+pub(crate) mod test_seams {
+    pub(crate) async fn materialize_owned_artifacts(
+        registry: &elastos_runtime::provider::ProviderRegistry,
+        package: &crate::protected_content_runtime::RuntimePortableListingPackage,
+    ) {
+        super::materialize_runtime_custody_artifacts(registry, package).await;
     }
-    Ok(request)
-}
+    use std::collections::HashMap;
+    use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
 
-struct RuntimeCustodyExpectedPurchaseIdentity<'a> {
-    principal_id: &'a str,
-    profile_did: &'a str,
-    mint_id_hex: &'a str,
-    content_id: &'a str,
-    content_cid: &'a str,
-    listing_sha256: &'a str,
-    listing: &'a crate::protected_content_runtime::RuntimePortableListingPackage,
-    buyer_account: &'a RuntimeCustodyCreatorAccount,
-}
+    static LISTING_COPY_HOLDERS: Mutex<Option<HashMap<PathBuf, Vec<String>>>> = Mutex::new(None);
 
-fn validate_runtime_custody_purchase_record_identity(
-    purchase: &crate::protected_content_runtime::RuntimeCustodyPurchaseRecord,
-    expected: &RuntimeCustodyExpectedPurchaseIdentity<'_>,
-) -> anyhow::Result<()> {
-    if purchase.schema != crate::protected_content_runtime::RUNTIME_PURCHASE_SCHEMA_V1
-        || purchase.principal_id != expected.principal_id
-        || purchase.profile_did != expected.profile_did
-        || purchase.mint_id != expected.mint_id_hex
-        || purchase.content_id != expected.content_id
-        || purchase.cid != expected.content_cid
-        || purchase.listing_sha256 != expected.listing_sha256
-        || !purchase
-            .seller_address
-            .eq_ignore_ascii_case(&expected.listing.seller_address)
-        || purchase.chain_namespace != expected.listing.chain_namespace
-        || purchase.network != expected.listing.network
-        || !purchase
-            .ledger
-            .eq_ignore_ascii_case(&expected.listing.ledger)
-        || !purchase
-            .token_id
-            .eq_ignore_ascii_case(&expected.listing.token_id)
-        || !purchase
-            .operative
-            .eq_ignore_ascii_case(&expected.listing.operative)
-        || purchase.price != expected.listing.price
-        || !purchase
-            .pay_token
-            .eq_ignore_ascii_case(&expected.listing.pay_token)
-        || purchase
-            .payment_processor
-            .as_deref()
-            .map(str::to_ascii_lowercase)
-            != expected
-                .listing
-                .payment_processor
-                .as_deref()
-                .map(str::to_ascii_lowercase)
-        || purchase.account_id != expected.buyer_account.account_id
-        || !purchase
-            .address
-            .eq_ignore_ascii_case(&expected.buyer_account.address)
-    {
-        return Err(purchase_denied_missing!()());
+    /// The pool members a test's Home places its listings on, in place of
+    /// its pool descriptors.
+    pub(crate) fn set_listing_copy_holders(data_dir: &Path, holders: Vec<String>) {
+        LISTING_COPY_HOLDERS
+            .lock()
+            .unwrap()
+            .get_or_insert_with(HashMap::new)
+            .insert(data_dir.to_path_buf(), holders);
     }
-    Ok(())
+
+    pub(super) fn listing_copy_holders(data_dir: &Path) -> Option<Vec<String>> {
+        LISTING_COPY_HOLDERS
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|holders| holders.get(data_dir).cloned())
+    }
 }
 
-async fn resolve_runtime_custody_purchase_plan(
+/// The typed refusal of a new attempt that would re-term a mint already on
+/// record, built directly so its wire spelling can be pinned. In service the
+/// same refusal comes from `RuntimeCustodyAttemptArchiveOutcome::kept_refusal`,
+/// for an attempt whose transaction was sent or mined, or that is listed.
+#[cfg(test)]
+fn runtime_custody_creator_mint_blocked(
+    mint_id: Digest32,
+    existing: &elastos_protected_content_runtime::RuntimeMintCreatorState,
+    progress: Option<serde_json::Value>,
+    conflict: Option<crate::protected_content_runtime::RuntimeCustodyCreatorMintConflict>,
+) -> anyhow::Error {
+    let mut blocked =
+        crate::protected_content_runtime::RuntimeCustodyCreatorMintBlocked::new(mint_id, existing);
+    if let Some(progress) = progress {
+        blocked = blocked.with_progress(progress);
+    }
+    if let Some(conflict) = conflict {
+        blocked = blocked.with_conflict(conflict);
+    }
+    tracing::warn!(
+        line = line!(),
+        state = blocked.state_label(),
+        "Runtime custody creator mint refused new terms for a mint already on record"
+    );
+    anyhow::Error::new(blocked)
+}
+
+/// File an owned protected item into its owner's Library as a `.ddrm`.
+///
+/// The capsule carries the asset's own `metadata.json` whole, so the Library
+/// can show it and the viewer can open it without fetching anything; the
+/// document is read back from the CID it was published under rather than kept
+/// from whatever built it, so a copy acquired by buying is assembled exactly
+/// like one acquired by minting.
+///
+/// When the metadata states no authority -- because none was configured at the
+/// time it was written -- it is asked for now and filled in, which is the whole
+/// reason the authority sits at the capsule's top level rather than only inside
+/// the metadata it was published with.
+///
+/// Best effort: the asset is owned whether or not a file could be written for
+/// it, and the owner keeps it either way. `None` when nothing was filed.
+pub(super) async fn write_runtime_custody_owned_capsule(
     state: &GatewayState,
-    listing: &crate::protected_content_runtime::RuntimePortableListingPackage,
-) -> anyhow::Result<ResolvedProtectedContentPurchase> {
-    let response = wallet_chain_provider_data(
-        state,
-        serde_json::json!({
-            "op": "resolve_protected_content_purchase",
-            "seller": listing.seller_address,
-            "chain_namespace": listing.chain_namespace,
-            "network": listing.network,
-            "ledger": listing.ledger,
-            "token_id": listing.token_id,
-        }),
-    )
-    .await
-    .map_err(purchase_unavailable!())?;
-    let resolved: ResolvedProtectedContentPurchase =
-        serde_json::from_value(response).map_err(purchase_unavailable!())?;
-    let expected_chain_id = runtime_custody_purchase_chain_id(&listing.chain_namespace)?;
-    if resolved.schema != "elastos.chain.protected-content-purchase/v1"
-        || resolved.network != listing.network
-        || resolved.purchase_quantity != "0x1"
-        || resolved.verified_listing.chain_id != expected_chain_id
-        || !resolved
-            .verified_listing
-            .seller
-            .eq_ignore_ascii_case(&listing.seller_address)
-        || !resolved
-            .verified_listing
-            .ledger
-            .eq_ignore_ascii_case(&listing.ledger)
-        || !resolved
-            .verified_listing
-            .token_id
-            .eq_ignore_ascii_case(&listing.token_id)
-        || !resolved
-            .verified_listing
-            .operative
-            .eq_ignore_ascii_case(&listing.operative)
-        || resolved.verified_listing.price != listing.price
-        || !resolved
-            .verified_listing
-            .pay_token
-            .eq_ignore_ascii_case(&listing.pay_token)
-        || resolved
-            .verified_listing
-            .payment_processor
-            .as_deref()
-            .map(str::to_ascii_lowercase)
-            != listing
-                .payment_processor
-                .as_deref()
-                .map(str::to_ascii_lowercase)
-        || resolved.verified_listing.available_quantity == "0x0"
-    {
-        return Err(purchase_denied_missing!()());
-    }
-    match resolved.steps.as_slice() {
-        [buy] if buy.stage == "buy" => {}
-        [approval, buy] if approval.stage == "approval" && buy.stage == "buy" => {}
-        _ => return Err(purchase_unavailable_missing!()()),
-    }
-    for step in &resolved.steps {
-        validate_wallet_evm_address(&step.to, "purchase transaction target").map_err(
-            |(_, _)| {
-                anyhow::anyhow!(
-                    crate::protected_content_runtime::RUNTIME_CUSTODY_PURCHASE_UNAVAILABLE_MESSAGE
-                )
-            },
-        )?;
-    }
-    Ok(resolved)
-}
-
-async fn resolve_runtime_custody_purchase_access(
-    state: &GatewayState,
-    listing: &crate::protected_content_runtime::RuntimePortableListingPackage,
-    buyer_account: &RuntimeCustodyCreatorAccount,
-    content_access_id_hex: &str,
-    request_id: &str,
-) -> anyhow::Result<Option<ResolvedProtectedContentPurchaseAccess>> {
-    let response = wallet_chain_provider_data(
-        state,
-        serde_json::json!({
-            "op": "resolve_protected_content_purchase_access",
-            "request_id": request_id,
-            "network": listing.network,
-            "wallet": buyer_account.address,
-            "content_access_id": content_access_id_hex,
-        }),
-    )
-    .await;
-    let Ok(response) = response else {
-        return Ok(None);
-    };
-    let access: ResolvedProtectedContentPurchaseAccess =
-        serde_json::from_value(response).map_err(purchase_unavailable!())?;
-    if access.schema != "elastos.chain.protected-content-purchase-access/v1"
-        || access.request_id != request_id
-        || access.network != listing.network
-        || access.chain_id != runtime_custody_purchase_chain_id(&listing.chain_namespace)?
-        || !access.wallet.eq_ignore_ascii_case(&buyer_account.address)
-        || !access
-            .content_access_id
-            .eq_ignore_ascii_case(content_access_id_hex)
-    {
-        return Err(purchase_unavailable_missing!()());
-    }
-    Ok(access.has_access.then_some(access))
-}
-
-async fn complete_runtime_custody_purchase_stage(
-    state: &GatewayState,
-    authority: &RuntimeWalletAuthority,
-    request: &RuntimeTransactionRequest,
-) -> anyhow::Result<Option<RuntimeTransactionCompletion>> {
-    let _approval = ensure_exact_runtime_transaction_approval(state, authority, request.clone())
-        .await
-        .map_err(purchase_unavailable!())?;
-    let completion = match complete_runtime_transaction_effect(
-        state,
-        authority,
-        RuntimeTransactionLookup::ApprovalId(
-            wallet_request_id(&request.effect_id, "approval").as_str(),
-        ),
-        Some(request),
-        None,
-    )
-    .await
-    {
-        Ok(completion) => completion,
-        Err((status, message))
-            if status == StatusCode::BAD_REQUEST
-                && message == "transaction approval is not completed" =>
-        {
-            tracing::debug!(
-                effect_id = %request.effect_id,
-                "runtime custody purchase: pending, wallet approval not completed"
-            );
-            return Ok(None);
-        }
-        Err((status, message)) => {
-            tracing::warn!(
-                effect_id = %request.effect_id,
-                %status,
-                %message,
-                "runtime custody purchase: transaction effect completion failed"
-            );
-            return Err(purchase_unavailable!()(format!("{status}: {message}")));
-        }
-    };
-    if completion.receipt.is_none() || completion.completion_pending {
-        tracing::debug!(
-            effect_id = %completion.effect_id,
-            transaction_hash = %completion.transaction_hash,
-            receipt = completion.receipt.is_some(),
-            completion_pending = completion.completion_pending,
-            completion_error = completion.completion_error.as_deref().unwrap_or(""),
-            already_confirmed = completion.already_confirmed,
-            "runtime custody purchase: pending exact Chain settlement"
-        );
-        return Ok(None);
-    }
-    if let Some(error) = completion.completion_error.as_deref() {
-        return Err(purchase_unavailable!()(format!(
-            "transaction effect completed with an error: {error}"
-        )));
-    }
-    Ok(Some(completion))
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn publish_runtime_custody_creator_metadata(
     registry: &ProviderRegistry,
-    data_dir: &std::path::Path,
-    object_uri: &str,
-    mime_type: &str,
-    codecs: &str,
-    facts: &crate::protected_content_runtime::RuntimeCustodyLibraryPublishFacts,
-    mint: &elastos_protected_content_runtime::PersistedRuntimeMint,
-    publisher_profile_did: &str,
-) -> anyhow::Result<(String, String)> {
-    let draft = mint.draft();
-    let metadata = RuntimeCustodyCreatorMetadata {
-        schema: "elastos.protected-content.metadata/v1",
-        name: runtime_custody_metadata_name(object_uri),
-        mime_type,
-        codecs,
-        encrypted_content_cid: &facts.content_cid,
-        content_access_id: format!("0x{}", hex::encode(draft.content_access_id().as_bytes())),
-        protected_content_identity: &facts.content_id,
-        mint_id: hex::encode(draft.mint_id().as_bytes()),
-        publisher_profile_did,
-        media_identity_base64: base64::engine::general_purpose::STANDARD
-            .encode(draft.media_identity().canonical_bytes()?),
-        key_envelope_identity_base64: base64::engine::general_purpose::STANDARD
-            .encode(draft.key_envelope().canonical_bytes()?),
-        rights_policy_identity_base64: base64::engine::general_purpose::STANDARD
-            .encode(draft.policy().canonical_bytes()?),
-        content_key_commitment_base64: base64::engine::general_purpose::STANDARD
-            .encode(draft.content_key_commitment().as_bytes()),
+    package: &crate::protected_content_runtime::RuntimePortableListingPackage,
+    principal_id: &str,
+    acquisition: crate::protected_content_runtime::RuntimeCustodyAcquisitionV1,
+) -> Option<String> {
+    let metadata = match crate::content::fetch_bytes_via_provider(
+        registry,
+        &package.metadata_cid,
+        Some("metadata.json"),
+    )
+    .await
+    .ok()
+    .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+    {
+        Some(metadata) => metadata,
+        None => {
+            tracing::debug!("runtime custody: no metadata document to build a capsule from");
+            return None;
+        }
     };
-    let bytes = serde_json::to_vec(&metadata)?;
-    let parent = data_dir.join("protected-content");
-    std::fs::create_dir_all(&parent)?;
-    let staging = tempfile::Builder::new()
-        .prefix("creator-metadata-")
-        .tempdir_in(&parent)?;
-    std::fs::write(staging.path().join("metadata.json"), bytes)?;
-    let metadata_cid = crate::content::publish_directory_via_provider_with_kind(
-        registry,
-        staging.path(),
-        "directory",
-        None,
-        None,
-    )
-    .await?;
-    Ok((
-        metadata_cid.clone(),
-        format!("ipfs://{metadata_cid}/metadata.json"),
-    ))
-}
-
-async fn publish_runtime_custody_creator_listing(
-    registry: &ProviderRegistry,
-    data_dir: &std::path::Path,
-    mint: &elastos_protected_content_runtime::PersistedRuntimeMint,
-    facts: &crate::protected_content_runtime::RuntimeCustodyLibraryPublishFacts,
-    publisher_principal_id: &str,
-    terminal: &elastos_protected_content_runtime::RuntimeMintCreatorTerminalEvidence,
-) -> anyhow::Result<String> {
-    let package = crate::protected_content_runtime::runtime_custody_creator_listing_package(
-        data_dir,
-        mint,
-        facts,
-        publisher_principal_id,
-        terminal,
-    )?;
-    let parent = data_dir.join("protected-content");
-    std::fs::create_dir_all(&parent)?;
-    let staging = tempfile::Builder::new()
-        .prefix("creator-listing-")
-        .tempdir_in(&parent)?;
-    std::fs::write(
-        staging.path().join("listing.json"),
-        serde_json::to_vec(&package)?,
-    )?;
-    let links = [
-        ("metadata".to_string(), package.metadata_cid.clone()),
-        ("encrypted-content".to_string(), package.content_cid.clone()),
-    ];
-    let requirements = crate::content::ContentPublishRequirements::new(3, true)?;
-    let cid = crate::content::publish_directory_via_provider_with_kind_links_and_requirements(
-        registry,
-        staging.path(),
-        "protected-content-listing",
-        Some(&package.content_id),
-        Some(&package.publisher_profile_did),
-        &links,
-        requirements,
-    )
-    .await?;
-    let listing_uri = format!("elastos://{cid}");
-    crate::protected_content_runtime::persist_runtime_custody_creator_listing(
-        data_dir,
-        mint,
+    let mut capsule = crate::protected_content_runtime::runtime_custody_capsule_document(
         package,
-        publisher_principal_id,
-        listing_uri.clone(),
-    )?;
-    Ok(listing_uri)
-}
-
-fn runtime_custody_metadata_name(object_uri: &str) -> &str {
-    object_uri
-        .rsplit('/')
-        .find(|segment| !segment.is_empty())
-        .unwrap_or("protected-content")
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ResolvedProtectedContentMarketSource {
-    schema: String,
-    network: String,
-    authority_gateway_contract: String,
-    #[allow(dead_code)]
-    evidence_rpc_sources: u64,
-}
-
-const ERC1155_IS_APPROVED_FOR_ALL_SELECTOR: &str = "e985e9c5";
-const ERC1155_SET_APPROVAL_FOR_ALL_SELECTOR: &str = "a22cb465";
-
-fn abi_word_from_address(address: &str) -> anyhow::Result<String> {
-    let raw = address
-        .strip_prefix("0x")
-        .filter(|raw| raw.len() == 40 && raw.bytes().all(|byte| byte.is_ascii_hexdigit()))
-        .ok_or_else(|| anyhow::anyhow!("invalid EVM address for ABI encoding"))?;
-    Ok(format!("{:0>64}", raw.to_ascii_lowercase()))
-}
-
-fn erc1155_is_approved_for_all_call_data(owner: &str, operator: &str) -> anyhow::Result<String> {
-    Ok(format!(
-        "0x{ERC1155_IS_APPROVED_FOR_ALL_SELECTOR}{}{}",
-        abi_word_from_address(owner)?,
-        abi_word_from_address(operator)?
-    ))
-}
-
-fn erc1155_set_approval_for_all_call_data(
-    operator: &str,
-    approved: bool,
-) -> anyhow::Result<String> {
-    Ok(format!(
-        "0x{ERC1155_SET_APPROVAL_FOR_ALL_SELECTOR}{}{:0>64}",
-        abi_word_from_address(operator)?,
-        if approved { "1" } else { "0" }
-    ))
-}
-
-/// Decodes the single `bool` word an `isApprovedForAll` call returns.
-/// Anything other than an exact 32-byte 0/1 word is treated as unknown,
-/// which the caller resolves by raising the approval (a spurious second
-/// `setApprovalForAll(true)` is harmless; a missed one breaks every buy).
-fn erc1155_bool_result(result: &str) -> Option<bool> {
-    let raw = result.strip_prefix("0x")?;
-    if raw.len() != 64 || !raw.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return None;
+        &metadata,
+        acquisition,
+    );
+    if capsule
+        .get("authority")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .is_empty()
+    {
+        if let Some(authority) = runtime_custody_market_authority(state, &package.network).await {
+            capsule["authority"] = serde_json::Value::String(authority);
+        }
     }
-    match raw.trim_start_matches('0') {
-        "" => Some(false),
-        "1" => Some(true),
-        _ => None,
+    // The asset's material belongs on the machine that owns it, whether this
+    // copy was minted here or bought from someone else.
+    materialize_runtime_custody_artifacts(registry, package).await;
+    let content_type =
+        crate::protected_content_runtime::runtime_custody_capsule_content_type(&metadata);
+    match crate::library::write_runtime_custody_capsule(
+        &state.data_dir,
+        principal_id,
+        &package.display_name,
+        &content_type,
+        &capsule,
+    ) {
+        Ok(uri) => Some(uri),
+        Err(error) => {
+            tracing::warn!(error = %error, "runtime custody: the owned capsule was not filed");
+            None
+        }
     }
 }
 
-async fn resolve_runtime_custody_market_gateway(
-    state: &GatewayState,
-    network: &str,
-) -> anyhow::Result<String> {
+/// Keep an owned asset's material on the machine that owns it.
+///
+/// Content owns the local retention attempt. Recursive
+/// pinning keeps a DASH directory's segments as well as its manifest. The
+/// existing content read path owns delivery of material this Home lacks.
+///
+/// Silent and best effort, as the owner asked: nothing here is shown, and an
+/// asset whose material could not be kept is still owned and still readable --
+/// just over the network until the next attempt.
+async fn materialize_runtime_custody_artifacts(
+    registry: &ProviderRegistry,
+    package: &crate::protected_content_runtime::RuntimePortableListingPackage,
+) {
+    for cid in [&package.content_cid, &package.metadata_cid] {
+        if cid.trim().is_empty() {
+            continue;
+        }
+        if let Err(error) = crate::content::retain_local_via_provider(registry, cid).await {
+            tracing::debug!(
+                error = %error,
+                "runtime custody: owned material was not kept locally"
+            );
+        }
+    }
+}
+
+/// The authority gateway this network's market is configured with, asked for
+/// when an asset's metadata did not state one.
+async fn runtime_custody_market_authority(state: &GatewayState, network: &str) -> Option<String> {
     let response = wallet_chain_provider_data(
         state,
         serde_json::json!({
@@ -2942,1021 +624,12 @@ async fn resolve_runtime_custody_market_gateway(
         }),
     )
     .await
-    .map_err(creator_mint_unavailable!())?;
-    let source: ResolvedProtectedContentMarketSource =
-        serde_json::from_value(response).map_err(creator_mint_unavailable!())?;
-    if source.schema != "elastos.chain.protected-content-market-source/v1"
-        || source.network != network
-    {
-        return Err(creator_mint_unavailable_missing!()());
-    }
-    validate_wallet_evm_address(&source.authority_gateway_contract, "market gateway")
-        .map_err(creator_mint_unavailable!())?;
-    Ok(source.authority_gateway_contract.to_ascii_lowercase())
-}
-
-/// Builds the exact `setApprovalForAll(gateway, true)` transaction on the
-/// mint's operative: the ERC-1155 contract the market gateway resolves from
-/// `(ledger, token_id)` and transfers the sold copies from. The asset ledger
-/// only records the mint; an approval granted there never reaches the
-/// operative, and every purchase reverts with
-/// `ERC1155MissingApprovalForAll(gateway, creator)`.
-fn runtime_custody_creator_operator_approval_request(
-    principal_id: &str,
-    creator_account: &RuntimeCustodyCreatorAccount,
-    chain_plan: &RuntimeCustodyCreatorChainPlan,
-    operative: &str,
-    gateway: &str,
-    mint_id: elastos_protected_content_contracts::Digest32,
-) -> anyhow::Result<RuntimeTransactionRequest> {
-    let data = erc1155_set_approval_for_all_call_data(gateway, true)?;
-    let stable_request = serde_json::json!({
-        "domain": "elastos.protected-content.creator-operator-approval/v1",
-        "effect_id": "",
-        "wallet_account_id": creator_account.account_id,
-        "address": creator_account.address,
-        "chain_namespace": chain_plan.chain_namespace,
-        "network": chain_plan.network,
-        "to": operative,
-        "value": "0x0",
-        "data": data,
-        "ledger": chain_plan.ledger,
-        "operative": operative,
-        "gateway": gateway,
-        "mint_id": hex::encode(mint_id.as_bytes()),
-    });
-    let request_sha256 = runtime_transaction_request_sha256(&stable_request)?;
-    let mut request = RuntimeTransactionRequest {
-        source: NATIVE_TRANSACTION_SOURCE,
-        effect_id: String::new(),
-        request_sha256,
-        account_id: creator_account.account_id.clone(),
-        address: creator_account.address.clone(),
-        chain_namespace: chain_plan.chain_namespace.clone(),
-        network: chain_plan.network.clone(),
-        to: operative.to_string(),
-        value: "0x0".to_string(),
-        data,
-        approval_reason: "Allow the marketplace gateway to deliver sold copies".to_string(),
-        metadata: serde_json::json!({
-            "product_operation": "protected_content_creator_operator_approval",
-            "ledger": chain_plan.ledger,
-            "operative": operative,
-            "gateway": gateway,
-            "mint_id": hex::encode(mint_id.as_bytes()),
-        }),
-    };
-    let request_binding = transaction_request_binding(&request);
-    request.effect_id = exact_runtime_transaction_effect_id(
-        NATIVE_TRANSACTION_SOURCE,
-        principal_id,
-        &request.request_sha256,
-        &request_binding,
-    )?;
-    Ok(request)
-}
-
-/// Ensures the mint's operative lets the market gateway move the creator's
-/// copies (ERC-1155 operator approval on the contract `buyAccess` transfers
-/// from). Returns Ok when the chain already reports the approval or the
-/// approval effect has settled; bails with the creator-pending message while
-/// the wallet approval or chain settlement is outstanding.
-#[allow(clippy::too_many_arguments)]
-async fn ensure_runtime_custody_creator_operator_approval(
-    state: &GatewayState,
-    authority: &RuntimeWalletAuthority,
-    mint_journal: &elastos_protected_content_runtime::RuntimeMintJournal,
-    mint: &elastos_protected_content_runtime::PersistedRuntimeMint,
-    mint_id: elastos_protected_content_contracts::Digest32,
-    principal_id: &str,
-    creator_account: &RuntimeCustodyCreatorAccount,
-    chain_plan: &RuntimeCustodyCreatorChainPlan,
-    operative: &str,
-) -> anyhow::Result<()> {
-    validate_wallet_evm_address(operative, "mint operative")
-        .map_err(creator_mint_unavailable!())?;
-    let operative = operative.to_ascii_lowercase();
-    let gateway = resolve_runtime_custody_market_gateway(state, &chain_plan.network).await?;
-    let probe = wallet_chain_provider_data(
-        state,
-        serde_json::json!({
-            "op": "contract_call",
-            "network": chain_plan.network,
-            "to": operative,
-            "data": erc1155_is_approved_for_all_call_data(&creator_account.address, &gateway)?,
-        }),
-    )
-    .await
-    .map_err(creator_mint_unavailable!())?;
-    let approved = probe
-        .get("result")
+    .ok()?;
+    response
+        .get("authority_gateway_contract")
         .and_then(serde_json::Value::as_str)
-        .and_then(erc1155_bool_result)
-        .unwrap_or(false);
-    tracing::debug!(
-        mint_id = %hex::encode(mint_id.as_bytes()),
-        creator = %creator_account.address,
-        %operative,
-        %gateway,
-        approved,
-        "runtime custody creator tail: operative operator approval probed"
-    );
-    if approved {
-        return Ok(());
-    }
-    let request = runtime_custody_creator_operator_approval_request(
-        principal_id,
-        creator_account,
-        chain_plan,
-        &operative,
-        &gateway,
-        mint_id,
-    )?;
-    let effect_binding = runtime_custody_creator_effect_binding(&request)?;
-    if let Some(existing) = mint
-        .creator_state()
-        .and_then(|creator_state| creator_state.operator_approval())
-    {
-        if existing != &effect_binding {
-            return Err(creator_mint_unavailable_missing!()());
-        }
-    } else {
-        mint_journal
-            .bind_creator_operator_approval(mint_id, effect_binding.clone())
-            .map_err(creator_mint_unavailable!())?;
-    }
-    let approval = ensure_exact_runtime_transaction_approval(state, authority, request.clone())
-        .await
-        .map_err(|(_, message)| anyhow::anyhow!(message))?;
-    tracing::debug!(
-        effect_id = %approval.effect_id,
-        "runtime custody creator tail: exact wallet effect ensured"
-    );
-    let completion = match complete_runtime_transaction_effect(
-        state,
-        authority,
-        RuntimeTransactionLookup::ApprovalId(effect_binding.approval_request_id()),
-        Some(&request),
-        None,
-    )
-    .await
-    {
-        Ok(completion) => completion,
-        Err((status, message))
-            if status == StatusCode::BAD_REQUEST
-                && message == "transaction approval is not completed" =>
-        {
-            let _ = approval;
-            {
-                tracing::debug!(
-                    line = line!(),
-                    "runtime custody creator tail: pending exact Wallet or Chain settlement"
-                );
-                anyhow::bail!(RUNTIME_CUSTODY_CREATOR_PENDING_MESSAGE);
-            }
-        }
-        Err((_, message)) => return Err(anyhow::anyhow!(message)),
-    };
-    if completion.receipt.is_none() || completion.completion_pending {
-        {
-            tracing::debug!(
-                line = line!(),
-                "runtime custody creator tail: pending exact Wallet or Chain settlement"
-            );
-            anyhow::bail!(RUNTIME_CUSTODY_CREATOR_PENDING_MESSAGE);
-        }
-    }
-    if completion.completion_error.is_some() {
-        return Err(creator_mint_unavailable_missing!()());
-    }
-    Ok(())
-}
-
-fn runtime_custody_creator_effect_binding(
-    request: &RuntimeTransactionRequest,
-) -> anyhow::Result<elastos_protected_content_runtime::RuntimeMintCreatorEffectBinding> {
-    elastos_protected_content_runtime::RuntimeMintCreatorEffectBinding::new(
-        request.effect_id.clone(),
-        wallet_request_id(&request.effect_id, "approval"),
-        request.request_sha256.clone(),
-        request.account_id.clone(),
-        request.address.clone(),
-        request.chain_namespace.clone(),
-        request.network.clone(),
-    )
-    .map_err(creator_mint_unavailable!())
-}
-
-fn runtime_custody_creator_chain_id(chain_namespace: &str) -> anyhow::Result<u64> {
-    chain_namespace
-        .strip_prefix("eip155:")
-        .ok_or_else(creator_mint_unavailable_missing!())?
-        .parse::<u64>()
-        .map_err(creator_mint_unavailable!())
-}
-
-async fn resolve_runtime_custody_creator_chain_plan(
-    state: &GatewayState,
-    expected_source_digest: Digest32,
-    source: &ResolvedProtectedContentCreatorMintSource,
-    creator_state: &elastos_protected_content_runtime::RuntimeMintCreatorState,
-    creator_address: &str,
-    content_access_id: elastos_protected_content_contracts::ContentAccessIdV1,
-    token_uri: &str,
-) -> anyhow::Result<RuntimeCustodyCreatorChainPlan> {
-    let response = wallet_chain_provider_data(
-        state,
-        serde_json::json!({
-            "op": "resolve_protected_content_creator_mint",
-            "creator": creator_address,
-            "token_uri": token_uri,
-            "content_access_id": format!("0x{}", hex::encode(content_access_id.as_bytes())),
-            "copies": creator_state.desired_terms().copies(),
-            "price": creator_state.desired_terms().price(),
-        }),
-    )
-    .await
-    .map_err(creator_mint_unavailable!())?;
-    let resolved: ResolvedProtectedContentCreatorMint =
-        serde_json::from_value(response).map_err(creator_mint_unavailable!())?;
-    let resolved_source_digest = runtime_custody_creator_mint_source_digest(
-        &resolved.network,
-        &resolved.chain_namespace,
-        &resolved.ledger,
-        &resolved.pay_token,
-        "elacity_mint_v1",
-        &resolved.function,
-    );
-    if resolved.schema != "elastos.chain.protected-content-creator-mint/v1"
-        || resolved.signed
-        || resolved.function != "mint(string,uint16,bytes,bytes)"
-        || resolved_source_digest != expected_source_digest
-        || resolved.network != source.network
-        || resolved.chain_namespace != source.chain_namespace
-        || !resolved
-            .content_access_id
-            .eq_ignore_ascii_case(&format!("0x{}", hex::encode(content_access_id.as_bytes())))
-        || !resolved.ledger.eq_ignore_ascii_case(&source.ledger)
-        || !resolved.pay_token.eq_ignore_ascii_case(&source.pay_token)
-    {
-        return Err(creator_mint_unavailable_missing!()());
-    }
-    validate_wallet_evm_address(&resolved.ledger, "creator ledger")
-        .map_err(|(_, message)| anyhow::anyhow!(message))?;
-    validate_wallet_evm_address(&resolved.to, "creator transaction target")
-        .map_err(|(_, message)| anyhow::anyhow!(message))?;
-    validate_wallet_evm_address(&resolved.pay_token, "creator pay token")
-        .map_err(|(_, message)| anyhow::anyhow!(message))?;
-    if !resolved.ledger.eq_ignore_ascii_case(&resolved.to) {
-        return Err(creator_mint_unavailable_missing!()());
-    }
-    Ok(RuntimeCustodyCreatorChainPlan {
-        network: resolved.network,
-        chain_namespace: resolved.chain_namespace,
-        ledger: resolved.ledger.to_ascii_lowercase(),
-        pay_token: resolved.pay_token.to_ascii_lowercase(),
-        to: resolved.to.to_ascii_lowercase(),
-        data: resolved.data,
-        value: resolved.value,
-    })
-}
-
-fn runtime_custody_creator_transaction_request(
-    principal_id: &str,
-    creator_account: &RuntimeCustodyCreatorAccount,
-    creator_state: &elastos_protected_content_runtime::RuntimeMintCreatorState,
-    chain_plan: &RuntimeCustodyCreatorChainPlan,
-    mint_id: elastos_protected_content_contracts::Digest32,
-    token_uri: &str,
-) -> anyhow::Result<RuntimeTransactionRequest> {
-    let stable_request = serde_json::json!({
-        "domain": "elastos.protected-content.creator-request/v1",
-        "effect_id": "",
-        "wallet_account_id": creator_account.account_id,
-        "address": creator_account.address,
-        "chain_namespace": chain_plan.chain_namespace,
-        "network": chain_plan.network,
-        "to": chain_plan.to,
-        "value": chain_plan.value,
-        "data": chain_plan.data,
-        "ledger": chain_plan.ledger,
-        "pay_token": chain_plan.pay_token,
-        "metadata_cid": creator_state.metadata_cid(),
-        "token_uri": token_uri,
-        "mint_id": hex::encode(mint_id.as_bytes()),
-        "copies": creator_state.desired_terms().copies(),
-        "price": creator_state.desired_terms().price(),
-    });
-    let request_sha256 = runtime_transaction_request_sha256(&stable_request)?;
-    let mut request = RuntimeTransactionRequest {
-        source: NATIVE_TRANSACTION_SOURCE,
-        effect_id: String::new(),
-        request_sha256,
-        account_id: creator_account.account_id.clone(),
-        address: creator_account.address.clone(),
-        chain_namespace: chain_plan.chain_namespace.clone(),
-        network: chain_plan.network.clone(),
-        to: chain_plan.to.clone(),
-        value: chain_plan.value.clone(),
-        data: chain_plan.data.clone(),
-        approval_reason: "Create protected-content creator listing".to_string(),
-        metadata: serde_json::json!({
-            "product_operation": "protected_content_creator_mint",
-            "ledger": chain_plan.ledger,
-            "pay_token": chain_plan.pay_token,
-            "metadata_cid": creator_state.metadata_cid(),
-            "token_uri": token_uri,
-        }),
-    };
-    let request_binding = transaction_request_binding(&request);
-    request.effect_id = exact_runtime_transaction_effect_id(
-        NATIVE_TRANSACTION_SOURCE,
-        principal_id,
-        &request.request_sha256,
-        &request_binding,
-    )?;
-    Ok(request)
-}
-
-/// Resolves the finalized mint receipt (token id + operative) for the settled
-/// mint transaction; a chain-provider `*_pending` answer surfaces as the
-/// creator-pending state so callers re-poll.
-async fn resolve_runtime_custody_creator_mint_receipt(
-    state: &GatewayState,
-    creator_state: &elastos_protected_content_runtime::RuntimeMintCreatorState,
-    creator_address: &str,
-    chain_plan: &RuntimeCustodyCreatorChainPlan,
-    transaction_hash: &str,
-) -> anyhow::Result<ResolvedProtectedContentMintReceipt> {
-    let receipt_response = wallet_chain_provider_data(
-        state,
-        serde_json::json!({
-            "op": "resolve_protected_content_mint_receipt",
-            "network": chain_plan.network,
-            "hash": transaction_hash,
-            "creator": creator_address,
-            "ledger": chain_plan.ledger,
-            "token_uri": creator_state.token_uri(),
-            "op_type_code": RUNTIME_CUSTODY_CREATOR_OP_TYPE_CODE,
-        }),
-    )
-    .await
-    .map_err(|error| creator_mint_chain_error(error, line!()))?;
-    let receipt: ResolvedProtectedContentMintReceipt =
-        serde_json::from_value(receipt_response).map_err(creator_mint_unavailable!())?;
-    tracing::debug!(
-        token_id = %receipt.token_id,
-        operative = %receipt.operative,
-        "runtime custody creator tail: mint receipt resolved"
-    );
-    Ok(receipt)
-}
-
-async fn finalize_runtime_custody_creator_listing(
-    state: &GatewayState,
-    creator_state: &elastos_protected_content_runtime::RuntimeMintCreatorState,
-    creator_address: &str,
-    chain_plan: &RuntimeCustodyCreatorChainPlan,
-    receipt: &ResolvedProtectedContentMintReceipt,
-    transaction_hash: &str,
-) -> anyhow::Result<elastos_protected_content_runtime::RuntimeMintCreatorTerminalEvidence> {
-    let listing_response = wallet_chain_provider_data(
-        state,
-        serde_json::json!({
-            "op": "resolve_protected_content_verified_listing",
-            "network": chain_plan.network,
-            "seller": creator_address,
-            "ledger": chain_plan.ledger,
-            "token_id": receipt.token_id,
-        }),
-    )
-    .await
-    .map_err(|error| creator_mint_chain_error(error, line!()))?;
-    let listing: ResolvedProtectedContentVerifiedListing =
-        serde_json::from_value(listing_response).map_err(creator_mint_unavailable!())?;
-    validate_runtime_custody_creator_terminal_bindings(
-        creator_state,
-        creator_address,
-        chain_plan,
-        receipt,
-        &listing,
-    )?;
-    elastos_protected_content_runtime::RuntimeMintCreatorTerminalEvidence::new(
-        creator_state.metadata_cid(),
-        creator_state.token_uri(),
-        creator_address,
-        &chain_plan.chain_namespace,
-        &chain_plan.network,
-        &chain_plan.ledger,
-        listing.token_id,
-        listing.operative,
-        listing.quantity,
-        listing.price,
-        listing.pay_token,
-        listing
-            .payment_processor
-            .map(|value| value.to_ascii_lowercase()),
-        transaction_hash,
-        crate::auth::now_ts(),
-    )
-    .map_err(creator_mint_unavailable!())
-}
-
-fn validate_runtime_custody_creator_terminal_bindings(
-    creator_state: &elastos_protected_content_runtime::RuntimeMintCreatorState,
-    creator_address: &str,
-    chain_plan: &RuntimeCustodyCreatorChainPlan,
-    receipt: &ResolvedProtectedContentMintReceipt,
-    listing: &ResolvedProtectedContentVerifiedListing,
-) -> anyhow::Result<()> {
-    let expected_chain_id = runtime_custody_creator_chain_id(&chain_plan.chain_namespace)?;
-    if receipt.schema != "elastos.chain.protected-content-mint-receipt/v1"
-        || receipt.network != chain_plan.network
-        || receipt.chain_id != expected_chain_id
-    {
-        return Err(creator_mint_unavailable_missing!()());
-    }
-    if listing.schema != "elastos.chain.protected-content-verified-listing/v1"
-        || listing.network != chain_plan.network
-        || listing.chain_id != expected_chain_id
-        || listing.chain_id != receipt.chain_id
-        || !listing.seller.eq_ignore_ascii_case(creator_address)
-        || !listing.ledger.eq_ignore_ascii_case(&chain_plan.ledger)
-        || !listing.token_id.eq_ignore_ascii_case(&receipt.token_id)
-        || !listing.operative.eq_ignore_ascii_case(&receipt.operative)
-        || listing.quantity != creator_state.desired_terms().copies()
-        || listing.price != creator_state.desired_terms().price()
-        || !listing
-            .pay_token
-            .eq_ignore_ascii_case(&chain_plan.pay_token)
-    {
-        return Err(creator_mint_unavailable_missing!()());
-    }
-    Ok(())
-}
-
-pub(crate) async fn runtime_custody_publish_via_gateway(
-    state: &GatewayState,
-    authority: &RuntimeWalletAuthority,
-    registry: Arc<ProviderRegistry>,
-    input: crate::protected_content_runtime::RuntimeCustodyLibrarySourceInput,
-) -> anyhow::Result<crate::protected_content_runtime::RuntimeCustodyLibraryPublishFacts> {
-    let (facts, prepared_input) =
-        crate::protected_content_runtime::publish_runtime_custody_library_source(
-            &state.data_dir,
-            Arc::clone(&registry),
-            input,
-        )
-        .await?;
-    runtime_custody_publish_creator_tail_from_facts(
-        state,
-        authority,
-        registry,
-        prepared_input,
-        facts,
-    )
-    .await
-}
-
-pub(crate) async fn runtime_custody_buy_via_gateway(
-    state: &GatewayState,
-    authority: &RuntimeWalletAuthority,
-    registry: Arc<ProviderRegistry>,
-    input: crate::protected_content_runtime::RuntimeCustodyBuyInput,
-) -> anyhow::Result<serde_json::Value> {
-    let mint_id = hex::decode(&input.mint_id)
-        .ok()
-        .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
-        .map(Digest32::new)
-        .ok_or_else(purchase_denied_missing!())?;
-    let listing_record =
-        crate::protected_content_runtime::load_runtime_custody_listing(&state.data_dir, mint_id)?
-            .ok_or_else(purchase_denied_missing!())?;
-    let listing = &listing_record.package;
-    let persisted_purchase = crate::protected_content_runtime::load_runtime_custody_purchase(
-        &state.data_dir,
-        &input.principal_id,
-        mint_id,
-    )?;
-    let listing_sha256 = listing_record.portable_package_digest();
-    if listing.mint_id != input.mint_id {
-        return Err(purchase_denied_missing!()());
-    }
-    let localhost_root = crate::auth::principal_localhost_root(&input.principal_id);
-    let profile = crate::collaboration_profile_authority::load_profile_authority(
-        &state.data_dir,
-        &input.principal_id,
-        &localhost_root,
-    )?
-    .ok_or_else(purchase_denied_missing!())?;
-    let profile_did = profile.document().profile_did.clone();
-    let now = crate::auth::now_ts();
-    let existing_buyer_account = if let Some(existing) = persisted_purchase.as_ref() {
-        validate_wallet_evm_address(&existing.address, "buyer").map_err(purchase_denied!())?;
-        let buyer_account = RuntimeCustodyCreatorAccount {
-            account_id: existing.account_id.clone(),
-            address: existing.address.clone(),
-        };
-        let expected_identity = RuntimeCustodyExpectedPurchaseIdentity {
-            principal_id: &input.principal_id,
-            profile_did: &profile_did,
-            mint_id_hex: &input.mint_id,
-            content_id: &listing.content_id,
-            content_cid: &listing.content_cid,
-            listing_sha256: &listing_sha256,
-            listing,
-            buyer_account: &buyer_account,
-        };
-        validate_runtime_custody_purchase_record_identity(existing, &expected_identity)?;
-        if matches!(
-            existing.progress,
-            crate::protected_content_runtime::RuntimeCustodyPurchaseProgress::Complete { .. }
-        ) {
-            return Ok(runtime_custody_buy_terminal_response(existing));
-        }
-        Some(buyer_account)
-    } else {
-        None
-    };
-    let (draft, fresh_availability) =
-        crate::protected_content_runtime::verify_fresh_runtime_custody_availability(
-            &state.data_dir,
-            &registry,
-            &listing_record,
-            mint_id,
-            now,
-        )
-        .await
-        .map_err(purchase_denied!())?;
-    tracing::debug!(
-        mint_id = %input.mint_id,
-        principal = %input.principal_id,
-        content_cid = %fresh_availability.content_cid(),
-        replicas = fresh_availability.observed_replicas(),
-        "runtime custody buy: fresh availability verified"
-    );
-    let expected_content_id =
-        crate::protected_content_runtime::runtime_protected_content_id(draft.encrypted_content())
-            .map_err(purchase_denied!())?;
-    let expected_content_access_id =
-        format!("0x{}", hex::encode(draft.content_access_id().as_bytes()));
-    if listing.content_id != expected_content_id
-        || listing.content_access_id != expected_content_access_id
-        || listing.content_cid != fresh_availability.content_cid()
-    {
-        return Err(purchase_denied_missing!()());
-    }
-    let (mut purchase, buyer_account) = match (persisted_purchase, existing_buyer_account) {
-        (Some(existing), Some(buyer_account)) => (existing, buyer_account),
-        (None, None) => {
-            let buyer_account =
-                resolve_runtime_custody_buyer_account(state, authority, &listing.chain_namespace)
-                    .await?;
-            let purchase_plan = resolve_runtime_custody_purchase_plan(state, listing).await?;
-            let mut steps = purchase_plan.steps.iter();
-            let approval_request = match purchase_plan.steps.as_slice() {
-                [approval, buy] if approval.stage == "approval" && buy.stage == "buy" => {
-                    Some(runtime_custody_purchase_transaction_request(
-                        &input.principal_id,
-                        &buyer_account,
-                        listing,
-                        &listing_sha256,
-                        mint_id,
-                        approval,
-                    )?)
-                }
-                [buy] if buy.stage == "buy" => None,
-                _ => return Err(purchase_unavailable_missing!()()),
-            };
-            let buy_step = steps
-                .next_back()
-                .ok_or_else(purchase_unavailable_missing!())?;
-            let buy_request = runtime_custody_purchase_transaction_request(
-                &input.principal_id,
-                &buyer_account,
-                listing,
-                &listing_sha256,
-                mint_id,
-                buy_step,
-            )?;
-            let purchase = crate::protected_content_runtime::RuntimeCustodyPurchaseRecord {
-                schema: crate::protected_content_runtime::RUNTIME_PURCHASE_SCHEMA_V1.to_string(),
-                principal_id: input.principal_id.clone(),
-                profile_did: profile_did.clone(),
-                mint_id: input.mint_id.clone(),
-                content_id: expected_content_id.clone(),
-                cid: fresh_availability.content_cid().to_string(),
-                listing_sha256: listing_sha256.clone(),
-                seller_address: listing.seller_address.clone(),
-                chain_namespace: listing.chain_namespace.clone(),
-                network: listing.network.clone(),
-                ledger: listing.ledger.clone(),
-                token_id: listing.token_id.clone(),
-                operative: listing.operative.clone(),
-                price: listing.price.clone(),
-                pay_token: listing.pay_token.clone(),
-                payment_processor: listing.payment_processor.clone(),
-                availability_receipt_digest: runtime_custody_purchase_availability_receipt_digest(
-                    &fresh_availability,
-                ),
-                account_id: buyer_account.account_id.clone(),
-                address: buyer_account.address.clone(),
-                approval_stage: approval_request
-                    .as_ref()
-                    .map(|request| runtime_custody_purchase_stage_record("approval", request))
-                    .transpose()?,
-                buy_stage: runtime_custody_purchase_stage_record("buy", &buy_request)?,
-                progress:
-                    crate::protected_content_runtime::RuntimeCustodyPurchaseProgress::Pending {
-                        confirmed_buy: None,
-                    },
-                created_at: now,
-                updated_at: now,
-            };
-            crate::protected_content_runtime::persist_runtime_custody_purchase(
-                &state.data_dir,
-                &purchase,
-            )?;
-            (purchase, buyer_account)
-        }
-        _ => return Err(purchase_denied_missing!()()),
-    };
-
-    let approval_request = purchase
-        .approval_stage
-        .as_ref()
-        .map(|stage| {
-            validate_runtime_custody_purchase_stage_request(
-                &input.principal_id,
-                &buyer_account,
-                listing,
-                &listing_sha256,
-                mint_id,
-                stage,
-                "approval",
-            )
-        })
-        .transpose()?;
-    let buy_request = validate_runtime_custody_purchase_stage_request(
-        &input.principal_id,
-        &buyer_account,
-        listing,
-        &listing_sha256,
-        mint_id,
-        &purchase.buy_stage,
-        "buy",
-    )?;
-
-    let fresh_receipt_digest =
-        runtime_custody_purchase_availability_receipt_digest(&fresh_availability);
-    if purchase.availability_receipt_digest != fresh_receipt_digest {
-        purchase.availability_receipt_digest = fresh_receipt_digest;
-        purchase.updated_at = crate::auth::now_ts();
-        crate::protected_content_runtime::persist_runtime_custody_purchase(
-            &state.data_dir,
-            &purchase,
-        )?;
-    }
-
-    if let Some(approval_request) = approval_request.as_ref() {
-        let approval_completion =
-            complete_runtime_custody_purchase_stage(state, authority, approval_request).await?;
-        if approval_completion.is_none() {
-            purchase.updated_at = crate::auth::now_ts();
-            crate::protected_content_runtime::persist_runtime_custody_purchase(
-                &state.data_dir,
-                &purchase,
-            )?;
-            anyhow::bail!(
-                crate::protected_content_runtime::RUNTIME_CUSTODY_PURCHASE_PENDING_MESSAGE
-            );
-        }
-    }
-
-    if let crate::protected_content_runtime::RuntimeCustodyPurchaseProgress::Pending {
-        confirmed_buy: None,
-    } = &purchase.progress
-    {
-        let buy_completion =
-            complete_runtime_custody_purchase_stage(state, authority, &buy_request).await?;
-        let Some(buy_completion) = buy_completion else {
-            purchase.updated_at = crate::auth::now_ts();
-            crate::protected_content_runtime::persist_runtime_custody_purchase(
-                &state.data_dir,
-                &purchase,
-            )?;
-            anyhow::bail!(
-                crate::protected_content_runtime::RUNTIME_CUSTODY_PURCHASE_PENDING_MESSAGE
-            );
-        };
-        let wallet_binding = buy_completion
-            .validated_chain_outcome
-            .as_ref()
-            .map(|outcome| {
-                (
-                    outcome.binding.clone(),
-                    outcome.chain_observation.clone(),
-                    outcome.confirmed_at,
-                )
-            });
-        let Some((wallet_binding, chain_observation, confirmed_at)) = wallet_binding else {
-            return Err(purchase_unavailable_missing!()());
-        };
-        purchase.progress =
-            crate::protected_content_runtime::RuntimeCustodyPurchaseProgress::Pending {
-                confirmed_buy: Some(
-                    crate::protected_content_runtime::RuntimeCustodyConfirmedPurchaseStage {
-                        chain_transaction: buy_completion.transaction_hash,
-                        wallet_binding,
-                        chain_observation,
-                        confirmed_at,
-                    },
-                ),
-            };
-        purchase.updated_at = crate::auth::now_ts();
-        crate::protected_content_runtime::persist_runtime_custody_purchase(
-            &state.data_dir,
-            &purchase,
-        )?;
-    }
-
-    let confirmed_buy = match &purchase.progress {
-        crate::protected_content_runtime::RuntimeCustodyPurchaseProgress::Pending {
-            confirmed_buy: Some(confirmed_buy),
-        } => confirmed_buy.clone(),
-        crate::protected_content_runtime::RuntimeCustodyPurchaseProgress::Complete { .. } => {
-            return Ok(runtime_custody_buy_terminal_response(&purchase));
-        }
-        crate::protected_content_runtime::RuntimeCustodyPurchaseProgress::Pending {
-            confirmed_buy: None,
-        } => anyhow::bail!(
-            crate::protected_content_runtime::RUNTIME_CUSTODY_PURCHASE_PENDING_MESSAGE
-        ),
-    };
-    let access = resolve_runtime_custody_purchase_access(
-        state,
-        listing,
-        &buyer_account,
-        &expected_content_access_id,
-        &format!("purchase-access:{}", purchase.buy_stage.effect_id),
-    )
-    .await?;
-    let Some(access) = access else {
-        purchase.updated_at = crate::auth::now_ts();
-        crate::protected_content_runtime::persist_runtime_custody_purchase(
-            &state.data_dir,
-            &purchase,
-        )?;
-        anyhow::bail!(crate::protected_content_runtime::RUNTIME_CUSTODY_PURCHASE_PENDING_MESSAGE);
-    };
-    purchase.progress =
-        crate::protected_content_runtime::RuntimeCustodyPurchaseProgress::Complete {
-            terminal: crate::protected_content_runtime::RuntimeCustodyTerminalPurchaseRecord {
-                chain_transaction: confirmed_buy.chain_transaction,
-                wallet_binding: confirmed_buy.wallet_binding,
-                chain_observation: confirmed_buy.chain_observation,
-                access_evidence: access,
-                confirmed_at: confirmed_buy.confirmed_at,
-                bought_at: crate::auth::now_ts(),
-            },
-        };
-    purchase.updated_at = crate::auth::now_ts();
-    crate::protected_content_runtime::persist_runtime_custody_purchase(&state.data_dir, &purchase)?;
-    Ok(runtime_custody_buy_terminal_response(&purchase))
-}
-
-async fn runtime_custody_publish_creator_tail_from_facts(
-    state: &GatewayState,
-    authority: &RuntimeWalletAuthority,
-    registry: Arc<ProviderRegistry>,
-    input: crate::protected_content_runtime::RuntimeCustodyLibraryPublishInput,
-    mut facts: crate::protected_content_runtime::RuntimeCustodyLibraryPublishFacts,
-) -> anyhow::Result<crate::protected_content_runtime::RuntimeCustodyLibraryPublishFacts> {
-    let mint_journal = crate::protected_content_runtime::runtime_mint_journal(&state.data_dir);
-    let mut mint = mint_journal
-        .load(facts.mint_id)
-        .map_err(creator_mint_unavailable!())?;
-    let source = resolve_runtime_custody_creator_mint_source(state).await?;
-    if runtime_custody_creator_mint_source_digest_for_source(&source)
-        != input.creator_mint_source_digest
-    {
-        return Err(creator_mint_unavailable_missing!()());
-    }
-    let creator_account =
-        resolve_runtime_custody_creator_account(state, authority, &input.wallet_account_id).await?;
-    if creator_account.address != input.wallet_account_address {
-        return Err(creator_mint_unavailable_missing!()());
-    }
-    let desired_terms = elastos_protected_content_runtime::RuntimeMintCreatorDesiredTerms::new(
-        creator_account.account_id.clone(),
-        input.copies.clone(),
-        input.price.clone(),
-    )
-    .map_err(creator_mint_unavailable!())?;
-    if let Some(existing) = mint.creator_state() {
-        if existing.desired_terms() != &desired_terms {
-            return Err(creator_mint_unavailable_missing!()());
-        }
-        if let Some(terminal) = existing.terminal() {
-            if !terminal
-                .seller()
-                .eq_ignore_ascii_case(&creator_account.address)
-            {
-                return Err(creator_mint_unavailable_missing!()());
-            }
-            facts.listing_uri = Some(
-                publish_runtime_custody_creator_listing(
-                    registry.as_ref(),
-                    &state.data_dir,
-                    &mint,
-                    &facts,
-                    &input.principal_id,
-                    terminal,
-                )
-                .await?,
-            );
-            return Ok(facts);
-        }
-    }
-    let creator_state = match mint.creator_state().cloned() {
-        Some(existing) => existing,
-        None => {
-            let publisher_profile_did =
-                crate::protected_content_runtime::load_runtime_custody_profile_did(
-                    &state.data_dir,
-                    &input.principal_id,
-                )?;
-            let (metadata_cid, token_uri) = publish_runtime_custody_creator_metadata(
-                registry.as_ref(),
-                &state.data_dir,
-                &input.object_uri,
-                &input.mime_type,
-                &input.codecs,
-                &facts,
-                &mint,
-                &publisher_profile_did,
-            )
-            .await?;
-            let creator_state = elastos_protected_content_runtime::RuntimeMintCreatorState::new(
-                desired_terms.clone(),
-                metadata_cid,
-                token_uri,
-            )
-            .map_err(creator_mint_unavailable!())?;
-            mint = mint_journal
-                .bind_creator_state(facts.mint_id, creator_state.clone())
-                .map_err(creator_mint_unavailable!())?;
-            creator_state
-        }
-    };
-    let chain_plan = resolve_runtime_custody_creator_chain_plan(
-        state,
-        input.creator_mint_source_digest,
-        &source,
-        &creator_state,
-        &creator_account.address,
-        mint.draft().content_access_id(),
-        creator_state.token_uri(),
-    )
-    .await?;
-    tracing::debug!(
-        mint_id = %hex::encode(facts.mint_id.as_bytes()),
-        network = %chain_plan.network,
-        to = %chain_plan.to,
-        value = %chain_plan.value,
-        "runtime custody creator tail: mint chain plan resolved"
-    );
-    let request = runtime_custody_creator_transaction_request(
-        &input.principal_id,
-        &creator_account,
-        &creator_state,
-        &chain_plan,
-        facts.mint_id,
-        creator_state.token_uri(),
-    )?;
-    let effect_binding = runtime_custody_creator_effect_binding(&request)?;
-    if let Some(existing) = mint.creator_state().and_then(|state| state.effect()) {
-        if existing != &effect_binding {
-            return Err(creator_mint_unavailable_missing!()());
-        }
-    } else {
-        mint_journal
-            .bind_creator_effect(facts.mint_id, effect_binding.clone())
-            .map_err(creator_mint_unavailable!())?;
-    }
-    let approval = ensure_exact_runtime_transaction_approval(state, authority, request.clone())
-        .await
-        .map_err(|(_, message)| anyhow::anyhow!(message))?;
-    tracing::debug!(
-        effect_id = %approval.effect_id,
-        "runtime custody creator tail: exact wallet effect ensured"
-    );
-    let completion = match complete_runtime_transaction_effect(
-        state,
-        authority,
-        RuntimeTransactionLookup::ApprovalId(effect_binding.approval_request_id()),
-        Some(&request),
-        None,
-    )
-    .await
-    {
-        Ok(completion) => completion,
-        Err((status, message))
-            if status == StatusCode::BAD_REQUEST
-                && message == "transaction approval is not completed" =>
-        {
-            let _ = approval;
-            {
-                tracing::debug!(
-                    line = line!(),
-                    "runtime custody creator tail: pending exact Wallet or Chain settlement"
-                );
-                anyhow::bail!(RUNTIME_CUSTODY_CREATOR_PENDING_MESSAGE);
-            }
-        }
-        Err((_, message)) => return Err(anyhow::anyhow!(message)),
-    };
-    if completion.receipt.is_none() {
-        {
-            tracing::debug!(
-                line = line!(),
-                "runtime custody creator tail: pending exact Wallet or Chain settlement"
-            );
-            anyhow::bail!(RUNTIME_CUSTODY_CREATOR_PENDING_MESSAGE);
-        }
-    }
-    if completion.completion_pending {
-        {
-            tracing::debug!(
-                line = line!(),
-                "runtime custody creator tail: pending exact Wallet or Chain settlement"
-            );
-            anyhow::bail!(RUNTIME_CUSTODY_CREATOR_PENDING_MESSAGE);
-        }
-    }
-    if completion.completion_error.is_some() {
-        return Err(creator_mint_unavailable_missing!()());
-    }
-    // The finalized receipt names the operative that holds the minted copies.
-    // A listing only becomes deliverable once that operative lets the market
-    // gateway move them (ERC-1155 operator approval); the mint itself never
-    // grants that, so raise it here as a second exact wallet effect when the
-    // chain does not already report it, then verify the listing.
-    let receipt = resolve_runtime_custody_creator_mint_receipt(
-        state,
-        &creator_state,
-        &creator_account.address,
-        &chain_plan,
-        &completion.transaction_hash,
-    )
-    .await?;
-    ensure_runtime_custody_creator_operator_approval(
-        state,
-        authority,
-        &mint_journal,
-        &mint,
-        facts.mint_id,
-        &input.principal_id,
-        &creator_account,
-        &chain_plan,
-        &receipt.operative,
-    )
-    .await?;
-    let terminal = finalize_runtime_custody_creator_listing(
-        state,
-        &creator_state,
-        &creator_account.address,
-        &chain_plan,
-        &receipt,
-        &completion.transaction_hash,
-    )
-    .await?;
-    mint = mint_journal
-        .mark_creator_completed(facts.mint_id, terminal.clone())
-        .map_err(creator_mint_unavailable!())?;
-    facts.listing_uri = Some(
-        publish_runtime_custody_creator_listing(
-            registry.as_ref(),
-            &state.data_dir,
-            &mint,
-            &facts,
-            &input.principal_id,
-            &terminal,
-        )
-        .await?,
-    );
-    Ok(facts)
-}
-
-#[cfg(test)]
-pub(crate) async fn runtime_custody_publish_creator_tail_for_test(
-    state: &GatewayState,
-    authority: &RuntimeWalletAuthority,
-    registry: Arc<ProviderRegistry>,
-    input: crate::protected_content_runtime::RuntimeCustodyLibraryPublishInput,
-    facts: crate::protected_content_runtime::RuntimeCustodyLibraryPublishFacts,
-) -> anyhow::Result<crate::protected_content_runtime::RuntimeCustodyLibraryPublishFacts> {
-    runtime_custody_publish_creator_tail_from_facts(state, authority, registry, input, facts).await
+        .filter(|authority| !authority.is_empty())
+        .map(str::to_string)
 }
 
 pub(super) fn provider_proxy_runtime_metadata_field(request: &serde_json::Value) -> Option<&str> {
@@ -4329,10 +1002,14 @@ fn library_operation_needs_runtime_coordinator(op: &str) -> bool {
         "publish"
             | "unpublish"
             | "repair"
+            | "discard_protection"
+            | "unfinished_protections"
             | "sync"
             | "list_runtime_custody"
             | "import_runtime_custody"
             | "buy"
+            | "buy_offer"
+            | "download_owned_copy"
             | "open_viewer"
             | "read_viewer"
             | "close_viewer"
@@ -4351,72 +1028,6 @@ fn library_request_targets_webspace(request: &serde_json::Value) -> bool {
                     .strip_prefix("localhost://WebSpaces/")
                     .is_some_and(|rest| !rest.is_empty())
         })
-}
-
-struct LibraryEventsStreamState {
-    registry: Arc<ProviderRegistry>,
-    principal_id: String,
-    cursor: String,
-    initialized: bool,
-}
-
-async fn library_events_since_cursor(
-    registry: &ProviderRegistry,
-    principal_id: &str,
-    cursor: &str,
-) -> anyhow::Result<(Vec<serde_json::Value>, String)> {
-    let response = registry
-        .send_raw(
-            "object",
-            &serde_json::json!({
-                "op": "events",
-                "principal_id": principal_id,
-                "limit": 256,
-            }),
-        )
-        .await
-        .map_err(|err| anyhow::anyhow!("object provider unavailable: {err}"))?;
-    if response.get("status").and_then(|value| value.as_str()) == Some("error") {
-        let message = response
-            .get("message")
-            .and_then(|value| value.as_str())
-            .unwrap_or("library events failed");
-        anyhow::bail!("{message}");
-    }
-    let events = response
-        .get("data")
-        .and_then(|data| data.get("events"))
-        .and_then(|value| value.as_array())
-        .cloned()
-        .unwrap_or_default();
-    let next_cursor = events
-        .last()
-        .and_then(|event| event.get("event_id"))
-        .and_then(|value| value.as_str())
-        .unwrap_or(cursor)
-        .to_string();
-    if cursor.is_empty() {
-        return Ok((events, next_cursor));
-    }
-    let cursor_index = events.iter().position(|event| {
-        event
-            .get("event_id")
-            .and_then(|value| value.as_str())
-            .is_some_and(|event_id| event_id == cursor)
-    });
-    let filtered = if let Some(index) = cursor_index {
-        events.into_iter().skip(index + 1).collect()
-    } else {
-        events
-    };
-    Ok((filtered, next_cursor))
-}
-
-fn library_events_sse_event(payload: serde_json::Value) -> SseEvent {
-    let data = serde_json::to_string(&payload).unwrap_or_else(|_| {
-        r#"{"schema":"elastos.library.events/v1","status":"error","events":[]}"#.to_string()
-    });
-    SseEvent::default().event("library-events").data(data)
 }
 
 #[cfg(test)]
@@ -4440,71 +1051,56 @@ mod tests {
         assert!(missing.chain().nth(1).unwrap().to_string().contains(".rs:"));
     }
 
+    /// STAB-34 / D5: after mining, "not finalized yet" and a transient chain
+    /// answer (the upstream unreachable, the provider not answering) are both
+    /// pending; only a definite refusal fails closed. (Before D5 the
+    /// transient answers failed closed too, which stopped the open page.)
     #[test]
-    fn erc1155_operator_approval_abi_helpers_encode_and_decode_exactly() {
-        let owner = "0xF36C114c19F96b4174B6D71E392c00dB95093a1E";
-        let gateway = "0x09dBe796f40ECEffEAccf243c3d758C4c1d8D87D";
-        assert_eq!(
-            super::erc1155_is_approved_for_all_call_data(owner, gateway).unwrap(),
-            "0xe985e9c5000000000000000000000000f36c114c19f96b4174b6d71e392c00db95093a1e00000000000000000000000009dbe796f40eceffeaccf243c3d758c4c1d8d87d"
-        );
-        assert_eq!(
-            super::erc1155_set_approval_for_all_call_data(gateway, true).unwrap(),
-            "0xa22cb46500000000000000000000000009dbe796f40eceffeaccf243c3d758c4c1d8d87d0000000000000000000000000000000000000000000000000000000000000001"
-        );
-        assert!(super::erc1155_is_approved_for_all_call_data("0x1234", gateway).is_err());
-        assert_eq!(
-            super::erc1155_bool_result(
-                "0x0000000000000000000000000000000000000000000000000000000000000001"
-            ),
-            Some(true)
-        );
-        assert_eq!(
-            super::erc1155_bool_result(
-                "0x0000000000000000000000000000000000000000000000000000000000000000"
-            ),
-            Some(false)
-        );
-        assert_eq!(super::erc1155_bool_result("0x01"), None);
-        assert_eq!(
-            super::erc1155_bool_result(
-                "0x0000000000000000000000000000000000000000000000000000000000000042"
-            ),
-            None
-        );
-    }
-
-    #[test]
-    fn creator_mint_chain_error_maps_pending_codes_to_pending_and_others_to_unavailable() {
-        let pending = super::creator_mint_chain_error(
+    fn creator_mint_chain_error_maps_pending_and_transient_to_pending_refusals_to_unavailable() {
+        for (status, message) in [
             (
                 StatusCode::BAD_REQUEST,
                 "protected_content_mint_receipt_pending: protected-content mint receipt is not finalized on enough configured sources".to_string(),
             ),
-            1,
-        );
-        assert_eq!(
-            pending.to_string(),
-            super::RUNTIME_CUSTODY_CREATOR_PENDING_MESSAGE
-        );
+            (
+                StatusCode::BAD_REQUEST,
+                "upstream_unreachable: EVM RPC request failed".to_string(),
+            ),
+            (
+                StatusCode::BAD_REQUEST,
+                "unavailable: mint receipt unavailable".to_string(),
+            ),
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "chain provider unavailable: timed out".to_string(),
+            ),
+        ] {
+            let pending = super::creator_mint_chain_error((status, message.clone()), 1);
+            assert_eq!(
+                pending.to_string(),
+                super::RUNTIME_CUSTODY_CREATOR_PENDING_MESSAGE,
+                "{message}"
+            );
+        }
         for (status, message) in [
             (
                 StatusCode::BAD_REQUEST,
                 "invalid_protected_content_mint_receipt: bad".to_string(),
             ),
             (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "protected_content_mint_receipt_pending: x".to_string(),
+                StatusCode::BAD_REQUEST,
+                "upstream_invalid_protected_content_verified_listing: bad".to_string(),
             ),
             (
                 StatusCode::BAD_REQUEST,
-                "upstream_unreachable: EVM RPC request failed".to_string(),
+                "protected_content_mint_receipt_reverted_already_bound: reverted".to_string(),
             ),
         ] {
-            let error = super::creator_mint_chain_error((status, message), 1);
+            let error = super::creator_mint_chain_error((status, message.clone()), 1);
             assert_eq!(
                 error.to_string(),
-                super::RUNTIME_CUSTODY_CREATOR_UNAVAILABLE_MESSAGE
+                super::RUNTIME_CUSTODY_CREATOR_UNAVAILABLE_MESSAGE,
+                "{message}"
             );
         }
     }
@@ -4516,6 +1112,11 @@ mod tests {
             "wallet-account-1".to_string(),
             "0x2".to_string(),
             "0x5".to_string(),
+            Vec::new(),
+            elastos_protected_content_runtime::RuntimeMintAccessMethod::BuyOnce,
+            None,
+            String::new(),
+            String::new(),
         )
         .unwrap();
         elastos_protected_content_runtime::RuntimeMintCreatorState::new(
@@ -4545,12 +1146,15 @@ mod tests {
             chain_id,
             token_id: "0x77".to_string(),
             operative: "0x00000000000000000000000000000000000000dd".to_string(),
+            quantity: Some("0x7".to_string()),
+            price: Some("0xf4240".to_string()),
+            pay_token: Some(RUNTIME_CUSTODY_NATIVE_PAY_TOKEN.to_string()),
         }
     }
 
     fn test_listing(chain_id: u64) -> ResolvedProtectedContentVerifiedListing {
         ResolvedProtectedContentVerifiedListing {
-            schema: "elastos.chain.protected-content-verified-listing/v1".to_string(),
+            schema: RUNTIME_CUSTODY_VERIFIED_LISTING_SCHEMA.to_string(),
             network: "base-mainnet".to_string(),
             chain_id,
             seller: "0x00000000000000000000000000000000000000ee".to_string(),
@@ -4562,6 +1166,141 @@ mod tests {
             pay_token: "0x00000000000000000000000000000000000000bb".to_string(),
             payment_processor: Some("0x00000000000000000000000000000000000000ff".to_string()),
         }
+    }
+
+    #[test]
+    fn runtime_custody_creator_mint_blocked_reports_the_stage_and_the_recorded_terms() {
+        let mint_id = elastos_protected_content_contracts::Digest32::new([0x11; 32]);
+        let recorded = test_creator_state();
+
+        // Recorded only: the wire spelling stays, though such an attempt is now
+        // set aside rather than refused. Never offered Start over from here.
+        let error = super::runtime_custody_creator_mint_blocked(mint_id, &recorded, None, None);
+        let blocked = error
+            .downcast_ref::<crate::protected_content_runtime::RuntimeCustodyCreatorMintBlocked>()
+            .expect("refusal must carry its reason as data");
+        let json = blocked.as_json();
+        assert_eq!(
+            json["schema"],
+            crate::protected_content_runtime::RUNTIME_CUSTODY_CREATOR_MINT_BLOCKED_SCHEMA_V1
+        );
+        assert_eq!(json["state"], "recorded_only");
+        assert_eq!(json["recorded_copies"], "0x2");
+        assert_eq!(json["recorded_price"], "0x5");
+        assert_eq!(json["can_start_over"], false);
+        assert_eq!(json["can_resume"], true);
+        assert_eq!(json["mint_id"], hex::encode(mint_id.as_bytes()));
+
+        // A transaction is out for approval: it may still settle, so the
+        // record must survive; only finishing it is on offer.
+        let raised = recorded
+            .clone()
+            .with_effect(
+                elastos_protected_content_runtime::RuntimeMintCreatorEffectBinding::new(
+                    "effect-1",
+                    "approval-1",
+                    "a".repeat(64),
+                    "wallet-account-1",
+                    "0x00000000000000000000000000000000000000ee",
+                    "eip155:8453",
+                    "base-mainnet",
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let json = super::runtime_custody_creator_mint_blocked(mint_id, &raised, None, None)
+            .downcast_ref::<crate::protected_content_runtime::RuntimeCustodyCreatorMintBlocked>()
+            .expect("refusal must carry its reason as data")
+            .as_json();
+        assert_eq!(json["state"], "approval_outstanding");
+        assert_eq!(json["can_start_over"], false);
+        assert_eq!(json["can_resume"], true);
+
+        // Settled: a seller and a token id exist, so nothing may be dropped.
+        // Resuming stays on offer: it finishes a listing that never published,
+        // and only replays one that did.
+        let settled = raised
+            .with_terminal(creator_terminal_evidence_for_test())
+            .unwrap();
+        let json = super::runtime_custody_creator_mint_blocked(mint_id, &settled, None, None)
+            .downcast_ref::<crate::protected_content_runtime::RuntimeCustodyCreatorMintBlocked>()
+            .expect("refusal must carry its reason as data")
+            .as_json();
+        assert_eq!(json["state"], "already_minted");
+        assert_eq!(json["can_start_over"], false);
+        assert_eq!(json["can_resume"], true);
+    }
+
+    /// The refusal's own sentence stays plain, and no app is expected to read
+    /// it: it is a fallback for surfaces that predate the typed answer.
+    /// A blocked mint says how far it got, so an app can show which stage the
+    /// existing attempt reached instead of only that one exists.
+    #[test]
+    fn runtime_custody_creator_mint_blocked_carries_progress_when_the_caller_has_it() {
+        let mint_id = elastos_protected_content_contracts::Digest32::new([0x11; 32]);
+        let progress = serde_json::json!({
+            "schema": crate::protected_content_runtime::RUNTIME_CUSTODY_CREATOR_PROGRESS_SCHEMA_V1,
+            "stages": [
+                { "id": "escrow", "state": "done" },
+                { "id": "publish", "state": "done" },
+                { "id": "listing", "state": "active" },
+            ],
+        });
+        let json = super::runtime_custody_creator_mint_blocked(
+            mint_id,
+            &test_creator_state(),
+            Some(progress.clone()),
+            None,
+        )
+        .downcast_ref::<crate::protected_content_runtime::RuntimeCustodyCreatorMintBlocked>()
+        .expect("the refusal must stay typed")
+        .as_json();
+        assert_eq!(json["progress"], progress);
+
+        // A caller without the record leaves it out rather than guessing.
+        let without =
+            super::runtime_custody_creator_mint_blocked(mint_id, &test_creator_state(), None, None)
+                .downcast_ref::<crate::protected_content_runtime::RuntimeCustodyCreatorMintBlocked>(
+                )
+                .expect("the refusal must stay typed")
+                .as_json();
+        assert!(without.get("progress").is_none());
+    }
+
+    #[test]
+    fn runtime_custody_creator_mint_blocked_never_reuses_the_unavailable_sentence() {
+        let error = super::runtime_custody_creator_mint_blocked(
+            elastos_protected_content_contracts::Digest32::new([0x11; 32]),
+            &test_creator_state(),
+            None,
+            None,
+        );
+        assert_ne!(
+            error.to_string(),
+            super::RUNTIME_CUSTODY_CREATOR_UNAVAILABLE_MESSAGE
+        );
+        assert!(error.to_string().contains("earlier attempt"));
+    }
+
+    fn creator_terminal_evidence_for_test(
+    ) -> elastos_protected_content_runtime::RuntimeMintCreatorTerminalEvidence {
+        elastos_protected_content_runtime::RuntimeMintCreatorTerminalEvidence::new(
+            "bafycreatorcid",
+            "ipfs://bafymetadata/metadata.json",
+            "0x00000000000000000000000000000000000000ee",
+            "eip155:8453",
+            "base-mainnet",
+            "0x00000000000000000000000000000000000000aa",
+            "0x77",
+            "0x00000000000000000000000000000000000000dd",
+            "0x2",
+            "0x5",
+            "0x00000000000000000000000000000000000000bb",
+            Some("0x00000000000000000000000000000000000000ff".to_string()),
+            "c".repeat(64),
+            1,
+        )
+        .unwrap()
     }
 
     #[test]
@@ -4581,6 +1320,75 @@ mod tests {
         .is_ok());
     }
 
+    /// The native pay-token path builds its own listing instead of reading one
+    /// back from chain state, so it has to satisfy the same bindings a fetched
+    /// listing does. A field left unset here fails closed at the terminal --
+    /// after the mint has already settled on chain -- which is the worst place
+    /// to find out.
+    #[test]
+    fn runtime_custody_native_listing_from_receipt_satisfies_terminal_bindings() {
+        let creator_state = test_creator_state();
+        let chain_plan = RuntimeCustodyCreatorChainPlan {
+            pay_token: RUNTIME_CUSTODY_NATIVE_PAY_TOKEN.to_string(),
+            ..test_chain_plan()
+        };
+        let receipt = ResolvedProtectedContentMintReceipt {
+            quantity: Some(creator_state.desired_terms().copies().to_string()),
+            price: Some(creator_state.desired_terms().price().to_string()),
+            pay_token: Some(RUNTIME_CUSTODY_NATIVE_PAY_TOKEN.to_string()),
+            ..test_receipt(8453)
+        };
+        let creator_address = "0x00000000000000000000000000000000000000ee";
+
+        let listing =
+            runtime_custody_listing_from_mint_receipt(creator_address, &chain_plan, &receipt);
+
+        assert_eq!(listing.schema, RUNTIME_CUSTODY_VERIFIED_LISTING_SCHEMA);
+        assert!(validate_runtime_custody_creator_terminal_bindings(
+            &creator_state,
+            creator_address,
+            &chain_plan,
+            &receipt,
+            &listing,
+        )
+        .is_ok());
+    }
+
+    /// The synthesized listing must not become a way to launder terms the
+    /// creator never asked for: a receipt whose `ItemListed` priced the token
+    /// differently is still refused.
+    #[test]
+    fn runtime_custody_native_listing_from_receipt_refuses_unrecorded_terms() {
+        let creator_state = test_creator_state();
+        let chain_plan = RuntimeCustodyCreatorChainPlan {
+            pay_token: RUNTIME_CUSTODY_NATIVE_PAY_TOKEN.to_string(),
+            ..test_chain_plan()
+        };
+        let creator_address = "0x00000000000000000000000000000000000000ee";
+        for (quantity, price) in [
+            ("0x3", creator_state.desired_terms().price().to_string()),
+            (creator_state.desired_terms().copies(), "0x6".to_string()),
+        ] {
+            let receipt = ResolvedProtectedContentMintReceipt {
+                quantity: Some(quantity.to_string()),
+                price: Some(price),
+                pay_token: Some(RUNTIME_CUSTODY_NATIVE_PAY_TOKEN.to_string()),
+                ..test_receipt(8453)
+            };
+            let listing =
+                runtime_custody_listing_from_mint_receipt(creator_address, &chain_plan, &receipt);
+
+            assert!(validate_runtime_custody_creator_terminal_bindings(
+                &creator_state,
+                creator_address,
+                &chain_plan,
+                &receipt,
+                &listing,
+            )
+            .is_err());
+        }
+    }
+
     #[test]
     fn runtime_custody_creator_terminal_bindings_accept_normalized_price_terms() {
         let creator_state = elastos_protected_content_runtime::RuntimeMintCreatorState::new(
@@ -4588,6 +1396,11 @@ mod tests {
                 "wallet-account-1",
                 "0x02",
                 "0x05",
+                Vec::new(),
+                elastos_protected_content_runtime::RuntimeMintAccessMethod::BuyOnce,
+                None,
+                String::new(),
+                String::new(),
             )
             .unwrap(),
             "bafycreatorcid",
@@ -4617,6 +1430,8 @@ mod tests {
         let creator_account = RuntimeCustodyCreatorAccount {
             account_id: "wallet:eip155:8453:0x00000000000000000000000000000000000000ee".to_string(),
             address: "0x00000000000000000000000000000000000000ee".to_string(),
+            external_signer: false,
+            connector_id: None,
         };
         let request = runtime_custody_creator_transaction_request(
             "did:key:z6Mkcreatorprincipal1111111111111111111111111111111",
@@ -4701,5 +1516,165 @@ mod tests {
             .unwrap_err();
             assert_eq!(err.to_string(), RUNTIME_CUSTODY_CREATOR_UNAVAILABLE_MESSAGE);
         }
+    }
+
+    fn test_purchase_buyer_account() -> RuntimeCustodyCreatorAccount {
+        RuntimeCustodyCreatorAccount {
+            account_id: "wallet:eip155:8453:0x00000000000000000000000000000000000000bb".to_string(),
+            address: "0x00000000000000000000000000000000000000bb".to_string(),
+            external_signer: false,
+            connector_id: None,
+        }
+    }
+
+    fn test_purchase_listing_package(
+    ) -> crate::protected_content_runtime::RuntimePortableListingPackage {
+        crate::protected_content_runtime::RuntimePortableListingPackage {
+            schema: "elastos.library.runtime-custody-portable-listing/v1".to_string(),
+            mint_id: "0".repeat(64),
+            content_id: "content:fixture".to_string(),
+            content_cid: "bafyfixturecontent".to_string(),
+            metadata_cid: "bafyfixturemetadata".to_string(),
+            token_uri: "ipfs://bafyfixturemetadata".to_string(),
+            publisher_profile_did: "did:key:z6MkFixture".to_string(),
+            display_name: "Demo".to_string(),
+            media_identity_base64: Some("ZGVtbw==".to_string()),
+            content_identity_base64: None,
+            content_access_id: format!("0x{}", "00".repeat(32)),
+            key_envelope_identity_base64: "ZGVtbw==".to_string(),
+            rights_policy_identity_base64: "ZGVtbw==".to_string(),
+            content_key_commitment_base64: "ZGVtbw==".to_string(),
+            seller_address: "0x0000000000000000000000000000000000000044".to_string(),
+            chain_namespace: "eip155:8453".to_string(),
+            network: "base".to_string(),
+            ledger: "0x0000000000000000000000000000000000000022".to_string(),
+            token_id: "0x3".to_string(),
+            operative: "0x0000000000000000000000000000000000000033".to_string(),
+            quantity: "0x1".to_string(),
+            price: "0x5".to_string(),
+            pay_token: "0x0000000000000000000000000000000000000055".to_string(),
+            payment_processor: None,
+            mint_transaction_hash: Some(format!("0x{}", "00".repeat(32))),
+            published_at: Some(1),
+            pool_mint_share_b64: None,
+            sealed_rights_policy_base64: None,
+            remote_seal: None,
+        }
+    }
+
+    fn test_purchase_buy_stage() -> ResolvedProtectedContentPurchaseStep {
+        ResolvedProtectedContentPurchaseStep {
+            stage: "buy".to_string(),
+            to: "0x0000000000000000000000000000000000000099".to_string(),
+            value: "0x0".to_string(),
+            data: "0xabcdef".to_string(),
+        }
+    }
+
+    /// Guards `request_sha256` stability for the `ListingPackage` binding
+    /// across the Task 4 refactor: the hash below was captured by running
+    /// the pre-refactor `runtime_custody_purchase_transaction_request`
+    /// (listing + listing_sha256 + mint_id signature) against this exact
+    /// fixture. If this test ever needs a new literal, every in-flight
+    /// purchase's `request_sha256` has silently changed underneath it.
+    #[test]
+    fn purchase_request_hash_is_unchanged_for_listing_packages() {
+        let buyer_account = test_purchase_buyer_account();
+        let listing = test_purchase_listing_package();
+        let (item, offer) = crate::protected_content_market::market_terms_from_package(
+            &listing,
+            &listing.content_access_id,
+        );
+        let listing_sha256 = format!("sha256:{}", "cc".repeat(32));
+        let mint_id = elastos_protected_content_contracts::Digest32::new([0x99; 32]);
+        let stage = test_purchase_buy_stage();
+        let request = runtime_custody_purchase_transaction_request(
+            "did:key:z6Mkbuyerprincipal11111111111111111111111111111111",
+            &buyer_account,
+            &item,
+            &offer,
+            &RuntimePurchaseBinding::ListingPackage {
+                listing_sha256: &listing_sha256,
+                mint_id,
+            },
+            &stage,
+        )
+        .unwrap();
+        assert_eq!(
+            request.request_sha256,
+            "d8d0abc7e0bbca17ecce84efe8140ae6c434060fe01cd5fc1f967e83c42450c3"
+        );
+        // Q-M10: the effect it names is pinned too -- a changed effect id is a
+        // second effect for a purchase already in flight.
+        assert_eq!(request.effect_id, "transaction-effect:sha256:b372d80079ffff8a7b8f2c25c4a05dd7de156d9c48cd81d5d15f71be95ee048c");
+    }
+
+    #[test]
+    fn purchase_request_binds_asset_uri_for_a_market_buy() {
+        let buyer_account = test_purchase_buyer_account();
+        let listing = test_purchase_listing_package();
+        let (item, offer) = crate::protected_content_market::market_terms_from_package(
+            &listing,
+            &listing.content_access_id,
+        );
+        let stage = test_purchase_buy_stage();
+        let asset_uri = "elastos://bafyfixturemetadata";
+        let request = runtime_custody_purchase_transaction_request(
+            "did:key:z6Mkbuyerprincipal11111111111111111111111111111111",
+            &buyer_account,
+            &item,
+            &offer,
+            &RuntimePurchaseBinding::Market {
+                asset_uri,
+                attempt_id: "0123456789abcdef0123456789abcdef",
+            },
+            &stage,
+        )
+        .unwrap();
+        // A market buy binds a different domain and `asset_uri` in place of
+        // `listing_sha256` / `mint_id`, so it must hash to a different value
+        // than the listing-package request built from the very same terms.
+        assert_ne!(
+            request.request_sha256,
+            "d8d0abc7e0bbca17ecce84efe8140ae6c434060fe01cd5fc1f967e83c42450c3"
+        );
+        let other_uri_request = runtime_custody_purchase_transaction_request(
+            "did:key:z6Mkbuyerprincipal11111111111111111111111111111111",
+            &buyer_account,
+            &item,
+            &offer,
+            &RuntimePurchaseBinding::Market {
+                asset_uri: "elastos://someotherfolder",
+                attempt_id: "0123456789abcdef0123456789abcdef",
+            },
+            &stage,
+        )
+        .unwrap();
+        assert_ne!(request.request_sha256, other_uri_request.request_sha256);
+        // R23: the attempt is part of what the hash binds. The same terms,
+        // item and asset under another attempt are another effect; the same
+        // attempt again is the same effect.
+        let market_request = |attempt_id: &str| {
+            runtime_custody_purchase_transaction_request(
+                "did:key:z6Mkbuyerprincipal11111111111111111111111111111111",
+                &buyer_account,
+                &item,
+                &offer,
+                &RuntimePurchaseBinding::Market {
+                    asset_uri,
+                    attempt_id,
+                },
+                &stage,
+            )
+            .unwrap()
+        };
+        let same = market_request("0123456789abcdef0123456789abcdef");
+        assert_eq!(same.request_sha256, request.request_sha256);
+        assert_eq!(same.effect_id, request.effect_id);
+        let retry = market_request("fedcba9876543210fedcba9876543210");
+        assert_ne!(retry.request_sha256, request.request_sha256);
+        assert_ne!(retry.effect_id, request.effect_id);
+        // The Wallet is shown the asset, never the attempt's identity.
+        assert!(retry.metadata.get("attempt_id").is_none());
     }
 }

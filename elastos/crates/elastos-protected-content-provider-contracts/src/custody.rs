@@ -481,6 +481,36 @@ pub struct ValidatedCustodyReleaseContributionRequestV1 {
     signed_node_rights_decision: SignedNodeRightsDecisionV1,
 }
 
+impl CustodyProviderRequestV1 {
+    /// The node a request names, read from its structure only (Plan B T2.1).
+    /// It proves nothing: a custody provider with one root per pool uses it to
+    /// pick the root whose issuer and node key then validate the request.
+    pub fn peek_selected_node_public_key(
+        bytes: &[u8],
+    ) -> Result<NodePublicKey, CustodyProviderRequestValidationErrorV1> {
+        let request = Self::decode_wire(bytes)?;
+        match &request.0 {
+            CustodyProviderRequestKindV1::ProvisionNodeShare { .. } => Ok(request
+                .custody_node_provisioning_record()?
+                .selected_node_public_key()),
+            CustodyProviderRequestKindV1::ReleaseContribution { .. } => Ok(request
+                .signed_node_rights_decision()?
+                .statement()
+                .node_public_key()),
+        }
+    }
+
+    /// The record a provisioning request carries, read from its structure
+    /// only (Plan B POOL-MINT PM-F2). It proves nothing: the Runtime uses it
+    /// to find the V1 slot the write would fill before the provider
+    /// validates the request.
+    pub fn peek_custody_node_provisioning_record(
+        bytes: &[u8],
+    ) -> Result<CustodyNodeProvisioningRecordV1, CustodyProviderRequestValidationErrorV1> {
+        Ok(Self::decode_wire(bytes)?.custody_node_provisioning_record()?)
+    }
+}
+
 impl ValidatedCustodyProviderRequestV1 {
     pub fn decode_and_validate_at(
         bytes: &[u8],

@@ -179,7 +179,10 @@ for capsule in \
     system \
     services \
     documents \
+    creator \
+    custody \
     elacity-player \
+    elacity-reader \
     chat-room \
     inbox \
     library \
@@ -238,10 +241,13 @@ PEOPLE_CAPSULE_DIR="${REPO_ROOT}/capsules/people" \
 BROWSER_CAPSULE_DIR="${REPO_ROOT}/capsules/browser" \
 DOCUMENTS_CAPSULE_DIR="${REPO_ROOT}/capsules/documents" \
 LIBRARY_CAPSULE_DIR="${REPO_ROOT}/capsules/library" \
+CREATOR_CAPSULE_DIR="${REPO_ROOT}/capsules/creator" \
+CUSTODY_CAPSULE_DIR="${REPO_ROOT}/capsules/custody" \
 MARKETPLACE_CAPSULE_DIR="${REPO_ROOT}/capsules/marketplace" \
 ARCHIVE_MANAGER_CAPSULE_DIR="${REPO_ROOT}/capsules/archive-manager" \
 ASSISTANT_CAPSULE_DIR="${REPO_ROOT}/capsules/assistant" \
 ELACITY_PLAYER_CAPSULE_DIR="${REPO_ROOT}/capsules/elacity-player" \
+ELACITY_READER_CAPSULE_DIR="${REPO_ROOT}/capsules/elacity-reader" \
 CHAT_ROOM_CAPSULE_DIR="${REPO_ROOT}/capsules/chat-room" \
 INBOX_CAPSULE_DIR="${REPO_ROOT}/capsules/inbox" \
 WALLET_CAPSULE_DIR="${REPO_ROOT}/capsules/wallet" \
@@ -396,10 +402,13 @@ browser_capsules = {
     "documents": pathlib.Path(os.environ["DOCUMENTS_CAPSULE_DIR"]),
     "inbox": pathlib.Path(os.environ["INBOX_CAPSULE_DIR"]),
     "library": pathlib.Path(os.environ["LIBRARY_CAPSULE_DIR"]),
+    "creator": pathlib.Path(os.environ["CREATOR_CAPSULE_DIR"]),
+    "custody": pathlib.Path(os.environ["CUSTODY_CAPSULE_DIR"]),
     "marketplace": pathlib.Path(os.environ["MARKETPLACE_CAPSULE_DIR"]),
     "archive-manager": pathlib.Path(os.environ["ARCHIVE_MANAGER_CAPSULE_DIR"]),
     "assistant": pathlib.Path(os.environ["ASSISTANT_CAPSULE_DIR"]),
     "elacity-player": pathlib.Path(os.environ["ELACITY_PLAYER_CAPSULE_DIR"]),
+    "elacity-reader": pathlib.Path(os.environ["ELACITY_READER_CAPSULE_DIR"]),
     "chat-room": pathlib.Path(os.environ["CHAT_ROOM_CAPSULE_DIR"]),
     "wallet": pathlib.Path(os.environ["WALLET_CAPSULE_DIR"]),
     "wallet-metamask": pathlib.Path(os.environ["WALLET_METAMASK_CAPSULE_DIR"]),

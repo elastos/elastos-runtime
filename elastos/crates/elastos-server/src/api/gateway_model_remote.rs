@@ -358,11 +358,11 @@ async fn call_grant(
             transfer: ProviderTransfer::Json,
             range: None,
             progress: None,
-            transport: ProviderInvocationTransport::Carrier(ProviderCarrierRoute::ConnectTicket {
-                connect_ticket: grant.connect_ticket.clone(),
-                peer_did: Some(grant.peer_did.clone()),
-                timeout_ms: Some(CARRIER_TIMEOUT_MS),
-            }),
+            transport: ProviderInvocationTransport::Carrier(ProviderCarrierRoute::connect_ticket(
+                grant.connect_ticket.clone(),
+                Some(grant.peer_did.clone()),
+                Some(CARRIER_TIMEOUT_MS),
+            )),
         })
         .await
         .map_err(|err| classify_carrier_error(&err.to_string()))?;

@@ -28,7 +28,12 @@ CANONICAL = {
     "custody-provider": "custody",
     "protected-content-decrypt-provider": "protected-content-decrypt",
 }
-PROVISIONAL = ("drm-provider", "rights-provider", "key-provider", "decrypt-provider")
+RETIRED_PROVISIONAL = (
+    "drm-provider",
+    "rights-provider",
+    "key-provider",
+    "decrypt-provider",
+)
 ROLE_REQUIRED = {
     "home": (
         "chain-provider",
@@ -45,15 +50,34 @@ ROLE_REQUIRED = {
         "custody-provider",
         "protected-content-decrypt-provider",
     ),
+    # A custody-host container hosts one of two provider sets, chosen by
+    # entrypoint.sh's `--role`. Both are expressed here because both ship:
+    # demanding the storage set of a custody-only node would fail a correct
+    # deployment, and demanding only the custody set of a storage node would
+    # let a broken one pass.
+    #
+    #   --role storage  (deploy/custody-host/docker-compose.yml's default,
+    #                   because a mint needs remote replicas and these are
+    #                   the only peers the harness has)
     "custody-host": (
         "custody-provider",
-        "availability-provider",
         "ipfs-provider",
         # A committee member settles every release through its own chain
         # rights evidence, so the chain plane is part of the slim role.
         "chain-provider",
     ),
+    #   --role custody  (entrypoint.sh's own default: custody IS the role.
+    #                   Key-share custody and release never reads ciphertext,
+    #                   so such a node runs no kubo and must never become a
+    #                   content-availability failure point.)
+    "custody-host-custody-only": (
+        "custody-provider",
+        "chain-provider",
+    ),
 }
+# Roles served by the deploy/custody-host container image. Slim shard-holders:
+# they never compose the 2-of-3 pool, but they do settle releases.
+CUSTODY_HOST_ROLES = ("custody-host", "custody-host-custody-only")
 ACTIVE_PROOF_PREREQUISITES = (
     "runtime_config_acceptance",
     "signed_custody_validation",
@@ -533,12 +557,14 @@ def audit_media(data_root, findings):
 def audit_operator_config(data_root, role, findings):
     protected = data_root / "protected-content"
     facts = {}
-    # custody-host is a slim shard-holder container: it never composes the
+    # A custody-host is a slim shard-holder container: it never composes the
     # 2-of-3 custody pool, so custody-composition.json is not provisioned
     # onto it and must not be demanded. It DOES settle every release through
     # its own chain rights evidence, so the chain config is required there
-    # too (synced from /shared by its entrypoint).
-    if role == "custody-host":
+    # too (synced from /shared by its entrypoint). Both --role variants are
+    # identical in this respect: the storage role adds content planes, not
+    # operator configuration.
+    if role in CUSTODY_HOST_ROLES:
         requirements = ((protected / "chain-provider.json", "chain_config"),)
     else:
         requirements = (
@@ -550,7 +576,7 @@ def audit_operator_config(data_root, role, findings):
         facts[name] = present
         if not present:
             findings.config(name)
-    if role in ("custody-node", "custody-host"):
+    if role == "custody-node" or role in CUSTODY_HOST_ROLES:
         state = owner_only(protected / "custody-provider/inactive", directory=True)
         facts["custody_state"] = state
         if not state:
@@ -652,15 +678,10 @@ def build_receipt(args):
     media = audit_media(data_root, findings)
     operator = audit_operator_config(data_root, args.role, findings)
     canonical_selected = sorted(set(selected).intersection(CANONICAL))
-    provisional_selected = sorted(set(selected).intersection(PROVISIONAL))
-    if provisional_selected and canonical_selected:
-        declared_mode = "pre_cutover_coexistence"
-    elif provisional_selected:
-        declared_mode = "provisional_selected"
-    elif canonical_selected:
-        declared_mode = "canonical_declared_unproven"
-    else:
-        declared_mode = "unconfigured"
+    retired_selected = sorted(set(selected).intersection(RETIRED_PROVISIONAL))
+    for retired in retired_selected:
+        findings.artifact(f"retired_provisional_provider_selected:{retired}")
+    declared_mode = "canonical_declared_unproven" if canonical_selected else "unconfigured"
 
     base.update(
         {
@@ -688,7 +709,6 @@ def build_receipt(args):
                 "status": "active_proof_pending",
                 "declared_mode": declared_mode,
                 "canonical_selected": canonical_selected,
-                "provisional_selected": provisional_selected,
             },
             "operator_configuration": operator,
             "media": media,

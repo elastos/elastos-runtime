@@ -1,13 +1,20 @@
 //! Protected-content Runtime provider plane.
 //!
-//! This module registers Runtime-owned `protect` and `custody` routes, scans
-//! the durable Runtime release journal on startup, and evaluates policy through
-//! the existing `chain` registry route. Library mint and buy use these seams.
-//! It does not replace the provisional `key`/`rights`/`drm`/`decrypt`
-//! open/share path or expose provider topology to capsules.
+//! This module registers the Runtime-owned `protect`, `media`, `custody`, and
+//! `protected-content-decrypt` targets, scans the durable Runtime release
+//! journal on startup, and evaluates policy through the `chain` registry
+//! route. Library mint, buy, open, read, and close use these seams. It is the
+//! only protected-content authority, and it exposes no provider topology to
+//! capsules.
 
 #[cfg(test)]
+mod pool_mint_tests;
+pub mod remote_dash_source;
+#[cfg(test)]
 pub(crate) mod tests;
+mod unfinished_mint;
+
+pub(crate) use unfinished_mint::*;
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
@@ -17,6 +24,15 @@ use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock, Weak};
 
+use crate::custody_release_limits::{
+    CustodyReleaseLimiter, RuntimeInvocationSource, CUSTODY_NODE_SETTINGS, RATE_LIMITED_CODE,
+};
+use crate::custody_surface::{
+    carrier_op_allowed, declared_ops, runtime_local_op_allowed, OP_CUSTODY_EVALUATE,
+    OP_CUSTODY_PROVISION_NODE_SHARE, OP_CUSTODY_PROVISION_POOL_NODE_SHARE,
+    OP_CUSTODY_RELEASE_CONTRIBUTION, OP_CUSTODY_RELEASE_POOL_CONTRIBUTION,
+    OP_CUSTODY_SIGN_POOL_STATEMENT, OP_CUSTODY_STATUS, TARGET_CUSTODY,
+};
 use base64::Engine as _;
 use ed25519_dalek::Signer as _;
 use elastos_protected_content_contracts::{
@@ -25,22 +41,37 @@ use elastos_protected_content_contracts::{
     EncryptedContentIdentityV1, KeyReleaseOutcomeV1, KeyReleaseRequestV1, NodeContributionRefV1,
     NodeCustodyPublicKeyV1, NodePublicKey, ProfileIdentityV1, RecipientKeyAuthorizationStatementV1,
     RecipientKeyIdentityV1, RecipientPublicKeyBytesV1, ReplayNonce16, RightsActionV1,
-    RightsEvaluationEvidenceRequestV1, RightsPolicyBodyV1, RightsPolicyIdentityV1, RightsRequestV1,
-    RuntimeOperationIssuerKeyV1, RuntimeReleaseAuditIdV1, RuntimeReleaseOperationStatementV1,
+    RightsEvaluationEvidenceRequestV1, RightsPolicyBodyV1, RightsPolicyIdentityV1,
+    RightsRequestAnyV1, RightsRequestV1, RightsRequestV2, RuntimeOperationIssuerKeyV1,
+    RuntimeReleaseAuditIdV1, RuntimeReleaseOperationAnyV1, RuntimeReleaseOperationStatementV1,
     RuntimeSessionBindingV1, SignedCustodyCommitteeAuthorizationV1, SignedCustodyEpochV1,
-    SignedCustodyPoolV1, SignedRuntimeReleaseOperationV1, SignedTerminalReceiptV1,
-    TerminalReceiptIssuerKey, TerminalReceiptStatementV1, WalletSignedRightsRequestV1,
+    SignedCustodyPoolV1, SignedPoolDescriptorAnyV1, SignedRuntimeReleaseOperationV1,
+    SignedTerminalReceiptV1, TerminalReceiptIssuerKey, TerminalReceiptStatementV1,
+    ViewerPartIndexV1, WalletAddress, WalletSignedRightsRequestAnyV1, WalletSignedRightsRequestV1,
 };
 use elastos_protected_content_provider_contracts::{
-    CencFmp4MediaIdentityV1, DecryptProviderRequestOpV1, DecryptProviderRequestV1,
-    DecryptProviderResponseV1, ProtectProviderRequestV1, ProtectProviderResponseStatusV1,
-    ProtectProviderResponseV1, ProtectionSessionNodeV1, RightsProviderRequestV1,
-    RightsProviderResponseV1, ValidatedCencFmp4MediaSessionLayoutV1,
+    build_cenc_dash_mpd_v2, cenc_dash_merkle_audit_path, cenc_dash_merkle_audit_paths,
+    cenc_dash_merkle_root, cenc_dash_segment_leaf_hash, pinned_declaration_v2,
+    CencDashIdentityBuilderV2, CencDashMediaIdentityV2, CencDashMpdRenditionV2,
+    CencDashMpdSegmentV2, CencDashRenditionDeclV2, CencDashRenditionKindV2,
+    CencFmp4MediaIdentityV1, CencLayoutProfile, CencMediaSuite, ChunkedPayloadObjectIdentityV1,
+    CustodyProtectionHeader, DecryptProviderRequestOpV1, DecryptProviderRequestV1,
+    DecryptProviderResponseV1, Fmp4SegmentTimelineV2, ProtectFailureReasonV2,
+    ProtectProviderRequestV1, ProtectProviderResponseStatusV1, ProtectProviderResponseV1,
+    ProtectionRepresentationV2, ProtectionSessionNodeV1, RightsProviderRequestV1,
+    RightsProviderResponseV1, ValidatedCencDashRenditionSessionV2,
     ValidatedClearFmp4MediaSessionLayoutV1, ViewerMediaPartSelectorV1,
+    ATTEST_REMOTE_SEAL_UPLOAD_OP, AUTHORIZE_REMOTE_SEAL_SHARE_OP,
     CUSTODY_PROVIDER_REQUEST_SCHEMA_V1, CUSTODY_PROVIDER_RESPONSE_SCHEMA_V1,
     DECRYPT_PROVIDER_REQUEST_SCHEMA_V1, DECRYPT_PROVIDER_RESPONSE_SCHEMA_V1,
+    MAX_OBJECT_PLAINTEXT_CHUNK_BYTES_V1, MAX_PROTECT_MEDIA_PART_BYTES_V1,
     MAX_PROTECT_MEDIA_SEGMENTS_V1, MAX_PROVIDER_OPAQUE_HANDLE_BYTES_V1,
-    PROTECT_PROVIDER_REQUEST_SCHEMA_V1, PROTECT_PROVIDER_RESPONSE_SCHEMA_V1,
+    MAX_VIEWER_MEDIA_PART_BYTES_V1, PROTECT_PROVIDER_REQUEST_SCHEMA_V1,
+    PROTECT_PROVIDER_RESPONSE_SCHEMA_V1,
+};
+use elastos_protected_content_provider_contracts::{
+    ProvisionRemoteShareCommandV1, RemoteShareDeliveryV1, RemoteShareProvisionRequestV1,
+    SIGN_REMOTE_SEAL_COMPLETION_OP,
 };
 use elastos_protected_content_rights::{
     PrivateCustodyRightsRequestV1, CHAIN_PROVIDER_ID, CHAIN_RIGHTS_EVIDENCE_OP,
@@ -49,18 +80,21 @@ use elastos_protected_content_runtime::RuntimeProviderCallError;
 use elastos_protected_content_runtime::{
     cancel_prepared_recipient, cancel_prepared_recipient_with_result_by_handle,
     close_viewer_session_with_result, open_viewer_session, prepare_recipient,
-    read_viewer_media_part, resolve_runtime_mint_selected_nodes, PersistedRuntimeMint,
-    PersistedRuntimeReleaseOperation, RuntimeContentAvailabilityRequirement,
-    RuntimeCustodyTerminalKind, RuntimeDecryptProvider, RuntimeMediaPreparationRecord,
-    RuntimeMediaPreparationState, RuntimeMintConfiguredCustodyProvider, RuntimeMintCoordinator,
-    RuntimeMintCoordinatorError, RuntimeMintCoordinatorOutcome, RuntimeMintCreatorTerminalEvidence,
-    RuntimeMintDraft, RuntimeMintIntent, RuntimeMintJournal, RuntimeOpenViewerSessionInput,
-    RuntimePreparedRecipient, RuntimePreparedRecipientCancelResult,
+    read_viewer_media_part, read_viewer_object_chunk, resolve_runtime_mint_selected_nodes,
+    ExclusiveFileLock, PersistedRuntimeMint, PersistedRuntimeReleaseOperation,
+    RuntimeContentAvailabilityRequirement, RuntimeContentIdentityV1, RuntimeCustodyTerminalKind,
+    RuntimeDecryptProvider, RuntimeMediaPreparationRecord, RuntimeMediaPreparationState,
+    RuntimeMintConfiguredCustodyProvider, RuntimeMintCoordinator, RuntimeMintCoordinatorError,
+    RuntimeMintCoordinatorOutcome, RuntimeMintCreatorStage, RuntimeMintCreatorState,
+    RuntimeMintCreatorTerminalEvidence, RuntimeMintDraft, RuntimeMintIntent,
+    RuntimeMintIntentRenditionV2, RuntimeMintJournal, RuntimeOpenViewerContentV1,
+    RuntimeOpenViewerSessionInput, RuntimePreparedRecipient, RuntimePreparedRecipientCancelResult,
     RuntimeProtectedContentPurchaseIntent, RuntimePurchaseEffectAuthority,
     RuntimeReleaseAuditRecord, RuntimeReleaseCoordinator, RuntimeReleaseCoordinatorOutcome,
     RuntimeReleaseJournal, RuntimeReleaseJournalError, RuntimeReleaseTerminalResult,
-    RuntimeSelectedProvider, RuntimeVerifiedContentAvailability, RuntimeVerifiedPurchaseEffect,
-    RuntimeViewerSession, RuntimeViewerSessionCloseResult,
+    RuntimeSelectedProvider, RuntimeVerifiedContentAvailability,
+    RuntimeVerifiedContentIdentityRootV1, RuntimeVerifiedPurchaseEffect, RuntimeViewerSession,
+    RuntimeViewerSessionCloseResult,
 };
 use elastos_runtime::provider::bridge::{ProviderBridge, ProviderConfig};
 use elastos_runtime::provider::{
@@ -76,100 +110,84 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::Digest as _;
 
-/// Protected content (Elacity Player, Protect and List, Marketplace Media)
-/// ships after 0.8.0 (#91). It stays off, and Home hides those surfaces and
-/// refuses protected publishing, unless the host sets
+/// Protected content (Creator, Custody, Elacity Player, Elacity Reader, Protect
+/// and List, Marketplace Media) ships after 0.8.0 (#91). It stays off, and Home
+/// hides those surfaces and refuses protected publishing, unless the host sets
 /// `elastos config set protected_content true`.
 pub(crate) fn protected_content_enabled(data_dir: &Path) -> bool {
-    fs::read_to_string(data_dir.join("config.toml"))
-        .ok()
-        .and_then(|contents| contents.parse::<toml::Table>().ok())
-        .and_then(|config| {
-            config
-                .get("protected_content")
-                .and_then(toml::Value::as_bool)
-        })
+    protected_content_enabled_in(read_home_config(data_dir).as_ref())
+}
+
+/// `protected_content` in a config snapshot; off when absent.
+pub(crate) fn protected_content_enabled_in(config: Option<&toml::Table>) -> bool {
+    config
+        .and_then(|config| config.get("protected_content"))
+        .and_then(toml::Value::as_bool)
         .unwrap_or(false)
 }
-pub(crate) const ELACITY_PLAYER_CAPSULE_ID: &str = "elacity-player";
 
-pub(crate) const CUSTODY_PROVIDER_ID: &str = "custody";
 pub(crate) const PROTECT_PROVIDER_ID: &str = "protect";
 pub(crate) const MEDIA_PROVIDER_ID: &str = "media";
 pub(crate) const RUNTIME_PROVIDER_ID: &str = "runtime";
 pub(crate) const PROTECTED_CONTENT_DECRYPT_PROVIDER_ID: &str = "protected-content-decrypt";
-const MEDIA_PROVIDER_CONFIG_FILE: &str = "protected-content/media-provider/config.json";
-const MEDIA_PROVIDER_CONFIG_SCHEMA_V1: &str = "elastos.protected-content.media-provider-config/v1";
-const MEDIA_PROVIDER_OUTPUT_PROFILE_V1: &str = "browser_fmp4_h264_v1";
-const MAX_MEDIA_PROVIDER_CONFIG_BYTES: usize = 8 * 1024;
-const MAX_MEDIA_PROVIDER_IMPORTED_TOOL_BYTES: u64 = 512 * 1024 * 1024;
-const MEDIA_PROVIDER_TIMEOUT_MS_V1: u64 = 3_600_000;
-const MEDIA_PROVIDER_MAX_STDIO_BYTES_V1: usize = 1 << 20;
-const MEDIA_PROVIDER_MAX_INPUT_BYTES_V1: u64 = 1 << 30;
-const MEDIA_PROVIDER_MAX_OUTPUT_PART_BYTES_V1: u64 = 64 << 20;
-const MEDIA_PROVIDER_MAX_DURATION_SECS_V1: u64 = 1_800;
-const MEDIA_PROVIDER_MAX_SOURCE_WIDTH_V1: u32 = 3_840;
-const MEDIA_PROVIDER_MAX_SOURCE_HEIGHT_V1: u32 = 2_160;
-const MEDIA_PROVIDER_MAX_SOURCE_FPS_V1: u32 = 60;
-const MEDIA_PROVIDER_MAX_SEGMENT_COUNT_V1: usize = MAX_PROTECT_MEDIA_SEGMENTS_V1 as usize;
-const MEDIA_PROVIDER_MAX_TOTAL_OUTPUT_BYTES_V1: u64 = 2 << 30;
 const CONTENT_PROVIDER_ID: &str = "content";
-const PROTECTED_CONTENT_REPLICATION_POLICY: &str = "protected-content-replication/v1";
-const PROTECTED_CONTENT_MIN_REPLICAS: u32 = 3;
-const PROTECTED_CONTENT_REQUIRE_LIVE_MULTI_PEER_PROOF: bool = true;
-const PROTECTED_CONTENT_AVAILABILITY_MAX_AGE_SECS: u64 = 60;
-const PROTECTED_CONTENT_AVAILABILITY_MAX_FUTURE_SKEW_SECS: u64 = 5;
+pub(crate) const PROTECTED_CONTENT_REPLICATION_POLICY: &str = "protected-content-replication/v1";
+const _: () =
+    assert!(PROTECTED_CONTENT_ACCEPTED_REPLICA_FLOOR <= PROTECTED_CONTENT_NEW_MINT_REPLICA_TARGET);
+pub(crate) const PROTECTED_CONTENT_AVAILABILITY_MAX_AGE_SECS: u64 = 60;
+pub(crate) const PROTECTED_CONTENT_AVAILABILITY_MAX_FUTURE_SKEW_SECS: u64 = 5;
 
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct RuntimeMediaProviderConfigFile {
-    schema: String,
-    ffmpeg_path: String,
-    ffprobe_path: String,
-    staging_root: String,
-    output_profile: String,
-    timeout_ms: u64,
-    max_stdio_bytes: usize,
-    max_input_bytes: u64,
-    max_output_part_bytes: u64,
-    max_duration_secs: u64,
-    max_source_width: u32,
-    max_source_height: u32,
-    max_source_fps: u32,
-    max_segment_count: usize,
-    max_total_output_bytes: u64,
-}
-
-struct RuntimeMediaToolSource {
-    file: fs::File,
-    size: u64,
-}
-
-struct RuntimeMediaToolImport {
-    path: PathBuf,
-    created: bool,
-}
 pub(crate) const RUNTIME_CUSTODY_COMPOSITION_MISSING_MESSAGE: &str =
     "Runtime custody composition is not configured";
-pub(crate) const RUNTIME_CUSTODY_PURCHASE_DENIED_MESSAGE: &str =
-    "Runtime custody purchase is denied before buy";
 pub(crate) const RUNTIME_CUSTODY_PURCHASE_PENDING_MESSAGE: &str =
     "Runtime custody purchase is pending exact Wallet or Chain settlement";
+pub(crate) const RUNTIME_CUSTODY_PURCHASE_UNBOUND_MESSAGE: &str =
+    "Runtime custody purchase target is not bound on chain";
 pub(crate) const RUNTIME_CUSTODY_PURCHASE_UNAVAILABLE_MESSAGE: &str =
     "Runtime custody purchase is unavailable";
-pub(crate) const RUNTIME_CUSTODY_OPEN_DENIED_MESSAGE: &str =
-    "Runtime custody open is denied before purchase";
+pub(crate) const RUNTIME_CUSTODY_DOWNLOAD_UNAVAILABLE_MESSAGE: &str =
+    "Runtime custody download is unavailable";
+
+/// Plan B T4.6: the item's pool cannot be found or used from this Home: no
+/// descriptor names its epoch (own, served or known), or the listing is an
+/// imported package on a Home that does not hold its ciphertext (S4-Q14).
+/// It travels as data -- `code` `custody_unresolved` -- and is final until
+/// the pool is added in Custody.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RuntimeCustodyUnresolved;
+
+impl RuntimeCustodyUnresolved {
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) const CODE: &'static str = "custody_unresolved";
+
+    pub(crate) fn error() -> anyhow::Error {
+        anyhow::Error::new(Self).context(RUNTIME_CUSTODY_UNRESOLVED_MESSAGE)
+    }
+}
+
+impl std::fmt::Display for RuntimeCustodyUnresolved {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("this item's pool cannot be reached from this Home")
+    }
+}
+
+impl std::error::Error for RuntimeCustodyUnresolved {}
+
+pub(crate) const RUNTIME_CUSTODY_UNRESOLVED_MESSAGE: &str =
+    "This item's pool cannot be reached from this Home yet. Add the pool in Custody.";
+
+pub(crate) const RUNTIME_CUSTODY_POOL_CONTENT_UNAVAILABLE_MESSAGE: &str =
+    "This file isn't available from the pool right now. Try again later.";
+
+/// Plan B T4.4: the item's pool resolves, but none of its nodes can serve
+/// this Home now. Not resumable; the viewer offers Retry (S4-Q16).
+pub(crate) const RUNTIME_CUSTODY_NO_ELIGIBLE_SERVER_MESSAGE: &str =
+    "No node of this item's pool can play it now. Try again later.";
+
 pub(crate) const RUNTIME_CUSTODY_AVAILABILITY_UNAVAILABLE_MESSAGE: &str =
     "Runtime custody content availability is unavailable";
-pub(crate) const RUNTIME_CUSTODY_DECRYPT_UNAVAILABLE_MESSAGE: &str =
-    "Runtime custody decrypt provider is unavailable";
 pub(crate) const RUNTIME_CUSTODY_RELEASE_APPROVAL_UNAVAILABLE_MESSAGE: &str =
     "Runtime custody viewer release approval is unavailable";
-/// The Wallet holds the viewer release rights-signature request as a pending
-/// managed approval; the caller approves it in the Wallet and re-issues the
-/// identical open, which resumes the persisted release.
-pub(crate) const RUNTIME_CUSTODY_OPEN_PENDING_MESSAGE: &str =
-    "Runtime custody viewer release is pending exact Wallet approval";
 
 /// Fail-closed mapping for the viewer release path: logs the cause and source
 /// line at warn and keeps the stable message outermost while carrying the
@@ -201,165 +219,48 @@ macro_rules! release_unavailable_missing {
         }
     };
 }
-pub(crate) const RUNTIME_CUSTODY_MINT_RECONCILIATION_REQUIRED_MESSAGE: &str =
-    "Runtime custody mint requires cleanup reconciliation";
-pub(crate) const RUNTIME_CUSTODY_MINT_TERMINAL_ABORT_MESSAGE: &str =
-    "Runtime custody mint was settled before draft persistence";
+
+mod creator;
+mod custody;
+mod library_publish;
+mod listing;
+mod viewer;
+
+pub use self::creator::*;
+pub use self::custody::*;
+pub use self::library_publish::*;
+pub(crate) use self::listing::*;
+pub use self::viewer::*;
+
 const PROTECTED_CONTENT_ROOT: &str = "protected-content";
-const CHAIN_PROVIDER_CONFIG_FILE: &str = "protected-content/chain-provider.json";
-pub const PROTECTED_CONTENT_CHAIN_PROVIDER_CONFIG_SCHEMA_V1: &str =
-    "elastos.protected-content.chain-provider-config/v1";
-const MAX_CHAIN_PROVIDER_CONFIG_BYTES: usize = 64 * 1024;
 const CUSTODY_COMPOSITION_CONFIG_FILE: &str = "protected-content/custody-composition.json";
 const RUNTIME_MINT_JOURNAL_ROOT: &str = "protected-content/runtime-mint";
 const RUNTIME_OPEN_MATERIAL_ROOT: &str = "protected-content/runtime-open";
 const RUNTIME_LISTING_ROOT: &str = "protected-content/runtime-listings";
 const RUNTIME_PURCHASE_ROOT: &str = "protected-content/runtime-purchases";
-const RUNTIME_VIEWER_SCHEMA_V1: &str = "elastos.library.runtime-custody-viewer-state/v1";
-const RUNTIME_LISTING_SCHEMA_V1: &str = "elastos.library.runtime-custody-listing/v1";
-const RUNTIME_PORTABLE_LISTING_SCHEMA_V1: &str = "elastos.protected-content.portable-listing/v1";
-const MAX_RUNTIME_PORTABLE_LISTING_BYTES: u64 = 128 * 1024;
 pub(crate) const RUNTIME_PURCHASE_SCHEMA_V1: &str = "elastos.library.runtime-custody-purchase/v1";
-static RUNTIME_VIEWER_LIFECYCLE_GUARDS: OnceLock<
-    StdMutex<HashMap<PathBuf, Weak<tokio::sync::Mutex<()>>>>,
-> = OnceLock::new();
-pub(crate) const CUSTODY_COMPOSITION_SCHEMA_V1: &str =
-    "elastos.protected-content.custody-composition/v1";
-const MAX_CUSTODY_COMPOSITION_BYTES: usize = 64 * 1024;
-const MAX_CUSTODY_COMPOSITION_BLOB_BYTES: usize = 16 * 1024;
 const MAX_CUSTODY_COMPOSITION_PEER_DID_BYTES: usize = 256;
 const PROTECTED_CONTENT_OBJECT_KIND: &str = "protected-content";
-const PROTECTED_CONTENT_IDENTITY_PATH: &str = "protected-content/v1/identity.bin";
-const PROTECTED_CONTENT_INIT_PATH: &str = "protected-content/v1/init.mp4";
+pub(crate) const PROTECTED_CONTENT_IDENTITY_PATH: &str = "protected-content/v1/identity.bin";
+pub(crate) const PROTECTED_CONTENT_INIT_PATH: &str = "protected-content/v1/init.mp4";
 const PROTECTED_CONTENT_SEGMENTS_PREFIX: &str = "protected-content/v1/segments/";
 const PROTECTED_CONTENT_SEGMENTS_SUFFIX: &str = ".m4s";
 const PROTECTED_CONTENT_AVAILABLE_STATUS: &str = "network_available";
-const RUNTIME_CUSTODY_LISTINGS_RESPONSE_SCHEMA_V1: &str =
-    "elastos.library.runtime-custody-listings/v1";
-const RUNTIME_CUSTODY_LISTING_AVAILABILITY_SCHEMA_V1: &str =
-    "elastos.library.runtime-custody-availability-summary/v1";
-const RUNTIME_CUSTODY_LISTING_ACCESS_AVAILABLE: &str = "available";
-const RUNTIME_CUSTODY_LISTING_ACCESS_CREATOR: &str = "creator";
-const RUNTIME_CUSTODY_LISTING_ACCESS_PURCHASED: &str = "purchased";
-const MAX_RUNTIME_CUSTODY_LISTINGS: usize = 128;
-const MAX_RUNTIME_CUSTODY_PUBLIC_TEXT_BYTES: usize = 256;
+
 const CONTENT_AVAILABILITY_RECEIPT_SCHEMA: &str = "elastos.content.availability.receipt/v1";
 const CONTENT_AVAILABILITY_RECEIPT_DOMAIN: &str = "elastos.content.availability.receipt.v1";
-const MAX_RUNTIME_VIEWER_RECONCILE_MINT_DIRS: usize = 256;
-const MAX_RUNTIME_VIEWER_RECONCILE_RECORDS: usize = 1024;
-const MAX_RUNTIME_VIEWER_RECORD_BYTES: u64 = 64 * 1024;
-const PROTECT_PROVIDER_PROCESS_ID: &str = "protected-content-protect";
 const MEDIA_PROVIDER_PROCESS_ID: &str = "media-provider";
-const MEDIA_PROVIDER_PROTOCOL_VERSION: &str = "elastos.media-provider/v1";
-const PROTECTED_CONTENT_PROVIDER_STATUS_TIMEOUT: std::time::Duration =
-    std::time::Duration::from_secs(5);
-const PROTECT_PROVIDER_OPERATIONS: &[&str] = &[
-    "status",
-    "open_protection_session",
-    "protect_media_segment",
-    "finalize_protection_session",
-    "cancel_protection_session",
-    "close_protection_session",
-    "shutdown",
-];
-const MEDIA_PROVIDER_OPERATIONS: &[&str] = &["status", "prepare"];
-const CUSTODY_PROVIDER_OPERATIONS: &[&str] = &[
-    "status",
-    "provision_node_share",
-    "release_contribution",
-    "shutdown",
-];
-const PROTECTED_CONTENT_DECRYPT_PROVIDER_OPERATIONS: &[&str] = &[
-    "status",
-    "prepare_recipient",
-    "open_viewer_session",
-    "read_viewer_media_part",
-    "cancel_prepared_recipient",
-    "close_viewer_session",
-    "shutdown",
-];
-const WALLET_PROVIDER_ID: &str = "wallet";
+/// Historical directory name. The path is frozen because provisioned custody
+/// hosts already hold state there; `inactive` says nothing about whether the
+/// custody plane is active.
 const INACTIVE_CUSTODY_ROOT: &str = "protected-content/custody-provider/inactive";
-const PROVIDER_INVOCATION_SCHEMA_V1: &str = "elastos.provider.invocation/v1";
-const CHAIN_PROTECTED_CONTENT_POLICY_OP: &str = "resolve_protected_content_policy";
-const CHAIN_PROTECTED_CONTENT_POLICY_SCHEMA_V1: &str = "elastos.chain.protected-content-policy/v1";
-const MEDIA_PROVIDER_PREPARED_MEDIA_SCHEMA_V1: &str = "elastos.media-provider.prepared-media/v1";
-const MEDIA_PROVIDER_OUTPUT_MIME_TYPE_V1: &str = "video/mp4";
-const MEDIA_PROVIDER_OUTPUT_CODECS_V1: &str = "avc1.640028";
-const MEDIA_PROVIDER_INPUT_FILE_NAME: &str = "input.bin";
-const MEDIA_PROVIDER_PREPARED_DIR_NAME: &str = "prepared";
-const MEDIA_PROVIDER_SEGMENTS_DIR_NAME: &str = "segments";
-const MEDIA_PROVIDER_MAX_INPUT_BYTES: u64 = 1024 * 1024 * 1024;
-const MEDIA_PROVIDER_MAX_OUTPUT_PART_BYTES: u64 = 64 * 1024 * 1024;
-const MEDIA_PROVIDER_MAX_SEGMENT_COUNT: usize = 512;
-const MEDIA_PROVIDER_MAX_TOTAL_OUTPUT_BYTES: u64 = 2 * 1024 * 1024 * 1024;
-const RUNTIME_MEDIA_PREPARATION_RECEIPT_DOMAIN: &[u8] =
-    b"elastos.protected-content.runtime-media-preparation-receipt/v1";
-const RUNTIME_MEDIA_PREPARATION_RECONCILIATION_MESSAGE: &str =
-    "Runtime custody media preparation requires settlement reconciliation";
-
-pub(crate) struct ResolvedRuntimeRightsPolicy {
-    body: RightsPolicyBodyV1,
-    identity: RightsPolicyIdentityV1,
-}
-
-impl ResolvedRuntimeRightsPolicy {
-    pub(crate) fn body(&self) -> &RightsPolicyBodyV1 {
-        &self.body
-    }
-
-    pub(crate) fn identity(&self) -> &RightsPolicyIdentityV1 {
-        &self.identity
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ChainProtectedContentPolicyResponse {
-    schema: String,
-    policy_body: String,
-}
-
-#[derive(Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RuntimeProtectedContentChainProviderConfigFile {
-    schema: String,
-    protected_content_network: Value,
-}
-
-#[derive(Clone)]
-pub struct RuntimeProtectedContentChainProviderConfig {
-    protected_content_network: Value,
-}
-
-impl RuntimeProtectedContentChainProviderConfig {
-    pub fn protected_content_network(&self) -> &Value {
-        &self.protected_content_network
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RuntimePreparedMediaProviderOutput {
-    schema: String,
-    mime_type: String,
-    codecs: String,
-}
-
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub(crate) enum RuntimeCustodyRouteTransportConfig {
-    Local,
-    CarrierPeerDid { peer_did: String },
-}
-
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct RuntimeCustodyRouteBindingConfig {
-    pub(crate) node_public_key_base64: String,
-    pub(crate) owner_state_root_base64: String,
-    pub(crate) transport: RuntimeCustodyRouteTransportConfig,
-}
+const MEDIA_PROVIDER_PREPARED_MEDIA_SCHEMA_V2: &str = "elastos.media-provider.prepared-media/v2";
+/// The protocol's part rule for a prepared (clear) part: 2 MiB less 64 KiB, so
+/// that protecting it, which adds at most a few KiB, stays under the 2 MiB
+/// protected part and the decrypt answer stays under the provider frame. It
+/// bounds one part, never a whole media: there is no cap on duration, size or
+/// segment count.
+const MEDIA_PROVIDER_MAX_PREPARED_PART_BYTES_V2: u64 = 2 * 1024 * 1024 - 64 * 1024;
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -371,356 +272,6 @@ pub(crate) struct RuntimeCustodyCompositionConfigFile {
     pub(crate) signed_epoch_base64: String,
     pub(crate) signed_committee_authorization_base64: String,
     pub(crate) routes: Vec<RuntimeCustodyRouteBindingConfig>,
-}
-
-struct RuntimeValidatedCustodyRouteBinding {
-    owner_state_root: Digest32,
-    transport: ProviderInvocationTransport,
-}
-
-struct RuntimeValidatedCustodyCompositionConfig {
-    expected_policy_authority: CustodyEpochIssuerKeyV1,
-    expected_authorization_identity: CustodyCommitteeAuthorizationIdentityV1,
-    signed_pool: SignedCustodyPoolV1,
-    signed_epoch: SignedCustodyEpochV1,
-    signed_committee_authorization: SignedCustodyCommitteeAuthorizationV1,
-    routes: [RuntimeValidatedCustodyRouteBinding; 3],
-}
-
-struct RuntimeCustodyCompositionNode {
-    node_public_key: NodePublicKey,
-    custody_public_key: NodeCustodyPublicKeyV1,
-    owner_state_root: Digest32,
-    adapter: RuntimeCustodyRegistryAdapter,
-}
-
-pub(crate) struct RuntimeCustodyComposition {
-    expected_policy_authority: CustodyEpochIssuerKeyV1,
-    expected_authorization_identity: CustodyCommitteeAuthorizationIdentityV1,
-    signed_pool: SignedCustodyPoolV1,
-    signed_epoch: SignedCustodyEpochV1,
-    signed_committee_authorization: SignedCustodyCommitteeAuthorizationV1,
-    nodes: [RuntimeCustodyCompositionNode; 3],
-}
-
-impl std::fmt::Debug for RuntimeCustodyComposition {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("RuntimeCustodyComposition")
-            .field("expected_policy_authority", &"[redacted]")
-            .field("expected_authorization_identity", &"[redacted]")
-            .field("signed_pool", &"[redacted]")
-            .field("signed_epoch", &"[redacted]")
-            .field("signed_committee_authorization", &"[redacted]")
-            .field("node_count", &self.nodes.len())
-            .finish()
-    }
-}
-
-impl RuntimeCustodyComposition {
-    pub(crate) fn configured_nodes(
-        &self,
-    ) -> Result<[RuntimeMintConfiguredCustodyProvider<'_>; 3], RuntimeMintCoordinatorError> {
-        Ok([
-            RuntimeMintConfiguredCustodyProvider::new(
-                self.nodes[0].node_public_key,
-                self.nodes[0].custody_public_key,
-                self.nodes[0].owner_state_root,
-                &self.nodes[0].adapter,
-            )?,
-            RuntimeMintConfiguredCustodyProvider::new(
-                self.nodes[1].node_public_key,
-                self.nodes[1].custody_public_key,
-                self.nodes[1].owner_state_root,
-                &self.nodes[1].adapter,
-            )?,
-            RuntimeMintConfiguredCustodyProvider::new(
-                self.nodes[2].node_public_key,
-                self.nodes[2].custody_public_key,
-                self.nodes[2].owner_state_root,
-                &self.nodes[2].adapter,
-            )?,
-        ])
-    }
-}
-
-struct InactiveCustodyProvider {
-    bridge: Arc<ProviderBridge>,
-    registry: Weak<ProviderRegistry>,
-}
-
-impl InactiveCustodyProvider {
-    fn new(bridge: Arc<ProviderBridge>, registry: Weak<ProviderRegistry>) -> Self {
-        Self { bridge, registry }
-    }
-
-    fn strip_runtime_invocation(&self, request: &Value) -> Result<Value, ProviderError> {
-        let mut value = request.clone();
-        let object = value
-            .as_object_mut()
-            .ok_or_else(|| ProviderError::Provider("custody request must be an object".into()))?;
-        if object.contains_key("_runtime_transfer") {
-            return Err(ProviderError::Provider(
-                "custody request contains an unsupported transfer envelope".into(),
-            ));
-        }
-        if object.contains_key("chain_data") || object.contains_key("evidence") {
-            return Err(ProviderError::Provider(
-                "custody request contains unsupported injected evidence".into(),
-            ));
-        }
-        if object.contains_key("carrier") {
-            return Err(ProviderError::Provider(
-                "custody request contains unsupported injected carrier data".into(),
-            ));
-        }
-        let op = object
-            .get("op")
-            .and_then(Value::as_str)
-            .ok_or_else(|| ProviderError::Provider("custody request is missing op".into()))?
-            .to_owned();
-        if matches!(
-            op.as_str(),
-            "evaluate_rights" | "prepare_evidence" | "settle_evidence"
-        ) {
-            return Err(ProviderError::Provider(
-                "custody request op is private to the node-hosted wrapper".into(),
-            ));
-        }
-        match op.as_str() {
-            "status" | "provision_node_share" | "release_contribution" | "evaluate" => {}
-            _ => {
-                return Err(ProviderError::Provider(
-                    "custody request op is unsupported".into(),
-                ));
-            }
-        }
-        let envelope = object.remove("_runtime_invocation").ok_or_else(|| {
-            ProviderError::Provider("custody request is missing runtime envelope".into())
-        })?;
-        let envelope = envelope.as_object().ok_or_else(|| {
-            ProviderError::Provider("custody request runtime envelope is invalid".into())
-        })?;
-        let transport = envelope
-            .get("transport")
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                ProviderError::Provider("custody request runtime envelope is invalid".into())
-            })?;
-        if !matches!(
-            transport,
-            "runtime-local-provider-plane" | "carrier-provider-plane"
-        ) {
-            return Err(ProviderError::Provider(
-                "custody request runtime envelope is invalid".into(),
-            ));
-        }
-        let carrier_is_valid = match transport {
-            "runtime-local-provider-plane" => envelope.get("carrier") == Some(&Value::Null),
-            "carrier-provider-plane" => envelope
-                .get("carrier")
-                .and_then(Value::as_object)
-                .filter(|carrier| carrier.len() == 1)
-                .and_then(|carrier| carrier.get("source_endpoint_did"))
-                .and_then(Value::as_str)
-                .and_then(|did| {
-                    crate::carrier::did_to_public_key(did).and_then(|public_key| {
-                        crate::carrier::public_key_to_did(&public_key)
-                            .ok()
-                            .filter(|canonical| canonical == did)
-                    })
-                })
-                .is_some(),
-            _ => false,
-        };
-        if envelope.len() != 11
-            || envelope.get("schema").and_then(Value::as_str) != Some(PROVIDER_INVOCATION_SCHEMA_V1)
-            || envelope.get("source").and_then(Value::as_str) != Some(RUNTIME_PROVIDER_ID)
-            || envelope.get("target").and_then(Value::as_str) != Some(CUSTODY_PROVIDER_ID)
-            || envelope.get("op").and_then(Value::as_str) != Some(op.as_str())
-            || envelope.get("capability").and_then(Value::as_str)
-                != Some(&format!(
-                    "provider:{RUNTIME_PROVIDER_ID}->{CUSTODY_PROVIDER_ID}:{op}"
-                ))
-            || !carrier_is_valid
-            || envelope.get("transfer").and_then(Value::as_str) != Some("json")
-            || envelope.get("range") != Some(&Value::Null)
-            || envelope.get("progress") != Some(&Value::Null)
-            || envelope.get("abi")
-                != Some(&json!({
-                    "schema": "elastos.provider.transfer-abi/v1",
-                    "transfer": "json",
-                    "transport": transport,
-                    "range_supported": false,
-                    "progress_supported": false,
-                    "progress_mode": "none",
-                    "transport_native_stream": false,
-                    "backpressure": "not_applicable",
-                    "cancel_supported": false,
-                }))
-        {
-            return Err(ProviderError::Provider(
-                "custody request runtime envelope is invalid".into(),
-            ));
-        }
-        Ok(value)
-    }
-
-    async fn send_private_child_request(
-        &self,
-        request: &PrivateCustodyRightsRequestV1,
-    ) -> Result<Value, ProviderError> {
-        let request = serde_json::to_value(request)
-            .map_err(|_| ProviderError::Provider("custody private request is invalid".into()))?;
-        self.bridge
-            .send_raw(&request)
-            .await
-            .map_err(|error| ProviderError::Provider(error.to_string()))
-    }
-
-    fn private_ok_data(&self, response: Value) -> Result<Value, ProviderError> {
-        match response.get("status").and_then(Value::as_str) {
-            Some("ok") => response.get("data").cloned().ok_or_else(|| {
-                ProviderError::Provider("custody private response is missing data".into())
-            }),
-            Some("error") => Err(ProviderError::Provider(
-                "custody private request was rejected".into(),
-            )),
-            _ => Err(ProviderError::Provider(
-                "custody private response has unsupported status".into(),
-            )),
-        }
-    }
-
-    fn normalize_public_status(&self, response: Value) -> Result<Value, ProviderError> {
-        let data = self.private_ok_data(response)?;
-        let object = data
-            .as_object()
-            .ok_or_else(|| ProviderError::Provider("custody status response is invalid".into()))?;
-        let provider = object
-            .get("provider")
-            .cloned()
-            .ok_or_else(|| ProviderError::Provider("custody status response is invalid".into()))?;
-        let version = object
-            .get("version")
-            .cloned()
-            .ok_or_else(|| ProviderError::Provider("custody status response is invalid".into()))?;
-        let configured = object
-            .get("configured")
-            .cloned()
-            .ok_or_else(|| ProviderError::Provider("custody status response is invalid".into()))?;
-        let request_schema = object
-            .get("request_schema")
-            .cloned()
-            .ok_or_else(|| ProviderError::Provider("custody status response is invalid".into()))?;
-        let response_schema = object
-            .get("response_schema")
-            .cloned()
-            .ok_or_else(|| ProviderError::Provider("custody status response is invalid".into()))?;
-        Ok(json!({
-            "status": "ok",
-            "data": {
-                "provider": provider,
-                "version": version,
-                "configured": configured,
-                "supported_operations": [
-                    "status",
-                    "provision_node_share",
-                    "release_contribution",
-                    "evaluate",
-                ],
-                "request_schema": request_schema,
-                "response_schema": response_schema,
-            }
-        }))
-    }
-}
-
-impl std::fmt::Debug for InactiveCustodyProvider {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("InactiveCustodyProvider")
-            .field("bridge", &"<redacted>")
-            .finish()
-    }
-}
-
-struct RuntimeCustodyRegistryAdapter {
-    registry: Arc<ProviderRegistry>,
-    transport: ProviderInvocationTransport,
-}
-
-impl RuntimeCustodyRegistryAdapter {
-    fn new(registry: Arc<ProviderRegistry>, transport: ProviderInvocationTransport) -> Self {
-        Self {
-            registry,
-            transport,
-        }
-    }
-
-    async fn invoke_rights(
-        &self,
-        request: &RightsProviderRequestV1,
-    ) -> Result<RightsProviderResponseV1, RuntimeProviderCallError> {
-        let request_value = serde_json::from_slice(
-            &request
-                .to_json_vec()
-                .map_err(|_| RuntimeProviderCallError::NoExactResult)?,
-        )
-        .map_err(|_| RuntimeProviderCallError::NoExactResult)?;
-        let response_value = invoke_json_provider_with_transport(
-            self.registry.as_ref(),
-            CUSTODY_PROVIDER_ID,
-            "evaluate",
-            request_value,
-            self.transport.clone(),
-        )
-        .await
-        .map_err(|_| RuntimeProviderCallError::NoExactResult)?;
-        RightsProviderResponseV1::from_json_slice(
-            &serde_json::to_vec(&response_value)
-                .map_err(|_| RuntimeProviderCallError::NoExactResult)?,
-        )
-        .map_err(|_| RuntimeProviderCallError::NoExactResult)
-    }
-
-    async fn invoke_custody(
-        &self,
-        op: &'static str,
-        request: &elastos_protected_content_provider_contracts::CustodyProviderRequestV1,
-    ) -> Result<
-        elastos_protected_content_provider_contracts::CustodyProviderResponseV1,
-        RuntimeProviderCallError,
-    > {
-        let request_value = serde_json::from_slice(
-            &request
-                .to_json_vec()
-                .map_err(|_| RuntimeProviderCallError::NoExactResult)?,
-        )
-        .map_err(|_| RuntimeProviderCallError::NoExactResult)?;
-        let response_value = invoke_json_provider_with_transport(
-            self.registry.as_ref(),
-            CUSTODY_PROVIDER_ID,
-            op,
-            request_value,
-            self.transport.clone(),
-        )
-        .await
-        .map_err(|_| RuntimeProviderCallError::NoExactResult)?;
-        elastos_protected_content_provider_contracts::CustodyProviderResponseV1::from_json_slice(
-            &serde_json::to_vec(&response_value)
-                .map_err(|_| RuntimeProviderCallError::NoExactResult)?,
-        )
-        .map_err(|_| RuntimeProviderCallError::NoExactResult)
-    }
-}
-
-impl std::fmt::Debug for RuntimeCustodyRegistryAdapter {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RuntimeCustodyRegistryAdapter")
-            .field("registry", &"<redacted>")
-            .field("transport", &"<redacted>")
-            .finish()
-    }
 }
 
 #[async_trait::async_trait]
@@ -742,7 +293,8 @@ impl elastos_protected_content_runtime::RuntimeCustodyProvider for RuntimeCustod
         elastos_protected_content_provider_contracts::CustodyProviderResponseV1,
         RuntimeProviderCallError,
     > {
-        self.invoke_custody("release_contribution", request).await
+        self.invoke_custody(OP_CUSTODY_RELEASE_CONTRIBUTION, request)
+            .await
     }
 
     async fn provision_node_share(
@@ -752,400 +304,48 @@ impl elastos_protected_content_runtime::RuntimeCustodyProvider for RuntimeCustod
         elastos_protected_content_provider_contracts::CustodyProviderResponseV1,
         RuntimeProviderCallError,
     > {
-        self.invoke_custody("provision_node_share", request).await
-    }
-}
-
-#[async_trait::async_trait]
-impl Provider for InactiveCustodyProvider {
-    async fn handle(&self, _request: ResourceRequest) -> Result<ResourceResponse, ProviderError> {
-        Err(ProviderError::Provider(
-            "inactive custody provider does not expose resources".into(),
-        ))
-    }
-
-    fn schemes(&self) -> Vec<&'static str> {
-        vec![CUSTODY_PROVIDER_ID]
-    }
-
-    fn name(&self) -> &'static str {
-        "inactive-custody-provider"
-    }
-
-    async fn send_raw(
-        &self,
-        request: &serde_json::Value,
-    ) -> Result<serde_json::Value, ProviderError> {
-        let request = self.strip_runtime_invocation(request)?;
-        if request.get("op").and_then(Value::as_str) == Some("status") {
-            let response = self
-                .bridge
-                .send_raw(&request)
-                .await
-                .map_err(|error| ProviderError::Provider(error.to_string()))?;
-            return self.normalize_public_status(response);
-        }
-        if request.get("op").and_then(Value::as_str) == Some("evaluate") {
-            let prepare = PrivateCustodyRightsRequestV1::new_prepare(request.clone());
-            let prepare_response = self.send_private_child_request(&prepare).await?;
-            let chain_request = self.private_ok_data(prepare_response)?;
-            let registry = self.registry.upgrade().ok_or_else(|| {
-                ProviderError::Provider("node-local custody registry is unavailable".into())
-            })?;
-            let chain_data = invoke_json_provider_with_transport(
-                registry.as_ref(),
-                CHAIN_PROVIDER_ID,
-                CHAIN_RIGHTS_EVIDENCE_OP,
-                chain_request,
-                ProviderInvocationTransport::Local,
-            )
+        self.invoke_custody(OP_CUSTODY_PROVISION_NODE_SHARE, request)
             .await
-            .map_err(ProviderError::Provider)?;
-            let settle = PrivateCustodyRightsRequestV1::new_settle(request, chain_data);
-            return self.send_private_child_request(&settle).await;
-        }
-        self.bridge
-            .send_raw(&request)
+    }
+
+    async fn release_pool_contribution(
+        &self,
+        request: &elastos_protected_content_provider_contracts::PoolCustodyRequestV1,
+    ) -> Result<
+        elastos_protected_content_provider_contracts::PoolCustodyResponseV1,
+        RuntimeProviderCallError,
+    > {
+        self.invoke_pool_custody(OP_CUSTODY_RELEASE_POOL_CONTRIBUTION, request)
             .await
-            .map_err(|error| ProviderError::Provider(error.to_string()))
     }
 
-    async fn shutdown(&self) -> Result<(), ProviderError> {
-        self.bridge
-            .shutdown()
+    async fn provision_pool_node_share(
+        &self,
+        request: &elastos_protected_content_provider_contracts::PoolCustodyRequestV1,
+    ) -> Result<
+        elastos_protected_content_provider_contracts::PoolCustodyResponseV1,
+        RuntimeProviderCallError,
+    > {
+        self.invoke_pool_custody(OP_CUSTODY_PROVISION_POOL_NODE_SHARE, request)
             .await
-            .map_err(|error| ProviderError::Provider(error.to_string()))
     }
-}
-
-/// Exact typed inputs for one Profile-authorized Runtime release operation.
-///
-/// This is an in-memory assembly value. It does not claim replay or persist
-/// any provider result; the Runtime release journal owns both responsibilities.
-#[derive(Clone)]
-pub(crate) struct RuntimeReleaseOperationAssemblyInput {
-    pub(crate) rights_request: WalletSignedRightsRequestV1,
-    pub(crate) release_request: KeyReleaseRequestV1,
-    pub(crate) recipient_public_key: RecipientPublicKeyBytesV1,
-    pub(crate) recipient_identity: RecipientKeyIdentityV1,
-    pub(crate) policy_body: RightsPolicyBodyV1,
-    pub(crate) evidence_request: RightsEvaluationEvidenceRequestV1,
-    pub(crate) custody_epoch: SignedCustodyEpochV1,
-    pub(crate) audit_request_id: RuntimeReleaseAuditIdV1,
-    pub(crate) issued_at: u64,
-    pub(crate) expires_at: u64,
-}
-
-/// Assemble and verify one Profile-authorized Runtime release operation.
-///
-/// The device key is loaded only from the existing local identity. This helper
-/// never creates keys, dispatches providers, or claims replay.
-pub(crate) fn assemble_protected_content_runtime_release_operation(
-    data_dir: &Path,
-    principal_id: &str,
-    localhost_root: &str,
-    proof_binding_id: &str,
-    input: RuntimeReleaseOperationAssemblyInput,
-    now_unix_seconds: u64,
-) -> anyhow::Result<SignedRuntimeReleaseOperationV1> {
-    let (device_key, _) =
-        crate::collaboration_profile_authority::load_existing_device_signing_key(data_dir)?
-            .ok_or_else(|| anyhow::anyhow!("local Runtime device signing key is missing"))?;
-    let runtime_issuer = RuntimeOperationIssuerKeyV1::new(device_key.verifying_key().to_bytes())
-        .map_err(|_| anyhow::anyhow!("local Runtime device signing key is invalid"))?;
-    if input.release_request.recipient() != &input.recipient_identity {
-        anyhow::bail!("release request recipient does not match recipient identity");
-    }
-    let authorization_statement = RecipientKeyAuthorizationStatementV1::new(
-        input.rights_request.request().binding().clone(),
-        input.rights_request.request().action(),
-        input.recipient_public_key,
-        input.recipient_identity,
-        runtime_issuer,
-        input.issued_at,
-        input.expires_at,
-    )
-    .map_err(|_| anyhow::anyhow!("recipient authorization statement is invalid"))?;
-    let recipient_authorization =
-        crate::collaboration_profile_authority::sign_protected_content_recipient_key_authorization(
-            data_dir,
-            principal_id,
-            localhost_root,
-            proof_binding_id,
-            authorization_statement,
-            now_unix_seconds,
-        )?;
-    let statement = RuntimeReleaseOperationStatementV1::new(
-        runtime_issuer,
-        input.rights_request,
-        input.release_request,
-        input.recipient_public_key,
-        recipient_authorization,
-        input.policy_body,
-        input.evidence_request,
-        input.custody_epoch,
-        input.audit_request_id,
-        input.issued_at,
-        input.expires_at,
-    )
-    .map_err(|_| anyhow::anyhow!("Runtime release operation statement is invalid"))?;
-    let signed = SignedRuntimeReleaseOperationV1::new(
-        statement.clone(),
-        device_key
-            .sign(
-                &statement
-                    .canonical_bytes()
-                    .map_err(|_| anyhow::anyhow!("Runtime release operation is not canonical"))?,
-            )
-            .to_bytes()
-            .to_vec(),
-    )
-    .map_err(|_| anyhow::anyhow!("Runtime release operation signature is invalid"))?;
-    signed
-        .verify(runtime_issuer, now_unix_seconds)
-        .map_err(|_| anyhow::anyhow!("Runtime release operation verification failed"))?;
-    Ok(signed)
-}
-
-struct RuntimeDecryptRegistryAdapter {
-    registry: Arc<ProviderRegistry>,
-}
-
-impl RuntimeDecryptRegistryAdapter {
-    fn new(registry: Arc<ProviderRegistry>) -> Self {
-        Self { registry }
-    }
-}
-
-fn decrypt_provider_op(request: &DecryptProviderRequestV1) -> &'static str {
-    match request.op() {
-        DecryptProviderRequestOpV1::PrepareRecipient => "prepare_recipient",
-        DecryptProviderRequestOpV1::OpenViewerSession => "open_viewer_session",
-        DecryptProviderRequestOpV1::ReadViewerMediaPart => "read_viewer_media_part",
-        DecryptProviderRequestOpV1::CancelPreparedRecipient => "cancel_prepared_recipient",
-        DecryptProviderRequestOpV1::CloseViewerSession => "close_viewer_session",
-    }
-}
-
-#[async_trait::async_trait]
-impl RuntimeDecryptProvider for RuntimeDecryptRegistryAdapter {
-    async fn prepare_recipient(
-        &self,
-        request: &DecryptProviderRequestV1,
-    ) -> Result<DecryptProviderResponseV1, RuntimeProviderCallError> {
-        invoke_decrypt_provider(self.registry.as_ref(), request).await
-    }
-
-    async fn open_viewer_session(
-        &self,
-        request: &DecryptProviderRequestV1,
-    ) -> Result<DecryptProviderResponseV1, RuntimeProviderCallError> {
-        invoke_decrypt_provider(self.registry.as_ref(), request).await
-    }
-
-    async fn read_viewer_media_part(
-        &self,
-        request: &DecryptProviderRequestV1,
-    ) -> Result<DecryptProviderResponseV1, RuntimeProviderCallError> {
-        invoke_decrypt_provider(self.registry.as_ref(), request).await
-    }
-
-    async fn cancel_prepared_recipient(
-        &self,
-        request: &DecryptProviderRequestV1,
-    ) -> Result<DecryptProviderResponseV1, RuntimeProviderCallError> {
-        invoke_decrypt_provider(self.registry.as_ref(), request).await
-    }
-
-    async fn close_viewer_session(
-        &self,
-        request: &DecryptProviderRequestV1,
-    ) -> Result<DecryptProviderResponseV1, RuntimeProviderCallError> {
-        invoke_decrypt_provider(self.registry.as_ref(), request).await
-    }
-}
-
-async fn invoke_decrypt_provider(
-    registry: &ProviderRegistry,
-    request: &DecryptProviderRequestV1,
-) -> Result<DecryptProviderResponseV1, RuntimeProviderCallError> {
-    let request_bytes = request
-        .to_json_vec()
-        .map_err(|_| RuntimeProviderCallError::NoExactResult)?;
-    let request_value: Value = serde_json::from_slice(&request_bytes)
-        .map_err(|_| RuntimeProviderCallError::NoExactResult)?;
-    let response_value = invoke_json_provider(
-        registry,
-        PROTECTED_CONTENT_DECRYPT_PROVIDER_ID,
-        decrypt_provider_op(request),
-        request_value,
-    )
-    .await
-    .map_err(|_| RuntimeProviderCallError::NoExactResult)?;
-    let response_bytes =
-        serde_json::to_vec(&response_value).map_err(|_| RuntimeProviderCallError::NoExactResult)?;
-    DecryptProviderResponseV1::from_json_slice(&response_bytes)
-        .map_err(|_| RuntimeProviderCallError::NoExactResult)
 }
 
 pub fn runtime_release_journal(data_dir: &Path) -> RuntimeReleaseJournal {
     RuntimeReleaseJournal::new(data_dir.join("protected-content").join("runtime-release"))
 }
 
-pub(crate) fn runtime_mint_journal_root(data_dir: &Path) -> PathBuf {
-    data_dir.join(RUNTIME_MINT_JOURNAL_ROOT)
-}
-
-pub(crate) fn runtime_mint_journal(data_dir: &Path) -> RuntimeMintJournal {
-    RuntimeMintJournal::new(runtime_mint_journal_root(data_dir))
-}
-
-fn generate_runtime_content_access_id() -> anyhow::Result<ContentAccessIdV1> {
-    loop {
-        let mut bytes = [0u8; 16];
-        rand::rngs::OsRng.fill_bytes(&mut bytes);
-        if let Ok(value) = ContentAccessIdV1::new(bytes) {
-            return Ok(value);
-        }
-    }
-}
-
-fn runtime_mint_intent_with_access_id(
-    composition: &RuntimeCustodyComposition,
-    input: &RuntimeCustodyLibraryPublishInput,
-    selected_nodes: Vec<elastos_protected_content_runtime::RuntimeMintNodeBinding>,
-    content_access_id: ContentAccessIdV1,
-) -> anyhow::Result<RuntimeMintIntent> {
-    RuntimeMintIntent::new(
-        input.principal_id.clone(),
-        &input.object_uri,
-        &input.source_storage,
-        input.wallet_account_id.clone(),
-        input.wallet_account_address.clone(),
-        input.creator_mint_source_digest,
-        input.mime_type.clone(),
-        input.codecs.clone(),
-        &input.clear_init_segment,
-        &input.clear_segments,
-        content_access_id,
-        composition
-            .signed_pool
-            .pool_identity()
-            .map_err(|_| anyhow::anyhow!("Runtime custody mint intent is invalid"))?,
-        composition
-            .signed_epoch
-            .epoch_identity()
-            .map_err(|_| anyhow::anyhow!("Runtime custody mint intent is invalid"))?,
-        composition
-            .signed_committee_authorization
-            .authorization_identity()
-            .map_err(|_| anyhow::anyhow!("Runtime custody mint intent is invalid"))?,
-        selected_nodes,
-    )
-    .map_err(|_| anyhow::anyhow!("Runtime custody mint intent is invalid"))
-}
-
-fn load_or_persist_runtime_mint_intent(
-    journal: &RuntimeMintJournal,
-    composition: &RuntimeCustodyComposition,
-    input: &RuntimeCustodyLibraryPublishInput,
-    selected_nodes: Vec<elastos_protected_content_runtime::RuntimeMintNodeBinding>,
-) -> anyhow::Result<RuntimeMintIntent> {
-    let request_id = RuntimeMintIntent::request_id_for_source(
-        &input.principal_id,
-        &input.object_uri,
-        &input.source_storage,
-    )
-    .map_err(|_| anyhow::anyhow!("Runtime custody mint intent is invalid"))?;
-    match journal.load_intent(request_id) {
-        Ok(existing) => {
-            let expected = runtime_mint_intent_with_access_id(
-                composition,
-                input,
-                selected_nodes,
-                existing.content_access_id(),
-            )?;
-            if !existing.same_authority_as(&expected) {
-                anyhow::bail!("Runtime custody mint intent conflicts with existing authority");
-            }
-            Ok(existing)
-        }
-        Err(elastos_protected_content_runtime::RuntimeMintJournalError::NotFound) => {
-            let intent = runtime_mint_intent_with_access_id(
-                composition,
-                input,
-                selected_nodes,
-                generate_runtime_content_access_id()?,
-            )?;
-            journal
-                .persist_intent(&intent)
-                .map_err(|_| anyhow::anyhow!("Runtime custody mint intent is unavailable"))
-        }
-        Err(_) => Err(anyhow::anyhow!(
-            "Runtime custody mint intent is unavailable"
-        )),
-    }
-}
-
-fn load_completed_runtime_mint_facts(
-    journal: &RuntimeMintJournal,
-    input: &RuntimeCustodyLibraryPublishInput,
-    mint_id: Digest32,
-) -> anyhow::Result<RuntimeCustodyLibraryPublishFacts> {
-    let persisted = journal
-        .load(mint_id)
-        .map_err(|_| anyhow::anyhow!("Runtime custody mint intent is unavailable"))?;
-    let evidence = persisted
-        .content_availability()
-        .ok_or_else(|| anyhow::anyhow!("Runtime custody mint intent is unavailable"))?;
-    let content_id = runtime_protected_content_id(persisted.draft().encrypted_content())?;
-    Ok(runtime_custody_library_publish_facts(
-        input,
-        persisted.draft(),
-        &content_id,
-        evidence,
-    ))
-}
-
-/// A crash between the protect session's close settlement and
-/// `mark_intent_completed` leaves the intent at `SettledBeforeDraft(Closed)`
-/// while every durable mint step may already have finished; the deterministic
-/// intent identity then bricks the source object permanently (ELACITY-2307).
-/// Adopt the finished record when one exists: return its mint id after
-/// completing the intent. A record that is not fully terminal cannot be rolled
-/// forward (the content key material is gone), so it fails closed for cleanup
-/// reconciliation with the orphaned custody evidence logged. No record means
-/// nothing durable survived the crash and the terminal abort stands.
-fn adopt_settled_runtime_mint_record(
-    journal: &RuntimeMintJournal,
-    mint_intent: &RuntimeMintIntent,
-) -> anyhow::Result<Option<Digest32>> {
-    let record = journal
-        .find_mint_record_for_intent(mint_intent.request_id())
-        .map_err(|_| anyhow::anyhow!("Runtime custody mint intent is unavailable"))?;
-    let Some(record) = record else {
-        return Ok(None);
-    };
-    let fully_terminal = record.custody_terminal()
-        == Some(RuntimeCustodyTerminalKind::CustodyProvisioned)
-        && record.content_availability().is_some();
-    if fully_terminal {
-        let mint_id = record.draft().mint_id();
-        journal
-            .mark_intent_completed(mint_intent.request_id(), mint_id)
-            .map_err(|_| anyhow::anyhow!("Runtime custody mint intent is unavailable"))?;
-        return Ok(Some(mint_id));
-    }
-    tracing::warn!(
-        request_id = %hex::encode(mint_intent.request_id().as_bytes()),
-        mint_id = %hex::encode(record.draft().mint_id().as_bytes()),
-        custody_terminal = ?record.custody_terminal(),
-        content_availability_recorded = record.content_availability().is_some(),
-        node_effects_started = record.any_effect_started(),
-        node_receipts_accepted = record.accepted_orphans().len(),
-        "settled runtime custody mint record is not fully terminal; orphaned custody state requires cleanup reconciliation"
-    );
-    anyhow::bail!(RUNTIME_CUSTODY_MINT_RECONCILIATION_REQUIRED_MESSAGE);
+fn runtime_mint_media_renditions(
+    media: &RuntimePreparedMediaV2,
+) -> Vec<RuntimeMintIntentRenditionV2> {
+    media
+        .renditions
+        .iter()
+        .map(|rendition| RuntimeMintIntentRenditionV2 {
+            kind: rendition.kind,
+            segment_count: rendition.segment_count,
+        })
+        .collect()
 }
 
 pub fn list_unresolved_runtime_releases(
@@ -1163,338 +363,17 @@ pub fn unresolved_release_audit_records(
         .collect()
 }
 
-pub async fn register_inactive_custody_provider(
-    registry: &Arc<ProviderRegistry>,
-    binary_path: &Path,
-    data_dir: &Path,
-) -> anyhow::Result<()> {
-    let state_root = inactive_custody_state_root(data_dir);
-    validate_inactive_custody_state_root(&state_root)?;
-    let base_path = state_root
-        .to_str()
-        .ok_or_else(|| {
-            invalid_inactive_custody_config("inactive custody provider root must be valid UTF-8")
-        })?
-        .to_owned();
-    let bridge_config = ProviderConfig {
-        base_path,
-        ..Default::default()
-    };
-    let bridge = Arc::new(
-        elastos_runtime::provider::ProviderBridge::spawn(binary_path, bridge_config)
-            .await
-            .map_err(|error| {
-                anyhow::anyhow!("failed to spawn inactive custody provider: {error}")
-            })?,
-    );
-    let startup = async {
-        let status =
-            request_protected_provider_startup_status(&bridge, "inactive custody provider").await?;
-        require_inactive_custody_provider_status(&status)?;
-        let provider: Arc<dyn Provider> = Arc::new(InactiveCustodyProvider::new(
-            bridge.clone(),
-            Arc::downgrade(registry),
-        ));
-        register_inactive_custody_runtime_provider_target(registry, provider)
-            .await
-            .map_err(|error| anyhow::anyhow!("failed to register inactive custody route: {error}"))
-    }
-    .await;
-    settle_protected_provider_startup(&bridge, startup, "inactive custody provider").await
-}
-
-pub async fn register_protect_provider(
-    registry: &Arc<ProviderRegistry>,
-    binary_path: &Path,
-) -> anyhow::Result<()> {
-    let bridge = Arc::new(
-        elastos_runtime::provider::ProviderBridge::spawn(
-            binary_path,
-            ProviderConfig {
-                extra: json!({}),
-                ..Default::default()
-            },
-        )
-        .await
-        .map_err(|error| anyhow::anyhow!("failed to spawn protect provider: {error}"))?,
-    );
-    let startup = async {
-        let status = request_protected_provider_startup_status(&bridge, "protect provider").await?;
-        require_protect_provider_status(&status)?;
-        let provider: Arc<dyn Provider> =
-            Arc::new(elastos_runtime::provider::CapsuleProvider::with_scheme(
-                bridge.clone(),
-                PROTECT_PROVIDER_ID,
-            ));
-        registry
-            .register_runtime_provider_target(PROTECT_PROVIDER_ID, provider)
-            .await
-            .map_err(|error| anyhow::anyhow!("failed to register protect provider: {error}"))
-    }
-    .await;
-    settle_protected_provider_startup(&bridge, startup, "protect provider").await
-}
-
-pub async fn register_protected_content_decrypt_provider(
-    registry: &Arc<ProviderRegistry>,
-    binary_path: &Path,
-    runtime_operation_issuer: RuntimeOperationIssuerKeyV1,
-) -> anyhow::Result<()> {
-    let bridge = Arc::new(
-        ProviderBridge::spawn(
-            binary_path,
-            ProviderConfig {
-                extra: json!({
-                    "trusted_runtime_issuer": format!(
-                        "0x{}",
-                        hex::encode(runtime_operation_issuer.as_bytes())
-                    ),
-                }),
-                ..Default::default()
-            },
-        )
-        .await
-        .map_err(|error| {
-            anyhow::anyhow!("failed to spawn protected-content decrypt provider: {error}")
-        })?,
-    );
-    let startup = async {
-        let status = request_protected_provider_startup_status(
-            &bridge,
-            "protected-content decrypt provider",
-        )
-        .await?;
-        require_protected_content_decrypt_provider_status(&status)?;
-        let provider: Arc<dyn Provider> =
-            Arc::new(elastos_runtime::provider::CapsuleProvider::with_scheme(
-                bridge.clone(),
-                PROTECTED_CONTENT_DECRYPT_PROVIDER_ID,
-            ));
-        registry
-            .register_runtime_provider_target(PROTECTED_CONTENT_DECRYPT_PROVIDER_ID, provider)
-            .await
-            .map_err(|error| {
-                anyhow::anyhow!("failed to register protected-content decrypt provider: {error}")
-            })
-    }
-    .await;
-    settle_protected_provider_startup(&bridge, startup, "protected-content decrypt provider").await
-}
-
-async fn request_protected_provider_startup_status(
-    bridge: &ProviderBridge,
-    label: &str,
-) -> anyhow::Result<Value> {
-    tokio::time::timeout(
-        PROTECTED_CONTENT_PROVIDER_STATUS_TIMEOUT,
-        bridge.send_raw(&json!({"op":"status"})),
-    )
-    .await
-    .map_err(|_| anyhow::anyhow!("{label} status timed out"))?
-    .map_err(|error| anyhow::anyhow!("{label} status failed: {error}"))
-}
-
-async fn settle_protected_provider_startup(
-    bridge: &ProviderBridge,
-    startup: anyhow::Result<()>,
-    label: &str,
-) -> anyhow::Result<()> {
-    let Err(startup_error) = startup else {
-        return Ok(());
-    };
-    if let Err(shutdown_error) = bridge.shutdown().await {
-        return Err(anyhow::anyhow!(
-            "{startup_error}; {label} shutdown/reap also failed: {shutdown_error}"
-        ));
-    }
-    Err(startup_error)
-}
-
-fn require_protect_provider_status(status: &Value) -> anyhow::Result<()> {
-    let data = require_exact_provider_status_data(
-        status,
-        "protect provider",
-        &[
-            "provider",
-            "version",
-            "configured",
-            "supported_operations",
-            "request_schema",
-            "response_schema",
-        ],
-    )?;
-    if data.get("provider").and_then(Value::as_str) != Some(PROTECT_PROVIDER_PROCESS_ID) {
-        anyhow::bail!("protect provider status has an unsupported identity");
-    }
-    if data.get("configured").and_then(Value::as_bool) != Some(true) {
-        anyhow::bail!("protect provider is not configured");
-    }
-    if data.get("request_schema").and_then(Value::as_str)
-        != Some(PROTECT_PROVIDER_REQUEST_SCHEMA_V1)
-        || data.get("response_schema").and_then(Value::as_str)
-            != Some(PROTECT_PROVIDER_RESPONSE_SCHEMA_V1)
-    {
-        anyhow::bail!("protect provider status has unsupported protocol schemas");
-    }
-    require_exact_provider_operations(data, PROTECT_PROVIDER_OPERATIONS, "protect provider")
-}
-
-pub fn require_media_provider_status(status: &Value) -> anyhow::Result<()> {
-    let data = require_exact_provider_status_data(
-        status,
-        "media-provider",
-        &[
-            "provider",
-            "protocol_version",
-            "version",
-            "configured",
-            "supported_operations",
-        ],
-    )?;
-    if data.get("provider").and_then(Value::as_str) != Some(MEDIA_PROVIDER_PROCESS_ID) {
-        anyhow::bail!("media-provider status has an unsupported provider identity");
-    }
-    if data.get("protocol_version").and_then(Value::as_str) != Some(MEDIA_PROVIDER_PROTOCOL_VERSION)
-    {
-        anyhow::bail!("media-provider status has an unsupported protocol version");
-    }
-    if data.get("configured").and_then(Value::as_bool) != Some(true) {
-        anyhow::bail!("media-provider is not configured");
-    }
-    require_exact_provider_operations(data, MEDIA_PROVIDER_OPERATIONS, "media-provider")
-}
-
-fn require_inactive_custody_provider_status(status: &Value) -> anyhow::Result<()> {
-    let data = require_exact_provider_status_data(
-        status,
-        "inactive custody provider",
-        &[
-            "provider",
-            "version",
-            "configured",
-            "supported_operations",
-            "request_schema",
-            "response_schema",
-        ],
-    )?;
-    if data.get("provider").and_then(Value::as_str) != Some(CUSTODY_PROVIDER_ID) {
-        anyhow::bail!("inactive custody provider status has an unsupported identity");
-    }
-    if data.get("configured").and_then(Value::as_bool) != Some(true) {
-        anyhow::bail!("inactive custody provider is not configured");
-    }
-    if data.get("request_schema").and_then(Value::as_str)
-        != Some(CUSTODY_PROVIDER_REQUEST_SCHEMA_V1)
-        || data.get("response_schema").and_then(Value::as_str)
-            != Some(CUSTODY_PROVIDER_RESPONSE_SCHEMA_V1)
-    {
-        anyhow::bail!("inactive custody provider status has unsupported protocol schemas");
-    }
-    require_exact_provider_operations(
-        data,
-        CUSTODY_PROVIDER_OPERATIONS,
-        "inactive custody provider",
-    )
-}
-
-fn require_protected_content_decrypt_provider_status(status: &Value) -> anyhow::Result<()> {
-    let data = require_exact_provider_status_data(
-        status,
-        "protected-content decrypt provider",
-        &[
-            "provider",
-            "version",
-            "configured",
-            "supported_operations",
-            "request_schema",
-            "response_schema",
-        ],
-    )?;
-    if data.get("provider").and_then(Value::as_str) != Some(PROTECTED_CONTENT_DECRYPT_PROVIDER_ID) {
-        anyhow::bail!("protected-content decrypt provider status has an unsupported identity");
-    }
-    if data.get("configured").and_then(Value::as_bool) != Some(true) {
-        anyhow::bail!("protected-content decrypt provider is not configured");
-    }
-    if data.get("request_schema").and_then(Value::as_str)
-        != Some(DECRYPT_PROVIDER_REQUEST_SCHEMA_V1)
-        || data.get("response_schema").and_then(Value::as_str)
-            != Some(DECRYPT_PROVIDER_RESPONSE_SCHEMA_V1)
-    {
-        anyhow::bail!("protected-content decrypt provider status has unsupported protocol schemas");
-    }
-    require_exact_provider_operations(
-        data,
-        PROTECTED_CONTENT_DECRYPT_PROVIDER_OPERATIONS,
-        "protected-content decrypt provider",
-    )
-}
-
-fn require_exact_provider_status_data<'a>(
-    status: &'a Value,
-    label: &str,
-    expected_fields: &[&str],
-) -> anyhow::Result<&'a serde_json::Map<String, Value>> {
-    let status_object = status
-        .as_object()
-        .ok_or_else(|| anyhow::anyhow!("{label} status is invalid"))?;
-    if status_object.len() != 2
-        || !status_object.contains_key("status")
-        || !status_object.contains_key("data")
-        || status.get("status").and_then(Value::as_str) != Some("ok")
-    {
-        anyhow::bail!("{label} status did not succeed");
-    }
-    let data = status
-        .get("data")
-        .and_then(Value::as_object)
-        .ok_or_else(|| anyhow::anyhow!("{label} status is missing data"))?;
-    if data.len() != expected_fields.len()
-        || expected_fields
-            .iter()
-            .any(|field| !data.contains_key(*field))
-    {
-        anyhow::bail!("{label} status has an unsupported shape");
-    }
-    // Release versions identify builds; protocol versions and schemas define compatibility.
-    if data
-        .get("version")
-        .and_then(Value::as_str)
-        .and_then(|version| semver::Version::parse(version).ok())
-        .is_none()
-    {
-        anyhow::bail!("{label} status has an invalid release version");
-    }
-    Ok(data)
-}
-
-fn require_exact_provider_operations(
-    data: &serde_json::Map<String, Value>,
-    expected: &[&str],
-    label: &str,
-) -> anyhow::Result<()> {
-    let supported_operations = data
-        .get("supported_operations")
-        .and_then(Value::as_array)
-        .ok_or_else(|| anyhow::anyhow!("{label} status is missing supported operations"))?;
-    if supported_operations.len() != expected.len()
-        || supported_operations
-            .iter()
-            .zip(expected)
-            .any(|(actual, expected)| actual.as_str() != Some(*expected))
-    {
-        anyhow::bail!("{label} status has unsupported operations");
-    }
-    Ok(())
-}
-
-async fn register_inactive_custody_runtime_provider_target(
-    registry: &ProviderRegistry,
-    provider: Arc<dyn Provider>,
-) -> Result<(), ProviderError> {
-    registry
-        .register_runtime_provider_target(CUSTODY_PROVIDER_ID, provider)
-        .await
+/// OPEN-LOOP F4: this Home's own custody node keys, the one answer to "is
+/// this node mine": the key every root on disk holds, so the served pools'
+/// nodes and the node Include set up alike. A root whose key cannot be read
+/// runs no node and is left out.
+pub(crate) fn own_custody_node_keys(data_dir: &Path) -> anyhow::Result<Vec<NodePublicKey>> {
+    Ok(custody_provider_root_paths(data_dir)?
+        .iter()
+        .filter_map(|root| {
+            custody_provider::load_node_public_key(&custody_root_dir(data_dir, root)).ok()
+        })
+        .collect())
 }
 
 /// Derive the Runtime operation issuer custody and decrypt providers must
@@ -1507,60 +386,42 @@ pub fn derive_protected_content_runtime_issuer(
         .map_err(|_| anyhow::anyhow!("active Runtime operation issuer is invalid"))
 }
 
-/// The provisioned state root an inactive custody provider is hosted from.
-///
-/// `elastos protected-content-config provision-custody-node` creates it; a
-/// custody host reads it to fail closed before spawning anything.
-pub fn inactive_custody_state_root(data_dir: &Path) -> std::path::PathBuf {
-    data_dir.join(INACTIVE_CUSTODY_ROOT)
+/// The Runtime operation issuer this host's Chain plane checks release
+/// operations against. A custody node settles releases for the one Runtime
+/// its custody state was provisioned to trust, never for this host's own
+/// device key; a host without custody state is its own Runtime.
+pub fn chain_plane_runtime_issuer(data_dir: &Path) -> anyhow::Result<RuntimeOperationIssuerKeyV1> {
+    let custody_state_root = inactive_custody_state_root(data_dir);
+    if custody_state_root.is_dir() {
+        return custody_provider::load_trusted_runtime_issuer(&custody_state_root).map_err(
+            |error| {
+                anyhow::anyhow!(
+                    "provisioned custody state names no readable trusted Runtime issuer: {error:?}"
+                )
+            },
+        );
+    }
+    let device_key = elastos_identity::load_or_create_device_key(data_dir)
+        .map_err(|_| anyhow::anyhow!("chain-provider host identity is unavailable"))?;
+    derive_protected_content_runtime_issuer(&device_key)
 }
 
 pub(crate) fn protected_content_root(data_dir: &Path) -> PathBuf {
     data_dir.join(PROTECTED_CONTENT_ROOT)
 }
 
-pub(crate) fn runtime_custody_composition_config_path(data_dir: &Path) -> PathBuf {
-    data_dir.join(CUSTODY_COMPOSITION_CONFIG_FILE)
-}
-
-fn validate_inactive_custody_state_root(root: &Path) -> anyhow::Result<()> {
-    validate_owner_only_directory(root, "inactive custody provider root")
-}
-
-fn invalid_inactive_custody_config(reason: impl std::fmt::Display) -> anyhow::Error {
-    anyhow::anyhow!("inactive custody provider configuration is missing or unsafe: {reason}")
-}
-
 pub(crate) fn validate_owner_only_directory(path: &Path, label: &str) -> anyhow::Result<()> {
     let metadata = fs::symlink_metadata(path).map_err(|error| {
         let _ = error;
-        invalid_inactive_custody_config(format!("{label} is unavailable"))
+        invalid_custody_config(format!("{label} is unavailable"))
     })?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
         anyhow::bail!(
             "{}",
-            invalid_inactive_custody_config(format!("{label} must be an owner-only directory"))
+            invalid_custody_config(format!("{label} must be an owner-only directory"))
         );
     }
-    validate_owner_only_metadata_with_error(
-        label,
-        &metadata,
-        false,
-        invalid_inactive_custody_config,
-    )
-}
-
-fn validate_owner_only_directory_with_error(
-    path: &Path,
-    label: &str,
-    error_fn: fn(String) -> anyhow::Error,
-) -> anyhow::Result<()> {
-    let metadata =
-        fs::symlink_metadata(path).map_err(|_| error_fn(format!("{label} is unavailable")))?;
-    if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return Err(error_fn(format!("{label} must be an owner-only directory")));
-    }
-    validate_owner_only_metadata_with_error(label, &metadata, false, error_fn)
+    validate_owner_only_metadata_with_error(label, &metadata, false, invalid_custody_config)
 }
 
 #[cfg(unix)]
@@ -1606,17 +467,6 @@ fn invalid_custody_composition_config(reason: impl std::fmt::Display) -> anyhow:
     anyhow::anyhow!("protected-content custody composition config is missing or unsafe: {reason}")
 }
 
-fn invalid_chain_provider_config(reason: impl std::fmt::Display) -> anyhow::Error {
-    anyhow::anyhow!("protected-content Chain provider config is missing or unsafe: {reason}")
-}
-
-fn validate_owner_only_protected_content_dir(data_dir: &Path) -> anyhow::Result<PathBuf> {
-    validate_owner_only_protected_content_dir_with_error(
-        data_dir,
-        invalid_custody_composition_config,
-    )
-}
-
 fn validate_owner_only_protected_content_dir_with_error(
     data_dir: &Path,
     error_fn: fn(String) -> anyhow::Error,
@@ -1639,786 +489,8 @@ fn validate_owner_only_protected_content_dir_with_error(
     Ok(root)
 }
 
-fn runtime_chain_provider_config_path(data_dir: &Path) -> PathBuf {
-    data_dir.join(CHAIN_PROVIDER_CONFIG_FILE)
-}
-
-pub fn load_runtime_protected_content_chain_provider_config(
-    data_dir: &Path,
-) -> anyhow::Result<Option<RuntimeProtectedContentChainProviderConfig>> {
-    let config_path = runtime_chain_provider_config_path(data_dir);
-    match fs::symlink_metadata(&config_path) {
-        Ok(_) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(_) => {
-            anyhow::bail!(
-                "{}",
-                invalid_chain_provider_config("config file is unavailable")
-            )
-        }
-    }
-    validate_owner_only_protected_content_dir_with_error(data_dir, invalid_chain_provider_config)?;
-    let bytes = read_owner_only_protected_content_config_bytes(
-        &config_path,
-        MAX_CHAIN_PROVIDER_CONFIG_BYTES,
-        "Chain provider config file",
-        invalid_chain_provider_config,
-    )?;
-    let config: RuntimeProtectedContentChainProviderConfigFile = serde_json::from_slice(&bytes)
-        .map_err(|_| invalid_chain_provider_config("config JSON is invalid"))?;
-    if config.schema != PROTECTED_CONTENT_CHAIN_PROVIDER_CONFIG_SCHEMA_V1
-        || !config.protected_content_network.is_object()
-    {
-        anyhow::bail!(
-            "{}",
-            invalid_chain_provider_config("config fields are invalid")
-        );
-    }
-    Ok(Some(RuntimeProtectedContentChainProviderConfig {
-        protected_content_network: config.protected_content_network,
-    }))
-}
-
 fn invalid_media_provider_config(reason: impl std::fmt::Display) -> anyhow::Error {
     anyhow::anyhow!("media-provider private config is missing or unsafe: {reason}")
-}
-
-fn runtime_media_provider_config_path(data_dir: &Path) -> PathBuf {
-    data_dir.join(MEDIA_PROVIDER_CONFIG_FILE)
-}
-
-fn runtime_media_provider_root(data_dir: &Path) -> PathBuf {
-    runtime_media_provider_config_path(data_dir)
-        .parent()
-        .expect("media-provider config has a parent")
-        .to_path_buf()
-}
-
-fn runtime_media_provider_tools_root(data_dir: &Path) -> PathBuf {
-    runtime_media_provider_root(data_dir).join("tools")
-}
-
-fn runtime_media_provider_staging_root(data_dir: &Path) -> PathBuf {
-    runtime_media_provider_root(data_dir).join("staging")
-}
-
-pub fn load_runtime_media_provider_bridge_config(
-    data_dir: &Path,
-) -> anyhow::Result<Option<ProviderConfig>> {
-    let config_path = runtime_media_provider_config_path(data_dir);
-    match fs::symlink_metadata(&config_path) {
-        Ok(_) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(_) => return Err(invalid_media_provider_config("config file is unavailable")),
-    }
-    validate_owner_only_protected_content_dir_with_error(data_dir, invalid_media_provider_config)?;
-    validate_owner_only_directory_with_error(
-        &runtime_media_provider_root(data_dir),
-        "media-provider root",
-        invalid_media_provider_config,
-    )?;
-    validate_owner_only_directory_with_error(
-        &runtime_media_provider_tools_root(data_dir),
-        "media-provider tools root",
-        invalid_media_provider_config,
-    )?;
-    validate_owner_only_directory_with_error(
-        &runtime_media_provider_staging_root(data_dir),
-        "media-provider staging root",
-        invalid_media_provider_config,
-    )?;
-    let bytes = read_owner_only_protected_content_config_bytes(
-        &config_path,
-        MAX_MEDIA_PROVIDER_CONFIG_BYTES,
-        "media-provider config file",
-        invalid_media_provider_config,
-    )?;
-    let raw: RuntimeMediaProviderConfigFile = serde_json::from_slice(&bytes)
-        .map_err(|_| invalid_media_provider_config("config JSON is invalid"))?;
-    let canonical_root = fs::canonicalize(runtime_media_provider_root(data_dir))
-        .map_err(|_| invalid_media_provider_config("provider root is unavailable"))?;
-    let expected_tools = canonical_root.join("tools");
-    let expected_staging = canonical_root.join("staging");
-    let expected_ffmpeg = expected_tools.join("ffmpeg");
-    let expected_ffprobe = expected_tools.join("ffprobe");
-    if raw.schema != MEDIA_PROVIDER_CONFIG_SCHEMA_V1
-        || raw.output_profile != MEDIA_PROVIDER_OUTPUT_PROFILE_V1
-        || Path::new(&raw.staging_root) != expected_staging
-        || Path::new(&raw.ffmpeg_path) != expected_ffmpeg
-        || Path::new(&raw.ffprobe_path) != expected_ffprobe
-        || raw.timeout_ms == 0
-        || raw.timeout_ms > MEDIA_PROVIDER_TIMEOUT_MS_V1
-        || raw.max_stdio_bytes == 0
-        || raw.max_stdio_bytes > MEDIA_PROVIDER_MAX_STDIO_BYTES_V1
-        || raw.max_input_bytes == 0
-        || raw.max_input_bytes > MEDIA_PROVIDER_MAX_INPUT_BYTES_V1
-        || raw.max_output_part_bytes == 0
-        || raw.max_output_part_bytes > MEDIA_PROVIDER_MAX_OUTPUT_PART_BYTES_V1
-        || raw.max_duration_secs == 0
-        || raw.max_duration_secs > MEDIA_PROVIDER_MAX_DURATION_SECS_V1
-        || raw.max_source_width == 0
-        || raw.max_source_width > MEDIA_PROVIDER_MAX_SOURCE_WIDTH_V1
-        || raw.max_source_height == 0
-        || raw.max_source_height > MEDIA_PROVIDER_MAX_SOURCE_HEIGHT_V1
-        || raw.max_source_fps == 0
-        || raw.max_source_fps > MEDIA_PROVIDER_MAX_SOURCE_FPS_V1
-        || raw.max_segment_count == 0
-        || raw.max_segment_count > MEDIA_PROVIDER_MAX_SEGMENT_COUNT_V1
-        || raw.max_total_output_bytes == 0
-        || raw.max_total_output_bytes > MEDIA_PROVIDER_MAX_TOTAL_OUTPUT_BYTES_V1
-        || raw.max_total_output_bytes < raw.max_output_part_bytes
-    {
-        return Err(invalid_media_provider_config("config fields are invalid"));
-    }
-    validate_runtime_media_import(&expected_ffmpeg, &expected_tools, "ffmpeg")?;
-    validate_runtime_media_import(&expected_ffprobe, &expected_tools, "ffprobe")?;
-    Ok(Some(ProviderConfig {
-        extra: json!({
-            "provider_id": MEDIA_PROVIDER_PROCESS_ID,
-            "staging_root": raw.staging_root,
-            "ffmpeg_path": raw.ffmpeg_path,
-            "ffprobe_path": raw.ffprobe_path,
-            "output_profile": raw.output_profile,
-            "timeout_ms": raw.timeout_ms,
-            "max_stdio_bytes": raw.max_stdio_bytes,
-            "max_input_bytes": raw.max_input_bytes,
-            "max_output_part_bytes": raw.max_output_part_bytes,
-            "max_duration_secs": raw.max_duration_secs,
-            "max_source_width": raw.max_source_width,
-            "max_source_height": raw.max_source_height,
-            "max_source_fps": raw.max_source_fps,
-            "max_segment_count": raw.max_segment_count,
-            "max_total_output_bytes": raw.max_total_output_bytes,
-        }),
-        ..Default::default()
-    }))
-}
-
-/// SHA-256 digests of ffmpeg and ffprobe read from a media-tools archive whose
-/// checksum was just verified against the installed signed release manifest.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct SignedMediaToolDigests {
-    pub(crate) ffmpeg: [u8; 32],
-    pub(crate) ffprobe: [u8; 32],
-}
-
-/// How a supplied pair may relate to an existing private import.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum MediaToolsTrust {
-    /// The supplied pair must equal the private import byte for byte.
-    MustMatch,
-    /// A differing private import is replaced, but only with bytes that hash to
-    /// the signed release's digests.
-    SignedRelease(SignedMediaToolDigests),
-}
-
-/// Whether a private import exists and either tool differs from the supplied pair.
-pub(crate) fn runtime_media_import_differs(
-    data_dir: &Path,
-    tools_dir: &Path,
-) -> anyhow::Result<bool> {
-    if load_runtime_media_provider_bridge_config(data_dir)?.is_none() {
-        return Ok(false);
-    }
-    let mut ffmpeg = open_runtime_media_tool(tools_dir, "ffmpeg")?;
-    let mut ffprobe = open_runtime_media_tool(tools_dir, "ffprobe")?;
-    let tools = runtime_media_provider_tools_root(data_dir);
-    Ok(
-        !runtime_media_tool_matches(&mut ffmpeg, &tools.join("ffmpeg"), "ffmpeg")?
-            || !runtime_media_tool_matches(&mut ffprobe, &tools.join("ffprobe"), "ffprobe")?,
-    )
-}
-
-pub(crate) fn prepare_runtime_media_provider_prerequisite(
-    data_dir: &Path,
-    tools_dir: &Path,
-    trust: MediaToolsTrust,
-) -> anyhow::Result<()> {
-    // Open the complete supplied pair before creating or changing private state.
-    let mut ffmpeg = open_runtime_media_tool(tools_dir, "ffmpeg")?;
-    let mut ffprobe = open_runtime_media_tool(tools_dir, "ffprobe")?;
-    match fs::symlink_metadata(runtime_media_provider_config_path(data_dir)) {
-        Ok(_) => {
-            load_runtime_media_provider_bridge_config(data_dir)?.ok_or_else(|| {
-                invalid_media_provider_config("config file disappeared during validation")
-            })?;
-            let tools = runtime_media_provider_tools_root(data_dir);
-            if runtime_media_tool_matches(&mut ffmpeg, &tools.join("ffmpeg"), "ffmpeg")?
-                && runtime_media_tool_matches(&mut ffprobe, &tools.join("ffprobe"), "ffprobe")?
-            {
-                return Ok(());
-            }
-            let MediaToolsTrust::SignedRelease(digests) = trust else {
-                return Err(invalid_media_provider_config(
-                    "supplied media tools differ from the private imported pair",
-                ));
-            };
-            // The config stores only private paths and operator-tuned limits, so a
-            // release upgrade replaces the imported bytes and leaves the config alone.
-            #[cfg(unix)]
-            {
-                let canonical_tools = fs::canonicalize(&tools)
-                    .map_err(|_| invalid_media_provider_config("tools root is unavailable"))?;
-                replace_runtime_media_pair(
-                    &canonical_tools,
-                    [
-                        ("ffmpeg", &mut ffmpeg, &digests.ffmpeg),
-                        ("ffprobe", &mut ffprobe, &digests.ffprobe),
-                    ],
-                )?;
-                load_runtime_media_provider_bridge_config(data_dir)?.ok_or_else(|| {
-                    invalid_media_provider_config("config file disappeared after upgrade")
-                })?;
-            }
-            #[cfg(not(unix))]
-            let _ = digests;
-            return Ok(());
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(_) => return Err(invalid_media_provider_config("config file is unavailable")),
-    }
-    #[cfg(unix)]
-    {
-        ensure_media_provider_directory(data_dir, "Runtime data root")?;
-        ensure_media_provider_directory(
-            &protected_content_root(data_dir),
-            "protected-content parent",
-        )?;
-        ensure_media_provider_directory(
-            &runtime_media_provider_root(data_dir),
-            "media-provider root",
-        )?;
-        let tools_root = runtime_media_provider_tools_root(data_dir);
-        ensure_media_provider_directory(&tools_root, "media-provider tools root")?;
-        let staging_root = runtime_media_provider_staging_root(data_dir);
-        ensure_media_provider_directory(&staging_root, "media-provider staging root")?;
-
-        let canonical_root = fs::canonicalize(runtime_media_provider_root(data_dir))
-            .map_err(|_| invalid_media_provider_config("provider root is unavailable"))?;
-        let canonical_tools = fs::canonicalize(&tools_root)
-            .map_err(|_| invalid_media_provider_config("tools root is unavailable"))?;
-        let canonical_staging = fs::canonicalize(&staging_root)
-            .map_err(|_| invalid_media_provider_config("staging root is unavailable"))?;
-        if canonical_tools != canonical_root.join("tools")
-            || canonical_staging != canonical_root.join("staging")
-        {
-            return Err(invalid_media_provider_config(
-                "private paths escape the provider root",
-            ));
-        }
-
-        let config_path = runtime_media_provider_config_path(data_dir);
-        let mut created_tools = Vec::new();
-        let mut config_created = false;
-        let result = (|| -> anyhow::Result<()> {
-            let ffmpeg_import = import_runtime_media_tool(&canonical_tools, "ffmpeg", &mut ffmpeg)?;
-            if ffmpeg_import.created {
-                created_tools.push(ffmpeg_import.path.clone());
-            }
-            let ffprobe_import =
-                import_runtime_media_tool(&canonical_tools, "ffprobe", &mut ffprobe)?;
-            if ffprobe_import.created {
-                created_tools.push(ffprobe_import.path.clone());
-            }
-            let config = RuntimeMediaProviderConfigFile {
-                schema: MEDIA_PROVIDER_CONFIG_SCHEMA_V1.to_string(),
-                ffmpeg_path: media_path_string(&ffmpeg_import.path, "ffmpeg")?,
-                ffprobe_path: media_path_string(&ffprobe_import.path, "ffprobe")?,
-                staging_root: media_path_string(&canonical_staging, "staging")?,
-                output_profile: MEDIA_PROVIDER_OUTPUT_PROFILE_V1.to_string(),
-                timeout_ms: MEDIA_PROVIDER_TIMEOUT_MS_V1,
-                max_stdio_bytes: MEDIA_PROVIDER_MAX_STDIO_BYTES_V1,
-                max_input_bytes: MEDIA_PROVIDER_MAX_INPUT_BYTES_V1,
-                max_output_part_bytes: MEDIA_PROVIDER_MAX_OUTPUT_PART_BYTES_V1,
-                max_duration_secs: MEDIA_PROVIDER_MAX_DURATION_SECS_V1,
-                max_source_width: MEDIA_PROVIDER_MAX_SOURCE_WIDTH_V1,
-                max_source_height: MEDIA_PROVIDER_MAX_SOURCE_HEIGHT_V1,
-                max_source_fps: MEDIA_PROVIDER_MAX_SOURCE_FPS_V1,
-                max_segment_count: MEDIA_PROVIDER_MAX_SEGMENT_COUNT_V1,
-                max_total_output_bytes: MEDIA_PROVIDER_MAX_TOTAL_OUTPUT_BYTES_V1,
-            };
-            let mut bytes = serde_json::to_vec_pretty(&config)?;
-            bytes.push(b'\n');
-            create_private_file_atomically(&config_path, &bytes, 0o600, "config")?;
-            config_created = true;
-            load_runtime_media_provider_bridge_config(data_dir)?.ok_or_else(|| {
-                invalid_media_provider_config("config file disappeared after setup")
-            })?;
-            Ok(())
-        })();
-        if result.is_err() {
-            if config_created {
-                let _ = fs::remove_file(&config_path);
-            }
-            for path in created_tools {
-                let _ = fs::remove_file(path);
-            }
-            let _ = sync_runtime_storage_parent(&canonical_tools);
-            let _ = sync_runtime_storage_parent(&canonical_root);
-        }
-        result
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (data_dir, ffmpeg, ffprobe);
-        anyhow::bail!(
-            "owner-only media-provider prerequisite setup is unsupported on this platform"
-        )
-    }
-}
-
-fn media_path_string(path: &Path, label: &str) -> anyhow::Result<String> {
-    path.to_str()
-        .map(str::to_owned)
-        .ok_or_else(|| invalid_media_provider_config(format!("{label} path is not valid UTF-8")))
-}
-
-#[cfg(unix)]
-pub(crate) fn ensure_media_provider_directory(path: &Path, label: &str) -> anyhow::Result<()> {
-    use std::os::unix::fs::DirBuilderExt as _;
-
-    match fs::symlink_metadata(path) {
-        Ok(_) => {
-            validate_owner_only_directory_with_error(path, label, invalid_media_provider_config)
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            if let Some(parent) = path.parent() {
-                if !parent.exists() {
-                    fs::create_dir_all(parent).map_err(|_| {
-                        invalid_media_provider_config(format!(
-                            "{label} parent could not be created"
-                        ))
-                    })?;
-                }
-            }
-            let mut builder = fs::DirBuilder::new();
-            builder.mode(0o700).create(path).map_err(|_| {
-                invalid_media_provider_config(format!("{label} could not be created"))
-            })?;
-            fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
-            validate_owner_only_directory_with_error(path, label, invalid_media_provider_config)
-        }
-        Err(_) => Err(invalid_media_provider_config(format!(
-            "{label} is unavailable"
-        ))),
-    }
-}
-
-#[cfg(unix)]
-fn open_runtime_media_tool(tools_dir: &Path, name: &str) -> anyhow::Result<RuntimeMediaToolSource> {
-    let candidate = tools_dir.join(name);
-    let literal = if candidate.is_absolute() {
-        candidate.clone()
-    } else {
-        std::env::current_dir()
-            .map_err(|_| {
-                invalid_media_provider_config(format!("{name} prerequisite is unavailable"))
-            })?
-            .join(&candidate)
-    };
-    let file = open_media_source_no_links(&literal, name)?;
-    let metadata = file.metadata().map_err(|_| {
-        invalid_media_provider_config(format!("{name} prerequisite metadata is unavailable"))
-    })?;
-    let mode = metadata.permissions().mode() & 0o777;
-    let uid = unsafe { libc::geteuid() };
-    if !metadata.is_file()
-        || (metadata.uid() != 0 && metadata.uid() != uid)
-        || mode & 0o022 != 0
-        || mode & 0o111 == 0
-        || metadata.nlink() != 1
-        || metadata.len() == 0
-        || metadata.len() > MAX_MEDIA_PROVIDER_IMPORTED_TOOL_BYTES
-    {
-        return Err(invalid_media_provider_config(format!(
-            "{name} prerequisite is unsafe or exceeds bounds"
-        )));
-    }
-    Ok(RuntimeMediaToolSource {
-        file,
-        size: metadata.len(),
-    })
-}
-
-#[cfg(not(unix))]
-fn open_runtime_media_tool(
-    _tools_dir: &Path,
-    _name: &str,
-) -> anyhow::Result<RuntimeMediaToolSource> {
-    anyhow::bail!("owner-only media-provider prerequisite setup is unsupported on this platform")
-}
-
-/// Open an absolute source path one directory at a time with `openat` and
-/// `O_NOFOLLOW`, so no link anywhere on the path is followed and every checked
-/// directory is the one the next step opens from. Callers that need a system link
-/// in their own root (macOS /var) canonicalize that root first.
-#[cfg(unix)]
-fn open_media_source_no_links(literal: &Path, name: &str) -> anyhow::Result<fs::File> {
-    use std::os::fd::{AsRawFd as _, FromRawFd as _};
-    use std::os::unix::ffi::OsStrExt as _;
-    use std::path::Component;
-
-    let uid = unsafe { libc::geteuid() };
-    let open_at = |dir: &fs::File, part: &std::ffi::OsStr, flags: libc::c_int| {
-        let part = std::ffi::CString::new(part.as_bytes())
-            .map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
-        let fd = unsafe {
-            libc::openat(
-                dir.as_raw_fd(),
-                part.as_ptr(),
-                flags | libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-            )
-        };
-        if fd < 0 {
-            return Err(std::io::Error::last_os_error());
-        }
-        Ok(unsafe { fs::File::from_raw_fd(fd) })
-    };
-    let check_dir = |dir: &fs::File, display: &Path| -> anyhow::Result<()> {
-        let metadata = dir.metadata().map_err(|_| {
-            invalid_media_provider_config(format!("{name} prerequisite parent is unavailable"))
-        })?;
-        if metadata.uid() != 0 && metadata.uid() != uid {
-            return Err(invalid_media_provider_config(format!(
-                "{name} prerequisite parent is unsafe: {} is not owned by you or root. Choose a user-owned location with safe parents",
-                display.display()
-            )));
-        }
-        if metadata.permissions().mode() & 0o002 != 0 {
-            return Err(invalid_media_provider_config(format!(
-                "{name} prerequisite parent is unsafe: {} is world-writable. Choose a user-owned location with safe parents",
-                display.display()
-            )));
-        }
-        Ok(())
-    };
-
-    let parts: Vec<Component> = literal.components().collect();
-    let Some((Component::Normal(file_name), dirs)) = parts.split_last() else {
-        return Err(invalid_media_provider_config(format!(
-            "{name} prerequisite path is invalid"
-        )));
-    };
-    let mut display = PathBuf::from("/");
-    let mut dir = fs::File::open("/").map_err(|_| {
-        invalid_media_provider_config(format!("{name} prerequisite parent is unavailable"))
-    })?;
-    check_dir(&dir, &display)?;
-    for part in dirs {
-        let step = match part {
-            Component::RootDir | Component::Prefix(_) | Component::CurDir => continue,
-            Component::ParentDir => {
-                display.pop();
-                std::ffi::OsStr::new("..")
-            }
-            Component::Normal(part) => {
-                display.push(part);
-                part
-            }
-        };
-        dir = open_at(&dir, step, libc::O_DIRECTORY).map_err(|error| {
-            if error.kind() == std::io::ErrorKind::NotFound {
-                invalid_media_provider_config(format!("media-provider prerequisite '{name}' was not found in the supplied tools directory"))
-            } else {
-                invalid_media_provider_config(format!(
-                    "{name} prerequisite parent is unsafe: {} is a symbolic link or not a real directory",
-                    display.display()
-                ))
-            }
-        })?;
-        check_dir(&dir, &display)?;
-    }
-    open_at(&dir, file_name, 0).map_err(|error| {
-        if error.kind() == std::io::ErrorKind::NotFound {
-            invalid_media_provider_config(format!(
-                "media-provider prerequisite '{name}' was not found in the supplied tools directory"
-            ))
-        } else if error.raw_os_error() == Some(libc::ELOOP) {
-            invalid_media_provider_config(format!("{name} prerequisite is a symbolic link"))
-        } else {
-            invalid_media_provider_config(format!("{name} prerequisite is unavailable"))
-        }
-    })
-}
-
-#[cfg(unix)]
-fn validate_runtime_media_import(path: &Path, tools_root: &Path, name: &str) -> anyhow::Result<()> {
-    let canonical = fs::canonicalize(path)
-        .map_err(|_| invalid_media_provider_config(format!("{name} import is unavailable")))?;
-    if canonical != path || canonical.parent() != Some(tools_root) {
-        return Err(invalid_media_provider_config(format!(
-            "{name} import escapes the tools root"
-        )));
-    }
-    let metadata = fs::symlink_metadata(path)
-        .map_err(|_| invalid_media_provider_config(format!("{name} import is unavailable")))?;
-    let mode = metadata.permissions().mode() & 0o777;
-    if metadata.file_type().is_symlink()
-        || !metadata.is_file()
-        || metadata.uid() != unsafe { libc::geteuid() }
-        || metadata.nlink() != 1
-        || mode != 0o500
-        || metadata.len() == 0
-        || metadata.len() > MAX_MEDIA_PROVIDER_IMPORTED_TOOL_BYTES
-    {
-        return Err(invalid_media_provider_config(format!(
-            "{name} import is unsafe"
-        )));
-    }
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn validate_runtime_media_import(
-    _path: &Path,
-    _tools_root: &Path,
-    _name: &str,
-) -> anyhow::Result<()> {
-    anyhow::bail!("owner-only media-provider config validation is unsupported on this platform")
-}
-
-#[cfg(unix)]
-fn import_runtime_media_tool(
-    tools_root: &Path,
-    name: &str,
-    source: &mut RuntimeMediaToolSource,
-) -> anyhow::Result<RuntimeMediaToolImport> {
-    let destination = tools_root.join(name);
-    match fs::symlink_metadata(&destination) {
-        Ok(_) => {
-            validate_runtime_media_import(&destination, tools_root, name)?;
-            if !runtime_media_tool_matches(source, &destination, name)? {
-                return Err(invalid_media_provider_config(format!(
-                    "{name} import conflicts with the discovered prerequisite"
-                )));
-            }
-            return Ok(RuntimeMediaToolImport {
-                path: destination,
-                created: false,
-            });
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(_) => {
-            return Err(invalid_media_provider_config(format!(
-                "{name} import is unavailable"
-            )))
-        }
-    }
-
-    let temp_path = stage_runtime_media_tool(tools_root, name, source)?;
-    let mut published = false;
-    let result = (|| -> anyhow::Result<()> {
-        fs::hard_link(&temp_path, &destination).map_err(|_| {
-            invalid_media_provider_config(format!(
-                "{name} import could not be installed atomically"
-            ))
-        })?;
-        published = true;
-        fs::remove_file(&temp_path)?;
-        sync_runtime_storage_parent(tools_root)?;
-        validate_runtime_media_import(&destination, tools_root, name)
-    })();
-    if let Err(error) = result {
-        let _ = fs::remove_file(&temp_path);
-        if published {
-            let _ = fs::remove_file(&destination);
-        }
-        return Err(error);
-    }
-    Ok(RuntimeMediaToolImport {
-        path: destination,
-        created: true,
-    })
-}
-
-/// Copy the supplied tool into an fsynced owner-only temporary file beside its destination.
-#[cfg(unix)]
-fn stage_runtime_media_tool(
-    tools_root: &Path,
-    name: &str,
-    source: &mut RuntimeMediaToolSource,
-) -> anyhow::Result<PathBuf> {
-    let mut nonce = [0u8; 8];
-    rand::thread_rng().fill_bytes(&mut nonce);
-    let temp_path = tools_root.join(format!(".{name}.tmp-{}", hex::encode(nonce)));
-    let mut options = fs::OpenOptions::new();
-    options
-        .create_new(true)
-        .write(true)
-        .mode(0o500)
-        .custom_flags(libc::O_NOFOLLOW);
-    let mut file = options.open(&temp_path).map_err(|_| {
-        invalid_media_provider_config(format!("{name} temporary import could not be created"))
-    })?;
-    let result = (|| -> anyhow::Result<()> {
-        source.file.seek(SeekFrom::Start(0))?;
-        let copied = std::io::copy(
-            &mut std::io::Read::by_ref(&mut source.file)
-                .take(MAX_MEDIA_PROVIDER_IMPORTED_TOOL_BYTES + 1),
-            &mut file,
-        )?;
-        if copied != source.size {
-            return Err(invalid_media_provider_config(format!(
-                "{name} prerequisite changed during import"
-            )));
-        }
-        file.sync_all()?;
-        fs::set_permissions(&temp_path, fs::Permissions::from_mode(0o500))?;
-        Ok(())
-    })();
-    drop(file);
-    if let Err(error) = result {
-        let _ = fs::remove_file(&temp_path);
-        return Err(error);
-    }
-    Ok(temp_path)
-}
-
-/// Replace the private pair with the signed release's tools. Every staged copy is
-/// hashed against the signed digest before any rename, so altered bytes publish
-/// nothing. A tool whose private copy already has the signed digest is kept, which
-/// also repairs a pair left half-replaced by an interrupted run. Each previous
-/// import stays in place until its rename publishes the new bytes.
-#[cfg(unix)]
-fn replace_runtime_media_pair(
-    tools_root: &Path,
-    pair: [(&str, &mut RuntimeMediaToolSource, &[u8; 32]); 2],
-) -> anyhow::Result<()> {
-    let mut staged = Vec::with_capacity(pair.len());
-    let result = (|| -> anyhow::Result<()> {
-        for (name, source, expected) in pair {
-            let destination = tools_root.join(name);
-            validate_runtime_media_import(&destination, tools_root, name)?;
-            if runtime_media_file_sha256(&destination, name)? == *expected {
-                continue;
-            }
-            let temp_path = stage_runtime_media_tool(tools_root, name, source)?;
-            staged.push((name, temp_path.clone(), destination));
-            if runtime_media_file_sha256(&temp_path, name)? != *expected {
-                return Err(invalid_media_provider_config(format!(
-                    "{name} does not match the signed release media tools"
-                )));
-            }
-        }
-        Ok(())
-    })();
-    if let Err(error) = result {
-        for (_, temp_path, _) in staged {
-            let _ = fs::remove_file(temp_path);
-        }
-        return Err(error);
-    }
-    for (name, temp_path, destination) in staged {
-        if fs::rename(&temp_path, &destination).is_err() {
-            let _ = fs::remove_file(&temp_path);
-            return Err(invalid_media_provider_config(format!(
-                "{name} import could not be replaced atomically"
-            )));
-        }
-        sync_runtime_storage_parent(tools_root)?;
-        validate_runtime_media_import(&destination, tools_root, name)?;
-    }
-    Ok(())
-}
-
-#[cfg(unix)]
-fn runtime_media_file_sha256(path: &Path, name: &str) -> anyhow::Result<[u8; 32]> {
-    let mut options = fs::OpenOptions::new();
-    options.read(true).custom_flags(libc::O_NOFOLLOW);
-    let file = options
-        .open(path)
-        .map_err(|_| invalid_media_provider_config(format!("{name} import is unavailable")))?;
-    let mut hasher = sha2::Sha256::new();
-    std::io::copy(
-        &mut file.take(MAX_MEDIA_PROVIDER_IMPORTED_TOOL_BYTES + 1),
-        &mut hasher,
-    )?;
-    Ok(hasher.finalize().into())
-}
-
-#[cfg(unix)]
-fn runtime_media_tool_matches(
-    source: &mut RuntimeMediaToolSource,
-    destination: &Path,
-    name: &str,
-) -> anyhow::Result<bool> {
-    let mut options = fs::OpenOptions::new();
-    options.read(true).custom_flags(libc::O_NOFOLLOW);
-    let mut imported = options
-        .open(destination)
-        .map_err(|_| invalid_media_provider_config(format!("{name} import is unavailable")))?;
-    if imported.metadata()?.len() != source.size {
-        return Ok(false);
-    }
-    source.file.seek(SeekFrom::Start(0))?;
-    let mut source_reader = std::io::Read::by_ref(&mut source.file).take(source.size + 1);
-    let mut imported_reader = std::io::Read::by_ref(&mut imported).take(source.size + 1);
-    let mut source_buffer = [0u8; 64 * 1024];
-    let mut imported_buffer = [0u8; 64 * 1024];
-    loop {
-        let source_read = source_reader.read(&mut source_buffer)?;
-        let imported_read = imported_reader.read(&mut imported_buffer)?;
-        if source_read != imported_read
-            || source_buffer[..source_read] != imported_buffer[..imported_read]
-        {
-            return Ok(false);
-        }
-        if source_read == 0 {
-            return Ok(true);
-        }
-    }
-}
-
-#[cfg(unix)]
-fn create_private_file_atomically(
-    path: &Path,
-    bytes: &[u8],
-    mode: u32,
-    label: &str,
-) -> anyhow::Result<()> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| invalid_media_provider_config(format!("{label} parent is unavailable")))?;
-    let mut nonce = [0u8; 8];
-    rand::thread_rng().fill_bytes(&mut nonce);
-    let temp_path = parent.join(format!(".{label}.tmp-{}", hex::encode(nonce)));
-    let mut options = fs::OpenOptions::new();
-    options
-        .create_new(true)
-        .write(true)
-        .mode(mode)
-        .custom_flags(libc::O_NOFOLLOW);
-    let mut file = options.open(&temp_path).map_err(|_| {
-        invalid_media_provider_config(format!("{label} temporary file could not be created"))
-    })?;
-    let mut published = false;
-    let result = (|| -> anyhow::Result<()> {
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        drop(file);
-        fs::hard_link(&temp_path, path)
-            .map_err(|_| invalid_media_provider_config(format!("{label} appeared during setup")))?;
-        published = true;
-        fs::remove_file(&temp_path)?;
-        sync_runtime_storage_parent(parent)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temp_path);
-        if published {
-            let _ = fs::remove_file(path);
-        }
-    }
-    result
-}
-
-#[cfg(unix)]
-fn read_owner_only_config_bytes(path: &Path, max_bytes: usize) -> anyhow::Result<Vec<u8>> {
-    read_owner_only_protected_content_config_bytes(
-        path,
-        max_bytes,
-        "custody-composition file",
-        invalid_custody_composition_config,
-    )
 }
 
 #[cfg(unix)]
@@ -2451,12 +523,6 @@ fn read_owner_only_protected_content_config_bytes(
 }
 
 #[cfg(not(unix))]
-fn read_owner_only_config_bytes(path: &Path, max_bytes: usize) -> anyhow::Result<Vec<u8>> {
-    let _ = (path, max_bytes);
-    anyhow::bail!("owner-only protected-content config validation is unsupported on this platform")
-}
-
-#[cfg(not(unix))]
 fn read_owner_only_protected_content_config_bytes(
     path: &Path,
     max_bytes: usize,
@@ -2465,12 +531,6 @@ fn read_owner_only_protected_content_config_bytes(
 ) -> anyhow::Result<Vec<u8>> {
     let _ = (path, max_bytes, label, error_fn);
     anyhow::bail!("owner-only protected-content config validation is unsupported on this platform")
-}
-
-fn canonical_custody_composition_config_bytes(
-    config: &RuntimeCustodyCompositionConfigFile,
-) -> anyhow::Result<Vec<u8>> {
-    Ok(serde_json::to_vec(&serde_json::to_value(config)?)?)
 }
 
 fn decode_canonical_base64_bytes(
@@ -2500,302 +560,248 @@ fn decode_canonical_base64_bytes(
     Ok(decoded)
 }
 
-fn decode_canonical_contract_base64<T: CanonicalContract>(
-    encoded: &str,
-    max_decoded_bytes: usize,
-    field: &str,
-) -> anyhow::Result<T> {
-    let bytes = decode_canonical_base64_bytes(encoded, max_decoded_bytes, field)?;
-    T::from_canonical_bytes(&bytes).map_err(|error| {
-        invalid_custody_composition_config(format!("{field} canonical bytes are invalid: {error}"))
-    })
+/// The pool a mint goes into (Plan B POOL-MINT): this Home's own
+/// composition, or the committee of a pool it uses, with that pool's
+/// descriptor.
+pub(crate) struct RuntimeCustodyMintPool {
+    pub(crate) composition: RuntimeCustodyComposition,
+    pub(crate) used: Option<SignedPoolDescriptorAnyV1>,
+    /// PM-F5: the pool and epoch a recorded mint already uses. Settling it
+    /// skips the freshness checks only new provisioning needs.
+    pub(crate) recorded: bool,
+    completed_local_mint: Option<Digest32>,
 }
 
-fn decode_digest32_base64(encoded: &str, field: &str) -> anyhow::Result<Digest32> {
-    let bytes = decode_canonical_base64_bytes(encoded, 32, field)?;
-    let digest: [u8; 32] = bytes
-        .try_into()
-        .map_err(|_| invalid_custody_composition_config(format!("{field} must be 32 bytes")))?;
-    Ok(Digest32::new(digest))
-}
-
-fn decode_custody_epoch_issuer_base64(
-    encoded: &str,
-    field: &str,
-) -> anyhow::Result<CustodyEpochIssuerKeyV1> {
-    let bytes = decode_canonical_base64_bytes(encoded, 32, field)?;
-    let issuer: [u8; 32] = bytes
-        .try_into()
-        .map_err(|_| invalid_custody_composition_config(format!("{field} must be 32 bytes")))?;
-    CustodyEpochIssuerKeyV1::new(issuer).map_err(|error| {
-        invalid_custody_composition_config(format!("{field} bytes are invalid: {error}"))
-    })
-}
-
-fn decode_node_public_key_base64(encoded: &str, field: &str) -> anyhow::Result<NodePublicKey> {
-    let bytes = decode_canonical_base64_bytes(encoded, 32, field)?;
-    let public_key: [u8; 32] = bytes
-        .try_into()
-        .map_err(|_| invalid_custody_composition_config(format!("{field} must be 32 bytes")))?;
-    NodePublicKey::new(public_key).map_err(|error| {
-        invalid_custody_composition_config(format!("{field} bytes are invalid: {error}"))
-    })
-}
-
-pub(crate) fn decode_canonical_peer_did(peer_did: &str) -> anyhow::Result<String> {
-    if peer_did.is_empty() || peer_did.len() > MAX_CUSTODY_COMPOSITION_PEER_DID_BYTES {
-        anyhow::bail!(
-            "{}",
-            invalid_custody_composition_config("carrier peer DID is out of bounds")
-        );
-    }
-    let verifying_key = crate::crypto::decode_did_key(peer_did).map_err(|_| {
-        invalid_custody_composition_config("carrier peer DID is not a valid canonical did:key")
-    })?;
-    let canonical = crate::crypto::encode_did_key(&verifying_key).map_err(|_| {
-        invalid_custody_composition_config("carrier peer DID cannot be canonicalized")
-    })?;
-    if canonical != peer_did {
-        anyhow::bail!(
-            "{}",
-            invalid_custody_composition_config("carrier peer DID is not canonical")
-        );
-    }
-    Ok(canonical)
-}
-
-fn load_runtime_custody_composition_config(
-    data_dir: &Path,
-) -> anyhow::Result<Option<RuntimeValidatedCustodyCompositionConfig>> {
-    let config_path = runtime_custody_composition_config_path(data_dir);
-    match fs::symlink_metadata(&config_path) {
-        Ok(_) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(_) => {
-            anyhow::bail!(
-                "{}",
-                invalid_custody_composition_config("custody-composition file is unavailable")
-            )
-        }
-    }
-    let _protected_root = validate_owner_only_protected_content_dir(data_dir)?;
-    let bytes = read_owner_only_config_bytes(&config_path, MAX_CUSTODY_COMPOSITION_BYTES)?;
-    let config: RuntimeCustodyCompositionConfigFile =
-        serde_json::from_slice(&bytes).map_err(|_| {
-            invalid_custody_composition_config(
-                "custody-composition file is not valid canonical JSON",
-            )
-        })?;
-    if config.schema != CUSTODY_COMPOSITION_SCHEMA_V1
-        || canonical_custody_composition_config_bytes(&config)? != bytes
-    {
-        anyhow::bail!(
-            "{}",
-            invalid_custody_composition_config("custody-composition file is not canonical")
-        );
-    }
-
-    let expected_policy_authority = decode_custody_epoch_issuer_base64(
-        &config.expected_policy_authority_base64,
-        "expected_policy_authority",
-    )?;
-    let expected_authorization_identity = decode_canonical_contract_base64(
-        &config.expected_committee_authorization_identity_base64,
-        MAX_CUSTODY_COMPOSITION_BLOB_BYTES,
-        "expected_committee_authorization_identity",
-    )?;
-    let signed_pool = decode_canonical_contract_base64(
-        &config.signed_pool_base64,
-        MAX_CUSTODY_COMPOSITION_BLOB_BYTES,
-        "signed_pool",
-    )?;
-    let signed_epoch = decode_canonical_contract_base64(
-        &config.signed_epoch_base64,
-        MAX_CUSTODY_COMPOSITION_BLOB_BYTES,
-        "signed_epoch",
-    )?;
-    let signed_committee_authorization = decode_canonical_contract_base64(
-        &config.signed_committee_authorization_base64,
-        MAX_CUSTODY_COMPOSITION_BLOB_BYTES,
-        "signed_committee_authorization",
-    )?;
-
-    let now = crate::auth::now_ts();
-    let validated = validate_custody_epoch_against_pool_at(
-        expected_policy_authority,
-        expected_authorization_identity,
-        &signed_pool,
-        &signed_epoch,
-        &signed_committee_authorization,
-        now,
-    )
-    .map_err(|_| {
-        invalid_custody_composition_config(
-            "signed pool/epoch/committee authorization does not validate against trust anchors",
-        )
-    })?;
-    let committee_nodes = validated.committee().nodes();
-    if committee_nodes.len() != 3 || config.routes.len() != 3 {
-        anyhow::bail!(
-            "{}",
-            invalid_custody_composition_config(
-                "custody-composition routes must cover exactly three selected nodes"
-            )
-        );
-    }
-
-    let mut configured_node_keys = std::collections::BTreeSet::new();
-    let mut configured_roots = std::collections::BTreeSet::new();
-    let mut configured_peer_dids = std::collections::BTreeSet::new();
-    let mut local_count = 0usize;
-    let mut route_bindings =
-        std::collections::BTreeMap::<NodePublicKey, (Digest32, ProviderInvocationTransport)>::new();
-
-    for route in &config.routes {
-        let node_public_key =
-            decode_node_public_key_base64(&route.node_public_key_base64, "route.node_public_key")?;
-        let owner_state_root =
-            decode_digest32_base64(&route.owner_state_root_base64, "route.owner_state_root")?;
-        if owner_state_root == Digest32::new([0; 32])
-            || !configured_node_keys.insert(node_public_key)
-            || !configured_roots.insert(owner_state_root)
-        {
-            anyhow::bail!(
-                "{}",
-                invalid_custody_composition_config(
-                    "custody-composition routes are duplicated or invalid"
-                )
-            );
-        }
-        let transport = match &route.transport {
-            RuntimeCustodyRouteTransportConfig::Local => {
-                local_count += 1;
-                ProviderInvocationTransport::Local
-            }
-            RuntimeCustodyRouteTransportConfig::CarrierPeerDid { peer_did } => {
-                let canonical_peer_did = decode_canonical_peer_did(peer_did)?;
-                if !configured_peer_dids.insert(canonical_peer_did.clone()) {
-                    anyhow::bail!(
-                        "{}",
-                        invalid_custody_composition_config("carrier peer DIDs must be distinct")
-                    );
-                }
-                ProviderInvocationTransport::Carrier(ProviderCarrierRoute::PeerDid {
-                    peer_did: canonical_peer_did,
-                    timeout_ms: None,
-                    reply_wait_ms: None,
-                })
-            }
+impl RuntimeCustodyMintPool {
+    /// The committee's nodes for this mint: the provisioning rule for a new
+    /// mint, the release rule (no pool term) for a recorded one (PM-F5).
+    pub(crate) fn selected_nodes<'a>(
+        &self,
+        configured: &'a [elastos_protected_content_runtime::RuntimeMintConfiguredCustodyProvider<
+            'a,
+        >],
+        now: u64,
+    ) -> anyhow::Result<Vec<elastos_protected_content_runtime::RuntimeMintSelectedNode<'a>>> {
+        let composition = &self.composition;
+        let resolve = if self.recorded {
+            elastos_protected_content_runtime::resolve_recorded_runtime_mint_selected_nodes
+        } else {
+            resolve_runtime_mint_selected_nodes
         };
-        route_bindings.insert(node_public_key, (owner_state_root, transport));
+        resolve(
+            composition.expected_policy_authority,
+            composition.expected_authorization_identity,
+            &composition.signed_pool,
+            &composition.signed_epoch,
+            &composition.signed_committee_authorization,
+            now,
+            configured,
+        )
+        .map_err(|_| anyhow::anyhow!("Runtime custody mint selection is invalid"))
     }
-
-    if local_count > 1 {
-        anyhow::bail!(
-            "{}",
-            invalid_custody_composition_config("at most one local custody route is allowed")
-        );
-    }
-
-    let routes = committee_nodes
-        .iter()
-        .map(|node| {
-            let (owner_state_root, transport) = route_bindings
-                .remove(&node.node_public_key())
-                .ok_or_else(|| {
-                    invalid_custody_composition_config(
-                        "custody-composition routes do not exactly cover the signed node set",
-                    )
-                })?;
-            Ok(RuntimeValidatedCustodyRouteBinding {
-                owner_state_root,
-                transport,
-            })
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    if !route_bindings.is_empty() {
-        anyhow::bail!(
-            "{}",
-            invalid_custody_composition_config(
-                "custody-composition routes do not exactly cover the signed node set",
-            )
-        );
-    }
-
-    Ok(Some(RuntimeValidatedCustodyCompositionConfig {
-        expected_policy_authority,
-        expected_authorization_identity,
-        signed_pool,
-        signed_epoch,
-        signed_committee_authorization,
-        routes: routes.try_into().map_err(|_| {
-            invalid_custody_composition_config(
-                "custody-composition routes must cover exactly three selected nodes",
-            )
-        })?,
-    }))
 }
 
-pub(crate) fn load_runtime_custody_composition(
+const MAX_RUNTIME_POOL_MINT_FILE_BYTES: usize = 128 * 1024;
+
+fn runtime_pool_mints_dir(data_dir: &Path) -> PathBuf {
+    protected_content_root(data_dir).join(RUNTIME_POOL_MINTS_DIR)
+}
+
+fn read_runtime_pool_mint_file<T: serde::de::DeserializeOwned>(
+    path: &Path,
+) -> anyhow::Result<Option<T>> {
+    match fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+        Ok(_) => {}
+    }
+    let bytes = crate::collaboration_config::read_owner_only_file(
+        path,
+        MAX_RUNTIME_POOL_MINT_FILE_BYTES,
+        "runtime pool mint",
+    )?;
+    Ok(Some(serde_json::from_slice(&bytes)?))
+}
+
+/// The source's current attempt, and whether its intent is written. `None`
+/// for a Home that never minted (reading would create the journal).
+fn runtime_mint_attempt_state(
+    data_dir: &Path,
+    principal_id: &str,
+    object_uri: &str,
+    source_storage: &str,
+) -> anyhow::Result<Option<(Digest32, Option<RuntimeMintIntent>)>> {
+    if fs::symlink_metadata(runtime_mint_journal_root(data_dir)).is_err() {
+        return Ok(None);
+    }
+    let journal = runtime_mint_journal(data_dir);
+    let attempt = journal
+        .current_attempt(principal_id, object_uri, source_storage)
+        .map_err(|_| anyhow::anyhow!("Runtime custody mint intent is unavailable"))?;
+    let intent = match journal.load_intent(attempt.request_id()) {
+        Ok(intent) => Some(intent),
+        Err(elastos_protected_content_runtime::RuntimeMintJournalError::NotFound) => None,
+        Err(_) => anyhow::bail!("Runtime custody mint intent is unavailable"),
+    };
+    Ok(Some((attempt.request_id(), intent)))
+}
+
+/// Plan B POOL-MINT: the pool this mint goes into.
+/// - A source whose intent is written keeps the pool it recorded (S7I-F1):
+///   the recorded pool file, else this Home's own composition. No
+///   reselection and no fallback.
+/// - `requested` names a pool: this Home's own, or one it uses.
+/// - Otherwise this Home's own pool, else the only pool it uses.
+///
+/// Refused plainly when there is none, before any media work. A new pool
+/// mint is recorded for its attempt before the intent is written.
+pub(crate) fn load_runtime_custody_mint_pool(
     data_dir: &Path,
     registry: Arc<ProviderRegistry>,
-) -> anyhow::Result<Option<RuntimeCustodyComposition>> {
-    let Some(config) = load_runtime_custody_composition_config(data_dir)? else {
-        return Ok(None);
-    };
+    requested: Option<&str>,
+    source: Option<(&str, &str, &str)>,
+) -> anyhow::Result<RuntimeCustodyMintPool> {
     let now = crate::auth::now_ts();
-    let validated = validate_custody_epoch_against_pool_at(
-        config.expected_policy_authority,
-        config.expected_authorization_identity,
-        &config.signed_pool,
-        &config.signed_epoch,
-        &config.signed_committee_authorization,
-        now,
-    )
-    .map_err(|_| {
-        invalid_custody_composition_config(
-            "signed pool/epoch/committee authorization does not validate against trust anchors",
-        )
-    })?;
-    let nodes = validated
-        .committee()
-        .nodes()
-        .iter()
-        .zip(config.routes.iter())
-        .map(|(node, route)| RuntimeCustodyCompositionNode {
-            node_public_key: node.node_public_key(),
-            custody_public_key: node.custody_public_key(),
-            owner_state_root: route.owner_state_root,
-            adapter: RuntimeCustodyRegistryAdapter::new(registry.clone(), route.transport.clone()),
-        })
-        .collect::<Vec<_>>();
-
-    let composition = RuntimeCustodyComposition {
-        expected_policy_authority: config.expected_policy_authority,
-        expected_authorization_identity: config.expected_authorization_identity,
-        signed_pool: config.signed_pool,
-        signed_epoch: config.signed_epoch,
-        signed_committee_authorization: config.signed_committee_authorization,
-        nodes: nodes.try_into().map_err(|_| {
-            invalid_custody_composition_config(
-                "custody-composition routes must cover exactly three selected nodes",
-            )
-        })?,
+    let attempt = match source {
+        Some((principal, uri, storage)) => {
+            runtime_mint_attempt_state(data_dir, principal, uri, storage)?
+        }
+        None => None,
     };
-    let configured = composition
-        .configured_nodes()
-        .map_err(|_| invalid_custody_composition_config("configured custody linkage is invalid"))?;
-    resolve_runtime_mint_selected_nodes(
-        composition.expected_policy_authority,
-        composition.expected_authorization_identity,
-        &composition.signed_pool,
-        &composition.signed_epoch,
-        &composition.signed_committee_authorization,
-        now,
-        &configured,
+    let used_pool =
+        |descriptor: SignedPoolDescriptorAnyV1,
+         recorded: Option<elastos_protected_content_contracts::CustodyEpochIdentityV1>|
+         -> anyhow::Result<RuntimeCustodyMintPool> {
+            Ok(RuntimeCustodyMintPool {
+                composition: runtime_custody_composition_for_pool(
+                    data_dir,
+                    registry.clone(),
+                    &descriptor,
+                    recorded,
+                    now,
+                )?,
+                used: Some(descriptor),
+                recorded: recorded.is_some(),
+                completed_local_mint: None,
+            })
+        };
+    if let Some((request_id, Some(intent))) = &attempt {
+        return match recorded_runtime_mint_pool(data_dir, *request_id)? {
+            Some(descriptor) => used_pool(descriptor, Some(intent.custody_epoch())),
+            None => Ok(RuntimeCustodyMintPool {
+                composition: load_mint_composition_for_intent(
+                    data_dir,
+                    registry.clone(),
+                    intent,
+                    now,
+                )?,
+                used: None,
+                recorded: intent.completed_mint_id().is_some(),
+                completed_local_mint: intent.completed_mint_id(),
+            }),
+        };
+    }
+    let own = load_runtime_custody_composition_snapshot(
+        data_dir,
+        &runtime_custody_composition_config_path(data_dir),
+        registry.clone(),
+    )?;
+    let own_pool = own.as_ref().map(|(own, _)| {
+        elastos_protected_content_contracts::PoolDidV1::from_issuer(own.expected_policy_authority)
+    });
+    let mut used = runtime_custody_used_pools(data_dir, own_pool.as_ref(), now);
+    let chosen = match requested {
+        Some(did) => {
+            let pool = elastos_protected_content_contracts::PoolDidV1::parse_did_key(did)
+                .map_err(|_| anyhow::anyhow!(RUNTIME_CUSTODY_MINT_NO_POOL_MESSAGE))?;
+            if own_pool == Some(pool) {
+                None
+            } else {
+                Some(
+                    used.into_iter()
+                        .find(|descriptor| descriptor.pool() == &pool)
+                        .ok_or_else(|| anyhow::anyhow!(RUNTIME_CUSTODY_MINT_NO_POOL_MESSAGE))?,
+                )
+            }
+        }
+        None if own.is_some() => None,
+        None => match used.len() {
+            0 => anyhow::bail!(RUNTIME_CUSTODY_MINT_NO_POOL_MESSAGE),
+            1 => Some(used.remove(0)),
+            _ => anyhow::bail!(RUNTIME_CUSTODY_MINT_POOL_CHOICE_MESSAGE),
+        },
+    };
+    let pool = match chosen {
+        None => {
+            let (composition, bytes) =
+                own.ok_or_else(|| anyhow::anyhow!(RUNTIME_CUSTODY_MINT_NO_POOL_MESSAGE))?;
+            if source.is_some() {
+                retain_mint_composition(
+                    data_dir,
+                    composition.expected_authorization_identity,
+                    &bytes,
+                )?;
+            }
+            RuntimeCustodyMintPool {
+                composition,
+                used: None,
+                recorded: false,
+                completed_local_mint: None,
+            }
+        }
+        Some(descriptor) => used_pool(descriptor, None)?,
+    };
+    // A used pool is recorded for the attempt. A composition mint needs no
+    // record; it only overwrites one an earlier choice for this attempt left.
+    let recorded_before = match (&attempt, &pool.used) {
+        (Some((request_id, _)), None) => {
+            fs::symlink_metadata(runtime_pool_mint_attempt_path(data_dir, *request_id)).is_ok()
+        }
+        _ => false,
+    };
+    if let Some(source) = source {
+        if pool.used.is_some() || recorded_before {
+            record_runtime_mint_attempt_pool(data_dir, source, pool.used.as_ref())?;
+        }
+    }
+    Ok(pool)
+}
+
+/// Writes the pool mint record once; a record already there is kept.
+fn record_runtime_pool_mint(
+    data_dir: &Path,
+    draft: &RuntimeMintDraft,
+    descriptor: &SignedPoolDescriptorAnyV1,
+    device_key: &elastos_runtime::signature::SigningKey,
+) -> anyhow::Result<()> {
+    if runtime_pool_mint_record(data_dir, draft.mint_id())?.is_some() {
+        return Ok(());
+    }
+    let issuer = RuntimeOperationIssuerKeyV1::new(device_key.verifying_key().to_bytes())
+        .map_err(|_| anyhow::anyhow!("local Runtime device signing key is invalid"))?;
+    let sign_key = device_key.clone();
+    let mint_share = elastos_protected_content_runtime::sign_pool_mint_share(
+        descriptor,
+        draft.key_envelope(),
+        draft.content_access_id(),
+        issuer,
+        &move |bytes: &[u8]| sign_key.sign(bytes).to_bytes(),
     )
-    .map_err(|_| invalid_custody_composition_config("configured custody linkage is invalid"))?;
-    Ok(Some(composition))
+    .map_err(|_| anyhow::anyhow!("Runtime custody pool mint share is invalid"))?;
+    write_runtime_pool_mint_file(
+        data_dir,
+        &runtime_pool_mint_path(data_dir, draft.mint_id()),
+        &RuntimePoolMintRecordV2 {
+            schema: RUNTIME_POOL_MINT_SHARE_SCHEMA_V1.to_string(),
+            mint_share_base64: base64::engine::general_purpose::STANDARD
+                .encode(mint_share.canonical_bytes()?),
+        },
+    )?;
+    tracing::debug!(
+        mint_id = %hex::encode(draft.mint_id().as_bytes()),
+        "runtime custody publish: pool mint recorded"
+    );
+    Ok(())
 }
 
 pub fn log_unresolved_runtime_releases(data_dir: &Path) {
@@ -2839,6 +845,42 @@ pub(crate) async fn invoke_json_provider(
     .await
 }
 
+/// Why a provider invocation did not yield data, keeping the distinction the
+/// formatted-string form throws away.
+///
+/// The distinction that matters to a caller holding a durable journal is
+/// whether the provider can have acted. `NotCompleted` is the only variant that
+/// says nothing either way: the registry call failed, which covers a provider
+/// that was never reached *and* a reply that was lost after the provider did
+/// its work. `Refused` carries the provider's own code, which is the sole
+/// evidence a caller has for classifying the refusal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ProviderInvocationFailure {
+    /// The registry call itself failed. The request may or may not have reached
+    /// the provider, and a reply may have been lost on the way back.
+    NotCompleted { detail: String },
+    /// The provider answered `status: "error"` with its own code and message.
+    Refused { code: String, message: String },
+    /// The provider answered, but the frame was not a usable response.
+    MalformedResponse { detail: String },
+}
+
+impl ProviderInvocationFailure {
+    /// The formatted form the string-returning callers have always seen. Kept
+    /// byte-identical so widening the typed layer changes no existing message.
+    fn into_message(self, target: &str, op: &str) -> String {
+        match self {
+            Self::NotCompleted { detail } => {
+                format!("{target} provider {op} invocation failed: {detail}")
+            }
+            Self::Refused { code, message } => {
+                format!("{target} provider {op} rejected the request: {code}: {message}")
+            }
+            Self::MalformedResponse { detail } => detail,
+        }
+    }
+}
+
 pub(crate) async fn invoke_json_provider_with_transport(
     registry: &ProviderRegistry,
     target: &str,
@@ -2846,6 +888,19 @@ pub(crate) async fn invoke_json_provider_with_transport(
     request: Value,
     transport: ProviderInvocationTransport,
 ) -> Result<Value, String> {
+    invoke_json_provider_classified(registry, target, op, request, transport)
+        .await
+        .map_err(|failure| failure.into_message(target, op))
+}
+
+/// The same invocation, with the failure kept as data.
+pub(crate) async fn invoke_json_provider_classified(
+    registry: &ProviderRegistry,
+    target: &str,
+    op: &str,
+    request: Value,
+    transport: ProviderInvocationTransport,
+) -> Result<Value, ProviderInvocationFailure> {
     let response = registry
         .invoke_provider(ProviderInvocation {
             source: RUNTIME_PROVIDER_ID.to_string(),
@@ -2865,21 +920,25 @@ pub(crate) async fn invoke_json_provider_with_transport(
                 error = %error,
                 "provider invocation failed"
             );
-            format!("{target} provider {op} invocation failed: {error}")
+            ProviderInvocationFailure::NotCompleted {
+                detail: error.to_string(),
+            }
         })?;
-    let status = response
-        .get("status")
-        .and_then(Value::as_str)
-        .ok_or_else(|| format!("{target} provider {op} response is missing status"))?;
+    let Some(status) = response.get("status").and_then(Value::as_str) else {
+        return Err(ProviderInvocationFailure::MalformedResponse {
+            detail: format!("{target} provider {op} response is missing status"),
+        });
+    };
     match status {
-        "ok" => response
-            .get("data")
-            .cloned()
-            .ok_or_else(|| format!("{target} provider {op} response is missing data")),
+        "ok" => response.get("data").cloned().ok_or_else(|| {
+            ProviderInvocationFailure::MalformedResponse {
+                detail: format!("{target} provider {op} response is missing data"),
+            }
+        }),
         "error" => {
-            // Keep the provider's own code/message: this string travels back
-            // to the caller (over Carrier for a committee member) and is the
-            // only trace of why a node refused.
+            // Keep the provider's own code/message: this travels back to the
+            // caller (over Carrier for a committee member) and is the only
+            // trace of why a node refused.
             let code = response
                 .get("code")
                 .and_then(Value::as_str)
@@ -2889,13 +948,14 @@ pub(crate) async fn invoke_json_provider_with_transport(
                 .and_then(Value::as_str)
                 .unwrap_or("no message");
             tracing::warn!(%target, %op, %code, %message, "provider rejected the request");
-            Err(format!(
-                "{target} provider {op} rejected the request: {code}: {message}"
-            ))
+            Err(ProviderInvocationFailure::Refused {
+                code: code.to_string(),
+                message: message.to_string(),
+            })
         }
-        _ => Err(format!(
-            "{target} provider {op} response has unsupported status"
-        )),
+        _ => Err(ProviderInvocationFailure::MalformedResponse {
+            detail: format!("{target} provider {op} response has unsupported status"),
+        }),
     }
 }
 
@@ -2908,116 +968,11 @@ pub(crate) fn runtime_protected_content_id(
     ))
 }
 
-fn runtime_protected_content_identity_hex(
-    encrypted_content: &EncryptedContentIdentityV1,
-) -> anyhow::Result<String> {
-    Ok(format!(
-        "0x{}",
-        hex::encode(
-            encrypted_content
-                .canonical_bytes()
-                .map_err(|_| anyhow::anyhow!("protected content identity is invalid"))?
-        )
-    ))
-}
-
-fn runtime_content_access_id_hex(content_access_id: ContentAccessIdV1) -> String {
-    format!("0x{}", hex::encode(content_access_id.as_bytes()))
-}
-
-pub(crate) async fn resolve_runtime_rights_policy(
-    registry: &ProviderRegistry,
-    encrypted_content: &EncryptedContentIdentityV1,
-    content_access_id: ContentAccessIdV1,
-    action: RightsActionV1,
-) -> anyhow::Result<ResolvedRuntimeRightsPolicy> {
-    let response_value = invoke_json_provider(
-        registry,
-        CHAIN_PROVIDER_ID,
-        CHAIN_PROTECTED_CONTENT_POLICY_OP,
-        json!({
-            "op": CHAIN_PROTECTED_CONTENT_POLICY_OP,
-            "encrypted_content": runtime_protected_content_identity_hex(encrypted_content)?,
-            "content_access_id": runtime_content_access_id_hex(content_access_id),
-            "action": runtime_rights_action_name(action),
-        }),
-    )
-    .await
-    .map_err(anyhow::Error::msg)?;
-    let response = serde_json::from_value::<ChainProtectedContentPolicyResponse>(response_value)?;
-    if response.schema != CHAIN_PROTECTED_CONTENT_POLICY_SCHEMA_V1 {
-        anyhow::bail!("chain provider returned an unsupported protected-content policy schema");
-    }
-    let policy_bytes = decode_0x_hex(&response.policy_body).ok_or_else(|| {
-        anyhow::anyhow!("chain provider returned an invalid protected-content policy body")
-    })?;
-    let body = RightsPolicyBodyV1::from_canonical_bytes(&policy_bytes)?;
-    if body.encrypted_content() != encrypted_content
-        || body.content_access_id() != content_access_id
-        || body.required_action() != action
-    {
-        anyhow::bail!(
-            "chain provider returned a protected-content policy that does not match the Runtime request"
-        );
-    }
-    let identity = body.policy_identity()?;
-    Ok(ResolvedRuntimeRightsPolicy { body, identity })
-}
-
-/// Publishes and verifies the one immutable CENC/fMP4 object Runtime may later
-/// record as availability evidence. The directory is provider input only: no
-/// file path, bytes, or receipt JSON crosses this boundary into Runtime state.
-pub async fn publish_and_verify_protected_content_availability(
-    registry: &ProviderRegistry,
-    protected_content_dir: &Path,
-    media_identity: &CencFmp4MediaIdentityV1,
-    requirement: &RuntimeContentAvailabilityRequirement,
-    now_unix_seconds: impl Fn() -> u64,
-) -> anyhow::Result<RuntimeVerifiedContentAvailability> {
-    validate_protected_content_availability_requirement(requirement)?;
-    verify_protected_content_directory(protected_content_dir, media_identity)?;
-    // The receipt is verified against `requirement.policy()` below, and the
-    // content plane records whatever `availability_policy` the publish
-    // request names (its own `network_default` otherwise), so the policy has
-    // to travel with the publish request.
-    let publish_requirements = crate::content::ContentPublishRequirements::new(
-        requirement.minimum_replicas(),
-        PROTECTED_CONTENT_REQUIRE_LIVE_MULTI_PEER_PROOF,
-    )?
-    .with_availability_policy(requirement.policy())?;
-    let content_cid = crate::content::publish_directory_via_provider_with_kind_and_requirements(
-        registry,
-        protected_content_dir,
-        PROTECTED_CONTENT_OBJECT_KIND,
-        Some(requirement.expected_object_identity()),
-        Some(requirement.expected_publisher_did()),
-        publish_requirements,
-    )
-    .await?;
-    let receipt = fetch_content_availability_receipt(registry, &content_cid).await?;
-    let manifest = crate::content::fetch_content_object_manifest(registry, &content_cid).await?;
-    verify_protected_content_manifest_and_files(registry, &content_cid, &manifest, media_identity)
-        .await?;
-    // The receipt's `checked_at` is stamped when the replication round
-    // finishes, which can be well over the future-skew allowance after this
-    // function was entered (three-node replication takes tens of seconds),
-    // so the freshness reference is sampled now, not by the caller.
-    let now_unix_seconds = now_unix_seconds();
-    verify_protected_content_receipt(
-        &content_cid,
-        &manifest,
-        &receipt,
-        media_identity,
-        requirement,
-        now_unix_seconds,
-    )
-}
-
 fn validate_protected_content_availability_requirement(
     requirement: &RuntimeContentAvailabilityRequirement,
 ) -> anyhow::Result<()> {
     if requirement.policy() != PROTECTED_CONTENT_REPLICATION_POLICY
-        || requirement.minimum_replicas() != PROTECTED_CONTENT_MIN_REPLICAS
+        || requirement.minimum_replicas() < PROTECTED_CONTENT_ACCEPTED_REPLICA_FLOOR
     {
         anyhow::bail!("protected content availability requirement is invalid");
     }
@@ -3041,7 +996,8 @@ async fn refresh_content_availability_receipt(
                 "cid": content_cid,
                 "availability_requirements": {
                     "min_replicas": requirement.minimum_replicas(),
-                    "require_live_multi_peer_proof": PROTECTED_CONTENT_REQUIRE_LIVE_MULTI_PEER_PROOF,
+                    "require_live_multi_peer_proof":
+                        protected_content_live_proof_required(requirement.minimum_replicas()),
                 },
                 "availability_policy": requirement.policy(),
                 "object_did": requirement.expected_object_identity(),
@@ -3076,53 +1032,6 @@ async fn fetch_content_availability_receipt(
         .ok_or_else(|| anyhow::anyhow!("protected content status receipt is absent"))?;
     serde_json::to_vec(receipt)
         .map_err(|_| anyhow::anyhow!("protected content status receipt is invalid"))
-}
-
-fn verify_protected_content_directory(
-    directory: &Path,
-    media_identity: &CencFmp4MediaIdentityV1,
-) -> anyhow::Result<()> {
-    let expected_files = protected_content_files(media_identity)?;
-    let expected_paths: Vec<String> = expected_files
-        .iter()
-        .map(|file| file.path.clone())
-        .collect();
-    let actual_paths = protected_content_directory_files(directory)?;
-    if actual_paths != expected_paths {
-        anyhow::bail!("protected content directory layout is invalid");
-    }
-    let descriptor = fs::read(directory.join(PROTECTED_CONTENT_IDENTITY_PATH))
-        .map_err(|_| anyhow::anyhow!("protected content descriptor is unavailable"))?;
-    let canonical_identity = media_identity
-        .canonical_bytes()
-        .map_err(|_| anyhow::anyhow!("protected content media identity is invalid"))?;
-    if descriptor != canonical_identity
-        || CencFmp4MediaIdentityV1::from_canonical_bytes(&descriptor)
-            .map_err(|_| anyhow::anyhow!("protected content descriptor is invalid"))?
-            != *media_identity
-    {
-        anyhow::bail!("protected content descriptor is invalid");
-    }
-    let init = fs::read(directory.join(PROTECTED_CONTENT_INIT_PATH))
-        .map_err(|_| anyhow::anyhow!("protected content init is unavailable"))?;
-    let mut segments = Vec::with_capacity(media_identity.encrypted_segments().len());
-    for index in 0..media_identity.encrypted_segments().len() {
-        segments.push(
-            fs::read(directory.join(protected_content_segment_path(index)))
-                .map_err(|_| anyhow::anyhow!("protected content segment is unavailable"))?,
-        );
-    }
-    let reconstructed = CencFmp4MediaIdentityV1::new_from_bytes(
-        &init,
-        &segments,
-        media_identity.mime_type(),
-        media_identity.codecs(),
-    )
-    .map_err(|_| anyhow::anyhow!("protected content media layout is invalid"))?;
-    if reconstructed != *media_identity {
-        anyhow::bail!("protected content media identity is invalid");
-    }
-    Ok(())
 }
 
 fn protected_content_directory_files(directory: &Path) -> anyhow::Result<Vec<String>> {
@@ -3162,7 +1071,10 @@ fn collect_protected_content_directory_files(
             .ok_or_else(|| anyhow::anyhow!("protected content directory is invalid"))?;
         let normalized = relative.replace('\\', "/");
         match normalized.as_str() {
-            PROTECTED_CONTENT_IDENTITY_PATH | PROTECTED_CONTENT_INIT_PATH => {}
+            PROTECTED_CONTENT_IDENTITY_PATH
+            | PROTECTED_CONTENT_INIT_PATH
+            | PROTECTED_CONTENT_OBJECT_EPC1_PATH
+            | PROTECTED_CONTENT_OBJECT_MANIFEST_PATH => {}
             _ if normalized.starts_with(PROTECTED_CONTENT_SEGMENTS_PREFIX)
                 && normalized.ends_with(PROTECTED_CONTENT_SEGMENTS_SUFFIX) =>
             {
@@ -3223,7 +1135,7 @@ fn content_object_file(path: &str, bytes: &[u8]) -> crate::content::ContentObjec
     }
 }
 
-fn protected_content_segment_path(index: usize) -> String {
+pub(crate) fn protected_content_segment_path(index: usize) -> String {
     format!("{PROTECTED_CONTENT_SEGMENTS_PREFIX}{index:08}{PROTECTED_CONTENT_SEGMENTS_SUFFIX}")
 }
 
@@ -3233,15 +1145,7 @@ async fn verify_protected_content_manifest_and_files(
     manifest: &crate::content::ContentObjectManifest,
     media_identity: &CencFmp4MediaIdentityV1,
 ) -> anyhow::Result<(Vec<u8>, Vec<Vec<u8>>)> {
-    let expected_files = protected_content_files(media_identity)?;
-    if manifest.schema != "elastos.content.object.manifest/v1"
-        || manifest.kind != PROTECTED_CONTENT_OBJECT_KIND
-        || !manifest.links.is_empty()
-        || !content_object_files_match(&manifest.files, &expected_files)
-        || manifest.content_digest != content_object_digest(&expected_files)
-    {
-        anyhow::bail!("protected content object manifest is invalid");
-    }
+    let expected_files = protected_content_media_manifest_files(manifest, media_identity)?;
     let mut protected_init = None;
     let mut encrypted_segments = Vec::with_capacity(media_identity.encrypted_segments().len());
     for file in &expected_files {
@@ -3306,15 +1210,6 @@ fn content_object_digest(files: &[crate::content::ContentObjectFile]) -> String 
     format!("sha256:{:x}", hasher.finalize())
 }
 
-fn runtime_rights_action_name(action: RightsActionV1) -> &'static str {
-    match action {
-        RightsActionV1::View => "view",
-        RightsActionV1::Stream => "stream",
-        RightsActionV1::Download => "download",
-        RightsActionV1::Execute => "execute",
-    }
-}
-
 fn decode_0x_hex(value: &str) -> Option<Vec<u8>> {
     let hex = value.strip_prefix("0x")?;
     hex::decode(hex).ok()
@@ -3327,6 +1222,7 @@ fn verify_protected_content_receipt(
     media_identity: &CencFmp4MediaIdentityV1,
     requirement: &RuntimeContentAvailabilityRequirement,
     now_unix_seconds: u64,
+    publisher_binding: RuntimeManifestPublisherBinding,
 ) -> anyhow::Result<RuntimeVerifiedContentAvailability> {
     validate_protected_content_availability_requirement(requirement)?;
     cid::Cid::try_from(content_cid)
@@ -3343,9 +1239,9 @@ fn verify_protected_content_receipt(
         || receipt.payload.object_did.as_deref() != Some(requirement.expected_object_identity())
         || receipt.payload.publisher_did != requirement.expected_publisher_did()
         || receipt.payload.policy != requirement.policy()
-        || receipt.payload.status != PROTECTED_CONTENT_AVAILABLE_STATUS
+        || !protected_content_availability_status_accepted(&receipt.payload.status, requirement)
         || receipt.payload.replicas < requirement.minimum_replicas()
-        || (PROTECTED_CONTENT_REQUIRE_LIVE_MULTI_PEER_PROOF
+        || (protected_content_live_proof_required(requirement.minimum_replicas())
             && receipt
                 .payload
                 .peer_selection
@@ -3353,7 +1249,7 @@ fn verify_protected_content_receipt(
                 .and_then(Value::as_bool)
                 != Some(true))
         || manifest.object_did.as_deref() != Some(requirement.expected_object_identity())
-        || manifest.publisher_did.as_deref() != Some(requirement.expected_publisher_did())
+        || !content_manifest_binds_publisher(manifest, requirement, publisher_binding)
     {
         anyhow::bail!("protected content availability receipt binding is invalid");
     }
@@ -3381,85 +1277,43 @@ fn verify_protected_content_receipt(
         receipt.payload.checked_at,
         Digest32::new(sha2::Sha256::digest(&receipt_json).into()),
         media_identity.encrypted_content().clone(),
-        media_identity.media_manifest_root(),
+        RuntimeVerifiedContentIdentityRootV1::for_media(media_identity),
     )
     .map_err(|_| anyhow::anyhow!("protected content availability evidence is invalid"))
 }
 
-#[derive(Debug)]
-struct RuntimePreparedLibraryPublish {
-    input: RuntimeCustodyLibraryPublishInput,
-    request_id: Digest32,
-    output_receipt_digest: Digest32,
-    operation_root: PathBuf,
-}
-
-#[derive(Debug)]
-enum RuntimeLibraryMediaPreparation {
-    Prepared(RuntimePreparedLibraryPublish),
-    Consumed {
-        record: RuntimeMediaPreparationRecord,
-        operation_root: PathBuf,
-    },
-}
-
-enum RuntimeMediaProviderPrepareError {
-    Settled,
-    Unknown,
-}
-
-fn runtime_media_staging_root(data_dir: &Path) -> PathBuf {
-    data_dir
-        .join(PROTECTED_CONTENT_ROOT)
-        .join("media-provider")
-        .join("staging")
-}
-
-fn runtime_media_private_state_error(_reason: String) -> anyhow::Error {
-    anyhow::anyhow!("Runtime custody media preparation private state is invalid")
-}
-
-fn validate_runtime_media_staging_root(staging_root: &Path) -> anyhow::Result<()> {
-    let metadata = fs::symlink_metadata(staging_root)
-        .map_err(|_| runtime_media_private_state_error(String::new()))?;
-    if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        anyhow::bail!("Runtime custody media preparation private state is invalid");
+async fn verify_protected_content_object_manifest_and_files(
+    registry: &ProviderRegistry,
+    content_cid: &str,
+    manifest: &crate::content::ContentObjectManifest,
+    object_identity: &ChunkedPayloadObjectIdentityV1,
+) -> anyhow::Result<()> {
+    let expected_files = protected_content_object_manifest_files(manifest, object_identity)?;
+    for file in &expected_files {
+        let bytes =
+            crate::content::fetch_bytes_via_provider(registry, content_cid, Some(&file.path))
+                .await?;
+        crate::content::verify_content_object_file(content_cid, file, &bytes)?;
+        if file.path == PROTECTED_CONTENT_OBJECT_MANIFEST_PATH
+            && bytes != protected_content_object_manifest_bytes(object_identity)?
+        {
+            anyhow::bail!("protected content descriptor is invalid");
+        }
     }
-    validate_owner_only_metadata_with_error(
-        "media-provider staging root",
-        &metadata,
-        false,
-        runtime_media_private_state_error,
-    )
+    Ok(())
 }
 
-/// Reads the creator's source object for media preparation through the
-/// principal-root object path. A protected root (recovery activated) stores
-/// every object as an encrypted `elastos.principal-root.object/v1` envelope,
-/// which a raw file copy would hand to the media provider as ciphertext; an
-/// unprotected root passes through unchanged. The whole object is held in
-/// memory because a protected object is one AES-GCM envelope and cannot be
-/// streamed; MEDIA_PROVIDER_MAX_INPUT_BYTES bounds the plaintext.
-fn read_runtime_media_source(
+/// Object twin of `read_runtime_media_source`'s read (not its media-specific
+/// stored-length preflight, which does not apply to a plain uploaded file):
+/// reads the principal-scoped object and refuses only an empty one. Minting
+/// applies no size bound; the read itself is `auth.rs`'s (#444).
+pub(crate) fn read_runtime_object_source(
     data_dir: &Path,
     principal_id: &str,
     object_uri: &str,
     source_file_path: &Path,
 ) -> anyhow::Result<Vec<u8>> {
-    const MESSAGE: &str = "Runtime custody media preparation input is invalid";
-    let source = open_runtime_media_source_file(source_file_path)?;
-    let stored_len = source
-        .metadata()
-        .map_err(|error| anyhow::Error::new(error).context(MESSAGE))?
-        .len();
-    drop(source);
-    // A protected envelope carries base64 ciphertext plus metadata, so the
-    // stored file may exceed the plaintext bound by a constant factor.
-    if stored_len == 0 || stored_len > MEDIA_PROVIDER_MAX_INPUT_BYTES.saturating_mul(2) {
-        return Err(
-            anyhow::anyhow!("stored source length {stored_len} is out of bounds").context(MESSAGE),
-        );
-    }
+    const MESSAGE: &str = "Runtime custody object publish input is invalid";
     let localhost_root = crate::auth::principal_localhost_root(principal_id);
     let bytes = crate::auth::read_principal_root_object(
         data_dir,
@@ -3472,334 +1326,121 @@ fn read_runtime_media_source(
         tracing::warn!(
             %object_uri,
             error = ?error,
-            "runtime custody media preparation: source object is unreadable"
+            "runtime custody object publish: source object is unreadable"
         );
         error.context(MESSAGE)
     })?;
-    if bytes.is_empty() || bytes.len() as u64 > MEDIA_PROVIDER_MAX_INPUT_BYTES {
-        return Err(
-            anyhow::anyhow!("source plaintext length {} is out of bounds", bytes.len())
-                .context(MESSAGE),
-        );
+    if bytes.is_empty() {
+        return Err(anyhow::anyhow!("source plaintext is empty").context(MESSAGE));
     }
     Ok(bytes)
 }
 
-fn runtime_media_source_digest(bytes: &[u8]) -> Digest32 {
-    Digest32::new(sha2::Sha256::digest(bytes).into())
+fn invalid_prepared_media_output() -> anyhow::Error {
+    anyhow::anyhow!("Runtime custody media preparation output is invalid")
 }
 
-fn reset_runtime_media_operation_root(operation_root: &Path) -> anyhow::Result<()> {
-    if operation_root.exists() {
-        let metadata = fs::symlink_metadata(operation_root)
-            .map_err(|_| runtime_media_private_state_error(String::new()))?;
-        if metadata.file_type().is_symlink() || !metadata.is_dir() {
-            anyhow::bail!("Runtime custody media preparation private state is invalid");
-        }
-        fs::remove_dir_all(operation_root)
-            .map_err(|_| runtime_media_private_state_error(String::new()))?;
-    }
-    fs::create_dir(operation_root).map_err(|_| runtime_media_private_state_error(String::new()))?;
-    #[cfg(unix)]
-    fs::set_permissions(operation_root, fs::Permissions::from_mode(0o700))
-        .map_err(|_| runtime_media_private_state_error(String::new()))?;
-    Ok(())
-}
-
-/// Stages the already-read source bytes as the media provider's input file.
-/// The digest is re-checked here so the staged file is provably the bytes the
-/// preparation record was keyed on.
-fn stage_runtime_media_provider_input(
-    source_bytes: &[u8],
-    destination_path: &Path,
-    expected_digest: Digest32,
-) -> anyhow::Result<()> {
-    if source_bytes.is_empty()
-        || source_bytes.len() as u64 > MEDIA_PROVIDER_MAX_INPUT_BYTES
-        || runtime_media_source_digest(source_bytes) != expected_digest
-    {
-        anyhow::bail!("Runtime custody media preparation input is invalid");
-    }
-    let mut destination = fs::OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(destination_path)
-        .map_err(|_| runtime_media_private_state_error(String::new()))?;
-    #[cfg(unix)]
-    fs::set_permissions(destination_path, fs::Permissions::from_mode(0o600))
-        .map_err(|_| runtime_media_private_state_error(String::new()))?;
-    destination
-        .write_all(source_bytes)
-        .map_err(|_| runtime_media_private_state_error(String::new()))?;
-    destination
-        .sync_all()
-        .map_err(|_| runtime_media_private_state_error(String::new()))?;
-    Ok(())
-}
-
-#[cfg(unix)]
-fn open_runtime_media_source_file(path: &Path) -> anyhow::Result<fs::File> {
-    let mut options = fs::OpenOptions::new();
-    options.read(true).custom_flags(libc::O_NOFOLLOW);
-    let file = options
-        .open(path)
-        .map_err(|_| anyhow::anyhow!("Runtime custody media preparation input is invalid"))?;
-    let metadata = file
-        .metadata()
-        .map_err(|_| anyhow::anyhow!("Runtime custody media preparation input is invalid"))?;
-    if !metadata.is_file() || metadata.nlink() != 1 {
-        anyhow::bail!("Runtime custody media preparation input is invalid");
-    }
-    Ok(file)
-}
-
-#[cfg(not(unix))]
-fn open_runtime_media_source_file(path: &Path) -> anyhow::Result<fs::File> {
-    let file = fs::File::open(path)
-        .map_err(|_| anyhow::anyhow!("Runtime custody media preparation input is invalid"))?;
-    let metadata = file
-        .metadata()
-        .map_err(|_| anyhow::anyhow!("Runtime custody media preparation input is invalid"))?;
-    if !metadata.is_file() {
-        anyhow::bail!("Runtime custody media preparation input is invalid");
-    }
-    Ok(file)
-}
-
-fn load_validated_runtime_prepared_media(
+/// One clear media part: `prepared/<rendition>/segments/NNNNNNNN.m4s`.
+fn runtime_prepared_segment_path(
     operation_root: &Path,
-    prepared_output: &RuntimePreparedMediaProviderOutput,
-) -> anyhow::Result<(RuntimeCustodyLibraryPublishInputMedia, Digest32)> {
-    if prepared_output.schema != MEDIA_PROVIDER_PREPARED_MEDIA_SCHEMA_V1
-        || prepared_output.mime_type != MEDIA_PROVIDER_OUTPUT_MIME_TYPE_V1
-        || prepared_output.codecs != MEDIA_PROVIDER_OUTPUT_CODECS_V1
-    {
-        anyhow::bail!("Runtime custody media preparation output is invalid");
-    }
-    let prepared_root = operation_root.join(MEDIA_PROVIDER_PREPARED_DIR_NAME);
-    let prepared_metadata = fs::symlink_metadata(&prepared_root)
-        .map_err(|_| anyhow::anyhow!("Runtime custody media preparation output is invalid"))?;
-    if prepared_metadata.file_type().is_symlink() || !prepared_metadata.is_dir() {
-        anyhow::bail!("Runtime custody media preparation output is invalid");
-    }
-    validate_owner_only_metadata_with_error(
-        "media-provider prepared output root",
-        &prepared_metadata,
-        false,
-        runtime_media_private_state_error,
-    )
-    .map_err(|_| anyhow::anyhow!("Runtime custody media preparation output is invalid"))?;
-    let segments_root = prepared_root.join(MEDIA_PROVIDER_SEGMENTS_DIR_NAME);
-    let mut saw_init = false;
-    let mut saw_segments = false;
-    for entry in fs::read_dir(&prepared_root)
-        .map_err(|_| anyhow::anyhow!("Runtime custody media preparation output is invalid"))?
-    {
-        let entry = entry
-            .map_err(|_| anyhow::anyhow!("Runtime custody media preparation output is invalid"))?;
-        let name = entry
-            .file_name()
-            .into_string()
-            .map_err(|_| anyhow::anyhow!("Runtime custody media preparation output is invalid"))?;
-        let metadata = fs::symlink_metadata(entry.path())
-            .map_err(|_| anyhow::anyhow!("Runtime custody media preparation output is invalid"))?;
-        if metadata.file_type().is_symlink() {
-            anyhow::bail!("Runtime custody media preparation output is invalid");
-        }
-        match name.as_str() {
-            "init.mp4" if metadata.is_file() => saw_init = true,
-            MEDIA_PROVIDER_SEGMENTS_DIR_NAME if metadata.is_dir() => saw_segments = true,
-            _ => anyhow::bail!("Runtime custody media preparation output is invalid"),
-        }
-    }
-    if !saw_init || !saw_segments {
-        anyhow::bail!("Runtime custody media preparation output is invalid");
-    }
-    let clear_init_segment = read_runtime_media_prepared_part(
-        &prepared_root.join("init.mp4"),
-        false,
-        MEDIA_PROVIDER_MAX_OUTPUT_PART_BYTES,
-    )?;
-    let mut total_output_bytes = clear_init_segment.len() as u64;
-    let session = ValidatedClearFmp4MediaSessionLayoutV1::new(&clear_init_segment)
-        .map_err(|_| anyhow::anyhow!("Runtime custody media preparation output is invalid"))?;
-    let segments_metadata = fs::symlink_metadata(&segments_root)
-        .map_err(|_| anyhow::anyhow!("Runtime custody media preparation output is invalid"))?;
-    if segments_metadata.file_type().is_symlink() || !segments_metadata.is_dir() {
-        anyhow::bail!("Runtime custody media preparation output is invalid");
-    }
-    validate_owner_only_metadata_with_error(
-        "media-provider prepared segments root",
-        &segments_metadata,
-        false,
-        runtime_media_private_state_error,
-    )
-    .map_err(|_| anyhow::anyhow!("Runtime custody media preparation output is invalid"))?;
-    let mut segments = std::collections::BTreeMap::new();
-    for entry in fs::read_dir(&segments_root)
-        .map_err(|_| anyhow::anyhow!("Runtime custody media preparation output is invalid"))?
-    {
-        let entry = entry
-            .map_err(|_| anyhow::anyhow!("Runtime custody media preparation output is invalid"))?;
-        let name = entry
-            .file_name()
-            .into_string()
-            .map_err(|_| anyhow::anyhow!("Runtime custody media preparation output is invalid"))?;
-        let index = parse_runtime_media_segment_name(&name)?;
-        let bytes = read_runtime_media_prepared_part(
-            &entry.path(),
-            true,
-            MEDIA_PROVIDER_MAX_OUTPUT_PART_BYTES,
-        )?;
-        total_output_bytes = total_output_bytes
-            .checked_add(bytes.len() as u64)
-            .ok_or_else(|| {
-                anyhow::anyhow!("Runtime custody media preparation output is invalid")
-            })?;
-        session
-            .validate_segment(&bytes)
-            .map_err(|_| anyhow::anyhow!("Runtime custody media preparation output is invalid"))?;
-        if segments.insert(index, bytes).is_some() {
-            anyhow::bail!("Runtime custody media preparation output is invalid");
-        }
-    }
-    if segments.is_empty()
-        || segments.len() > MEDIA_PROVIDER_MAX_SEGMENT_COUNT
-        || segments.len() > MAX_PROTECT_MEDIA_SEGMENTS_V1 as usize
-        || total_output_bytes > MEDIA_PROVIDER_MAX_TOTAL_OUTPUT_BYTES
-    {
-        anyhow::bail!("Runtime custody media preparation output is invalid");
-    }
-    let mut clear_segments = Vec::with_capacity(segments.len());
-    for (expected_index, (actual_index, bytes)) in segments.into_iter().enumerate() {
-        if actual_index != expected_index as u32 {
-            anyhow::bail!("Runtime custody media preparation output is invalid");
-        }
-        clear_segments.push(bytes);
-    }
-    let media = RuntimeCustodyLibraryPublishInputMedia {
-        mime_type: prepared_output.mime_type.clone(),
-        codecs: prepared_output.codecs.clone(),
-        clear_init_segment,
-        clear_segments,
-    };
-    let receipt = runtime_media_preparation_receipt(&media);
-    Ok((media, receipt))
+    kind: CencDashRenditionKindV2,
+    index: u32,
+) -> PathBuf {
+    runtime_prepared_rendition_dir(operation_root, kind)
+        .join(MEDIA_PROVIDER_SEGMENTS_DIR_NAME)
+        .join(format!("{index:08}.m4s"))
 }
 
-struct RuntimeCustodyLibraryPublishInputMedia {
+/// The preparation receipt, fed one part at a time so it never needs the media
+/// in memory: `SHA-256(domain || u8 n || per rendition: u8 kind || mime || 0 ||
+/// codecs || 0 || u64 init_len || sha256(init) || u64 segment_count || per
+/// segment: u64 index || u64 len || sha256(segment))`.
+struct RuntimeMediaPreparationReceiptV2(sha2::Sha256);
+
+impl RuntimeMediaPreparationReceiptV2 {
+    fn new(rendition_count: usize) -> anyhow::Result<Self> {
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(RUNTIME_MEDIA_PREPARATION_RECEIPT_DOMAIN);
+        hasher
+            .update([u8::try_from(rendition_count).map_err(|_| invalid_prepared_media_output())?]);
+        Ok(Self(hasher))
+    }
+
+    fn begin_rendition(
+        &mut self,
+        kind: CencDashRenditionKindV2,
+        clear_init_segment: &[u8],
+        segment_count: u32,
+    ) {
+        let (mime_type, codecs) = pinned_declaration_v2(kind);
+        self.0.update([kind.code()]);
+        self.0.update(mime_type.as_bytes());
+        self.0.update([0]);
+        self.0.update(codecs.as_bytes());
+        self.0.update([0]);
+        self.0
+            .update((clear_init_segment.len() as u64).to_be_bytes());
+        self.0.update(sha2::Sha256::digest(clear_init_segment));
+        self.0.update(u64::from(segment_count).to_be_bytes());
+    }
+
+    fn push_segment(&mut self, index: u32, segment: &[u8]) -> Digest32 {
+        let digest = Digest32::new(sha2::Sha256::digest(segment).into());
+        self.0.update(u64::from(index).to_be_bytes());
+        self.0.update((segment.len() as u64).to_be_bytes());
+        self.0.update(digest.as_bytes());
+        digest
+    }
+
+    fn finish(self) -> Digest32 {
+        Digest32::new(self.0.finalize().into())
+    }
+}
+
+/// What the media provider reports it prepared.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimePreparedMediaProviderOutputV2 {
+    schema: String,
+    renditions: Vec<RuntimePreparedMediaProviderRenditionV2>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimePreparedMediaProviderRenditionV2 {
+    rendition: String,
     mime_type: String,
     codecs: String,
-    clear_init_segment: Vec<u8>,
-    clear_segments: Vec<Vec<u8>>,
+    segment_count: u32,
 }
 
-fn runtime_media_preparation_receipt(media: &RuntimeCustodyLibraryPublishInputMedia) -> Digest32 {
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(RUNTIME_MEDIA_PREPARATION_RECEIPT_DOMAIN);
-    hasher.update(media.mime_type.as_bytes());
-    hasher.update([0]);
-    hasher.update(media.codecs.as_bytes());
-    hasher.update([0]);
-    hasher.update((media.clear_init_segment.len() as u64).to_be_bytes());
-    hasher.update(sha2::Sha256::digest(&media.clear_init_segment));
-    for (index, segment) in media.clear_segments.iter().enumerate() {
-        hasher.update((index as u64).to_be_bytes());
-        hasher.update((segment.len() as u64).to_be_bytes());
-        hasher.update(sha2::Sha256::digest(segment));
-    }
-    Digest32::new(hasher.finalize().into())
-}
-
-fn read_runtime_media_prepared_part(
-    path: &Path,
-    require_non_empty: bool,
-    max_output_part_bytes: u64,
-) -> anyhow::Result<Vec<u8>> {
-    #[cfg(unix)]
-    let file = {
-        let mut options = fs::OpenOptions::new();
-        options.read(true).custom_flags(libc::O_NOFOLLOW);
-        options
-            .open(path)
-            .map_err(|_| anyhow::anyhow!("Runtime custody media preparation output is invalid"))?
-    };
-    #[cfg(not(unix))]
-    let file = fs::File::open(path)
-        .map_err(|_| anyhow::anyhow!("Runtime custody media preparation output is invalid"))?;
-    let metadata = file
-        .metadata()
-        .map_err(|_| anyhow::anyhow!("Runtime custody media preparation output is invalid"))?;
-    #[cfg(unix)]
-    if metadata.nlink() != 1 {
-        anyhow::bail!("Runtime custody media preparation output is invalid");
-    }
-    if !metadata.is_file()
-        || metadata.len() > max_output_part_bytes
-        || (require_non_empty && metadata.len() == 0)
-    {
-        anyhow::bail!("Runtime custody media preparation output is invalid");
-    }
-    let mut bytes = Vec::with_capacity(usize::try_from(metadata.len()).unwrap_or(0));
-    std::io::Read::take(file, max_output_part_bytes + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| anyhow::anyhow!("Runtime custody media preparation output is invalid"))?;
-    if bytes.len() as u64 > max_output_part_bytes || (require_non_empty && bytes.is_empty()) {
-        anyhow::bail!("Runtime custody media preparation output is invalid");
-    }
-    Ok(bytes)
-}
-
-fn parse_runtime_media_segment_name(name: &str) -> anyhow::Result<u32> {
-    let Some(index) = name.strip_suffix(".m4s") else {
-        anyhow::bail!("Runtime custody media preparation output is invalid");
-    };
-    if index.len() != 8 || !index.as_bytes().iter().all(u8::is_ascii_digit) {
-        anyhow::bail!("Runtime custody media preparation output is invalid");
-    }
-    index
-        .parse::<u32>()
-        .map_err(|_| anyhow::anyhow!("Runtime custody media preparation output is invalid"))
-}
-
-async fn invoke_runtime_media_provider_prepare(
-    registry: &ProviderRegistry,
-    operation_id: Digest32,
-) -> Result<RuntimePreparedMediaProviderOutput, RuntimeMediaProviderPrepareError> {
-    let response = registry
-        .invoke_provider(ProviderInvocation {
-            source: RUNTIME_PROVIDER_ID.to_string(),
-            target: MEDIA_PROVIDER_ID.to_string(),
-            op: "prepare".to_string(),
-            request: json!({
-                "op": "prepare",
-                "operation_id": hex::encode(operation_id.as_bytes()),
-            }),
-            transfer: ProviderTransfer::Json,
-            range: None,
-            progress: None,
-            transport: ProviderInvocationTransport::Local,
-        })
-        .await
-        .map_err(|_| RuntimeMediaProviderPrepareError::Unknown)?;
-    match response.get("status").and_then(Value::as_str) {
-        Some("ok") => response
-            .get("data")
-            .cloned()
-            .ok_or(RuntimeMediaProviderPrepareError::Settled)
-            .and_then(|data| {
-                serde_json::from_value(data).map_err(|_| RuntimeMediaProviderPrepareError::Settled)
-            }),
-        Some("error")
-            if response
-                .get("data")
-                .and_then(|data| data.get("operation_settled"))
-                .and_then(Value::as_bool)
-                == Some(true) =>
-        {
-            Err(RuntimeMediaProviderPrepareError::Settled)
+impl RuntimePreparedMediaProviderOutputV2 {
+    /// The renditions it declares as `(kind, segment count)`: the v2 schema,
+    /// one or two renditions with video first, and each one's pinned pair.
+    fn declared_renditions(&self) -> anyhow::Result<Vec<(CencDashRenditionKindV2, u32)>> {
+        if self.schema != MEDIA_PROVIDER_PREPARED_MEDIA_SCHEMA_V2 {
+            return Err(refuse_prepared_media_output("the output schema is not v2"));
         }
-        _ => Err(RuntimeMediaProviderPrepareError::Unknown),
+        let mut declared = Vec::with_capacity(self.renditions.len());
+        for rendition in &self.renditions {
+            let kind = runtime_media_dash_rendition_kind(&rendition.rendition)
+                .ok_or_else(|| refuse_prepared_media_output("an unknown rendition"))?;
+            let (mime_type, codecs) = pinned_declaration_v2(kind);
+            if rendition.mime_type != mime_type
+                || rendition.codecs != codecs
+                || rendition.segment_count == 0
+                || declared.last().is_some_and(|(last, _)| *last >= kind)
+            {
+                return Err(refuse_prepared_media_output(
+                    "a rendition is not the pinned pair, is empty, or is out of order",
+                ));
+            }
+            declared.push((kind, rendition.segment_count));
+        }
+        if declared.is_empty() {
+            return Err(refuse_prepared_media_output("no rendition"));
+        }
+        Ok(declared)
     }
 }
 
@@ -3807,49 +1448,29 @@ async fn invoke_runtime_media_provider_prepare(
 pub(crate) struct RuntimeCustodyLibraryPublishInput {
     pub object_uri: String,
     pub principal_id: String,
-    pub mime_type: String,
-    pub codecs: String,
     pub wallet_account_id: String,
     pub wallet_account_address: String,
     pub creator_mint_source_digest: Digest32,
     pub copies: String,
+    /// What a buyer pays for one copy, as a decimal amount of the pay token --
+    /// scaled to its base units where the token's decimals are known, which is
+    /// not here.
     pub price: String,
-    pub clear_init_segment: Vec<u8>,
-    pub clear_segments: Vec<Vec<u8>>,
-    pub source_storage: String,
-}
+    /// The channel this mint publishes into. Never empty: a publish that named
+    /// none was refused at the library boundary.
+    pub channel: String,
+    /// The token the sale is priced in. Empty means the mint source's first
+    /// offered token.
+    pub pay_token: String,
 
-#[derive(Clone)]
-pub(crate) struct RuntimeCustodyLibrarySourceInput {
-    pub object_uri: String,
-    pub principal_id: String,
-    pub source_file_path: PathBuf,
-    pub wallet_account_id: String,
-    pub wallet_account_address: String,
-    pub creator_mint_source_digest: Digest32,
-    pub copies: String,
-    pub price: String,
+    /// The validated clear media, which the mint streams from disk one part at
+    /// a time.
+    pub media: RuntimePreparedMediaV2,
     pub source_storage: String,
-}
-
-impl std::fmt::Debug for RuntimeCustodyLibrarySourceInput {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("RuntimeCustodyLibrarySourceInput")
-            .field("object_uri", &self.object_uri)
-            .field("principal_id", &self.principal_id)
-            .field("source_file_path", &"[private]")
-            .field("wallet_account_id", &"[redacted]")
-            .field("wallet_account_address", &"[redacted]")
-            .field(
-                "creator_mint_source_digest",
-                &self.creator_mint_source_digest,
-            )
-            .field("copies", &self.copies)
-            .field("price", &self.price)
-            .field("source_storage", &self.source_storage)
-            .finish()
-    }
+    pub listing: Option<crate::library::RuntimeCustodyListingTerms>,
+    /// Plan B S7-lite T7.6: the pool this mint goes into; `None` is this
+    /// Home's own pool, else the only pool that admits it.
+    pub pool_did: Option<String>,
 }
 
 impl std::fmt::Debug for RuntimeCustodyLibraryPublishInput {
@@ -3858,8 +1479,6 @@ impl std::fmt::Debug for RuntimeCustodyLibraryPublishInput {
             .debug_struct("RuntimeCustodyLibraryPublishInput")
             .field("object_uri", &self.object_uri)
             .field("principal_id", &self.principal_id)
-            .field("mime_type", &self.mime_type)
-            .field("codecs", &self.codecs)
             .field("wallet_account_id", &"[redacted]")
             .field("wallet_account_address", &"[redacted]")
             .field(
@@ -3868,8 +1487,7 @@ impl std::fmt::Debug for RuntimeCustodyLibraryPublishInput {
             )
             .field("copies", &self.copies)
             .field("price", &self.price)
-            .field("clear_init_segment_bytes", &self.clear_init_segment.len())
-            .field("clear_segment_count", &self.clear_segments.len())
+            .field("media", &self.media)
             .field("source_storage", &self.source_storage)
             .finish()
     }
@@ -3885,856 +1503,218 @@ pub(crate) struct RuntimeCustodyLibraryPublishFacts {
     pub receipt: Value,
     pub content_security: Value,
     pub listing_uri: Option<String>,
+    /// Where the `.ddrm` for this mint was filed. `None` until the tail has
+    /// reached its terminal, since a capsule names a `tokenId` that does not
+    /// exist before then.
+    pub capsule_uri: Option<String>,
 }
 
-async fn prepare_runtime_custody_library_source(
-    data_dir: &Path,
-    registry: &ProviderRegistry,
-    source: &RuntimeCustodyLibrarySourceInput,
-) -> anyhow::Result<RuntimeLibraryMediaPreparation> {
-    let staging_root = runtime_media_staging_root(data_dir);
-    let source_bytes = read_runtime_media_source(
-        data_dir,
-        &source.principal_id,
-        &source.object_uri,
-        &source.source_file_path,
-    )?;
-    let source_object_digest = runtime_media_source_digest(&source_bytes);
-    let expected = RuntimeMediaPreparationRecord::new(
-        &source.principal_id,
-        &source.object_uri,
-        &source.source_storage,
-        source_object_digest,
-        MEDIA_PROVIDER_ID,
-        source.wallet_account_id.clone(),
-        source.wallet_account_address.clone(),
-        source.creator_mint_source_digest,
-    )
-    .map_err(|_| anyhow::anyhow!("Runtime custody media preparation intent is invalid"))?;
-    let journal = runtime_mint_journal(data_dir);
-    if !runtime_media_provider_is_registered(registry).await
-        && !data_dir.join(RUNTIME_MINT_JOURNAL_ROOT).exists()
-    {
-        anyhow::bail!("Runtime custody media preparation provider is unavailable");
-    }
-    let record = match journal.load_media_preparation(expected.request_id()) {
-        Ok(existing) => {
-            if !existing.same_authority_as(&expected) {
-                anyhow::bail!(
-                    "Runtime custody media preparation conflicts with existing authority"
-                );
-            }
-            existing
-        }
-        Err(elastos_protected_content_runtime::RuntimeMintJournalError::NotFound) => {
-            if !runtime_media_provider_is_registered(registry).await {
-                anyhow::bail!("Runtime custody media preparation provider is unavailable");
-            }
-            validate_runtime_media_staging_root(&staging_root)?;
-            let operation_root = staging_root.join(hex::encode(expected.operation_id().as_bytes()));
-            reset_runtime_media_operation_root(&operation_root)?;
-            if let Err(error) = stage_runtime_media_provider_input(
-                &source_bytes,
-                &operation_root.join(MEDIA_PROVIDER_INPUT_FILE_NAME),
-                source_object_digest,
-            ) {
-                let _ = fs::remove_dir_all(&operation_root);
-                return Err(error);
-            }
-            journal.persist_media_preparation(&expected).map_err(|_| {
-                let _ = fs::remove_dir_all(&operation_root);
-                anyhow::anyhow!("Runtime custody media preparation intent is unavailable")
-            })?
-        }
-        Err(_) => {
-            anyhow::bail!("Runtime custody media preparation intent is unavailable");
-        }
-    };
-    let operation_root = staging_root.join(hex::encode(record.operation_id().as_bytes()));
-    match record.state() {
-        RuntimeMediaPreparationState::Consumed => {
-            if operation_root.exists() {
-                validate_runtime_media_staging_root(&staging_root)?;
-                reset_runtime_media_operation_root(&operation_root)?;
-                fs::remove_dir(&operation_root)
-                    .map_err(|_| runtime_media_private_state_error(String::new()))?;
-            }
-            return Ok(RuntimeLibraryMediaPreparation::Consumed {
-                record,
-                operation_root,
-            });
-        }
-        RuntimeMediaPreparationState::EffectPending => {
-            anyhow::bail!(RUNTIME_MEDIA_PREPARATION_RECONCILIATION_MESSAGE);
-        }
-        RuntimeMediaPreparationState::Failed => {
-            anyhow::bail!("Runtime custody media preparation failed");
-        }
-        RuntimeMediaPreparationState::Prepared => {
-            validate_runtime_media_staging_root(&staging_root)?;
-            let output = RuntimePreparedMediaProviderOutput {
-                schema: MEDIA_PROVIDER_PREPARED_MEDIA_SCHEMA_V1.to_string(),
-                mime_type: MEDIA_PROVIDER_OUTPUT_MIME_TYPE_V1.to_string(),
-                codecs: MEDIA_PROVIDER_OUTPUT_CODECS_V1.to_string(),
-            };
-            let (media, output_receipt_digest) =
-                load_validated_runtime_prepared_media(&operation_root, &output)?;
-            if record.output_receipt_digest() != Some(output_receipt_digest) {
-                anyhow::bail!("Runtime custody media preparation output is invalid");
-            }
-            return Ok(RuntimeLibraryMediaPreparation::Prepared(
-                RuntimePreparedLibraryPublish {
-                    input: RuntimeCustodyLibraryPublishInput {
-                        object_uri: source.object_uri.clone(),
-                        principal_id: source.principal_id.clone(),
-                        mime_type: media.mime_type,
-                        codecs: media.codecs,
-                        wallet_account_id: source.wallet_account_id.clone(),
-                        wallet_account_address: source.wallet_account_address.clone(),
-                        creator_mint_source_digest: source.creator_mint_source_digest,
-                        copies: source.copies.clone(),
-                        price: source.price.clone(),
-                        clear_init_segment: media.clear_init_segment,
-                        clear_segments: media.clear_segments,
-                        source_storage: source.source_storage.clone(),
-                    },
-                    request_id: record.request_id(),
-                    output_receipt_digest,
-                    operation_root,
-                },
-            ));
-        }
-        RuntimeMediaPreparationState::Ready => {}
-    }
-
-    if !runtime_media_provider_is_registered(registry).await {
-        anyhow::bail!("Runtime custody media preparation provider is unavailable");
-    }
-    validate_runtime_media_staging_root(&staging_root)?;
-    reset_runtime_media_operation_root(&operation_root)?;
-    if let Err(error) = stage_runtime_media_provider_input(
-        &source_bytes,
-        &operation_root.join(MEDIA_PROVIDER_INPUT_FILE_NAME),
-        source_object_digest,
-    ) {
-        let _ = fs::remove_dir_all(&operation_root);
-        return Err(error);
-    }
-    journal
-        .mark_media_preparation_effect_started(record.request_id())
-        .map_err(|_| anyhow::anyhow!(RUNTIME_MEDIA_PREPARATION_RECONCILIATION_MESSAGE))?;
-    let output = match invoke_runtime_media_provider_prepare(registry, record.operation_id()).await
-    {
-        Ok(output) => output,
-        Err(RuntimeMediaProviderPrepareError::Settled) => {
-            journal
-                .mark_media_preparation_failed(record.request_id())
-                .map_err(|_| anyhow::anyhow!(RUNTIME_MEDIA_PREPARATION_RECONCILIATION_MESSAGE))?;
-            let _ = fs::remove_dir_all(&operation_root);
-            anyhow::bail!("Runtime custody media preparation failed");
-        }
-        Err(RuntimeMediaProviderPrepareError::Unknown) => {
-            anyhow::bail!(RUNTIME_MEDIA_PREPARATION_RECONCILIATION_MESSAGE);
-        }
-    };
-    let (media, output_receipt_digest) =
-        match load_validated_runtime_prepared_media(&operation_root, &output) {
-            Ok(prepared) => prepared,
-            Err(error) => {
-                journal
-                    .mark_media_preparation_failed(record.request_id())
-                    .map_err(|_| {
-                        anyhow::anyhow!(RUNTIME_MEDIA_PREPARATION_RECONCILIATION_MESSAGE)
-                    })?;
-                let _ = fs::remove_dir_all(&operation_root);
-                return Err(error);
-            }
-        };
-    journal
-        .mark_media_preparation_prepared(record.request_id(), output_receipt_digest)
-        .map_err(|_| anyhow::anyhow!(RUNTIME_MEDIA_PREPARATION_RECONCILIATION_MESSAGE))?;
-    Ok(RuntimeLibraryMediaPreparation::Prepared(
-        RuntimePreparedLibraryPublish {
-            input: RuntimeCustodyLibraryPublishInput {
-                object_uri: source.object_uri.clone(),
-                principal_id: source.principal_id.clone(),
-                mime_type: media.mime_type,
-                codecs: media.codecs,
-                wallet_account_id: source.wallet_account_id.clone(),
-                wallet_account_address: source.wallet_account_address.clone(),
-                creator_mint_source_digest: source.creator_mint_source_digest,
-                copies: source.copies.clone(),
-                price: source.price.clone(),
-                clear_init_segment: media.clear_init_segment,
-                clear_segments: media.clear_segments,
-                source_storage: source.source_storage.clone(),
-            },
-            request_id: record.request_id(),
-            output_receipt_digest,
-            operation_root,
-        },
-    ))
+/// STAB-33: a pool node refused this mint's key share because its host is out
+/// of storage, or has no storage maximum set. Creator names the pool and the
+/// host-storage action instead of only "Runtime custody mint failed", and
+/// offers the same publish again once that host has room.
+#[derive(Debug, Clone)]
+pub(crate) struct RuntimeCustodyMintPoolNodeRefused {
+    code: &'static str,
+    pool_did: Option<String>,
 }
 
-async fn runtime_media_provider_is_registered(registry: &ProviderRegistry) -> bool {
-    registry
-        .has_ready_runtime_provider_target(MEDIA_PROVIDER_ID)
-        .await
-}
-
-pub(crate) async fn publish_runtime_custody_library_source(
-    data_dir: &Path,
-    registry: Arc<ProviderRegistry>,
-    source: RuntimeCustodyLibrarySourceInput,
-) -> anyhow::Result<(
-    RuntimeCustodyLibraryPublishFacts,
-    RuntimeCustodyLibraryPublishInput,
-)> {
-    match prepare_runtime_custody_library_source(data_dir, registry.as_ref(), &source).await? {
-        RuntimeLibraryMediaPreparation::Prepared(prepared) => {
-            let input = prepared.input;
-            let facts = publish_runtime_custody_library_object(
-                data_dir,
-                Arc::clone(&registry),
-                input.clone(),
-            )
-            .await?;
-            runtime_mint_journal(data_dir)
-                .mark_media_preparation_consumed(
-                    prepared.request_id,
-                    prepared.output_receipt_digest,
-                    facts.mint_id,
-                )
-                .map_err(|_| anyhow::anyhow!(RUNTIME_MEDIA_PREPARATION_RECONCILIATION_MESSAGE))?;
-            fs::remove_dir_all(&prepared.operation_root)
-                .map_err(|_| runtime_media_private_state_error(String::new()))?;
-            Ok((facts, input))
-        }
-        RuntimeLibraryMediaPreparation::Consumed {
-            record,
-            operation_root,
-        } => {
-            let mint_id = record.consumed_mint_id().ok_or_else(|| {
-                anyhow::anyhow!("Runtime custody media preparation intent is unavailable")
-            })?;
-            let journal = runtime_mint_journal(data_dir);
-            let intent = journal
-                .load_intent(record.request_id())
-                .map_err(|_| anyhow::anyhow!("Runtime custody mint intent is unavailable"))?;
-            if intent.completed_mint_id() != Some(mint_id) {
-                anyhow::bail!("Runtime custody media preparation conflicts with mint settlement");
-            }
-            let persisted = journal
-                .load(mint_id)
-                .map_err(|_| anyhow::anyhow!("Runtime custody mint intent is unavailable"))?;
-            let input = RuntimeCustodyLibraryPublishInput {
-                object_uri: source.object_uri,
-                principal_id: source.principal_id,
-                mime_type: persisted.draft().media_identity().mime_type().to_string(),
-                codecs: persisted.draft().media_identity().codecs().to_string(),
-                wallet_account_id: source.wallet_account_id,
-                wallet_account_address: source.wallet_account_address,
-                creator_mint_source_digest: source.creator_mint_source_digest,
-                copies: source.copies,
-                price: source.price,
-                clear_init_segment: Vec::new(),
-                clear_segments: Vec::new(),
-                source_storage: source.source_storage,
-            };
-            let facts = load_completed_runtime_mint_facts(&journal, &input, mint_id)?;
-            if operation_root.exists() {
-                fs::remove_dir_all(&operation_root)
-                    .map_err(|_| runtime_media_private_state_error(String::new()))?;
-            }
-            Ok((facts, input))
-        }
-    }
-}
-
-pub(crate) async fn publish_runtime_custody_library_object(
-    data_dir: &Path,
-    registry: Arc<ProviderRegistry>,
-    input: RuntimeCustodyLibraryPublishInput,
-) -> anyhow::Result<RuntimeCustodyLibraryPublishFacts> {
-    let composition = load_runtime_custody_composition(data_dir, registry.clone())?
-        .ok_or_else(|| anyhow::anyhow!(RUNTIME_CUSTODY_COMPOSITION_MISSING_MESSAGE))?;
-    let (device_key, device_did) =
-        crate::collaboration_profile_authority::load_existing_device_signing_key(data_dir)?
-            .ok_or_else(|| anyhow::anyhow!("local Runtime device signing key is missing"))?;
-    let runtime_issuer = RuntimeOperationIssuerKeyV1::new(device_key.verifying_key().to_bytes())
-        .map_err(|_| anyhow::anyhow!("local Runtime device signing key is invalid"))?;
-    let now = crate::auth::now_ts();
-    let configured = composition
-        .configured_nodes()
-        .map_err(|_| anyhow::anyhow!("Runtime custody mint selection is invalid"))?;
-    let selected = resolve_runtime_mint_selected_nodes(
-        composition.expected_policy_authority,
-        composition.expected_authorization_identity,
-        &composition.signed_pool,
-        &composition.signed_epoch,
-        &composition.signed_committee_authorization,
-        now,
-        &configured,
-    )
-    .map_err(|_| anyhow::anyhow!("Runtime custody mint selection is invalid"))?;
-    let mint_nodes = selected
-        .iter()
-        .map(|node| node.binding().clone())
-        .collect::<Vec<_>>();
-    let mint_journal = runtime_mint_journal(data_dir);
-    let mint_intent = load_or_persist_runtime_mint_intent(
-        &mint_journal,
-        &composition,
-        &input,
-        mint_nodes.clone(),
-    )?;
-    if let Some(mint_id) = mint_intent.completed_mint_id() {
-        return load_completed_runtime_mint_facts(&mint_journal, &input, mint_id);
-    }
-    if mint_intent.protect_settled_closed_before_draft() {
-        if let Some(mint_id) = adopt_settled_runtime_mint_record(&mint_journal, &mint_intent)? {
-            return load_completed_runtime_mint_facts(&mint_journal, &input, mint_id);
-        }
-    }
-    let protected =
-        protect_runtime_custody_media(&registry, &mint_journal, &composition, &input, &mint_intent)
-            .await?;
-    tracing::debug!(
-        request_id = %hex::encode(mint_intent.request_id().as_bytes()),
-        segments = protected.encrypted_segments.len(),
-        "runtime custody publish: media protected"
-    );
-    let policy = resolve_runtime_rights_policy(
-        registry.as_ref(),
-        protected.media_identity.encrypted_content(),
-        mint_intent.content_access_id(),
-        RightsActionV1::View,
-    )
-    .await
-    .map_err(|error| {
-        tracing::warn!(%error, "Runtime custody rights policy resolution failed");
-        error.context("Runtime custody rights policy is unavailable")
-    })?;
-    tracing::debug!(
-        request_id = %hex::encode(mint_intent.request_id().as_bytes()),
-        "runtime custody publish: rights policy resolved"
-    );
-    let mint_draft = RuntimeMintDraft::new(
-        &protected.init_segment,
-        &protected.encrypted_segments,
-        input.mime_type.clone(),
-        input.codecs.clone(),
-        mint_intent.content_access_id(),
-        protected
-            .envelope
-            .key_envelope_identity()
-            .map_err(|_| anyhow::anyhow!("Runtime custody protect output is invalid"))?,
-        policy.identity().clone(),
-        protected.envelope.manifest().content_key_commitment(),
-        protected.envelope.manifest().threshold(),
-        mint_nodes,
-    )
-    .map_err(|_| anyhow::anyhow!("Runtime custody mint draft is invalid"))?;
-    let sign_key = device_key.clone();
-    let coordinator = RuntimeMintCoordinator::new(
-        runtime_mint_journal(data_dir),
-        runtime_issuer,
-        move |bytes| sign_key.sign(bytes).to_bytes(),
-        selected,
-    )
-    .map_err(|_| anyhow::anyhow!("Runtime custody mint coordinator is invalid"))?;
-    match coordinator
-        .provision(&mint_draft, &protected.envelope, now)
-        .await
-        .map_err(|_| anyhow::anyhow!("Runtime custody mint failed"))?
-    {
-        RuntimeMintCoordinatorOutcome::CustodyProvisioned { mint_id }
-            if mint_id == mint_draft.mint_id() => {}
-        RuntimeMintCoordinatorOutcome::ContentAvailable { mint_id }
-            if mint_id == mint_draft.mint_id() => {}
-        _ => anyhow::bail!("Runtime custody mint failed"),
-    }
-    tracing::debug!(
-        mint_id = %hex::encode(mint_draft.mint_id().as_bytes()),
-        nodes = mint_draft.nodes().len(),
-        "runtime custody publish: custody provisioned"
-    );
-    let content_id = runtime_protected_content_id(mint_draft.encrypted_content())?;
-    let publisher_profile_did = load_runtime_custody_profile_did(data_dir, &input.principal_id)?;
-    let requirement = RuntimeContentAvailabilityRequirement::new(
-        device_did,
-        content_id.clone(),
-        publisher_profile_did,
-        PROTECTED_CONTENT_REPLICATION_POLICY,
-        PROTECTED_CONTENT_MIN_REPLICAS,
-        PROTECTED_CONTENT_AVAILABILITY_MAX_AGE_SECS,
-        PROTECTED_CONTENT_AVAILABILITY_MAX_FUTURE_SKEW_SECS,
-    )
-    .map_err(|_| anyhow::anyhow!("Runtime custody availability requirement is invalid"))?;
-    let staging = write_protected_content_staging_directory(data_dir, &protected)?;
-    let evidence = publish_and_verify_protected_content_availability(
-        registry.as_ref(),
-        staging.path(),
-        mint_draft.media_identity(),
-        &requirement,
-        crate::auth::now_ts,
-    )
-    .await
-    .map_err(|error| {
-        // The caller sees the fail-closed message; the verifier's actual
-        // reason travels as the cause chain (and the operator log).
-        tracing::warn!(
-            mint_id = %hex::encode(mint_draft.mint_id().as_bytes()),
-            %error,
-            "Runtime custody content availability verification failed"
-        );
-        error.context(RUNTIME_CUSTODY_AVAILABILITY_UNAVAILABLE_MESSAGE)
-    })?;
-    tracing::debug!(
-        mint_id = %hex::encode(mint_draft.mint_id().as_bytes()),
-        content_id = %content_id,
-        replicas = evidence.observed_replicas(),
-        "runtime custody publish: content availability verified"
-    );
-    match coordinator
-        .record_content_availability(&mint_draft, &requirement, evidence.clone())
-        .map_err(|_| anyhow::anyhow!("Runtime custody availability record failed"))?
-    {
-        RuntimeMintCoordinatorOutcome::ContentAvailable { mint_id }
-            if mint_id == mint_draft.mint_id() => {}
-        _ => anyhow::bail!("Runtime custody availability record failed"),
-    }
-    let facts = runtime_custody_library_publish_facts(&input, &mint_draft, &content_id, &evidence);
-    mint_journal
-        .mark_intent_completed(mint_intent.request_id(), mint_draft.mint_id())
-        .map_err(|_| anyhow::anyhow!("Runtime custody mint intent is unavailable"))?;
-    Ok(facts)
-}
-
-struct ProtectedRuntimeCustodyMedia {
-    init_segment: Vec<u8>,
-    encrypted_segments: Vec<Vec<u8>>,
-    media_identity: CencFmp4MediaIdentityV1,
-    envelope: CustodyEnvelopeV1,
-}
-
-enum RuntimeProtectRecoveryDisposition {
-    Fresh,
-    ReplayOpenAndSettleCancel,
-    SettleCancel([u8; MAX_PROVIDER_OPAQUE_HANDLE_BYTES_V1]),
-    SettleClose([u8; MAX_PROVIDER_OPAQUE_HANDLE_BYTES_V1]),
-    TerminalAbort,
-}
-
-async fn protect_runtime_custody_media(
-    registry: &ProviderRegistry,
-    journal: &RuntimeMintJournal,
-    composition: &RuntimeCustodyComposition,
-    input: &RuntimeCustodyLibraryPublishInput,
-    mint_intent: &RuntimeMintIntent,
-) -> anyhow::Result<ProtectedRuntimeCustodyMedia> {
-    let open_request =
-        runtime_custody_open_protection_session_request(composition, input, mint_intent)?;
-    match runtime_protect_recovery_disposition(mint_intent) {
-        RuntimeProtectRecoveryDisposition::TerminalAbort => {
-            anyhow::bail!(RUNTIME_CUSTODY_MINT_TERMINAL_ABORT_MESSAGE);
-        }
-        RuntimeProtectRecoveryDisposition::SettleCancel(handle) => {
-            settle_runtime_custody_protect_session(
-                registry,
-                journal,
-                mint_intent.request_id(),
-                handle,
-                RuntimeProtectSessionSettlementOp::Cancel,
-            )
-            .await?;
-            anyhow::bail!(RUNTIME_CUSTODY_MINT_TERMINAL_ABORT_MESSAGE);
-        }
-        RuntimeProtectRecoveryDisposition::SettleClose(handle) => {
-            settle_runtime_custody_protect_session(
-                registry,
-                journal,
-                mint_intent.request_id(),
-                handle,
-                RuntimeProtectSessionSettlementOp::Close,
-            )
-            .await?;
-            anyhow::bail!(RUNTIME_CUSTODY_MINT_TERMINAL_ABORT_MESSAGE);
-        }
-        RuntimeProtectRecoveryDisposition::ReplayOpenAndSettleCancel => {
-            if !registry
-                .has_ready_runtime_provider_target(PROTECT_PROVIDER_ID)
-                .await
-            {
-                anyhow::bail!(RUNTIME_CUSTODY_MINT_RECONCILIATION_REQUIRED_MESSAGE);
-            }
-            let opened =
-                invoke_typed_protect_provider(registry, "open_protection_session", &open_request)
-                    .await
-                    .map_err(|_| {
-                        anyhow::anyhow!(RUNTIME_CUSTODY_MINT_RECONCILIATION_REQUIRED_MESSAGE)
-                    })?;
-            if opened.status() != ProtectProviderResponseStatusV1::ProtectionSessionOpened {
-                anyhow::bail!(RUNTIME_CUSTODY_MINT_RECONCILIATION_REQUIRED_MESSAGE);
-            }
-            let handle = opened
-                .protection_session_handle()
-                .map_err(|_| anyhow::anyhow!(RUNTIME_CUSTODY_MINT_RECONCILIATION_REQUIRED_MESSAGE))?
-                .ok_or_else(|| {
-                    anyhow::anyhow!(RUNTIME_CUSTODY_MINT_RECONCILIATION_REQUIRED_MESSAGE)
-                })?;
-            journal
-                .mark_intent_protect_opened(mint_intent.request_id(), handle)
-                .map_err(|_| anyhow::anyhow!("Runtime custody mint intent is unavailable"))?;
-            settle_runtime_custody_protect_session(
-                registry,
-                journal,
-                mint_intent.request_id(),
-                handle,
-                RuntimeProtectSessionSettlementOp::Cancel,
-            )
-            .await?;
-            anyhow::bail!(RUNTIME_CUSTODY_MINT_TERMINAL_ABORT_MESSAGE);
-        }
-        RuntimeProtectRecoveryDisposition::Fresh => {}
-    }
-
-    if !registry
-        .has_ready_runtime_provider_target(PROTECT_PROVIDER_ID)
-        .await
-    {
-        anyhow::bail!("Runtime custody protect provider is unavailable");
-    }
-    journal
-        .mark_intent_protect_effect_started(mint_intent.request_id())
-        .map_err(|_| anyhow::anyhow!("Runtime custody mint intent is unavailable"))?;
-    let opened =
-        invoke_typed_protect_provider(registry, "open_protection_session", &open_request).await?;
-    if opened.status() != ProtectProviderResponseStatusV1::ProtectionSessionOpened {
-        anyhow::bail!("Runtime custody protect provider is unavailable");
-    }
-    let handle = opened
-        .protection_session_handle()
-        .map_err(|_| anyhow::anyhow!("Runtime custody protect output is invalid"))?
-        .ok_or_else(|| anyhow::anyhow!("Runtime custody protect output is invalid"))?;
-    journal
-        .mark_intent_protect_opened(mint_intent.request_id(), handle)
-        .map_err(|_| anyhow::anyhow!("Runtime custody mint intent is unavailable"))?;
-    let protect_result = protect_opened_runtime_custody_session(
-        registry,
-        journal,
-        mint_intent.request_id(),
-        handle,
-        &opened,
-        input,
-        composition,
-        mint_intent.content_access_id(),
-    )
-    .await;
-    match protect_result {
-        Ok(protected) => {
-            settle_runtime_custody_protect_session(
-                registry,
-                journal,
-                mint_intent.request_id(),
-                handle,
-                RuntimeProtectSessionSettlementOp::Close,
-            )
-            .await?;
-            Ok(protected)
-        }
-        Err(error) => {
-            settle_runtime_custody_protect_session(
-                registry,
-                journal,
-                mint_intent.request_id(),
-                handle,
-                RuntimeProtectSessionSettlementOp::Cancel,
-            )
-            .await
-            .map_err(|_| anyhow::anyhow!(RUNTIME_CUSTODY_MINT_RECONCILIATION_REQUIRED_MESSAGE))?;
-            Err(error)
-        }
-    }
-}
-
-fn runtime_protect_recovery_disposition(
-    mint_intent: &RuntimeMintIntent,
-) -> RuntimeProtectRecoveryDisposition {
-    if let Some(handle) = mint_intent.protect_pending_close_handle() {
-        RuntimeProtectRecoveryDisposition::SettleClose(handle)
-    } else if let Some(handle) = mint_intent.protect_pending_cancel_handle() {
-        RuntimeProtectRecoveryDisposition::SettleCancel(handle)
-    } else if mint_intent.protect_open_request_pending() {
-        RuntimeProtectRecoveryDisposition::ReplayOpenAndSettleCancel
-    } else if mint_intent.protect_terminal_before_draft() {
-        RuntimeProtectRecoveryDisposition::TerminalAbort
-    } else {
-        RuntimeProtectRecoveryDisposition::Fresh
-    }
-}
-
-fn runtime_custody_open_protection_session_request(
-    composition: &RuntimeCustodyComposition,
-    input: &RuntimeCustodyLibraryPublishInput,
-    mint_intent: &RuntimeMintIntent,
-) -> anyhow::Result<ProtectProviderRequestV1> {
-    let nodes = composition
-        .nodes
-        .iter()
-        .map(|node| {
-            ProtectionSessionNodeV1::new(node.node_public_key, node.custody_public_key)
-                .map_err(|_| anyhow::anyhow!("Runtime custody protect committee is invalid"))
+impl RuntimeCustodyMintPoolNodeRefused {
+    /// The host-storage refusal the pool's nodes reported, if any.
+    fn reported(
+        diagnostics: &RuntimeCustodyCallDiagnostics,
+        pool_did: Option<String>,
+    ) -> Option<Self> {
+        let recorded = diagnostics.recorded();
+        [
+            crate::host_trust::HOST_STORAGE_FULL,
+            crate::host_trust::HOST_STORAGE_MAX_UNSET,
+        ]
+        .into_iter()
+        .find(|code| {
+            recorded
+                .iter()
+                .any(|line| line.split(": ").any(|part| part.trim() == *code))
         })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    let segment_count = u32::try_from(input.clear_segments.len())
-        .map_err(|_| anyhow::anyhow!("Runtime custody protect input is invalid"))?;
-    ProtectProviderRequestV1::new_open_protection_session(
-        mint_intent.request_id(),
-        mint_intent.content_access_id(),
-        composition
-            .signed_pool
-            .pool_identity()
-            .map_err(|_| anyhow::anyhow!("Runtime custody protect committee is invalid"))?,
-        composition
-            .signed_epoch
-            .epoch_identity()
-            .map_err(|_| anyhow::anyhow!("Runtime custody protect committee is invalid"))?,
-        composition
-            .signed_committee_authorization
-            .authorization_identity()
-            .map_err(|_| anyhow::anyhow!("Runtime custody protect committee is invalid"))?,
-        input.mime_type.clone(),
-        input.codecs.clone(),
-        segment_count,
-        &input.clear_init_segment,
-        nodes,
+        .map(|code| Self { code, pool_did })
+    }
+
+    pub(crate) fn as_json(&self) -> Value {
+        json!({
+            "code": self.code,
+            "pool_did": self.pool_did,
+            "action": "host_storage",
+        })
+    }
+}
+
+impl std::fmt::Display for RuntimeCustodyMintPoolNodeRefused {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let why = if self.code == crate::host_trust::HOST_STORAGE_FULL {
+            "its host storage is full"
+        } else {
+            "its host has no storage maximum set"
+        };
+        write!(
+            formatter,
+            "Runtime custody mint failed: a node in this item's pool refused the key share because {why}"
+        )
+    }
+}
+
+impl std::error::Error for RuntimeCustodyMintPoolNodeRefused {}
+
+/// The error an aborted custody fan-out answers with: typed when a pool node
+/// refused for its host storage (STAB-33), else the plain failure.
+pub(crate) fn runtime_custody_mint_failed(
+    diagnostics: &RuntimeCustodyCallDiagnostics,
+    pool_did: Option<String>,
+) -> anyhow::Error {
+    match RuntimeCustodyMintPoolNodeRefused::reported(diagnostics, pool_did) {
+        Some(refused) => anyhow::Error::new(refused),
+        None => anyhow::anyhow!("Runtime custody mint failed"),
+    }
+}
+
+/// The pool a composition mints into, as Creator names it.
+fn runtime_custody_composition_pool_did(composition: &RuntimeCustodyComposition) -> Option<String> {
+    elastos_protected_content_contracts::PoolDidV1::from_issuer(
+        composition.expected_policy_authority,
     )
-    .map_err(|_| anyhow::anyhow!("Runtime custody protect request is invalid"))
+    .to_did_key()
+    .ok()
 }
 
-enum RuntimeProtectSessionSettlementOp {
-    Cancel,
-    Close,
+fn remote_sealing_enabled(
+    data_dir: &Path,
+    existing: Option<&RuntimeMintIntent>,
+    setting: &str,
+) -> bool {
+    existing.is_none_or(|intent| !intent.provider_effect_started())
+        && read_home_config(data_dir)
+            .as_ref()
+            .and_then(|config| config.get(setting))
+            .and_then(toml::Value::as_bool)
+            == Some(true)
 }
 
-async fn settle_runtime_custody_protect_session(
-    registry: &ProviderRegistry,
-    journal: &RuntimeMintJournal,
-    request_id: Digest32,
-    handle: [u8; MAX_PROVIDER_OPAQUE_HANDLE_BYTES_V1],
-    op: RuntimeProtectSessionSettlementOp,
+fn bind_remote_sealing_pool(
+    data_dir: &Path,
+    registry: &Arc<ProviderRegistry>,
+    source: (&str, &str, &str),
+    mint_pool: &mut RuntimeCustodyMintPool,
+    now: u64,
 ) -> anyhow::Result<()> {
-    let (provider_op, request) = match op {
-        RuntimeProtectSessionSettlementOp::Cancel => (
-            "cancel_protection_session",
-            ProtectProviderRequestV1::new_cancel_protection_session(handle)
-                .map_err(|_| anyhow::anyhow!("Runtime custody protect request is invalid"))?,
-        ),
-        RuntimeProtectSessionSettlementOp::Close => (
-            "close_protection_session",
-            ProtectProviderRequestV1::new_close_protection_session(handle)
-                .map_err(|_| anyhow::anyhow!("Runtime custody protect request is invalid"))?,
-        ),
-    };
-    let response = invoke_typed_protect_provider(registry, provider_op, &request).await?;
-    match (op, response.status()) {
-        (
-            RuntimeProtectSessionSettlementOp::Cancel,
-            ProtectProviderResponseStatusV1::ProtectionSessionCancelled,
-        ) => {
-            journal
-                .mark_intent_protect_cancelled_before_draft(request_id)
-                .map_err(|_| anyhow::anyhow!("Runtime custody mint intent is unavailable"))?;
-        }
-        (
-            RuntimeProtectSessionSettlementOp::Close,
-            ProtectProviderResponseStatusV1::ProtectionSessionClosed,
-        ) => {
-            journal
-                .mark_intent_protect_closed_before_draft(request_id)
-                .map_err(|_| anyhow::anyhow!("Runtime custody mint intent is unavailable"))?;
-        }
-        (
-            RuntimeProtectSessionSettlementOp::Cancel | RuntimeProtectSessionSettlementOp::Close,
-            ProtectProviderResponseStatusV1::ProtectionSessionAlreadyAbsent,
-        ) => {
-            journal
-                .mark_intent_protect_already_absent_before_draft(request_id)
-                .map_err(|_| anyhow::anyhow!("Runtime custody mint intent is unavailable"))?;
-        }
-        _ => anyhow::bail!(RUNTIME_CUSTODY_MINT_RECONCILIATION_REQUIRED_MESSAGE),
+    if mint_pool.used.is_none() {
+        let descriptor = crate::custody_pool_descriptor::owner_descriptor(data_dir, now)?
+            .map(SignedPoolDescriptorAnyV1::from)
+            .ok_or_else(|| anyhow::anyhow!(RUNTIME_CUSTODY_MINT_NO_POOL_MESSAGE))?;
+        let epoch = mint_pool.composition.signed_epoch.epoch_identity()?;
+        mint_pool.composition = runtime_custody_composition_for_pool(
+            data_dir,
+            Arc::clone(registry),
+            &descriptor,
+            Some(epoch),
+            now,
+        )?;
+        record_runtime_mint_attempt_pool(data_dir, source, Some(&descriptor))?;
+        mint_pool.used = Some(descriptor);
     }
     Ok(())
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "This operation keeps protect-session authority and settlement inputs explicit at one boundary"
-)]
-async fn protect_opened_runtime_custody_session(
-    registry: &ProviderRegistry,
+async fn finish_runtime_custody_remote_mint<
+    S: elastos_protected_content_runtime::RemoteSealPartSource,
+>(
+    data_dir: &Path,
+    registry: Arc<ProviderRegistry>,
     journal: &RuntimeMintJournal,
-    request_id: Digest32,
-    handle: [u8; MAX_PROVIDER_OPAQUE_HANDLE_BYTES_V1],
-    opened: &ProtectProviderResponseV1,
-    input: &RuntimeCustodyLibraryPublishInput,
-    composition: &RuntimeCustodyComposition,
-    content_access_id: ContentAccessIdV1,
-) -> anyhow::Result<ProtectedRuntimeCustodyMedia> {
-    let init_segment = opened
-        .protected_init_segment()
-        .ok_or_else(|| anyhow::anyhow!("Runtime custody protect output is invalid"))?
-        .to_vec();
-    let mut encrypted_segments = Vec::with_capacity(input.clear_segments.len());
-    for (segment_index, clear_segment) in input.clear_segments.iter().enumerate() {
-        let protected = invoke_typed_protect_provider(
-            registry,
-            "protect_media_segment",
-            &ProtectProviderRequestV1::new_protect_media_segment(
-                handle,
-                u32::try_from(segment_index)
-                    .map_err(|_| anyhow::anyhow!("Runtime custody protect input is invalid"))?,
-                clear_segment,
-            )
-            .map_err(|_| anyhow::anyhow!("Runtime custody protect request is invalid"))?,
-        )
-        .await?;
-        if protected.status() != ProtectProviderResponseStatusV1::MediaSegmentProtected
-            || protected.segment_index()
-                != Some(
-                    u32::try_from(segment_index)
-                        .map_err(|_| anyhow::anyhow!("Runtime custody protect input is invalid"))?,
-                )
-        {
-            anyhow::bail!("Runtime custody protect provider is unavailable");
-        }
-        encrypted_segments.push(
-            protected
-                .protected_segment()
-                .ok_or_else(|| anyhow::anyhow!("Runtime custody protect output is invalid"))?
-                .to_vec(),
-        );
+    intent: &RuntimeMintIntent,
+    source: impl FnOnce() -> anyhow::Result<S>,
+) -> anyhow::Result<PersistedRuntimeMint> {
+    use elastos_protected_content_runtime::{
+        upload_remote_seal, verify_recorded_remote_seal_attestation, PoolRemoteSealTransport,
+    };
+
+    let remote = intent
+        .remote_seal_request()
+        .ok_or_else(|| anyhow::anyhow!("remote seal request is unavailable"))?;
+    let (device_key, device_did) =
+        crate::collaboration_profile_authority::load_existing_device_signing_key(data_dir)?
+            .ok_or_else(|| anyhow::anyhow!("local Runtime device signing key is missing"))?;
+    let issuer = RuntimeOperationIssuerKeyV1::new(device_key.verifying_key().to_bytes())?;
+    anyhow::ensure!(
+        remote.request().statement().minter_issuer == issuer,
+        "remote seal request belongs to a different minter"
+    );
+    let request_id = intent.request_id();
+    let finish = |record: PersistedRuntimeMint| {
+        record_runtime_pool_mint(data_dir, record.draft(), remote.descriptor(), &device_key)?;
+        Ok(record)
+    };
+    if let Some(record) = journal.load_adopted_remote_mint(request_id)? {
+        return finish(record);
     }
-    let finalized = invoke_typed_protect_provider(
-        registry,
-        "finalize_protection_session",
-        &ProtectProviderRequestV1::new_finalize_protection_session(handle)
-            .map_err(|_| anyhow::anyhow!("Runtime custody protect request is invalid"))?,
+    let source = source()?;
+    let transport = PoolRemoteSealTransport(
+        crate::custody_pool_resolver::RegistryPoolSessionTransport::new(data_dir, registry.clone()),
+    );
+    let completion = upload_remote_seal(
+        &transport,
+        &source,
+        journal,
+        request_id,
+        issuer,
+        &crate::auth::now_ts,
     )
     .await?;
-    if finalized.status() != ProtectProviderResponseStatusV1::ProtectionSessionFinalized {
-        anyhow::bail!("Runtime custody protect provider is unavailable");
-    }
-    let media_identity = finalized
-        .media_identity()
-        .map_err(|_| anyhow::anyhow!("Runtime custody protect output is invalid"))?
-        .ok_or_else(|| anyhow::anyhow!("Runtime custody protect output is invalid"))?;
-    let envelope = finalized
-        .custody_envelope()
-        .map_err(|_| anyhow::anyhow!("Runtime custody protect output is invalid"))?
-        .ok_or_else(|| anyhow::anyhow!("Runtime custody protect output is invalid"))?;
-    let expected_media = CencFmp4MediaIdentityV1::new_from_bytes(
-        &init_segment,
-        &encrypted_segments,
-        input.mime_type.clone(),
-        input.codecs.clone(),
+    let output = verify_recorded_remote_seal_attestation(
+        &completion,
+        remote.descriptor(),
+        remote.request(),
+        remote.sealer(),
+    )?;
+    let statement = output.statement();
+    let requirement = RuntimeContentAvailabilityRequirement::new(
+        &statement.sealer_device_did,
+        runtime_protected_content_id(output.identity().encrypted_content())?,
+        &statement.content_publisher_did,
+        PROTECTED_CONTENT_REPLICATION_POLICY,
+        PROTECTED_CONTENT_NEW_MINT_REPLICA_TARGET,
+        PROTECTED_CONTENT_AVAILABILITY_MAX_AGE_SECS,
+        PROTECTED_CONTENT_AVAILABILITY_MAX_FUTURE_SKEW_SECS,
+    )?;
+    let (requirement, availability) = verify_remote_mint_publication(
+        &registry,
+        &output,
+        requirement,
+        &device_did,
+        crate::auth::now_ts,
     )
-    .map_err(|_| anyhow::anyhow!("Runtime custody protect output is invalid"))?;
-    let protected_session =
-        ValidatedCencFmp4MediaSessionLayoutV1::new(&expected_media, &init_segment)
-            .map_err(|_| anyhow::anyhow!("Runtime custody protect output is invalid"))?;
-    if media_identity != expected_media
-        || protected_session.content_access_id() != content_access_id
-        || envelope.manifest().encrypted_content() != media_identity.encrypted_content()
-        || envelope.manifest().custody_pool()
-            != composition
-                .signed_pool
-                .pool_identity()
-                .map_err(|_| anyhow::anyhow!("Runtime custody protect committee is invalid"))?
-        || envelope.manifest().custody_epoch()
-            != composition
-                .signed_epoch
-                .epoch_identity()
-                .map_err(|_| anyhow::anyhow!("Runtime custody protect committee is invalid"))?
-        || envelope.manifest().custody_committee_authorization()
-            != composition
-                .signed_committee_authorization
-                .authorization_identity()
-                .map_err(|_| anyhow::anyhow!("Runtime custody protect committee is invalid"))?
-    {
-        anyhow::bail!("Runtime custody protect output is invalid");
-    }
-    journal
-        .mark_intent_protect_finalized(request_id, handle)
-        .map_err(|_| anyhow::anyhow!("Runtime custody mint intent is unavailable"))?;
-    Ok(ProtectedRuntimeCustodyMedia {
-        init_segment,
-        encrypted_segments,
-        media_identity,
-        envelope,
-    })
-}
-
-async fn invoke_typed_protect_provider(
-    registry: &ProviderRegistry,
-    op: &str,
-    request: &ProtectProviderRequestV1,
-) -> anyhow::Result<ProtectProviderResponseV1> {
-    let request_value = serde_json::from_slice(
-        &request
-            .to_json_vec()
-            .map_err(|_| anyhow::anyhow!("Runtime custody protect request is invalid"))?,
+    .await?;
+    let policy = resolve_runtime_rights_policy(
+        &registry,
+        output.identity().encrypted_content(),
+        intent.content_access_id(),
+        RightsActionV1::View,
     )
-    .map_err(|_| anyhow::anyhow!("Runtime custody protect request is invalid"))?;
-    let data = invoke_json_provider(registry, PROTECT_PROVIDER_ID, op, request_value)
-        .await
-        .map_err(|_| anyhow::anyhow!("Runtime custody protect provider is unavailable"))?;
-    ProtectProviderResponseV1::from_json_slice(
-        &serde_json::to_vec(&data)
-            .map_err(|_| anyhow::anyhow!("Runtime custody protect output is invalid"))?,
-    )
-    .map_err(|_| anyhow::anyhow!("Runtime custody protect output is invalid"))
-}
-
-fn write_protected_content_staging_directory(
-    data_dir: &Path,
-    protected: &ProtectedRuntimeCustodyMedia,
-) -> anyhow::Result<tempfile::TempDir> {
-    let parent = protected_content_root(data_dir);
-    fs::create_dir_all(&parent)?;
-    let staging = tempfile::Builder::new()
-        .prefix("publish-")
-        .tempdir_in(&parent)
-        .map_err(|_| anyhow::anyhow!("Runtime custody publish staging is unavailable"))?;
-    let tree = staging.path().join("protected-content/v1/segments");
-    fs::create_dir_all(&tree)
-        .map_err(|_| anyhow::anyhow!("Runtime custody publish staging is unavailable"))?;
-    fs::write(
-        staging.path().join(PROTECTED_CONTENT_IDENTITY_PATH),
-        protected
-            .media_identity
-            .canonical_bytes()
-            .map_err(|_| anyhow::anyhow!("Runtime custody protect output is invalid"))?,
-    )
-    .map_err(|_| anyhow::anyhow!("Runtime custody publish staging is unavailable"))?;
-    fs::write(
-        staging.path().join(PROTECTED_CONTENT_INIT_PATH),
-        &protected.init_segment,
-    )
-    .map_err(|_| anyhow::anyhow!("Runtime custody publish staging is unavailable"))?;
-    for (index, segment) in protected.encrypted_segments.iter().enumerate() {
-        fs::write(
-            staging.path().join(protected_content_segment_path(index)),
-            segment,
-        )
-        .map_err(|_| anyhow::anyhow!("Runtime custody publish staging is unavailable"))?;
-    }
-    Ok(staging)
+    .await?;
+    let draft = RuntimeMintDraft::new_from_identity(
+        output.identity().clone(),
+        intent.content_access_id(),
+        statement.key_envelope.clone(),
+        policy.identity().clone(),
+        statement.content_key_commitment,
+        statement.key_envelope.threshold(),
+        intent.nodes().to_vec(),
+    )?;
+    let record = journal.persist_remote_mint(request_id, &draft, &requirement, availability)?;
+    finish(record)
 }
 
 fn runtime_custody_library_publish_facts(
-    input: &RuntimeCustodyLibraryPublishInput,
+    object_uri: &str,
+    source_storage: &str,
     draft: &RuntimeMintDraft,
     content_id: &str,
     evidence: &RuntimeVerifiedContentAvailability,
@@ -4755,7 +1735,7 @@ fn runtime_custody_library_publish_facts(
         content_cid: evidence.content_cid().to_string(),
         mint_id: draft.mint_id(),
         content_id: content_id.to_string(),
-        display_name: runtime_custody_display_name(&input.object_uri),
+        display_name: runtime_custody_display_name(object_uri),
         availability: availability.clone(),
         receipt: json!({
             "schema": "elastos.library.runtime-custody-receipt/v1",
@@ -4763,48 +1743,22 @@ fn runtime_custody_library_publish_facts(
         }),
         content_security: json!({
             "schema": "elastos.library.published-content-security/v1",
-            "object_uri": input.object_uri,
-            "source_storage": input.source_storage,
+            "object_uri": object_uri,
+            "source_storage": source_storage,
             "published_payload": "runtime_custody_encrypted",
             "key_release_required": false,
             "status": "runtime_custody_available",
             "content_id": content_id,
             "mint_id": mint_id_hex,
+            // What the capsule protects. The Library item is a `.ddrm`, whose
+            // name cannot say whether it holds a film or a PDF, so the viewer
+            // routes on this rather than on the item's own extension.
+            "asset_mime": draft.content_identity().content_type(),
             "required_providers": [],
         }),
         listing_uri: None,
+        capsule_uri: None,
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct RuntimePortableListingPackage {
-    pub(crate) schema: String,
-    pub(crate) mint_id: String,
-    pub(crate) content_id: String,
-    pub(crate) content_cid: String,
-    pub(crate) metadata_cid: String,
-    pub(crate) token_uri: String,
-    pub(crate) publisher_profile_did: String,
-    pub(crate) display_name: String,
-    pub(crate) media_identity_base64: String,
-    pub(crate) content_access_id: String,
-    pub(crate) key_envelope_identity_base64: String,
-    pub(crate) rights_policy_identity_base64: String,
-    pub(crate) content_key_commitment_base64: String,
-    pub(crate) seller_address: String,
-    pub(crate) chain_namespace: String,
-    pub(crate) network: String,
-    pub(crate) ledger: String,
-    pub(crate) token_id: String,
-    pub(crate) operative: String,
-    pub(crate) quantity: String,
-    pub(crate) price: String,
-    pub(crate) pay_token: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) payment_processor: Option<String>,
-    pub(crate) mint_transaction_hash: String,
-    pub(crate) published_at: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -4819,522 +1773,92 @@ pub(crate) enum RuntimeCustodyListingOrigin {
         listing_uri: String,
         package_sha256: String,
     },
+    /// Adopted after a market purchase from the asset's shared
+    /// `metadata.json` (D10): no listing package was ever published for it,
+    /// so it names the asset it was built from and its digest is computed.
+    Asset {
+        asset_uri: String,
+        /// The immutable published package verified before local adoption.
+        #[serde(skip)]
+        source_listing: Option<RuntimeSourceListing>,
+    },
+    /// Adopted from the asset's shared `metadata.json` for a principal the
+    /// chain grants access to without a purchase. It carries zero terms
+    /// nobody agreed to sell on, so it is never bought, shared or listed.
+    Granted { asset_uri: String },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct RuntimeCustodyListingAvailabilitySummary {
-    checked_at: u64,
-    observed_replicas: u32,
-    receipt_digest: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct RuntimeCustodyListingRecord {
-    pub(crate) schema: String,
-    pub(crate) origin: RuntimeCustodyListingOrigin,
-    pub(crate) package: RuntimePortableListingPackage,
-    pub(crate) availability: RuntimeCustodyListingAvailabilitySummary,
-}
-
-impl RuntimeCustodyListingRecord {
-    pub(crate) fn validate(&self) -> anyhow::Result<()> {
-        if self.schema != RUNTIME_LISTING_SCHEMA_V1 {
-            anyhow::bail!("Runtime custody listing is invalid");
-        }
-        self.package.decode_and_validate()?;
-        match &self.origin {
-            RuntimeCustodyListingOrigin::LocalCreator {
-                principal_id,
-                listing_uri,
-                package_sha256,
-            } => {
-                validate_runtime_custody_public_text(principal_id)?;
-                validate_runtime_portable_listing_origin(
-                    listing_uri,
-                    package_sha256,
-                    &self.package,
-                )?;
+impl RuntimeCustodyListingOrigin {
+    /// The `elastos://` address this listing's package was published at.
+    ///
+    /// Both origins carry it: a local creator's listing keeps the URI it
+    /// published to, and an imported one keeps the URI it was fetched from.
+    /// Either way it names the same package, so passing it on is how a listing
+    /// travels between Homes.
+    ///
+    /// An adopted listing has no package of its own; the asset it was built
+    /// from is what travels instead. A granted listing travels nowhere: its
+    /// terms are nobody's, so `None`.
+    pub(crate) fn listing_uri(&self) -> Option<&str> {
+        match self {
+            Self::LocalCreator { listing_uri, .. } | Self::Imported { listing_uri, .. } => {
+                Some(listing_uri)
             }
-            RuntimeCustodyListingOrigin::Imported {
-                listing_uri,
-                package_sha256,
-            } => {
-                validate_runtime_portable_listing_origin(
-                    listing_uri,
-                    package_sha256,
-                    &self.package,
-                )?;
-            }
+            Self::Asset {
+                asset_uri,
+                source_listing,
+            } => Some(
+                source_listing
+                    .as_ref()
+                    .map(|source| source.listing_uri.as_str())
+                    .unwrap_or(asset_uri),
+            ),
+            Self::Granted { .. } => None,
         }
-        if self.availability.checked_at == 0
-            || self.availability.observed_replicas < PROTECTED_CONTENT_MIN_REPLICAS
-            || self.availability.receipt_digest.len() != 64
-            || hex::decode(&self.availability.receipt_digest)
-                .map_or(true, |bytes| bytes.len() != 32)
-        {
-            anyhow::bail!("Runtime custody listing is invalid");
-        }
-        Ok(())
     }
 
-    pub(crate) fn portable_package_digest(&self) -> String {
-        let package_sha256 = match &self.origin {
-            RuntimeCustodyListingOrigin::LocalCreator { package_sha256, .. }
-            | RuntimeCustodyListingOrigin::Imported { package_sha256, .. } => package_sha256,
-        };
-        format!("sha256:{package_sha256}")
+    /// Whether this listing was built for a chain grant rather than from
+    /// terms anyone offered. Such a listing is never bought, shared or listed.
+    pub(crate) const fn is_granted(&self) -> bool {
+        matches!(self, Self::Granted { .. })
     }
 }
 
-fn validate_runtime_portable_listing_origin(
-    listing_uri: &str,
-    package_sha256: &str,
-    package: &RuntimePortableListingPackage,
-) -> anyhow::Result<()> {
-    if listing_uri != format!("elastos://{}", runtime_portable_listing_cid(listing_uri)?)
-        || package_sha256.len() != 64
-        || hex::decode(package_sha256).map_or(true, |bytes| bytes.len() != 32)
-        || package_sha256 != hex::encode(sha2::Sha256::digest(serde_json::to_vec(package)?))
-    {
-        anyhow::bail!("Runtime custody listing is invalid");
-    }
-    Ok(())
-}
-
-struct DecodedRuntimePortableAsset {
-    media_identity: CencFmp4MediaIdentityV1,
-    content_access_id: ContentAccessIdV1,
-    key_envelope: elastos_protected_content_contracts::KeyEnvelopeIdentityV1,
-    rights_policy: RightsPolicyIdentityV1,
-    content_key_commitment: Digest32,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RuntimePortableMetadata {
-    schema: String,
-    name: String,
-    mime_type: String,
-    codecs: String,
-    encrypted_content_cid: String,
-    content_access_id: String,
-    protected_content_identity: String,
-    mint_id: String,
-    publisher_profile_did: String,
-    media_identity_base64: String,
-    key_envelope_identity_base64: String,
-    rights_policy_identity_base64: String,
-    content_key_commitment_base64: String,
-}
-
-impl RuntimePortableListingPackage {
-    fn decode_and_validate(&self) -> anyhow::Result<DecodedRuntimePortableAsset> {
-        if self.schema != RUNTIME_PORTABLE_LISTING_SCHEMA_V1
-            || self.token_uri != format!("ipfs://{}/metadata.json", self.metadata_cid)
-            || self.published_at == 0
-        {
-            anyhow::bail!("Runtime custody portable listing is invalid");
-        }
-        let _ = parse_mint_id_hex(&self.mint_id)?;
-        validate_runtime_custody_public_text(&self.content_id)?;
-        validate_runtime_custody_cid(&self.content_cid)?;
-        validate_runtime_custody_cid(&self.metadata_cid)?;
-        validate_runtime_custody_profile_did(&self.publisher_profile_did)?;
-        validate_runtime_custody_display_name(&self.display_name)?;
-        validate_runtime_custody_evm_address(&self.seller_address)?;
-        validate_runtime_custody_public_text(&self.chain_namespace)?;
-        validate_runtime_custody_public_text(&self.network)?;
-        validate_runtime_custody_evm_address(&self.ledger)?;
-        validate_runtime_custody_canonical_quantity(&self.token_id)?;
-        validate_runtime_custody_evm_address(&self.operative)?;
-        validate_runtime_custody_canonical_quantity(&self.quantity)?;
-        validate_runtime_custody_canonical_quantity(&self.price)?;
-        validate_runtime_custody_evm_address(&self.pay_token)?;
-        if let Some(payment_processor) = &self.payment_processor {
-            validate_runtime_custody_evm_address(payment_processor)?;
-        }
-        let transaction_hash = decode_0x_hex(&self.mint_transaction_hash)
-            .filter(|bytes| bytes.len() == 32)
-            .ok_or_else(|| anyhow::anyhow!("Runtime custody portable listing is invalid"))?;
-        if self.mint_transaction_hash != format!("0x{}", hex::encode(transaction_hash)) {
-            anyhow::bail!("Runtime custody portable listing is invalid");
-        }
-        let media_identity: CencFmp4MediaIdentityV1 = decode_runtime_portable_contract(
-            &self.media_identity_base64,
-            MAX_RUNTIME_PORTABLE_LISTING_BYTES as usize,
-        )?;
-        let key_envelope: elastos_protected_content_contracts::KeyEnvelopeIdentityV1 =
-            decode_runtime_portable_contract(
-                &self.key_envelope_identity_base64,
-                MAX_RUNTIME_PORTABLE_LISTING_BYTES as usize,
-            )?;
-        let rights_policy = decode_runtime_portable_contract(
-            &self.rights_policy_identity_base64,
-            MAX_RUNTIME_PORTABLE_LISTING_BYTES as usize,
-        )?;
-        let content_access_id = ContentAccessIdV1::new(
-            decode_0x_hex(&self.content_access_id)
-                .and_then(|bytes| bytes.try_into().ok())
-                .ok_or_else(|| anyhow::anyhow!("Runtime custody portable listing is invalid"))?,
-        )
-        .map_err(|_| anyhow::anyhow!("Runtime custody portable listing is invalid"))?;
-        if self.content_access_id != format!("0x{}", hex::encode(content_access_id.as_bytes())) {
-            anyhow::bail!("Runtime custody portable listing is invalid");
-        }
-        let content_key_commitment = Digest32::new(
-            decode_runtime_portable_base64(&self.content_key_commitment_base64, 32)?
-                .try_into()
-                .map_err(|_| anyhow::anyhow!("Runtime custody portable listing is invalid"))?,
-        );
-        if media_identity.encrypted_content() != key_envelope.encrypted_content()
-            || runtime_protected_content_id(media_identity.encrypted_content())? != self.content_id
-            || media_identity.mime_type().len() > MAX_RUNTIME_CUSTODY_PUBLIC_TEXT_BYTES
-            || media_identity.codecs().len() > MAX_RUNTIME_CUSTODY_PUBLIC_TEXT_BYTES
-        {
-            anyhow::bail!("Runtime custody portable listing is invalid");
-        }
-        Ok(DecodedRuntimePortableAsset {
-            media_identity,
-            content_access_id,
-            key_envelope,
-            rights_policy,
-            content_key_commitment,
-        })
+/// The acquisition stage of a granted copy: it names the chain and nothing
+/// else, because no transaction stands behind the copy.
+pub(crate) fn runtime_custody_grant_stage(
+    chain_namespace: &str,
+    network: &str,
+) -> RuntimeCustodyPurchaseStageRecord {
+    RuntimeCustodyPurchaseStageRecord {
+        stage: RUNTIME_CUSTODY_GRANT_STAGE.to_string(),
+        effect_id: String::new(),
+        approval_request_id: String::new(),
+        request_sha256: String::new(),
+        chain_namespace: chain_namespace.to_string(),
+        network: network.to_string(),
+        to: String::new(),
+        value: String::new(),
+        data: String::new(),
     }
 }
 
-fn runtime_portable_listing_cid(uri: &str) -> anyhow::Result<&str> {
-    let value = uri
-        .strip_prefix("elastos://")
-        .ok_or_else(|| anyhow::anyhow!("Runtime custody portable listing is invalid"))?;
-    validate_runtime_custody_cid(value)?;
-    Ok(value)
-}
-
-fn validate_runtime_custody_cid(value: &str) -> anyhow::Result<()> {
-    let parsed = cid::Cid::try_from(value)
-        .map_err(|_| anyhow::anyhow!("Runtime custody portable listing is invalid"))?;
-    anyhow::ensure!(
-        parsed.to_string() == value,
-        "Runtime custody portable listing is invalid"
-    );
-    Ok(())
-}
-
-fn validate_runtime_custody_profile_did(value: &str) -> anyhow::Result<()> {
-    validate_runtime_custody_public_text(value)?;
-    crate::crypto::decode_did_key(value)
-        .map(|_| ())
-        .map_err(|_| anyhow::anyhow!("Runtime custody portable listing is invalid"))
-}
-
-fn decode_runtime_portable_base64(value: &str, max: usize) -> anyhow::Result<Vec<u8>> {
-    decode_canonical_base64_bytes(value, max, "portable listing")
-        .map_err(|_| anyhow::anyhow!("Runtime custody portable listing is invalid"))
-}
-
-fn decode_runtime_portable_contract<T: CanonicalContract>(
-    value: &str,
-    max: usize,
-) -> anyhow::Result<T> {
-    T::from_canonical_bytes(&decode_runtime_portable_base64(value, max)?)
-        .map_err(|_| anyhow::anyhow!("Runtime custody portable listing is invalid"))
-}
-
-async fn fetch_runtime_portable_file(
-    registry: &ProviderRegistry,
-    cid: &str,
-    path: &str,
-) -> anyhow::Result<(crate::content::ContentObjectManifest, Vec<u8>)> {
-    let manifest = crate::content::fetch_content_object_manifest(registry, cid).await?;
-    let file = manifest
-        .files
-        .first()
-        .filter(|file| {
-            manifest.files.len() == 1
-                && file.path == path
-                && file.size <= MAX_RUNTIME_PORTABLE_LISTING_BYTES
-        })
-        .ok_or_else(|| anyhow::anyhow!("Runtime custody portable listing is invalid"))?;
-    let bytes = crate::content::fetch_bytes_via_provider(registry, cid, Some(path)).await?;
-    if bytes.len() as u64 > MAX_RUNTIME_PORTABLE_LISTING_BYTES {
-        anyhow::bail!("Runtime custody portable listing is invalid");
+/// `did:pkh:eip155:<chainId>:<address>` with a canonical decimal chain id and a
+/// lowercase `0x` + 40 hex address, as `(chain_id, address)`.
+pub(crate) fn parse_runtime_publisher_pkh(value: &str) -> Option<(u64, &str)> {
+    let rest = value.strip_prefix("did:pkh:eip155:")?;
+    let (chain_id, address) = rest.split_once(':')?;
+    let parsed = chain_id.parse::<u64>().ok()?;
+    if parsed.to_string() != chain_id {
+        return None;
     }
-    crate::content::verify_content_object_file(cid, file, &bytes)?;
-    Ok((manifest, bytes))
+    validate_runtime_custody_evm_address(address).ok()?;
+    (address == address.to_ascii_lowercase()).then_some((parsed, address))
 }
 
-async fn verify_runtime_portable_metadata(
-    registry: &ProviderRegistry,
-    package: &RuntimePortableListingPackage,
-    decoded: &DecodedRuntimePortableAsset,
-) -> anyhow::Result<()> {
-    let (manifest, bytes) =
-        fetch_runtime_portable_file(registry, &package.metadata_cid, "metadata.json").await?;
-    let metadata: RuntimePortableMetadata = serde_json::from_slice(&bytes)
-        .map_err(|_| anyhow::anyhow!("Runtime custody portable listing is invalid"))?;
-    if serde_json::to_vec(&metadata)? != bytes
-        || manifest.schema != "elastos.content.object.manifest/v1"
-        || manifest.kind != "directory"
-        || !manifest.links.is_empty()
-        || metadata.schema != "elastos.protected-content.metadata/v1"
-        || metadata.name != package.display_name
-        || metadata.mime_type != decoded.media_identity.mime_type()
-        || metadata.codecs != decoded.media_identity.codecs()
-        || metadata.encrypted_content_cid != package.content_cid
-        || metadata.content_access_id != package.content_access_id
-        || metadata.protected_content_identity != package.content_id
-        || metadata.mint_id != package.mint_id
-        || metadata.publisher_profile_did != package.publisher_profile_did
-        || metadata.media_identity_base64 != package.media_identity_base64
-        || metadata.key_envelope_identity_base64 != package.key_envelope_identity_base64
-        || metadata.rights_policy_identity_base64 != package.rights_policy_identity_base64
-        || metadata.content_key_commitment_base64 != package.content_key_commitment_base64
-    {
-        anyhow::bail!("Runtime custody portable listing is invalid");
-    }
-    Ok(())
-}
-
-async fn verify_runtime_portable_chain(
-    registry: &ProviderRegistry,
-    package: &RuntimePortableListingPackage,
-) -> anyhow::Result<()> {
-    let chain_id = package
-        .chain_namespace
-        .strip_prefix("eip155:")
-        .and_then(|value| value.parse::<u64>().ok())
-        .ok_or_else(|| anyhow::anyhow!("Runtime custody portable listing is invalid"))?;
-    let resolve = |request| async move {
-        let response = registry
-            .send_raw(CHAIN_PROVIDER_ID, &request)
-            .await
-            .map_err(|_| anyhow::anyhow!("Runtime custody portable listing is invalid"))?;
-        response
-            .get("data")
-            .cloned()
-            .filter(|_| response.get("status").and_then(Value::as_str) == Some("ok"))
-            .ok_or_else(|| anyhow::anyhow!("Runtime custody portable listing is invalid"))
-    };
-    let receipt: crate::api::gateway::ResolvedProtectedContentMintReceipt = serde_json::from_value(
-        resolve(json!({
-            "op": "resolve_protected_content_mint_receipt", "network": package.network,
-            "hash": package.mint_transaction_hash, "creator": package.seller_address,
-            "ledger": package.ledger, "token_uri": package.token_uri, "op_type_code": 1,
-        }))
-        .await?,
-    )?;
-    let listing: crate::api::gateway::ResolvedProtectedContentVerifiedListing = serde_json::from_value(resolve(json!({
-        "op": "resolve_protected_content_verified_listing", "network": package.network,
-        "seller": package.seller_address, "ledger": package.ledger, "token_id": package.token_id,
-    })).await?)?;
-    if receipt.schema != "elastos.chain.protected-content-mint-receipt/v1"
-        || listing.schema != "elastos.chain.protected-content-verified-listing/v1"
-        || receipt.network != package.network
-        || listing.network != package.network
-        || receipt.chain_id != chain_id
-        || listing.chain_id != chain_id
-        || receipt.token_id != package.token_id
-        || receipt.operative != package.operative
-        || !listing.seller.eq_ignore_ascii_case(&package.seller_address)
-        || !listing.ledger.eq_ignore_ascii_case(&package.ledger)
-        || listing.token_id != package.token_id
-        || listing.operative != package.operative
-        || listing.quantity != package.quantity
-        || listing.price != package.price
-        || !listing.pay_token.eq_ignore_ascii_case(&package.pay_token)
-        || listing.payment_processor != package.payment_processor
-    {
-        anyhow::bail!("Runtime custody portable listing is invalid");
-    }
-    Ok(())
-}
-
-async fn verify_runtime_portable_media(
-    data_dir: &Path,
-    registry: &Arc<ProviderRegistry>,
-    package: &RuntimePortableListingPackage,
-    decoded: &DecodedRuntimePortableAsset,
-    now_unix_seconds: u64,
-) -> anyhow::Result<(RuntimeMintDraft, RuntimeVerifiedContentAvailability)> {
-    // The caller samples its clock before the fresh ensure; walking a dead
-    // candidate's connect timeouts can take longer than the receipt's
-    // future-skew allowance, so a receipt stamped at completion would read
-    // as "in the future". Verify against the later of the two clocks (a
-    // fixed test clock ahead of wall time is preserved).
-    let now_unix_seconds = now_unix_seconds.max(crate::auth::now_ts());
-    let trusted_receipt_signer_did =
-        crate::collaboration_profile_authority::load_existing_device_did(data_dir)?
-            .ok_or_else(|| anyhow::anyhow!("local Runtime device signing key is missing"))?;
-    let requirement = RuntimeContentAvailabilityRequirement::new(
-        trusted_receipt_signer_did,
-        &package.content_id,
-        &package.publisher_profile_did,
-        PROTECTED_CONTENT_REPLICATION_POLICY,
-        PROTECTED_CONTENT_MIN_REPLICAS,
-        PROTECTED_CONTENT_AVAILABILITY_MAX_AGE_SECS,
-        PROTECTED_CONTENT_AVAILABILITY_MAX_FUTURE_SKEW_SECS,
-    )?;
-    // "Fresh" is a new observation, not the receipt stored at mint time:
-    // that one is older than the freshness window for every purchase made
-    // more than a minute after the mint. Ask the content plane to ensure the
-    // CID again under the same bindings, then read the receipt it produced.
-    let receipt =
-        refresh_content_availability_receipt(registry, &package.content_cid, &requirement).await?;
-    let manifest =
-        crate::content::fetch_content_object_manifest(registry, &package.content_cid).await?;
-    let (init, segments) = verify_protected_content_manifest_and_files(
-        registry,
-        &package.content_cid,
-        &manifest,
-        &decoded.media_identity,
-    )
-    .await?;
-    let availability = verify_protected_content_receipt(
-        &package.content_cid,
-        &manifest,
-        &receipt,
-        &decoded.media_identity,
-        &requirement,
-        // Re-sampled: the refresh above may have walked dead-candidate timeouts.
-        now_unix_seconds.max(crate::auth::now_ts()),
-    )?;
-    let composition = load_runtime_custody_composition(data_dir, registry.clone())?
-        .ok_or_else(|| anyhow::anyhow!(RUNTIME_CUSTODY_COMPOSITION_MISSING_MESSAGE))?;
-    let configured_nodes = composition.configured_nodes()?;
-    let selected = resolve_runtime_mint_selected_nodes(
-        composition.expected_policy_authority,
-        composition.expected_authorization_identity,
-        &composition.signed_pool,
-        &composition.signed_epoch,
-        &composition.signed_committee_authorization,
-        // Re-sampled: the refresh above may have walked dead-candidate timeouts.
-        now_unix_seconds.max(crate::auth::now_ts()),
-        &configured_nodes,
-    )?;
-    let draft = RuntimeMintDraft::new(
-        &init,
-        &segments,
-        decoded.media_identity.mime_type(),
-        decoded.media_identity.codecs(),
-        decoded.content_access_id,
-        decoded.key_envelope.clone(),
-        decoded.rights_policy.clone(),
-        decoded.content_key_commitment,
-        decoded.key_envelope.threshold(),
-        selected.iter().map(|node| node.binding().clone()).collect(),
-    )?;
-    if draft.mint_id() != parse_mint_id_hex(&package.mint_id)? {
-        anyhow::bail!("Runtime custody portable listing is invalid");
-    }
-    Ok((draft, availability))
-}
-
-pub(crate) async fn import_runtime_custody_listing(
-    data_dir: &Path,
-    registry: Arc<ProviderRegistry>,
-    principal_id: &str,
-    listing_uri: &str,
-) -> anyhow::Result<Value> {
-    validate_runtime_custody_public_text(principal_id)?;
-    let listing_cid = runtime_portable_listing_cid(listing_uri)?;
-    let (manifest, bytes) =
-        fetch_runtime_portable_file(&registry, listing_cid, "listing.json").await?;
-    let package: RuntimePortableListingPackage = serde_json::from_slice(&bytes)
-        .map_err(|_| anyhow::anyhow!("Runtime custody portable listing is invalid"))?;
-    if serde_json::to_vec(&package)? != bytes {
-        anyhow::bail!("Runtime custody portable listing is invalid");
-    }
-    let decoded = package.decode_and_validate()?;
-    if manifest.schema != "elastos.content.object.manifest/v1"
-        || manifest.kind != "protected-content-listing"
-        || manifest.links.len() != 2
-        || !manifest
-            .links
-            .iter()
-            .any(|link| link.rel == "encrypted-content" && link.cid == package.content_cid)
-        || !manifest
-            .links
-            .iter()
-            .any(|link| link.rel == "metadata" && link.cid == package.metadata_cid)
-        || manifest.object_did.as_deref() != Some(package.content_id.as_str())
-        || manifest.publisher_did.as_deref() != Some(package.publisher_profile_did.as_str())
-    {
-        anyhow::bail!("Runtime custody portable listing is invalid");
-    }
-    verify_runtime_portable_metadata(&registry, &package, &decoded).await?;
-    verify_runtime_portable_chain(&registry, &package).await?;
-    let (draft, verified_availability) = verify_runtime_portable_media(
-        data_dir,
-        &registry,
-        &package,
-        &decoded,
-        crate::auth::now_ts(),
-    )
-    .await?;
-    let availability = RuntimeCustodyListingAvailabilitySummary {
-        checked_at: verified_availability.checked_at(),
-        observed_replicas: verified_availability.observed_replicas(),
-        receipt_digest: hex::encode(verified_availability.receipt_digest().as_bytes()),
-    };
-    let package_sha256 = hex::encode(sha2::Sha256::digest(&bytes));
-    let expected = RuntimeCustodyListingRecord {
-        schema: RUNTIME_LISTING_SCHEMA_V1.to_string(),
-        origin: RuntimeCustodyListingOrigin::Imported {
-            listing_uri: listing_uri.to_string(),
-            package_sha256,
-        },
-        package,
-        availability,
-    };
-    expected.validate()?;
-    if let Some(existing) = load_runtime_custody_listing(data_dir, draft.mint_id())? {
-        if existing.schema != expected.schema
-            || existing.origin != expected.origin
-            || existing.package != expected.package
-            || (existing.availability.checked_at == expected.availability.checked_at
-                && existing.availability != expected.availability)
-        {
-            anyhow::bail!("Runtime custody listing is invalid");
-        }
-        if expected.availability.checked_at > existing.availability.checked_at {
-            persist_runtime_custody_listing(data_dir, &expected)?;
-        }
-    } else {
-        persist_runtime_custody_listing(data_dir, &expected)?;
-    }
-    Ok(json!({
-        "schema": "elastos.library.runtime-custody-import/v1",
-        "listing_uri": listing_uri,
-        "mint_id": expected.package.mint_id,
-        "status": "verified",
-    }))
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct RuntimeCustodyPurchaseStageRecord {
-    pub(crate) stage: String,
-    pub(crate) effect_id: String,
-    pub(crate) approval_request_id: String,
-    pub(crate) request_sha256: String,
-    pub(crate) chain_namespace: String,
-    pub(crate) network: String,
-    pub(crate) to: String,
-    pub(crate) value: String,
-    pub(crate) data: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct RuntimeCustodyConfirmedPurchaseStage {
-    pub(crate) chain_transaction: String,
-    pub(crate) wallet_binding: ValidatedChainOutcomeBindingV1,
-    pub(crate) chain_observation: Value,
-    pub(crate) confirmed_at: u64,
-}
+// ---------------------------------------------------------------------------
+// Plan B T4.6: a Home that does not hold an item's ciphertext.
+// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -5344,7 +1868,18 @@ pub(crate) struct RuntimeCustodyPurchaseAccessEvidenceRecord {
     pub(crate) network: String,
     pub(crate) chain_id: u64,
     pub(crate) wallet: String,
-    pub(crate) content_access_id: String,
+    /// The KID the access was asked with (`hasAccessByContentId`). Absent on
+    /// evidence asked by the item instead (R50), which names `ledger` and
+    /// `token_id`. Every record written before R50 has it, and serializes
+    /// exactly as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) content_access_id: Option<String>,
+    /// The item the access was asked about (`AuthorityGateway.hasAccess`,
+    /// R50): set, with `token_id`, only on item-keyed evidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) ledger: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) token_id: Option<String>,
     pub(crate) has_access: bool,
     pub(crate) finalized_block_number: u64,
     pub(crate) finalized_block_hash: String,
@@ -5353,27 +1888,36 @@ pub(crate) struct RuntimeCustodyPurchaseAccessEvidenceRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct RuntimeCustodyTerminalPurchaseRecord {
-    pub(crate) chain_transaction: String,
-    pub(crate) wallet_binding: ValidatedChainOutcomeBindingV1,
-    pub(crate) chain_observation: Value,
-    pub(crate) access_evidence: RuntimeCustodyPurchaseAccessEvidenceRecord,
-    pub(crate) confirmed_at: u64,
-    pub(crate) bought_at: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum RuntimeCustodyPurchaseProgress {
     Pending {
-        #[serde(skip_serializing_if = "Option::is_none")]
+        /// Set once the ERC-20 approval stage's transaction has confirmed on
+        /// chain, so a retried buy skips re-driving an already-confirmed
+        /// approval instead of re-requesting it from the Wallet every call.
+        /// Absent for two-legitimate-different reasons: native-token
+        /// purchases that never had an approval stage, and records written
+        /// before this field existed -- both must keep deserializing.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        confirmed_approval: Option<RuntimeCustodyConfirmedPurchaseStage>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         confirmed_buy: Option<RuntimeCustodyConfirmedPurchaseStage>,
     },
     Complete {
         terminal: RuntimeCustodyTerminalPurchaseRecord,
     },
+    /// A copy the chain grants without any transaction of this principal's
+    /// (acquisition `granted`). The finalized access answer is its only
+    /// evidence, so it is the only state with no transaction to present; a
+    /// purchase or a mint is always `Complete`.
+    Granted {
+        access_evidence: RuntimeCustodyPurchaseAccessEvidenceRecord,
+        acquired_at: u64,
+    },
 }
+
+/// Wire identity of the answer to a request to rebuild an owned copy.
+pub(crate) const RUNTIME_CUSTODY_DOWNLOAD_SCHEMA_V1: &str =
+    "elastos.library.runtime-custody-download/v1";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -5400,495 +1944,43 @@ pub(crate) struct RuntimeCustodyPurchaseRecord {
     pub(crate) address: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) approval_stage: Option<RuntimeCustodyPurchaseStageRecord>,
-    pub(crate) buy_stage: RuntimeCustodyPurchaseStageRecord,
+    /// The transaction by which this principal acquired access: the buy for a
+    /// bought copy, the mint for a minted one. The open path presents it as the
+    /// chain evidence behind a release, so every owned copy has one -- which is
+    /// why this is not optional and why a minted copy records its mint here
+    /// rather than leaving a hole or fabricating a buy.
+    ///
+    /// Written as `acquisition_stage`; `buy_stage` is how every record predating
+    /// minted copies spells the same field.
+    #[serde(alias = "buy_stage")]
+    pub(crate) acquisition_stage: RuntimeCustodyPurchaseStageRecord,
+    #[serde(default)]
+    pub(crate) acquisition: RuntimeCustodyAcquisitionV1,
+    /// Where this copy's `.ddrm` was filed in the owner's Library.
+    ///
+    /// `None` means no capsule has been written yet -- either the copy predates
+    /// capsules, or filing one has not succeeded. That is what a repair looks
+    /// for, and what keeps a replayed buy from filing a second capsule beside
+    /// the first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) capsule_uri: Option<String>,
     pub(crate) progress: RuntimeCustodyPurchaseProgress,
     pub(crate) created_at: u64,
     pub(crate) updated_at: u64,
 }
 
-pub(crate) struct RuntimeCustodyBuyInput {
+/// Which owned copy a download names.
+pub(crate) enum RuntimeCustodyOwnedCopy {
+    /// A copy this Home holds a listing for.
+    Mint(String),
+    /// A copy bought on the market, named the way the chain names it: until
+    /// it is adopted there is no mint for it here to name.
+    MarketItem(crate::protected_content_market::RuntimeMarketBuyItemClaim),
+}
+
+pub(crate) struct RuntimeCustodyDownloadInput {
     pub principal_id: String,
-    pub mint_id: String,
-}
-
-pub(crate) struct RuntimeCustodyViewerOpenInput {
-    pub principal_id: String,
-    pub mint_id: String,
-    pub launch_id: Option<String>,
-    pub proof_binding_id: Option<String>,
-    pub session_id: Option<String>,
-    pub grant_id: Option<String>,
-}
-
-#[derive(Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RuntimeCustodyViewerRecord {
-    schema: String,
-    principal_id: String,
-    profile_did: String,
-    mint_id: String,
-    content_id: String,
-    runtime_session_binding_digest: String,
-    audit_request_id: String,
-    viewer_session_handle: String,
-    expires_at: u64,
-    #[serde(default)]
-    next_media_part_index: u32,
-    lifecycle_status: RuntimeCustodyViewerLifecycleStatus,
-    pending_close_result: Option<RuntimeCustodyOpenPendingCloseResult>,
-    pending_cancel_result: Option<RuntimeCustodyOpenPendingCancelResult>,
-    /// Set while the viewer release waits on the Wallet's managed approval of
-    /// the rights-signature request; absent for earlier records.
-    #[serde(default)]
-    pending_release: Option<RuntimeCustodyPendingRelease>,
-    created_at: u64,
-    updated_at: u64,
-}
-
-/// Everything a resumed open needs to replay the exact rights-signature
-/// request against the recipient the decrypt provider still holds under the
-/// viewer session handle. The recipient private key never leaves the decrypt
-/// provider; only its public identity is persisted.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct RuntimeCustodyPendingRelease {
-    wallet_request_hex: String,
-    approval_request_id: String,
-    recipient_public_key_hex: String,
-    recipient_encryption_suite_id: String,
-    recipient_key_id_hex: String,
-}
-
-impl RuntimeCustodyPendingRelease {
-    fn new(
-        wallet_request: &[u8],
-        approval_request_id: &str,
-        prepared: &RuntimePreparedRecipient,
-    ) -> Self {
-        Self {
-            wallet_request_hex: hex::encode(wallet_request),
-            approval_request_id: approval_request_id.to_string(),
-            recipient_public_key_hex: hex::encode(prepared.recipient_public_key().as_bytes()),
-            recipient_encryption_suite_id: prepared
-                .recipient_identity()
-                .encryption_suite_id()
-                .to_string(),
-            recipient_key_id_hex: hex::encode(prepared.recipient_identity().key_id().as_bytes()),
-        }
-    }
-
-    fn wallet_request(&self) -> anyhow::Result<Vec<u8>> {
-        decode_hex_bytes(&self.wallet_request_hex).map_err(release_unavailable!())
-    }
-
-    fn recipient_public_key(&self) -> anyhow::Result<RecipientPublicKeyBytesV1> {
-        let bytes =
-            decode_hex_bytes(&self.recipient_public_key_hex).map_err(release_unavailable!())?;
-        RecipientPublicKeyBytesV1::new(
-            bytes
-                .as_slice()
-                .try_into()
-                .map_err(release_unavailable!())?,
-        )
-        .map_err(release_unavailable!())
-    }
-
-    fn recipient_identity(&self) -> anyhow::Result<RecipientKeyIdentityV1> {
-        let key_id: [u8; 32] = decode_hex_bytes(&self.recipient_key_id_hex)
-            .map_err(release_unavailable!())?
-            .as_slice()
-            .try_into()
-            .map_err(release_unavailable!())?;
-        RecipientKeyIdentityV1::new(
-            self.recipient_encryption_suite_id.clone(),
-            Digest32::new(key_id),
-        )
-        .map_err(release_unavailable!())
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum RuntimeCustodyViewerLifecycleStatus {
-    OpenPending,
-    Active,
-    CleanupPending,
-    Closed,
-    AlreadyAbsent,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum RuntimeCustodyOpenPendingCloseResult {
-    Closed,
-    AlreadyAbsent,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum RuntimeCustodyOpenPendingCancelResult {
-    Cancelled,
-    AlreadyAbsent,
-}
-
-struct RuntimeCustodyOpenPendingInput<'a> {
-    principal_id: &'a str,
-    profile_did: &'a str,
-    mint_id: Digest32,
-    content_id: &'a str,
-    runtime_session_binding: RuntimeSessionBindingV1,
-    audit_request_id: Digest32,
-    viewer_session_handle: [u8; MAX_PROVIDER_OPAQUE_HANDLE_BYTES_V1],
-    expires_at: u64,
-    now: u64,
-}
-
-impl RuntimeCustodyViewerRecord {
-    fn from_open_pending(input: RuntimeCustodyOpenPendingInput<'_>) -> anyhow::Result<Self> {
-        let record = Self {
-            schema: RUNTIME_VIEWER_SCHEMA_V1.to_string(),
-            principal_id: input.principal_id.to_string(),
-            profile_did: input.profile_did.to_string(),
-            mint_id: hex::encode(input.mint_id.as_bytes()),
-            content_id: input.content_id.to_string(),
-            runtime_session_binding_digest: hex::encode(
-                input.runtime_session_binding.digest().as_bytes(),
-            ),
-            audit_request_id: hex::encode(input.audit_request_id.as_bytes()),
-            viewer_session_handle: hex::encode(input.viewer_session_handle),
-            expires_at: input.expires_at,
-            next_media_part_index: 0,
-            lifecycle_status: RuntimeCustodyViewerLifecycleStatus::OpenPending,
-            pending_close_result: None,
-            pending_cancel_result: None,
-            pending_release: None,
-            created_at: input.now,
-            updated_at: input.now,
-        };
-        let _ = record.audit_request_id()?;
-        let _ = record.viewer_session_handle_bytes()?;
-        if record.expires_at == 0 {
-            anyhow::bail!("Runtime custody viewer session is unavailable");
-        }
-        Ok(record)
-    }
-
-    fn from_active_session(
-        principal_id: &str,
-        profile_did: &str,
-        mint_id: Digest32,
-        content_id: &str,
-        runtime_session_binding: RuntimeSessionBindingV1,
-        session: &RuntimeViewerSession,
-        now: u64,
-    ) -> anyhow::Result<Self> {
-        Ok(Self {
-            schema: RUNTIME_VIEWER_SCHEMA_V1.to_string(),
-            principal_id: principal_id.to_string(),
-            profile_did: profile_did.to_string(),
-            mint_id: hex::encode(mint_id.as_bytes()),
-            content_id: content_id.to_string(),
-            runtime_session_binding_digest: hex::encode(
-                runtime_session_binding.digest().as_bytes(),
-            ),
-            audit_request_id: hex::encode(session.audit_request_id().as_bytes()),
-            viewer_session_handle: hex::encode(session.viewer_session_handle()),
-            expires_at: session.expires_at(),
-            next_media_part_index: 0,
-            lifecycle_status: RuntimeCustodyViewerLifecycleStatus::Active,
-            pending_close_result: None,
-            pending_cancel_result: None,
-            pending_release: None,
-            created_at: now,
-            updated_at: now,
-        })
-    }
-
-    fn validates_authority_identity(
-        &self,
-        principal_id: &str,
-        profile_did: &str,
-        mint_id: Digest32,
-        content_id: &str,
-    ) -> bool {
-        if self.schema != RUNTIME_VIEWER_SCHEMA_V1
-            || self.principal_id != principal_id
-            || self.profile_did != profile_did
-            || self.mint_id != hex::encode(mint_id.as_bytes())
-            || self.content_id != content_id
-        {
-            return false;
-        }
-        true
-    }
-
-    fn matches_runtime_session_binding(
-        &self,
-        runtime_session_binding: &RuntimeSessionBindingV1,
-    ) -> bool {
-        self.runtime_session_binding_digest
-            == hex::encode(runtime_session_binding.digest().as_bytes())
-    }
-
-    fn audit_request_id(&self) -> anyhow::Result<Digest32> {
-        Ok(Digest32::new(
-            decode_hex_bytes(&self.audit_request_id)
-                .map_err(|_| anyhow::anyhow!("Runtime custody viewer session is unavailable"))?
-                .try_into()
-                .map_err(|_| anyhow::anyhow!("Runtime custody viewer session is unavailable"))?,
-        ))
-    }
-
-    fn viewer_session_handle_bytes(
-        &self,
-    ) -> anyhow::Result<[u8; MAX_PROVIDER_OPAQUE_HANDLE_BYTES_V1]> {
-        decode_hex_bytes(&self.viewer_session_handle)
-            .map_err(|_| anyhow::anyhow!("Runtime custody viewer session is unavailable"))?
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("Runtime custody viewer session is unavailable"))
-    }
-
-    fn to_runtime_viewer_session(
-        &self,
-        encrypted_content: &EncryptedContentIdentityV1,
-    ) -> anyhow::Result<RuntimeViewerSession> {
-        RuntimeViewerSession::from_persisted_parts(
-            self.audit_request_id()?,
-            self.viewer_session_handle_bytes()?,
-            encrypted_content.clone(),
-            RightsActionV1::View,
-            self.expires_at,
-        )
-        .map_err(|_| anyhow::anyhow!("Runtime custody viewer session is unavailable"))
-    }
-
-    fn is_expired(&self, now: u64) -> bool {
-        now >= self.expires_at
-    }
-
-    /// Media parts are released strictly in order: part 0 is the init
-    /// segment (no `segment_index`), part n+1 is segment n. The stable
-    /// message stays; the detail names the expected and requested parts.
-    fn require_media_part_index(&self, segment_index: Option<u32>) -> anyhow::Result<()> {
-        const MESSAGE: &str = "Runtime custody viewer media part is invalid";
-        let requested = match segment_index {
-            Some(index) => index.checked_add(1).ok_or_else(|| {
-                anyhow::anyhow!("segment index {index} overflows the media part sequence")
-                    .context(MESSAGE)
-            })?,
-            None => 0,
-        };
-        if requested != self.next_media_part_index {
-            tracing::warn!(
-                requested_part = requested,
-                next_part = self.next_media_part_index,
-                "runtime custody viewer: media part requested out of order"
-            );
-            return Err(anyhow::anyhow!(
-                "requested media part {requested} (segment_index {segment_index:?}) but the next part is {} (part 0 is the init segment, part n+1 is segment n)",
-                self.next_media_part_index
-            )
-            .context(MESSAGE));
-        }
-        Ok(())
-    }
-
-    fn mark_media_part_read(&mut self, now: u64) -> anyhow::Result<()> {
-        self.next_media_part_index = self
-            .next_media_part_index
-            .checked_add(1)
-            .ok_or_else(|| anyhow::anyhow!("Runtime custody viewer media part is invalid"))?;
-        self.updated_at = now;
-        Ok(())
-    }
-
-    fn open_pending_close_result(&self) -> Option<RuntimeCustodyOpenPendingCloseResult> {
-        self.pending_close_result
-    }
-
-    fn open_pending_cancel_result(&self) -> Option<RuntimeCustodyOpenPendingCancelResult> {
-        self.pending_cancel_result
-    }
-
-    fn mark_open_pending_close_result(
-        &mut self,
-        result: RuntimeViewerSessionCloseResult,
-        now: u64,
-    ) {
-        self.pending_close_result = Some(match result {
-            RuntimeViewerSessionCloseResult::Closed => RuntimeCustodyOpenPendingCloseResult::Closed,
-            RuntimeViewerSessionCloseResult::AlreadyAbsent => {
-                RuntimeCustodyOpenPendingCloseResult::AlreadyAbsent
-            }
-        });
-        self.updated_at = now;
-    }
-
-    fn mark_open_pending_cancel_result(
-        &mut self,
-        result: RuntimePreparedRecipientCancelResult,
-        now: u64,
-    ) {
-        self.pending_cancel_result = Some(match result {
-            RuntimePreparedRecipientCancelResult::Cancelled => {
-                RuntimeCustodyOpenPendingCancelResult::Cancelled
-            }
-            RuntimePreparedRecipientCancelResult::AlreadyAbsent => {
-                RuntimeCustodyOpenPendingCancelResult::AlreadyAbsent
-            }
-        });
-        self.updated_at = now;
-    }
-
-    fn mark_cleanup_pending(&mut self, now: u64) {
-        self.lifecycle_status = RuntimeCustodyViewerLifecycleStatus::CleanupPending;
-        self.pending_close_result = None;
-        self.pending_cancel_result = None;
-        self.updated_at = now;
-    }
-
-    fn mark_terminal(&mut self, result: RuntimeViewerSessionCloseResult, now: u64) {
-        self.lifecycle_status = match result {
-            RuntimeViewerSessionCloseResult::Closed => RuntimeCustodyViewerLifecycleStatus::Closed,
-            RuntimeViewerSessionCloseResult::AlreadyAbsent => {
-                RuntimeCustodyViewerLifecycleStatus::AlreadyAbsent
-            }
-        };
-        self.pending_close_result = None;
-        self.pending_cancel_result = None;
-        self.updated_at = now;
-    }
-}
-
-pub(crate) fn list_runtime_custody_listings(
-    data_dir: &Path,
-    principal_id: &str,
-) -> anyhow::Result<Value> {
-    if principal_id.trim().is_empty() {
-        anyhow::bail!("Runtime custody listing principal is invalid");
-    }
-    let root = data_dir.join(RUNTIME_LISTING_ROOT);
-    let (listing_paths, truncated) = select_runtime_custody_listing_paths(&root)?;
-    let mut listings = Vec::with_capacity(listing_paths.len());
-    for path in listing_paths {
-        let bytes = fs::read(path)?;
-        let record: RuntimeCustodyListingRecord = serde_json::from_slice(&bytes)
-            .map_err(|_| anyhow::anyhow!("Runtime custody listing is invalid"))?;
-        record.validate()?;
-        listings.push(runtime_custody_listing_summary(
-            data_dir,
-            principal_id,
-            &record,
-        )?);
-    }
-    Ok(json!({
-        "schema": RUNTIME_CUSTODY_LISTINGS_RESPONSE_SCHEMA_V1,
-        "truncated": truncated,
-        "listings": listings,
-    }))
-}
-
-fn select_runtime_custody_listing_paths(root: &Path) -> anyhow::Result<(Vec<PathBuf>, bool)> {
-    if !root.is_dir() {
-        return Ok((Vec::new(), false));
-    }
-    let mut selected = BTreeMap::<String, PathBuf>::new();
-    let mut truncated = false;
-    for entry in fs::read_dir(root)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
-            continue;
-        }
-        let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
-            continue;
-        };
-        let name = name.to_string();
-        if selected.len() < MAX_RUNTIME_CUSTODY_LISTINGS {
-            selected.insert(name, path);
-            continue;
-        }
-        truncated = true;
-        let Some(last_name) = selected.keys().next_back().cloned() else {
-            continue;
-        };
-        if name < last_name {
-            selected.remove(&last_name);
-            selected.insert(name, path);
-        }
-    }
-    Ok((selected.into_values().collect(), truncated))
-}
-
-fn runtime_custody_listing_summary(
-    data_dir: &Path,
-    principal_id: &str,
-    record: &RuntimeCustodyListingRecord,
-) -> anyhow::Result<Value> {
-    let availability = runtime_custody_listing_availability(record);
-    let access_state = runtime_custody_listing_access_state(data_dir, principal_id, record)?;
-    let media = record.package.decode_and_validate()?.media_identity;
-    Ok(json!({
-        "schema": RUNTIME_LISTING_SCHEMA_V1,
-        "mint_id": record.package.mint_id,
-        "display_name": record.package.display_name,
-        "mime_type": media.mime_type(),
-        "codecs": media.codecs(),
-        "quantity": record.package.quantity,
-        "price": record.package.price,
-        "pay_token": record.package.pay_token,
-        "seller_address": record.package.seller_address,
-        "token_id": record.package.token_id,
-        "published_at": record.package.published_at,
-        "availability": availability,
-        "access_state": access_state,
-    }))
-}
-
-fn runtime_custody_listing_availability(record: &RuntimeCustodyListingRecord) -> Value {
-    json!({
-        "schema": RUNTIME_CUSTODY_LISTING_AVAILABILITY_SCHEMA_V1,
-        "status": "last_verified_receipt",
-        "checked_at": record.availability.checked_at,
-        "required_replicas": PROTECTED_CONTENT_MIN_REPLICAS,
-        "observed_replicas": record.availability.observed_replicas,
-        "receipt_digest": record.availability.receipt_digest,
-        "recheck_before_buy": true,
-        "recheck_before_open": true,
-    })
-}
-
-fn runtime_custody_listing_access_state(
-    data_dir: &Path,
-    principal_id: &str,
-    record: &RuntimeCustodyListingRecord,
-) -> anyhow::Result<&'static str> {
-    if matches!(
-        &record.origin,
-        RuntimeCustodyListingOrigin::LocalCreator {
-            principal_id: creator,
-            ..
-        } if creator == principal_id
-    ) {
-        return Ok(RUNTIME_CUSTODY_LISTING_ACCESS_CREATOR);
-    }
-    let mint_id = parse_mint_id_hex(&record.package.mint_id)?;
-    let Some(purchase) = load_runtime_custody_purchase(data_dir, principal_id, mint_id)? else {
-        return Ok(RUNTIME_CUSTODY_LISTING_ACCESS_AVAILABLE);
-    };
-    if purchase.mint_id != record.package.mint_id
-        || purchase.content_id != record.package.content_id
-    {
-        anyhow::bail!("Runtime custody purchase is invalid");
-    }
-    let purchased = matches!(
-        purchase.progress,
-        RuntimeCustodyPurchaseProgress::Complete { .. }
-    ) && purchase.listing_sha256 == record.portable_package_digest();
-    Ok(if purchased {
-        RUNTIME_CUSTODY_LISTING_ACCESS_PURCHASED
-    } else {
-        RUNTIME_CUSTODY_LISTING_ACCESS_AVAILABLE
-    })
+    pub copy: RuntimeCustodyOwnedCopy,
 }
 
 fn runtime_custody_display_name(object_uri: &str) -> String {
@@ -5908,1010 +2000,63 @@ fn runtime_custody_display_name(object_uri: &str) -> String {
     truncate_utf8_to_bytes(&cleaned, MAX_RUNTIME_CUSTODY_PUBLIC_TEXT_BYTES)
 }
 
-fn truncate_utf8_to_bytes(value: &str, max_bytes: usize) -> String {
-    if value.len() <= max_bytes {
-        return value.to_string();
+/// How long after an acquisition confirms its finality is still watched for.
+/// Finality on Base trails the head by about 15-20 minutes. The open reads
+/// finality before any Wallet request however old the copy (OPEN-LOOP OP2).
+pub(crate) const RUNTIME_CUSTODY_FINALITY_WATCH_SECS: u64 = 60 * 60;
+
+/// Opens a purchase-ledger record file for read, refusing symlinks,
+/// non-regular files, and hard-linked files — the same discipline
+/// `open_runtime_media_source_file` applies to media source input.
+///
+/// A refused file is "invalid"; a file that could not be opened or examined
+/// keeps its `io::Error` in the chain (R43), so a caller can tell a record
+/// that is not one from a record it could not read.
+#[cfg(unix)]
+pub(crate) fn open_owner_only_runtime_record_file(path: &Path) -> anyhow::Result<fs::File> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true).custom_flags(libc::O_NOFOLLOW);
+    let file = match options.open(path) {
+        Ok(file) => file,
+        // O_NOFOLLOW answers a symlink with ELOOP: a refusal, not a failure.
+        Err(error) if error.raw_os_error() == Some(libc::ELOOP) => {
+            return Err(runtime_record_file_rejected(path))
+        }
+        Err(error) => return Err(runtime_record_file_unreadable(path, error)),
+    };
+    let metadata = file
+        .metadata()
+        .map_err(|error| runtime_record_file_unreadable(path, error))?;
+    if !(metadata.is_file() && metadata.nlink() == 1) {
+        return Err(runtime_record_file_rejected(path));
     }
-    let mut end = max_bytes;
-    while end > 0 && !value.is_char_boundary(end) {
-        end -= 1;
-    }
-    value[..end].to_string()
+    Ok(file)
 }
 
-fn validate_runtime_custody_display_name(value: &str) -> anyhow::Result<()> {
-    validate_runtime_custody_public_text(value)?;
-    if value.chars().all(char::is_whitespace) {
-        anyhow::bail!("Runtime custody listing is invalid");
+#[cfg(not(unix))]
+pub(crate) fn open_owner_only_runtime_record_file(path: &Path) -> anyhow::Result<fs::File> {
+    let file = fs::File::open(path).map_err(|error| runtime_record_file_unreadable(path, error))?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| runtime_record_file_unreadable(path, error))?;
+    if !metadata.is_file() {
+        return Err(runtime_record_file_rejected(path));
     }
-    Ok(())
+    Ok(file)
 }
 
-fn validate_runtime_custody_public_text(value: &str) -> anyhow::Result<()> {
-    if value.is_empty()
-        || value.len() > MAX_RUNTIME_CUSTODY_PUBLIC_TEXT_BYTES
-        || value.chars().any(char::is_control)
-    {
-        anyhow::bail!("Runtime custody listing is invalid");
-    }
-    Ok(())
+fn runtime_record_file_rejected(path: &Path) -> anyhow::Error {
+    tracing::warn!(path = %path.display(), "purchase ledger record rejected");
+    anyhow::anyhow!("Runtime custody purchase is invalid")
 }
 
-fn validate_runtime_custody_canonical_quantity(value: &str) -> anyhow::Result<()> {
-    let raw = value
-        .strip_prefix("0x")
-        .ok_or_else(|| anyhow::anyhow!("Runtime custody listing is invalid"))?;
-    if raw.is_empty()
-        || raw.len() > 64
-        || !raw
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-    {
-        anyhow::bail!("Runtime custody listing is invalid");
-    }
-    if raw.len() > 1 && raw.starts_with('0') {
-        anyhow::bail!("Runtime custody listing is invalid");
-    }
-    Ok(())
-}
-
-fn validate_runtime_custody_evm_address(value: &str) -> anyhow::Result<()> {
-    let raw = value
-        .strip_prefix("0x")
-        .ok_or_else(|| anyhow::anyhow!("Runtime custody listing is invalid"))?;
-    if raw.len() != 40
-        || !raw
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-    {
-        anyhow::bail!("Runtime custody listing is invalid");
-    }
-    Ok(())
-}
-
-pub(crate) async fn verify_fresh_runtime_custody_availability(
-    data_dir: &Path,
-    registry: &Arc<ProviderRegistry>,
-    listing: &RuntimeCustodyListingRecord,
-    mint_id: Digest32,
-    now_unix_seconds: u64,
-) -> anyhow::Result<(RuntimeMintDraft, RuntimeVerifiedContentAvailability)> {
-    let expected_mint_id = hex::encode(mint_id.as_bytes());
-    if listing.package.mint_id != expected_mint_id {
-        tracing::warn!(line = line!(), "Runtime custody purchase denied before buy");
-        anyhow::bail!(RUNTIME_CUSTODY_PURCHASE_DENIED_MESSAGE);
-    }
-    let decoded = listing.package.decode_and_validate()?;
-    verify_runtime_portable_media(
-        data_dir,
-        registry,
-        &listing.package,
-        &decoded,
-        now_unix_seconds,
-    )
-    .await
-    .map_err(|error| {
-        tracing::warn!(
-            mint_id = %expected_mint_id,
-            error = ?error,
-            "runtime custody fresh availability failed closed"
-        );
-        error.context(RUNTIME_CUSTODY_AVAILABILITY_UNAVAILABLE_MESSAGE)
-    })
-}
-
-pub(crate) async fn open_runtime_custody_viewer(
-    data_dir: &Path,
-    registry: Arc<ProviderRegistry>,
-    input: RuntimeCustodyViewerOpenInput,
-) -> anyhow::Result<Value> {
-    let mint_id = parse_mint_id_hex(&input.mint_id)?;
-    let _viewer_lifecycle_guard =
-        acquire_runtime_custody_viewer_lifecycle_guard(data_dir, &input.principal_id, mint_id)
-            .await;
-    let purchase = load_runtime_custody_purchase(data_dir, &input.principal_id, mint_id)?
-        .ok_or_else(|| anyhow::anyhow!(RUNTIME_CUSTODY_OPEN_DENIED_MESSAGE))?;
-    if purchase.principal_id != input.principal_id {
-        anyhow::bail!(RUNTIME_CUSTODY_OPEN_DENIED_MESSAGE);
-    }
-    let profile_did = load_runtime_custody_profile_did(data_dir, &input.principal_id)?;
-    let listing = load_runtime_custody_listing(data_dir, mint_id)?
-        .ok_or_else(|| anyhow::anyhow!(RUNTIME_CUSTODY_OPEN_DENIED_MESSAGE))?;
-    let asset = validate_runtime_custody_viewer_asset(
-        &listing,
-        &input.principal_id,
-        &profile_did,
-        mint_id,
-        &purchase,
-    )?;
-    let launch_id = input
-        .launch_id
-        .as_deref()
-        .filter(|value| valid_runtime_viewer_launch_id(value));
-    let proof_binding_id = input
-        .proof_binding_id
-        .as_deref()
-        .filter(|value| !value.is_empty());
-    let session_id = input
-        .session_id
-        .as_deref()
-        .filter(|value| !value.is_empty());
-    let grant_id = input.grant_id.as_deref().filter(|value| !value.is_empty());
-    let (Some(launch_id), Some(proof_binding_id), Some(session_id), Some(grant_id)) =
-        (launch_id, proof_binding_id, session_id, grant_id)
-    else {
-        return Err(release_unavailable_missing!()());
-    };
-    let runtime_session_binding = derive_runtime_custody_session_binding(
-        &input.principal_id,
-        &profile_did,
-        launch_id,
-        proof_binding_id,
-        session_id,
-        grant_id,
-        mint_id,
-    )?;
-    // An open-pending record that still waits on the Wallet approval of its
-    // rights-signature request is resumed for the same runtime session
-    // (same prepared recipient, same wallet request) instead of being torn
-    // down and re-prepared, which would orphan the pending approval.
-    let mut resumed_pending_release: Option<RuntimeCustodyViewerRecord> = None;
-    if let Some(record) =
-        load_runtime_custody_viewer_record(data_dir, &input.principal_id, mint_id)?
-    {
-        if !record.validates_authority_identity(
-            &input.principal_id,
-            &profile_did,
-            mint_id,
-            &purchase.content_id,
-        ) {
-            anyhow::bail!(RUNTIME_CUSTODY_OPEN_DENIED_MESSAGE);
-        }
-        let viewer_now = crate::auth::now_ts();
-        match record.lifecycle_status {
-            RuntimeCustodyViewerLifecycleStatus::Active
-                if record.matches_runtime_session_binding(&runtime_session_binding)
-                    && !record.is_expired(viewer_now) =>
-            {
-                let session =
-                    record.to_runtime_viewer_session(asset.media_identity.encrypted_content())?;
-                return runtime_custody_viewer_public_response(
-                    &asset.media_identity,
-                    mint_id,
-                    session.viewer_session_handle(),
-                    session.expires_at(),
-                );
-            }
-            RuntimeCustodyViewerLifecycleStatus::OpenPending
-                if record.pending_release.is_some()
-                    && record.matches_runtime_session_binding(&runtime_session_binding)
-                    && !record.is_expired(viewer_now) =>
-            {
-                tracing::debug!(
-                    mint_id = %hex::encode(mint_id.as_bytes()),
-                    "runtime custody open: resuming viewer release pending Wallet approval"
-                );
-                resumed_pending_release = Some(record);
-            }
-            RuntimeCustodyViewerLifecycleStatus::Active
-                if !record.matches_runtime_session_binding(&runtime_session_binding)
-                    && !record.is_expired(viewer_now) =>
-            {
-                anyhow::bail!(RUNTIME_CUSTODY_OPEN_DENIED_MESSAGE);
-            }
-            RuntimeCustodyViewerLifecycleStatus::OpenPending
-            | RuntimeCustodyViewerLifecycleStatus::Active
-            | RuntimeCustodyViewerLifecycleStatus::CleanupPending => {
-                if record.lifecycle_status == RuntimeCustodyViewerLifecycleStatus::Active
-                    && !record.is_expired(viewer_now)
-                    && !record.matches_runtime_session_binding(&runtime_session_binding)
-                {
-                    anyhow::bail!(RUNTIME_CUSTODY_OPEN_DENIED_MESSAGE);
-                }
-                let _ = settle_runtime_custody_viewer_cleanup(
-                    data_dir,
-                    registry.clone(),
-                    &listing,
-                    &input.principal_id,
-                    mint_id,
-                    record,
-                )
-                .await?;
-            }
-            RuntimeCustodyViewerLifecycleStatus::Closed
-            | RuntimeCustodyViewerLifecycleStatus::AlreadyAbsent => {}
-        }
-    }
-    let (draft, fresh_availability) = verify_fresh_runtime_custody_availability(
-        data_dir,
-        &registry,
-        &listing,
-        mint_id,
-        crate::auth::now_ts(),
-    )
-    .await?;
-    if fresh_availability.content_cid() != purchase.cid {
-        anyhow::bail!(RUNTIME_CUSTODY_AVAILABILITY_UNAVAILABLE_MESSAGE);
-    }
-    let buy = reconstructed_buy_receipt(&draft, &fresh_availability, &purchase, &profile_did)?;
-    let composition = load_runtime_custody_composition(data_dir, registry.clone())?
-        .ok_or_else(|| anyhow::anyhow!(RUNTIME_CUSTODY_COMPOSITION_MISSING_MESSAGE))?;
-    let (device_key, _) =
-        crate::collaboration_profile_authority::load_existing_device_signing_key(data_dir)?
-            .ok_or_else(|| anyhow::anyhow!("local Runtime device signing key is missing"))?;
-    let runtime_issuer = RuntimeOperationIssuerKeyV1::new(device_key.verifying_key().to_bytes())
-        .map_err(|_| anyhow::anyhow!("local Runtime device signing key is invalid"))?;
-    let (media_identity, protected_init) =
-        fetch_runtime_custody_open_media(registry.as_ref(), &purchase.cid, draft.media_identity())
-            .await?;
-    let now = crate::auth::now_ts();
-    let decrypt = RuntimeDecryptRegistryAdapter::new(registry.clone());
-    let (prepared, mut open_pending, audit_request_id, replay_wallet_request) =
-        if let Some(record) = resumed_pending_release {
-            let pending = record
-                .pending_release
-                .clone()
-                .ok_or_else(release_unavailable_missing!())?;
-            let audit_request_id = RuntimeReleaseAuditIdV1::new(record.audit_request_id()?)
-                .map_err(release_unavailable!())?;
-            let prepared = RuntimePreparedRecipient::from_persisted_parts(
-                audit_request_id.digest(),
-                record.viewer_session_handle_bytes()?,
-                buy.binding_for_session(runtime_session_binding)
-                    .map_err(release_unavailable!())?,
-                buy.action(),
-                runtime_issuer,
-                record.expires_at,
-                pending.recipient_public_key()?,
-                pending.recipient_identity()?,
-            )
-            .map_err(release_unavailable!())?;
-            let replay = pending.wallet_request()?;
-            (prepared, record, audit_request_id, Some(replay))
-        } else {
-            let audit_request_id = runtime_open_audit_id(&input.principal_id, mint_id, now);
-            let prepared = match prepare_recipient(
-                &decrypt,
-                &buy,
-                runtime_session_binding,
-                audit_request_id,
-                runtime_issuer,
-                now.saturating_sub(5),
-                now + 60,
-            )
-            .await
-            {
-                Ok(prepared) => prepared,
-                Err(_) => anyhow::bail!(RUNTIME_CUSTODY_DECRYPT_UNAVAILABLE_MESSAGE),
-            };
-            let open_pending =
-                RuntimeCustodyViewerRecord::from_open_pending(RuntimeCustodyOpenPendingInput {
-                    principal_id: &input.principal_id,
-                    profile_did: &profile_did,
-                    mint_id,
-                    content_id: &purchase.content_id,
-                    runtime_session_binding,
-                    audit_request_id: prepared.audit_request_id(),
-                    viewer_session_handle: *prepared.prepared_recipient_handle(),
-                    expires_at: prepared.expires_at(),
-                    now: crate::auth::now_ts(),
-                })?;
-            if let Err(error) = persist_runtime_custody_viewer_record(
-                data_dir,
-                &input.principal_id,
-                mint_id,
-                &open_pending,
-            ) {
-                let _ = cancel_prepared_recipient(&decrypt, &prepared).await;
-                return Err(error);
-            }
-            (prepared, open_pending, audit_request_id, None)
-        };
-    let (release_wallet_request, release_wallet_response, signed_rights) =
-        match invoke_runtime_release_wallet(
-            registry.as_ref(),
-            &buy,
-            prepared.recipient_identity(),
-            RuntimeReleaseWalletInvocation {
-                principal_id: &input.principal_id,
-                account_id: &purchase.account_id,
-                proof_binding_id,
-                session_id,
-                grant_id,
-                mint_id,
-                runtime_session_binding,
-            },
-            replay_wallet_request.as_deref(),
-            now,
-        )
-        .await
-        {
-            Ok(RuntimeReleaseWalletOutcome::Signed {
-                request_bytes,
-                response_bytes,
-                signed_rights,
-            }) => (request_bytes, response_bytes, *signed_rights),
-            Ok(RuntimeReleaseWalletOutcome::PendingApproval {
-                request_bytes,
-                approval_request_id,
-            }) => {
-                // First pending answer: remember the exact request and the
-                // recipient identity so the next open replays it; the prepared
-                // recipient stays alive in the decrypt provider until the
-                // record expires.
-                if open_pending.pending_release.is_none() {
-                    open_pending.pending_release = Some(RuntimeCustodyPendingRelease::new(
-                        &request_bytes,
-                        &approval_request_id,
-                        &prepared,
-                    ));
-                    open_pending.updated_at = crate::auth::now_ts();
-                    persist_runtime_custody_viewer_record(
-                        data_dir,
-                        &input.principal_id,
-                        mint_id,
-                        &open_pending,
-                    )?;
-                }
-                return Err(anyhow::anyhow!(
-                    "{}:{}: approval_request_id={approval_request_id}",
-                    file!(),
-                    line!()
-                )
-                .context(RUNTIME_CUSTODY_OPEN_PENDING_MESSAGE));
-            }
-            Err(error) => {
-                let _ = settle_runtime_custody_viewer_cleanup(
-                    data_dir,
-                    registry.clone(),
-                    &listing,
-                    &input.principal_id,
-                    mint_id,
-                    open_pending.clone(),
-                )
-                .await;
-                // Every release wallet error already carries the stable message
-                // outermost with its cause chain; pass it through unchanged.
-                return Err(error);
-            }
-        };
-    let policy = match resolve_runtime_rights_policy(
-        registry.as_ref(),
-        draft.encrypted_content(),
-        draft.content_access_id(),
-        RightsActionV1::View,
-    )
-    .await
-    {
-        Ok(policy) => policy,
-        Err(_) => {
-            let _ = settle_runtime_custody_viewer_cleanup(
-                data_dir,
-                registry.clone(),
-                &listing,
-                &input.principal_id,
-                mint_id,
-                open_pending.clone(),
-            )
-            .await;
-            anyhow::bail!("Runtime custody rights policy is unavailable");
-        }
-    };
-    let release_request = match KeyReleaseRequestV1::new(
-        signed_rights.request().binding().clone(),
-        signed_rights
-            .request()
-            .request_hash()
-            .map_err(release_unavailable!())?,
-        RightsActionV1::View,
-        prepared.recipient_identity().clone(),
-        now.saturating_sub(5),
-        now + 55,
-        ReplayNonce16::new(audit_nonce_bytes(audit_request_id)),
-    ) {
-        Ok(request) => request,
-        Err(_) => {
-            let _ = settle_runtime_custody_viewer_cleanup(
-                data_dir,
-                registry.clone(),
-                &listing,
-                &input.principal_id,
-                mint_id,
-                open_pending.clone(),
-            )
-            .await;
-            return Err(release_unavailable_missing!()());
-        }
-    };
-    let evidence_request = match RightsEvaluationEvidenceRequestV1::new(
-        signed_rights.request().binding().clone(),
-        policy.identity().clone(),
-    ) {
-        Ok(request) => request,
-        Err(_) => {
-            let _ = settle_runtime_custody_viewer_cleanup(
-                data_dir,
-                registry.clone(),
-                &listing,
-                &input.principal_id,
-                mint_id,
-                open_pending.clone(),
-            )
-            .await;
-            return Err(release_unavailable_missing!()());
-        }
-    };
-    let localhost_root = crate::auth::principal_localhost_root(&input.principal_id);
-    let operation = match assemble_protected_content_runtime_release_operation(
-        data_dir,
-        &input.principal_id,
-        &localhost_root,
-        proof_binding_id,
-        RuntimeReleaseOperationAssemblyInput {
-            rights_request: signed_rights,
-            release_request,
-            recipient_public_key: *prepared.recipient_public_key(),
-            recipient_identity: prepared.recipient_identity().clone(),
-            policy_body: policy.body().clone(),
-            evidence_request,
-            custody_epoch: composition.signed_epoch.clone(),
-            audit_request_id,
-            issued_at: now.saturating_sub(3),
-            expires_at: now + 50,
-        },
-        now,
-    ) {
-        Ok(operation) => operation,
-        Err(_) => {
-            let _ = settle_runtime_custody_viewer_cleanup(
-                data_dir,
-                registry.clone(),
-                &listing,
-                &input.principal_id,
-                mint_id,
-                open_pending.clone(),
-            )
-            .await;
-            return Err(release_unavailable_missing!()());
-        }
-    };
-    let selected = vec![
-        RuntimeSelectedProvider::new(
-            composition.nodes[0].node_public_key,
-            &composition.nodes[0].adapter,
-            &composition.nodes[0].adapter,
-        ),
-        RuntimeSelectedProvider::new(
-            composition.nodes[1].node_public_key,
-            &composition.nodes[1].adapter,
-            &composition.nodes[1].adapter,
-        ),
-        RuntimeSelectedProvider::new(
-            composition.nodes[2].node_public_key,
-            &composition.nodes[2].adapter,
-            &composition.nodes[2].adapter,
-        ),
-    ];
-    let coordinator =
-        RuntimeReleaseCoordinator::new(runtime_release_journal(data_dir), runtime_issuer, selected)
-            .map_err(release_unavailable!())?
-            .with_response_clock(crate::auth::now_ts);
-    let contributions = match coordinator
-        .release(
-            &release_wallet_request,
-            &release_wallet_response,
-            operation.clone(),
-            now,
-        )
-        .await
-    {
-        Ok(RuntimeReleaseCoordinatorOutcome::Terminal(
-            RuntimeReleaseTerminalResult::ContributionsReady {
-                signed_node_contributions,
-            },
-        )) => signed_node_contributions,
-        Ok(RuntimeReleaseCoordinatorOutcome::Nonterminal {
-            operation_hash,
-            reason,
-        }) => {
-            tracing::debug!(
-                ?reason,
-                "runtime custody open: release nonterminal, resuming exact operation"
-            );
-            match coordinator
-                .resume_exact(operation_hash, crate::auth::now_ts())
-                .await
-            {
-                Ok(RuntimeReleaseCoordinatorOutcome::Terminal(
-                    RuntimeReleaseTerminalResult::ContributionsReady {
-                        signed_node_contributions,
-                    },
-                )) => signed_node_contributions,
-                other => {
-                    let _ = settle_runtime_custody_viewer_cleanup(
-                        data_dir,
-                        registry.clone(),
-                        &listing,
-                        &input.principal_id,
-                        mint_id,
-                        open_pending.clone(),
-                    )
-                    .await;
-                    return Err(release_unavailable!()(format!(
-                        "release resume did not yield contributions: {other:?}"
-                    )));
-                }
-            }
-        }
-        other => {
-            let _ = settle_runtime_custody_viewer_cleanup(
-                data_dir,
-                registry.clone(),
-                &listing,
-                &input.principal_id,
-                mint_id,
-                open_pending.clone(),
-            )
-            .await;
-            return Err(release_unavailable!()(format!(
-                "release did not yield contributions: {other:?}"
-            )));
-        }
-    };
-    let receipt_now = crate::auth::now_ts();
-    let terminal_receipt = match sign_runtime_terminal_receipt(
-        &device_key,
-        &operation,
-        &contributions,
-        &composition.signed_epoch,
-        receipt_now,
-    ) {
-        Ok(receipt) => receipt,
-        Err(_) => {
-            let _ = settle_runtime_custody_viewer_cleanup(
-                data_dir,
-                registry.clone(),
-                &listing,
-                &input.principal_id,
-                mint_id,
-                open_pending.clone(),
-            )
-            .await;
-            return Err(release_unavailable_missing!()());
-        }
-    };
-    let expected_terminal_issuer =
-        match TerminalReceiptIssuerKey::new(device_key.verifying_key().to_bytes()) {
-            Ok(issuer) => issuer,
-            Err(_) => {
-                let _ = settle_runtime_custody_viewer_cleanup(
-                    data_dir,
-                    registry.clone(),
-                    &listing,
-                    &input.principal_id,
-                    mint_id,
-                    open_pending.clone(),
-                )
-                .await;
-                anyhow::bail!("local Runtime device signing key is invalid");
-            }
-        };
-    let session = match open_viewer_session(
-        &decrypt,
-        &RuntimeOpenViewerSessionInput {
-            buy: &buy,
-            prepared_recipient: &prepared,
-            signed_runtime_release_operation: &operation,
-            expected_terminal_issuer,
-            content_key_commitment: draft.content_key_commitment(),
-            media_identity: &media_identity,
-            protected_init_segment: &protected_init,
-            signed_node_contributions: &contributions,
-            signed_terminal_receipt: &terminal_receipt,
-            now_unix_seconds: crate::auth::now_ts(),
-        },
-    )
-    .await
-    {
-        Ok(session) => session,
-        Err(_) => {
-            let _ = settle_runtime_custody_viewer_cleanup(
-                data_dir,
-                registry.clone(),
-                &listing,
-                &input.principal_id,
-                mint_id,
-                open_pending.clone(),
-            )
-            .await;
-            anyhow::bail!(RUNTIME_CUSTODY_DECRYPT_UNAVAILABLE_MESSAGE);
-        }
-    };
-    let handle = *session.viewer_session_handle();
-    let expires_at = session.expires_at();
-    let viewer_now = crate::auth::now_ts();
-    let record = RuntimeCustodyViewerRecord::from_active_session(
-        &input.principal_id,
-        &profile_did,
-        mint_id,
-        &purchase.content_id,
-        runtime_session_binding,
-        &session,
-        viewer_now,
-    )?;
-    if let Err(error) =
-        persist_runtime_custody_viewer_record(data_dir, &input.principal_id, mint_id, &record)
-    {
-        let _ = settle_runtime_custody_viewer_cleanup(
-            data_dir,
-            registry.clone(),
-            &listing,
-            &input.principal_id,
-            mint_id,
-            open_pending,
-        )
-        .await;
-        return Err(error);
-    }
-    runtime_custody_viewer_public_response(draft.media_identity(), mint_id, &handle, expires_at)
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) async fn read_runtime_custody_viewer(
-    data_dir: &Path,
-    registry: Arc<ProviderRegistry>,
-    principal_id: &str,
-    mint_id_hex: &str,
-    handle_hex: &str,
-    launch_id: Option<&str>,
-    proof_binding_id: Option<&str>,
-    session_id: Option<&str>,
-    grant_id: Option<&str>,
-    segment_index: Option<u32>,
-) -> anyhow::Result<Value> {
-    let mint_id = parse_mint_id_hex(mint_id_hex)?;
-    let _viewer_lifecycle_guard =
-        acquire_runtime_custody_viewer_lifecycle_guard(data_dir, principal_id, mint_id).await;
-    let handle = parse_viewer_handle_hex(handle_hex)?;
-    let purchase = load_runtime_custody_purchase(data_dir, principal_id, mint_id)?
-        .ok_or_else(|| anyhow::anyhow!("Runtime custody viewer session is unavailable"))?;
-    if purchase.principal_id != principal_id {
-        anyhow::bail!("Runtime custody viewer session is unavailable");
-    }
-    let profile_did = load_runtime_custody_profile_did(data_dir, principal_id)?;
-    let listing = load_runtime_custody_listing(data_dir, mint_id)?
-        .ok_or_else(|| anyhow::anyhow!("Runtime custody viewer session is unavailable"))?;
-    let asset = validate_runtime_custody_viewer_asset(
-        &listing,
-        principal_id,
-        &profile_did,
-        mint_id,
-        &purchase,
-    )?;
-    let runtime_session_binding = require_runtime_custody_session_binding(
-        principal_id,
-        &profile_did,
-        launch_id,
-        proof_binding_id,
-        session_id,
-        grant_id,
-        mint_id,
-        "Runtime custody viewer session is unavailable",
-    )?;
-    let mut record = load_runtime_custody_viewer_record(data_dir, principal_id, mint_id)?
-        .ok_or_else(|| anyhow::anyhow!("Runtime custody viewer session is unavailable"))?;
-    if !record.validates_authority_identity(
-        principal_id,
-        &profile_did,
-        mint_id,
-        &purchase.content_id,
-    ) || !record.matches_runtime_session_binding(&runtime_session_binding)
-        || record.viewer_session_handle != hex::encode(handle)
-    {
-        anyhow::bail!("Runtime custody viewer session is unavailable");
-    }
-    let now = crate::auth::now_ts();
-    let session = match record.lifecycle_status {
-        RuntimeCustodyViewerLifecycleStatus::Active if !record.is_expired(now) => {
-            record.to_runtime_viewer_session(asset.media_identity.encrypted_content())?
-        }
-        RuntimeCustodyViewerLifecycleStatus::OpenPending
-        | RuntimeCustodyViewerLifecycleStatus::Active
-        | RuntimeCustodyViewerLifecycleStatus::CleanupPending => {
-            let _ = settle_runtime_custody_viewer_cleanup(
-                data_dir,
-                registry.clone(),
-                &listing,
-                principal_id,
-                mint_id,
-                record,
-            )
-            .await?;
-            anyhow::bail!("Runtime custody viewer session is unavailable");
-        }
-        RuntimeCustodyViewerLifecycleStatus::Closed
-        | RuntimeCustodyViewerLifecycleStatus::AlreadyAbsent => {
-            anyhow::bail!("Runtime custody viewer session is unavailable");
-        }
-    };
-    record.require_media_part_index(segment_index)?;
-    let selector = if let Some(segment_index) = segment_index {
-        let path = protected_content_segment_path(
-            usize::try_from(segment_index)
-                .map_err(|_| anyhow::anyhow!("Runtime custody viewer media part is invalid"))?,
-        );
-        if usize::try_from(segment_index).ok()
-            >= Some(asset.media_identity.encrypted_segments().len())
-        {
-            anyhow::bail!("Runtime custody viewer media part is invalid");
-        }
-        let encrypted =
-            crate::content::fetch_bytes_via_provider(registry.as_ref(), &purchase.cid, Some(&path))
-                .await
-                .map_err(|_| anyhow::anyhow!(RUNTIME_CUSTODY_AVAILABILITY_UNAVAILABLE_MESSAGE))?;
-        ViewerMediaPartSelectorV1::segment(segment_index, encrypted)
-            .map_err(|_| anyhow::anyhow!("Runtime custody viewer media part is invalid"))?
-    } else {
-        ViewerMediaPartSelectorV1::init()
-    };
-    let part = read_viewer_media_part(
-        &RuntimeDecryptRegistryAdapter::new(registry.clone()),
-        &session,
-        selector,
-        crate::auth::now_ts(),
-    )
-    .await
-    .map_err(|_| anyhow::anyhow!(RUNTIME_CUSTODY_DECRYPT_UNAVAILABLE_MESSAGE))?;
-    record.mark_media_part_read(crate::auth::now_ts())?;
-    if persist_runtime_custody_viewer_record(data_dir, principal_id, mint_id, &record).is_err() {
-        let _ = settle_runtime_custody_viewer_cleanup(
-            data_dir,
-            registry,
-            &listing,
-            principal_id,
-            mint_id,
-            record,
-        )
-        .await;
-        anyhow::bail!("Runtime custody viewer session is unavailable");
-    }
-    Ok(json!({
-        "schema": "elastos.library.runtime-custody-viewer-part/v1",
-        "mint_id": hex::encode(mint_id.as_bytes()),
-        "viewer_session_handle": handle_hex,
-        "encoding": "base64",
-        "data": base64::engine::general_purpose::STANDARD.encode(part.clear_media_part()),
-    }))
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) async fn close_runtime_custody_viewer(
-    data_dir: &Path,
-    registry: Arc<ProviderRegistry>,
-    principal_id: &str,
-    mint_id_hex: &str,
-    handle_hex: &str,
-    launch_id: Option<&str>,
-    proof_binding_id: Option<&str>,
-    session_id: Option<&str>,
-    grant_id: Option<&str>,
-) -> anyhow::Result<Value> {
-    let mint_id = parse_mint_id_hex(mint_id_hex)?;
-    let _viewer_lifecycle_guard =
-        acquire_runtime_custody_viewer_lifecycle_guard(data_dir, principal_id, mint_id).await;
-    let handle = parse_viewer_handle_hex(handle_hex)?;
-    let purchase = load_runtime_custody_purchase(data_dir, principal_id, mint_id)?
-        .ok_or_else(|| anyhow::anyhow!("Runtime custody viewer session is unavailable"))?;
-    if purchase.principal_id != principal_id {
-        anyhow::bail!("Runtime custody viewer session is unavailable");
-    }
-    let profile_did = load_runtime_custody_profile_did(data_dir, principal_id)?;
-    let listing = load_runtime_custody_listing(data_dir, mint_id)?
-        .ok_or_else(|| anyhow::anyhow!("Runtime custody viewer session is unavailable"))?;
-    let asset = validate_runtime_custody_viewer_asset(
-        &listing,
-        principal_id,
-        &profile_did,
-        mint_id,
-        &purchase,
-    )?;
-    let runtime_session_binding = require_runtime_custody_session_binding(
-        principal_id,
-        &profile_did,
-        launch_id,
-        proof_binding_id,
-        session_id,
-        grant_id,
-        mint_id,
-        "Runtime custody viewer session is unavailable",
-    )?;
-    let mut record = load_runtime_custody_viewer_record(data_dir, principal_id, mint_id)?
-        .ok_or_else(|| anyhow::anyhow!("Runtime custody viewer session is unavailable"))?;
-    if !record.validates_authority_identity(
-        principal_id,
-        &profile_did,
-        mint_id,
-        &purchase.content_id,
-    ) || !record.matches_runtime_session_binding(&runtime_session_binding)
-        || record.viewer_session_handle != hex::encode(handle)
-    {
-        anyhow::bail!("Runtime custody viewer session is unavailable");
-    }
-    let result = match record.lifecycle_status {
-        RuntimeCustodyViewerLifecycleStatus::Closed
-        | RuntimeCustodyViewerLifecycleStatus::AlreadyAbsent => None,
-        RuntimeCustodyViewerLifecycleStatus::OpenPending
-        | RuntimeCustodyViewerLifecycleStatus::CleanupPending => {
-            let settled = settle_runtime_custody_viewer_cleanup(
-                data_dir,
-                registry.clone(),
-                &listing,
-                principal_id,
-                mint_id,
-                record.clone(),
-            )
-            .await?;
-            Some(match settled.lifecycle_status {
-                RuntimeCustodyViewerLifecycleStatus::Closed => {
-                    RuntimeViewerSessionCloseResult::Closed
-                }
-                RuntimeCustodyViewerLifecycleStatus::AlreadyAbsent => {
-                    RuntimeViewerSessionCloseResult::AlreadyAbsent
-                }
-                _ => anyhow::bail!(RUNTIME_CUSTODY_DECRYPT_UNAVAILABLE_MESSAGE),
-            })
-        }
-        RuntimeCustodyViewerLifecycleStatus::Active => {
-            let session =
-                record.to_runtime_viewer_session(asset.media_identity.encrypted_content())?;
-            Some(
-                match close_viewer_session_with_result(
-                    &RuntimeDecryptRegistryAdapter::new(registry),
-                    &session,
-                )
-                .await
-                {
-                    Ok(result) => result,
-                    Err(_) => {
-                        record.mark_cleanup_pending(crate::auth::now_ts());
-                        persist_runtime_custody_viewer_record(
-                            data_dir,
-                            principal_id,
-                            mint_id,
-                            &record,
-                        )?;
-                        anyhow::bail!(RUNTIME_CUSTODY_DECRYPT_UNAVAILABLE_MESSAGE);
-                    }
-                },
-            )
-        }
-    };
-    let close_result = if let Some(result) = result {
-        record.mark_terminal(result, crate::auth::now_ts());
-        persist_runtime_custody_viewer_record(data_dir, principal_id, mint_id, &record)?;
-        result
-    } else {
-        RuntimeViewerSessionCloseResult::AlreadyAbsent
-    };
-    Ok(json!({
-        "schema": "elastos.library.runtime-custody-viewer/v1",
-        "mint_id": hex::encode(mint_id.as_bytes()),
-        "closed": true,
-        "close_result": match close_result {
-            RuntimeViewerSessionCloseResult::Closed => "closed",
-            RuntimeViewerSessionCloseResult::AlreadyAbsent => "already_absent",
-        },
-    }))
-}
-
-pub(crate) fn persist_runtime_custody_listing(
-    data_dir: &Path,
-    record: &RuntimeCustodyListingRecord,
-) -> anyhow::Result<()> {
-    write_owner_only_bytes(
-        &runtime_listing_path(data_dir, parse_mint_id_hex(&record.package.mint_id)?),
-        &serde_json::to_vec(record)?,
-    )
-}
-
-pub(crate) fn load_runtime_custody_listing(
-    data_dir: &Path,
-    mint_id: Digest32,
-) -> anyhow::Result<Option<RuntimeCustodyListingRecord>> {
-    let path = runtime_listing_path(data_dir, mint_id);
-    if !path.exists() {
-        return Ok(None);
-    }
-    let record: RuntimeCustodyListingRecord = serde_json::from_slice(&fs::read(path)?)
-        .map_err(|_| anyhow::anyhow!("Runtime custody listing is invalid"))?;
-    record.validate()?;
-    Ok(Some(record))
-}
-
-pub(crate) fn runtime_custody_creator_listing_package(
-    data_dir: &Path,
-    mint: &PersistedRuntimeMint,
-    facts: &RuntimeCustodyLibraryPublishFacts,
-    publisher_principal_id: &str,
-    terminal: &RuntimeMintCreatorTerminalEvidence,
-) -> anyhow::Result<RuntimePortableListingPackage> {
-    let mint_id = mint.draft().mint_id();
-    let availability = mint
-        .content_availability()
-        .ok_or_else(|| anyhow::anyhow!("Runtime custody listing is invalid"))?;
-    let publisher_profile_did = load_runtime_custody_profile_did(data_dir, publisher_principal_id)?;
-    if availability.publisher_identity() != publisher_profile_did {
-        anyhow::bail!("Runtime custody listing is invalid");
-    }
-    Ok(RuntimePortableListingPackage {
-        schema: RUNTIME_PORTABLE_LISTING_SCHEMA_V1.to_string(),
-        mint_id: hex::encode(mint_id.as_bytes()),
-        content_id: facts.content_id.clone(),
-        content_access_id: format!(
-            "0x{}",
-            hex::encode(mint.draft().content_access_id().as_bytes())
-        ),
-        content_cid: facts.content_cid.clone(),
-        metadata_cid: terminal.metadata_cid().to_string(),
-        token_uri: terminal.token_uri().to_string(),
-        publisher_profile_did,
-        display_name: facts.display_name.clone(),
-        media_identity_base64: base64::engine::general_purpose::STANDARD
-            .encode(mint.draft().media_identity().canonical_bytes()?),
-        key_envelope_identity_base64: base64::engine::general_purpose::STANDARD
-            .encode(mint.draft().key_envelope().canonical_bytes()?),
-        rights_policy_identity_base64: base64::engine::general_purpose::STANDARD
-            .encode(mint.draft().policy().canonical_bytes()?),
-        content_key_commitment_base64: base64::engine::general_purpose::STANDARD
-            .encode(mint.draft().content_key_commitment().as_bytes()),
-        quantity: terminal.quantity().to_string(),
-        seller_address: terminal.seller().to_ascii_lowercase(),
-        chain_namespace: terminal.chain_namespace().to_string(),
-        network: terminal.network().to_string(),
-        ledger: terminal.ledger().to_ascii_lowercase(),
-        token_id: terminal.token_id().to_ascii_lowercase(),
-        operative: terminal.operative().to_ascii_lowercase(),
-        price: terminal.price().to_string(),
-        pay_token: terminal.pay_token().to_ascii_lowercase(),
-        payment_processor: terminal.payment_processor().map(str::to_ascii_lowercase),
-        mint_transaction_hash: terminal.transaction_hash().to_ascii_lowercase(),
-        published_at: terminal.published_at(),
-    })
-}
-
-pub(crate) fn persist_runtime_custody_creator_listing(
-    data_dir: &Path,
-    mint: &PersistedRuntimeMint,
-    package: RuntimePortableListingPackage,
-    publisher_principal_id: &str,
-    listing_uri: String,
-) -> anyhow::Result<()> {
-    let mint_id = mint.draft().mint_id();
-    let evidence = mint
-        .content_availability()
-        .ok_or_else(|| anyhow::anyhow!("Runtime custody listing is invalid"))?;
-    let expected = RuntimeCustodyListingRecord {
-        schema: RUNTIME_LISTING_SCHEMA_V1.to_string(),
-        origin: RuntimeCustodyListingOrigin::LocalCreator {
-            principal_id: publisher_principal_id.to_string(),
-            package_sha256: hex::encode(sha2::Sha256::digest(serde_json::to_vec(&package)?)),
-            listing_uri,
-        },
-        package,
-        availability: RuntimeCustodyListingAvailabilitySummary {
-            checked_at: evidence.checked_at(),
-            observed_replicas: evidence.observed_replicas(),
-            receipt_digest: hex::encode(evidence.receipt_digest().as_bytes()),
-        },
-    };
-    expected.validate()?;
-    if let Some(existing) = load_runtime_custody_listing(data_dir, mint_id)? {
-        if existing == expected {
-            return Ok(());
-        }
-        anyhow::bail!("Runtime custody listing is invalid");
-    }
-    persist_runtime_custody_listing(data_dir, &expected)
+fn runtime_record_file_unreadable(path: &Path, error: std::io::Error) -> anyhow::Error {
+    tracing::warn!(
+        path = %path.display(),
+        %error,
+        "purchase ledger record could not be read"
+    );
+    anyhow::Error::new(error).context("Runtime custody purchase is invalid")
 }
 
 pub(crate) fn load_runtime_custody_purchase(
@@ -6923,78 +2068,99 @@ pub(crate) fn load_runtime_custody_purchase(
     if !path.exists() {
         return Ok(None);
     }
-    let record: RuntimeCustodyPurchaseRecord = serde_json::from_slice(&fs::read(path)?)?;
+    let mut file = open_owner_only_runtime_record_file(&path)?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    let record: RuntimeCustodyPurchaseRecord = serde_json::from_slice(&bytes)?;
     if record.schema != RUNTIME_PURCHASE_SCHEMA_V1 || record.principal_id != principal_id {
         anyhow::bail!("Runtime custody purchase is invalid");
     }
     Ok(Some(record))
 }
 
-fn validate_runtime_custody_viewer_asset(
-    listing: &RuntimeCustodyListingRecord,
+/// This principal's listing-package purchase (`buy`) of the item the chain
+/// keys `(chain_namespace, ledger, token_id)` (D2), whatever its progress --
+/// the record a market purchase of the same item must not race (R29).
+///
+/// Purchases are filed by mint, so this reads each of the principal's
+/// records. One that does not parse or validate is skipped and logged: it is
+/// not a purchase this Home can stand behind, and one broken file must not
+/// stop every other purchase. One that cannot be READ is an error (R43): it
+/// may be a purchase under way, and the caller refuses rather than start a
+/// second one beside it.
+pub(crate) fn load_runtime_custody_purchase_for_chain_item(
+    data_dir: &Path,
     principal_id: &str,
-    profile_did: &str,
-    mint_id: Digest32,
-    purchase: &RuntimeCustodyPurchaseRecord,
-) -> anyhow::Result<DecodedRuntimePortableAsset> {
-    let package = &listing.package;
-    let chain_id = package
-        .chain_namespace
-        .strip_prefix("eip155:")
-        .and_then(|value| value.parse::<u64>().ok())
-        .ok_or_else(|| anyhow::anyhow!(RUNTIME_CUSTODY_OPEN_DENIED_MESSAGE))?;
-    if purchase.schema != RUNTIME_PURCHASE_SCHEMA_V1
-        || package.mint_id != hex::encode(mint_id.as_bytes())
-        || purchase.principal_id != principal_id
-        || purchase.profile_did != profile_did
-        || purchase.mint_id != package.mint_id
-        || purchase.content_id != package.content_id
-        || purchase.cid != package.content_cid
-        || purchase.listing_sha256 != listing.portable_package_digest()
-        || !purchase
-            .seller_address
-            .eq_ignore_ascii_case(&package.seller_address)
-        || purchase.chain_namespace != package.chain_namespace
-        || purchase.network != package.network
-        || !purchase.ledger.eq_ignore_ascii_case(&package.ledger)
-        || !purchase.token_id.eq_ignore_ascii_case(&package.token_id)
-        || !purchase.operative.eq_ignore_ascii_case(&package.operative)
-        || purchase.price != package.price
-        || !purchase.pay_token.eq_ignore_ascii_case(&package.pay_token)
-        || purchase.buy_stage.chain_namespace != package.chain_namespace
-        || purchase.buy_stage.network != package.network
-        || purchase
-            .payment_processor
-            .as_deref()
-            .map(str::to_ascii_lowercase)
-            != package
-                .payment_processor
-                .as_deref()
-                .map(str::to_ascii_lowercase)
-    {
-        anyhow::bail!(RUNTIME_CUSTODY_OPEN_DENIED_MESSAGE);
-    }
-    let RuntimeCustodyPurchaseProgress::Complete { terminal } = &purchase.progress else {
-        anyhow::bail!(RUNTIME_CUSTODY_OPEN_DENIED_MESSAGE);
+    chain_namespace: &str,
+    ledger: &str,
+    token_id: &str,
+) -> anyhow::Result<Option<RuntimeCustodyPurchaseRecord>> {
+    let directory = runtime_purchase_lock_path(data_dir, principal_id)
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| anyhow::anyhow!("Runtime custody purchase is invalid"))?;
+    let entries = match fs::read_dir(&directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
     };
-    if !terminal.access_evidence.has_access
-        || terminal.access_evidence.network != package.network
-        || terminal.access_evidence.chain_id != chain_id
-        || !terminal
-            .access_evidence
-            .wallet
-            .eq_ignore_ascii_case(&purchase.address)
-        || terminal.access_evidence.content_access_id != package.content_access_id
-    {
-        anyhow::bail!(RUNTIME_CUSTODY_OPEN_DENIED_MESSAGE);
+    for entry in entries {
+        let path = entry?.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        let Some(mint_id) = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .and_then(|stem| parse_mint_id_hex(stem).ok())
+        else {
+            continue;
+        };
+        match load_runtime_custody_purchase(data_dir, principal_id, mint_id) {
+            Ok(Some(record))
+                if record.chain_namespace == chain_namespace
+                    && record.ledger.eq_ignore_ascii_case(ledger)
+                    && record.token_id.eq_ignore_ascii_case(token_id) =>
+            {
+                return Ok(Some(record));
+            }
+            Ok(_) => {}
+            Err(error) => match error.downcast_ref::<std::io::Error>() {
+                // Gone since the directory was listed: no purchase to find.
+                Some(io) if io.kind() == std::io::ErrorKind::NotFound => {}
+                Some(_) => return Err(error),
+                None => tracing::warn!(
+                    path = %path.display(),
+                    error = %format!("{error:#}"),
+                    "purchase ledger record invalid; skipped"
+                ),
+            },
+        }
     }
-    package.decode_and_validate()
+    Ok(None)
+}
+
+#[cfg(test)]
+fn runtime_purchase_lock_test_state() -> &'static StdMutex<HashMap<PathBuf, (usize, bool)>> {
+    RUNTIME_PURCHASE_LOCK_TEST_STATE.get_or_init(|| StdMutex::new(HashMap::new()))
 }
 
 pub(crate) fn persist_runtime_custody_purchase(
     data_dir: &Path,
     purchase: &RuntimeCustodyPurchaseRecord,
 ) -> anyhow::Result<()> {
+    let lock_path = runtime_purchase_lock_path(data_dir, &purchase.principal_id);
+    #[cfg(unix)]
+    if let Some(parent) = lock_path.parent() {
+        ensure_owner_only_runtime_storage_parent(parent)?;
+    }
+    #[cfg(not(unix))]
+    if let Some(parent) = lock_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let _lock = ExclusiveFileLock::acquire(&lock_path)?;
+    #[cfg(test)]
+    let _lock_test_probe = RuntimePurchaseLockTestProbe::enter(lock_path.clone());
     write_owner_only_bytes(
         &runtime_purchase_path(
             data_dir,
@@ -7005,757 +2171,48 @@ pub(crate) fn persist_runtime_custody_purchase(
     )
 }
 
-fn load_runtime_custody_viewer_record(
+/// Remove `record`'s purchase file under the purchase ledger lock when the
+/// record on disk is still the one `still_it` recognises.
+fn remove_runtime_custody_purchase_if(
     data_dir: &Path,
-    principal_id: &str,
-    mint_id: Digest32,
-) -> anyhow::Result<Option<RuntimeCustodyViewerRecord>> {
-    let path = runtime_viewer_path(data_dir, principal_id, mint_id);
-    let Some(bytes) = load_runtime_custody_viewer_record_bytes(&path)? else {
-        return Ok(None);
-    };
-    let record: RuntimeCustodyViewerRecord = serde_json::from_slice(&bytes)?;
-    Ok(Some(record))
-}
-
-fn load_runtime_custody_viewer_record_from_path(
-    path: &Path,
-) -> anyhow::Result<Option<RuntimeCustodyViewerRecord>> {
-    let Some(extension) = path.extension().and_then(|value| value.to_str()) else {
-        return Ok(None);
-    };
-    if extension != "json" {
-        return Ok(None);
+    record: &RuntimeCustodyPurchaseRecord,
+    still_it: impl FnOnce(&RuntimeCustodyPurchaseRecord) -> bool,
+) -> anyhow::Result<bool> {
+    let attempt = record;
+    let mint_id = parse_mint_id_hex(&attempt.mint_id)?;
+    let lock_path = runtime_purchase_lock_path(data_dir, &attempt.principal_id);
+    #[cfg(unix)]
+    if let Some(parent) = lock_path.parent() {
+        ensure_owner_only_runtime_storage_parent(parent)?;
     }
-    let Some(bytes) = load_runtime_custody_viewer_record_bytes(path)? else {
-        return Ok(None);
-    };
-    let record: RuntimeCustodyViewerRecord = serde_json::from_slice(&bytes)?;
-    Ok(Some(record))
-}
-
-fn load_runtime_custody_viewer_record_bytes(path: &Path) -> anyhow::Result<Option<Vec<u8>>> {
-    let file = match fs::File::open(path) {
-        Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error.into()),
-    };
-    let mut reader = file.take(MAX_RUNTIME_VIEWER_RECORD_BYTES + 1);
-    let mut bytes = Vec::new();
-    reader.read_to_end(&mut bytes)?;
-    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > MAX_RUNTIME_VIEWER_RECORD_BYTES {
-        anyhow::bail!("Runtime custody viewer session is unavailable");
+    #[cfg(not(unix))]
+    if let Some(parent) = lock_path.parent() {
+        fs::create_dir_all(parent)?;
     }
-    Ok(Some(bytes))
-}
-
-fn validate_runtime_custody_viewer_record_identity(
-    data_dir: &Path,
-    path: &Path,
-    record: &RuntimeCustodyViewerRecord,
-) -> anyhow::Result<(Digest32, RuntimeCustodyListingRecord)> {
-    if record.schema != RUNTIME_VIEWER_SCHEMA_V1 {
-        anyhow::bail!("viewer record schema is invalid");
+    let _lock = ExclusiveFileLock::acquire(&lock_path)?;
+    #[cfg(test)]
+    let _lock_test_probe = RuntimePurchaseLockTestProbe::enter(lock_path.clone());
+    // The load refuses a symlink or a hard-linked file exactly as any read
+    // does, so a retirement can never be pointed at anything but this record.
+    match load_runtime_custody_purchase(data_dir, &attempt.principal_id, mint_id)? {
+        Some(current) if still_it(&current) => {}
+        _ => return Ok(false),
     }
-    let mint_id = parse_mint_id_hex(&record.mint_id)?;
-    if runtime_viewer_path(data_dir, &record.principal_id, mint_id) != path {
-        anyhow::bail!("viewer record path does not match its identities");
-    }
-    let purchase = load_runtime_custody_purchase(data_dir, &record.principal_id, mint_id)?
-        .ok_or_else(|| anyhow::anyhow!("viewer record purchase is unavailable"))?;
-    if purchase.principal_id != record.principal_id
-        || purchase.profile_did != record.profile_did
-        || purchase.content_id != record.content_id
-    {
-        anyhow::bail!("viewer record identities do not match the durable purchase");
-    }
-    let listing = load_runtime_custody_listing(data_dir, mint_id)?
-        .ok_or_else(|| anyhow::anyhow!("viewer record listing is unavailable"))?;
-    let asset = validate_runtime_custody_viewer_asset(
-        &listing,
-        &record.principal_id,
-        &record.profile_did,
-        mint_id,
-        &purchase,
-    )?;
-    if runtime_protected_content_id(asset.media_identity.encrypted_content())? != record.content_id
-    {
-        anyhow::bail!("viewer record content does not match the durable mint");
-    }
-    let _ = record.audit_request_id()?;
-    let _ = record.viewer_session_handle_bytes()?;
-    if record.expires_at == 0 {
-        anyhow::bail!("viewer record expiry is invalid");
-    }
-    let max_media_part_index = u32::try_from(asset.media_identity.encrypted_segments().len())
-        .map_err(|_| anyhow::anyhow!("viewer record media position is invalid"))?
-        .saturating_add(1);
-    if record.next_media_part_index > max_media_part_index {
-        anyhow::bail!("viewer record media position is invalid");
-    }
-    if record.lifecycle_status != RuntimeCustodyViewerLifecycleStatus::OpenPending {
-        let _ = record.to_runtime_viewer_session(asset.media_identity.encrypted_content())?;
-    }
-    Ok((mint_id, listing))
-}
-
-fn persist_runtime_custody_viewer_record(
-    data_dir: &Path,
-    principal_id: &str,
-    mint_id: Digest32,
-    record: &RuntimeCustodyViewerRecord,
-) -> anyhow::Result<()> {
-    let bytes = serde_json::to_vec(record)?;
-    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > MAX_RUNTIME_VIEWER_RECORD_BYTES {
-        anyhow::bail!("Runtime custody viewer session is unavailable");
-    }
-    write_owner_only_bytes(
-        &runtime_viewer_path(data_dir, principal_id, mint_id),
-        &bytes,
-    )
-}
-
-async fn settle_runtime_custody_viewer_cleanup(
-    data_dir: &Path,
-    registry: Arc<ProviderRegistry>,
-    listing: &RuntimeCustodyListingRecord,
-    principal_id: &str,
-    mint_id: Digest32,
-    mut record: RuntimeCustodyViewerRecord,
-) -> anyhow::Result<RuntimeCustodyViewerRecord> {
-    let purchase = load_runtime_custody_purchase(data_dir, principal_id, mint_id)?
-        .ok_or_else(|| anyhow::anyhow!("Runtime custody viewer session is unavailable"))?;
-    let asset = validate_runtime_custody_viewer_asset(
-        listing,
-        principal_id,
-        &record.profile_did,
-        mint_id,
-        &purchase,
-    )?;
-    let decrypt = RuntimeDecryptRegistryAdapter::new(registry);
-    match record.lifecycle_status {
-        RuntimeCustodyViewerLifecycleStatus::OpenPending => {
-            let session =
-                record.to_runtime_viewer_session(asset.media_identity.encrypted_content())?;
-            let close_result = match record.open_pending_close_result() {
-                Some(RuntimeCustodyOpenPendingCloseResult::Closed) => {
-                    RuntimeViewerSessionCloseResult::Closed
-                }
-                Some(RuntimeCustodyOpenPendingCloseResult::AlreadyAbsent) => {
-                    RuntimeViewerSessionCloseResult::AlreadyAbsent
-                }
-                None => {
-                    let result = close_viewer_session_with_result(&decrypt, &session)
-                        .await
-                        .map_err(|_| {
-                            anyhow::anyhow!(RUNTIME_CUSTODY_DECRYPT_UNAVAILABLE_MESSAGE)
-                        })?;
-                    record.mark_open_pending_close_result(result, crate::auth::now_ts());
-                    persist_runtime_custody_viewer_record(
-                        data_dir,
-                        principal_id,
-                        mint_id,
-                        &record,
-                    )?;
-                    result
-                }
-            };
-            let cancel_result = match record.open_pending_cancel_result() {
-                Some(RuntimeCustodyOpenPendingCancelResult::Cancelled) => {
-                    RuntimePreparedRecipientCancelResult::Cancelled
-                }
-                Some(RuntimeCustodyOpenPendingCancelResult::AlreadyAbsent) => {
-                    RuntimePreparedRecipientCancelResult::AlreadyAbsent
-                }
-                None => {
-                    let result = cancel_prepared_recipient_with_result_by_handle(
-                        &decrypt,
-                        record.audit_request_id()?,
-                        record.viewer_session_handle_bytes()?,
-                    )
-                    .await
-                    .map_err(|_| anyhow::anyhow!(RUNTIME_CUSTODY_DECRYPT_UNAVAILABLE_MESSAGE))?;
-                    record.mark_open_pending_cancel_result(result, crate::auth::now_ts());
-                    persist_runtime_custody_viewer_record(
-                        data_dir,
-                        principal_id,
-                        mint_id,
-                        &record,
-                    )?;
-                    result
-                }
-            };
-            let _ = cancel_result;
-            record.mark_terminal(close_result, crate::auth::now_ts());
-            persist_runtime_custody_viewer_record(data_dir, principal_id, mint_id, &record)?;
-            Ok(record)
-        }
-        RuntimeCustodyViewerLifecycleStatus::Active
-        | RuntimeCustodyViewerLifecycleStatus::CleanupPending => {
-            let session =
-                record.to_runtime_viewer_session(asset.media_identity.encrypted_content())?;
-            match close_viewer_session_with_result(&decrypt, &session).await {
-                Ok(result) => {
-                    record.mark_terminal(result, crate::auth::now_ts());
-                    persist_runtime_custody_viewer_record(
-                        data_dir,
-                        principal_id,
-                        mint_id,
-                        &record,
-                    )?;
-                    Ok(record)
-                }
-                Err(_) => {
-                    record.mark_cleanup_pending(crate::auth::now_ts());
-                    persist_runtime_custody_viewer_record(
-                        data_dir,
-                        principal_id,
-                        mint_id,
-                        &record,
-                    )?;
-                    anyhow::bail!(RUNTIME_CUSTODY_DECRYPT_UNAVAILABLE_MESSAGE);
-                }
-            }
-        }
-        RuntimeCustodyViewerLifecycleStatus::Closed
-        | RuntimeCustodyViewerLifecycleStatus::AlreadyAbsent => Ok(record),
+    let path = runtime_purchase_path(data_dir, &attempt.principal_id, mint_id);
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
     }
 }
 
-/// Reconciles durable protected-content viewer records after canonical decrypt
-/// provider registration so restart cleanup can settle exact viewer sessions.
-pub async fn reconcile_runtime_custody_viewers_after_decrypt_registration(
-    data_dir: &Path,
-    registry: Arc<ProviderRegistry>,
-) -> anyhow::Result<()> {
-    let root = data_dir.join(RUNTIME_OPEN_MATERIAL_ROOT);
-    if !root.is_dir() {
-        return Ok(());
-    }
-    let mut unresolved_mint_dirs = 0usize;
-    let mut unresolved_viewer_records = 0usize;
-    for mint_entry in fs::read_dir(&root)? {
-        let mint_entry = mint_entry?;
-        if !mint_entry.file_type()?.is_dir() {
-            continue;
-        }
-        let viewers_dir = mint_entry.path().join("viewers");
-        if !viewers_dir.is_dir() {
-            continue;
-        }
-        let mut counted_mint_dir = false;
-        for viewer_entry in fs::read_dir(&viewers_dir)? {
-            let viewer_entry = viewer_entry?;
-            if !viewer_entry.file_type()?.is_file() {
-                continue;
-            }
-            let path = viewer_entry.path();
-            let _viewer_lifecycle_guard =
-                acquire_runtime_custody_viewer_lifecycle_guard_for_path(&path).await;
-            let Some(record) = load_runtime_custody_viewer_record_from_path(&path)? else {
-                continue;
-            };
-            let lifecycle_status = record.lifecycle_status;
-            if !matches!(
-                record.lifecycle_status,
-                RuntimeCustodyViewerLifecycleStatus::OpenPending
-                    | RuntimeCustodyViewerLifecycleStatus::Active
-                    | RuntimeCustodyViewerLifecycleStatus::CleanupPending
-            ) {
-                if validate_runtime_custody_viewer_record_identity(data_dir, &path, &record)
-                    .is_err()
-                {
-                    continue;
-                }
-                continue;
-            }
-            if !counted_mint_dir {
-                unresolved_mint_dirs += 1;
-                counted_mint_dir = true;
-                if unresolved_mint_dirs > MAX_RUNTIME_VIEWER_RECONCILE_MINT_DIRS {
-                    anyhow::bail!(
-                        "Runtime custody viewer reconciliation exceeds unresolved mint directory limit"
-                    );
-                }
-            }
-            unresolved_viewer_records += 1;
-            if unresolved_viewer_records > MAX_RUNTIME_VIEWER_RECONCILE_RECORDS {
-                anyhow::bail!(
-                    "Runtime custody viewer reconciliation exceeds unresolved record limit"
-                );
-            }
-            let (mint_id, listing) = validate_runtime_custody_viewer_record_identity(
-                data_dir, &path, &record,
-            )
-            .map_err(|error| {
-                anyhow::anyhow!(
-                    "Runtime custody viewer reconciliation found invalid {:?} record at {}: {}",
-                    lifecycle_status,
-                    path.display(),
-                    error
-                )
-            })?;
-            let principal_id = record.principal_id.clone();
-            if let Err(error) = settle_runtime_custody_viewer_cleanup(
-                data_dir,
-                registry.clone(),
-                &listing,
-                &principal_id,
-                mint_id,
-                record,
-            )
-            .await
-            {
-                tracing::warn!(
-                    "Runtime custody viewer cleanup reconciliation remains pending at {}: {}",
-                    path.display(),
-                    error
-                );
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Boot-path hook after successful Runtime-only decrypt registration.
-/// Viewer records created before decrypt came up are the state this reconcile
-/// exists for. Boot keeps serving when reconciliation fails closed.
-pub async fn reconcile_runtime_custody_viewers_after_decrypt_boot(
-    data_dir: &Path,
-    registry: Arc<ProviderRegistry>,
-) {
-    if let Err(error) =
-        reconcile_runtime_custody_viewers_after_decrypt_registration(data_dir, registry).await
-    {
-        tracing::warn!(
-            error = %error,
-            "Runtime custody viewer reconciliation after decrypt registration failed closed"
-        );
-    }
-}
-
-fn reconstructed_buy_receipt(
-    draft: &RuntimeMintDraft,
-    availability: &RuntimeVerifiedContentAvailability,
-    purchase: &RuntimeCustodyPurchaseRecord,
-    current_profile_did: &str,
-) -> anyhow::Result<elastos_protected_content_runtime::RuntimeBuyReceipt> {
-    if purchase.profile_did != current_profile_did {
-        return Err(runtime_open_error(
-            elastos_protected_content_runtime::RuntimeOpenError::ChainEvidence,
-        ));
-    }
-    let profile_identity = profile_identity_from_did(current_profile_did)?;
-    let RuntimeCustodyPurchaseProgress::Complete { terminal } = &purchase.progress else {
-        return Err(runtime_open_error(
-            elastos_protected_content_runtime::RuntimeOpenError::ChainEvidence,
-        ));
-    };
-    let effect = RuntimeVerifiedPurchaseEffect::new(
-        RuntimeProtectedContentPurchaseIntent::new(
-            draft.mint_id(),
-            draft.encrypted_content().clone(),
-            draft.key_envelope().clone(),
-            draft.policy().clone(),
-            RightsActionV1::View,
-            purchase.chain_namespace.clone(),
-            purchase.network.clone(),
-            purchase.buy_stage.to.clone(),
-            purchase.buy_stage.value.clone(),
-            purchase.buy_stage.data.clone(),
-        )
-        .map_err(|_| anyhow::anyhow!("Runtime custody chain evidence is invalid"))?,
-        RuntimePurchaseEffectAuthority::new(
-            purchase.principal_id.clone(),
-            purchase.account_id.clone(),
-            purchase.address.clone(),
-            purchase.buy_stage.approval_request_id.clone(),
-        )
-        .map_err(|_| anyhow::anyhow!("Runtime custody wallet authority is invalid"))?,
-        terminal.wallet_binding.clone(),
-        terminal.chain_transaction.clone(),
-        terminal.chain_observation.clone(),
-        terminal.confirmed_at,
-    )
-    .map_err(runtime_open_error)?;
-    draft
-        .bind_verified_buy(
-            availability,
-            &purchase.principal_id,
-            profile_identity,
-            &effect,
-        )
-        .map_err(runtime_open_error)
-}
-
-struct RuntimeReleaseWalletInvocation<'a> {
-    principal_id: &'a str,
-    account_id: &'a str,
-    proof_binding_id: &'a str,
-    session_id: &'a str,
-    grant_id: &'a str,
-    mint_id: Digest32,
-    runtime_session_binding: RuntimeSessionBindingV1,
-}
-
-/// What the Wallet answered to the viewer release rights-signature request.
-#[derive(Debug)]
-enum RuntimeReleaseWalletOutcome {
-    /// The exact wallet request/response pair and the verified signed rights.
-    Signed {
-        request_bytes: Vec<u8>,
-        response_bytes: Vec<u8>,
-        /// Boxed: the signed rights request dwarfs the pending arm.
-        signed_rights: Box<WalletSignedRightsRequestV1>,
-    },
-    /// A managed account needs the principal's explicit approval first; the
-    /// exact request must be replayed once the approval is completed.
-    PendingApproval {
-        request_bytes: Vec<u8>,
-        approval_request_id: String,
-    },
-}
-
-/// Builds the exact wallet rights-signature request for this open, or
-/// decodes the persisted one when a pending release is being resumed (the
-/// rights request is bound to the recipient identity, so a resumed release
-/// must replay byte-identical bytes for the Wallet to return its stored
-/// result).
-fn runtime_release_wallet_request(
-    buy: &elastos_protected_content_runtime::RuntimeBuyReceipt,
-    recipient: &RecipientKeyIdentityV1,
-    invocation: &RuntimeReleaseWalletInvocation<'_>,
-    replay_request: Option<&[u8]>,
-    now: u64,
-) -> anyhow::Result<(WalletProviderRequestV2, RightsRequestV1)> {
-    if let Some(bytes) = replay_request {
-        let wallet_request =
-            WalletProviderRequestV2::decode_at(bytes, now).map_err(release_unavailable!())?;
-        let WalletProviderOperationV2::RequestProtectedContentRightsSignature {
-            canonical_rights_request_hex,
-            ..
-        } = &wallet_request.operation
-        else {
-            return Err(release_unavailable_missing!()());
-        };
-        let rights_request = RightsRequestV1::from_canonical_bytes(
-            &decode_hex_bytes(canonical_rights_request_hex).map_err(release_unavailable!())?,
-        )
-        .map_err(release_unavailable!())?;
-        if rights_request.recipient() != recipient {
-            return Err(release_unavailable_missing!()());
-        }
-        return Ok((wallet_request, rights_request));
-    }
-    let mut replay_nonce = [0u8; 16];
-    rand::thread_rng().fill_bytes(&mut replay_nonce);
-    let rights_request = RightsRequestV1::new(
-        buy.binding_for_session(invocation.runtime_session_binding)
-            .map_err(release_unavailable!())?,
-        buy.action(),
-        recipient.clone(),
-        now.saturating_sub(5),
-        now + 180,
-        ReplayNonce16::new(replay_nonce),
-    )
-    .map_err(release_unavailable!())?;
-    let mut request_entropy = [0u8; 16];
-    rand::thread_rng().fill_bytes(&mut request_entropy);
-    let context = VerifiedWalletInvocationContext::new(
-        invocation.principal_id.to_string(),
-        invocation.session_id,
-        Some(invocation.proof_binding_id.to_string()),
-        invocation.grant_id,
-        "runtime",
-        format!(
-            "runtime-open-{}",
-            hex::encode(invocation.mint_id.as_bytes())
-        ),
-    )
-    .map_err(release_unavailable!())?;
-    let wallet_request = WalletProviderRequestV2::new(
-        &context,
-        format!("wallet-request:{}", hex::encode(request_entropy)),
-        now,
-        now.saturating_add(MAX_INVOCATION_TTL_SECS),
-        WalletProviderOperationV2::RequestProtectedContentRightsSignature {
-            account_id: invocation.account_id.to_string(),
-            canonical_rights_request_hex: hex::encode(
-                rights_request
-                    .canonical_bytes()
-                    .map_err(release_unavailable!())?,
-            ),
-            reason: "Open protected content".to_string(),
-        },
-    )
-    .map_err(release_unavailable!())?;
-    Ok((wallet_request, rights_request))
-}
-
-async fn invoke_runtime_release_wallet(
-    registry: &ProviderRegistry,
-    buy: &elastos_protected_content_runtime::RuntimeBuyReceipt,
-    recipient: &RecipientKeyIdentityV1,
-    invocation: RuntimeReleaseWalletInvocation<'_>,
-    replay_request: Option<&[u8]>,
-    now: u64,
-) -> anyhow::Result<RuntimeReleaseWalletOutcome> {
-    let (wallet_request, rights_request) =
-        runtime_release_wallet_request(buy, recipient, &invocation, replay_request, now)?;
-    let response = registry
-        .invoke_provider(ProviderInvocation {
-            source: RUNTIME_PROVIDER_ID.to_string(),
-            target: WALLET_PROVIDER_ID.to_string(),
-            op: WALLET_BUS_OPERATION.to_string(),
-            request: serde_json::json!({
-                "op": WALLET_BUS_OPERATION,
-                "request": wallet_request,
-            }),
-            transfer: ProviderTransfer::Json,
-            range: None,
-            progress: None,
-            transport: ProviderInvocationTransport::Local,
-        })
-        .await
-        .map_err(release_unavailable!())?;
-    if response.get("status").and_then(Value::as_str) != Some("ok") {
-        let code = response
-            .get("code")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown");
-        let message = response
-            .get("message")
-            .and_then(Value::as_str)
-            .unwrap_or("wallet rights signature request rejected");
-        return Err(release_unavailable!()(format!(
-            "wallet rights signature request rejected: {code}: {message}"
-        )));
-    }
-    let data = response
-        .get("data")
-        .ok_or_else(release_unavailable_missing!())?;
-    let request_bytes = serde_json::to_vec(&wallet_request).map_err(release_unavailable!())?;
-    let response_bytes = serde_json::to_vec(data).map_err(release_unavailable!())?;
-    // A managed account answers with its approval record until the principal
-    // approves it in the Wallet; the exact request is then replayed.
-    let payload = data
-        .get("result")
-        .and_then(|result| result.get("data"))
-        .unwrap_or(data);
-    if payload
-        .get("requires_approval")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        let approval_request_id = payload
-            .get("approval_request")
-            .and_then(|approval| approval.get("request_id"))
-            .and_then(Value::as_str)
-            .ok_or_else(release_unavailable_missing!())?
-            .to_string();
-        tracing::debug!(
-            %approval_request_id,
-            "runtime custody open: viewer release awaits exact Wallet approval"
-        );
-        return Ok(RuntimeReleaseWalletOutcome::PendingApproval {
-            request_bytes,
-            approval_request_id,
-        });
-    }
-    let signed_rights = wallet_signed_rights_from_bytes(&request_bytes, &response_bytes)
-        .map_err(release_unavailable!())?;
-    if signed_rights.request() != &rights_request {
-        return Err(release_unavailable!()(
-            "wallet signed a rights request other than the one issued",
-        ));
-    }
-    Ok(RuntimeReleaseWalletOutcome::Signed {
-        request_bytes,
-        response_bytes,
-        signed_rights: Box::new(signed_rights),
-    })
-}
-
-/// Decodes the Wallet's signed rights result from the exact request/response
-/// pair, naming the step that failed so a live failure is diagnosable.
-fn wallet_signed_rights_from_bytes(
-    wallet_request_bytes: &[u8],
-    wallet_response_bytes: &[u8],
-) -> Result<WalletSignedRightsRequestV1, String> {
-    let now = crate::auth::now_ts();
-    let request =
-        elastos_wallet_contract::WalletProviderRequestV2::decode_at(wallet_request_bytes, now)
-            .map_err(|err| format!("wallet request does not decode: {err:?}"))?;
-    let response = elastos_wallet_contract::WalletProviderResponseV2::decode_for_request(
-        wallet_response_bytes,
-        &request,
-    )
-    .map_err(|err| format!("wallet response is not bound to the request: {err:?}"))?;
-    let data = match response.result {
-        elastos_wallet_contract::WalletResultV2::Ok { data } => data,
-        elastos_wallet_contract::WalletResultV2::Error { code, message } => {
-            return Err(format!("wallet answered an error: {code}: {message}"));
-        }
-    };
-    let result = elastos_protected_content_runtime::wallet_rights_signature_result(&data)
-        .ok_or_else(|| {
-            let keys = data
-                .as_object()
-                .map(|object| object.keys().cloned().collect::<Vec<_>>().join(","))
-                .unwrap_or_default();
-            format!("wallet result carries no rights signature (keys: {keys})")
-        })?;
-    let bytes = decode_hex_bytes(&result.wallet_signed_rights_request_hex)
-        .map_err(|err| format!("signed rights hex is invalid: {err}"))?;
-    WalletSignedRightsRequestV1::from_canonical_bytes(&bytes)
-        .map_err(|err| format!("signed rights bytes are not canonical: {err:?}"))
-}
-
-fn sign_runtime_terminal_receipt(
-    device_key: &ed25519_dalek::SigningKey,
-    operation: &SignedRuntimeReleaseOperationV1,
-    contributions: &[elastos_protected_content_contracts::SignedNodeContributionV1],
-    epoch: &SignedCustodyEpochV1,
-    now: u64,
-) -> anyhow::Result<SignedTerminalReceiptV1> {
-    let authenticated = operation
-        .verify(operation.statement().runtime_operation_issuer(), now)
-        .map_err(release_unavailable!())?;
-    let node_set = epoch
-        .statement()
-        .node_set()
-        .map_err(release_unavailable!())?;
-    let refs = contributions
-        .iter()
-        .map(|contribution| {
-            authenticated
-                .verify_node_contribution(contribution, &node_set, now)
-                .map(|verified| NodeContributionRefV1::from(&verified))
-        })
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(release_unavailable!())?;
-    let contribution_issued_at = contributions
-        .iter()
-        .map(|contribution| contribution.statement().issued_at())
-        .max()
-        .unwrap_or(now);
-    let contribution_expires_at = contributions
-        .iter()
-        .map(|contribution| contribution.statement().expires_at())
-        .min()
-        .unwrap_or(now.saturating_add(30));
-    let release = operation.statement().release_request();
-    let issued_at = now.max(contribution_issued_at).max(release.issued_at());
-    let expires_at = contribution_expires_at
-        .min(release.expires_at())
-        .min(issued_at.saturating_add(30));
-    if expires_at <= issued_at {
-        return Err(release_unavailable_missing!()());
-    }
-    let statement = TerminalReceiptStatementV1::new(
-        authenticated.release_request_hash(),
-        authenticated.binding().clone(),
-        TerminalReceiptIssuerKey::new(device_key.verifying_key().to_bytes())
-            .map_err(|_| anyhow::anyhow!("local Runtime device signing key is invalid"))?,
-        KeyReleaseOutcomeV1::Released,
-        refs,
-        issued_at,
-        expires_at,
-    )
-    .map_err(release_unavailable!())?;
-    SignedTerminalReceiptV1::new(
-        statement.clone(),
-        device_key
-            .sign(
-                &statement
-                    .canonical_bytes()
-                    .map_err(release_unavailable!())?,
-            )
-            .to_bytes()
-            .to_vec(),
-    )
-    .map_err(release_unavailable!())
-}
-
-async fn fetch_runtime_custody_open_media(
-    registry: &ProviderRegistry,
-    cid: &str,
-    expected: &CencFmp4MediaIdentityV1,
-) -> anyhow::Result<(CencFmp4MediaIdentityV1, Vec<u8>)> {
-    let identity_bytes = crate::content::fetch_bytes_via_provider(
-        registry,
-        cid,
-        Some(PROTECTED_CONTENT_IDENTITY_PATH),
-    )
-    .await
-    .map_err(|_| anyhow::anyhow!(RUNTIME_CUSTODY_AVAILABILITY_UNAVAILABLE_MESSAGE))?;
-    let media = CencFmp4MediaIdentityV1::from_canonical_bytes(&identity_bytes)
-        .map_err(|_| anyhow::anyhow!(RUNTIME_CUSTODY_AVAILABILITY_UNAVAILABLE_MESSAGE))?;
-    if &media != expected {
-        anyhow::bail!(RUNTIME_CUSTODY_AVAILABILITY_UNAVAILABLE_MESSAGE);
-    }
-    let init =
-        crate::content::fetch_bytes_via_provider(registry, cid, Some(PROTECTED_CONTENT_INIT_PATH))
-            .await
-            .map_err(|_| anyhow::anyhow!(RUNTIME_CUSTODY_AVAILABILITY_UNAVAILABLE_MESSAGE))?;
-    Ok((media, init))
-}
-
-fn runtime_open_error(error: elastos_protected_content_runtime::RuntimeOpenError) -> anyhow::Error {
-    match error {
-        elastos_protected_content_runtime::RuntimeOpenError::WalletAuthority => {
-            anyhow::anyhow!("Runtime custody wallet authority is invalid")
-        }
-        elastos_protected_content_runtime::RuntimeOpenError::MintSelection => {
-            anyhow::anyhow!("Runtime custody mint selection is invalid")
-        }
-        elastos_protected_content_runtime::RuntimeOpenError::DecryptResult => {
-            anyhow::anyhow!(RUNTIME_CUSTODY_DECRYPT_UNAVAILABLE_MESSAGE)
-        }
-        _ => anyhow::anyhow!("Runtime custody chain evidence is invalid"),
-    }
-}
-
-fn parse_mint_id_hex(value: &str) -> anyhow::Result<Digest32> {
+pub(crate) fn parse_mint_id_hex(value: &str) -> anyhow::Result<Digest32> {
     let bytes = decode_hex_bytes(value)
         .map_err(|_| anyhow::anyhow!("Runtime custody mint identity is invalid"))?;
     let bytes: [u8; 32] = bytes
         .try_into()
         .map_err(|_| anyhow::anyhow!("Runtime custody mint identity is invalid"))?;
     Ok(Digest32::new(bytes))
-}
-
-fn parse_viewer_handle_hex(
-    value: &str,
-) -> anyhow::Result<[u8; MAX_PROVIDER_OPAQUE_HANDLE_BYTES_V1]> {
-    let bytes = decode_hex_bytes(value)
-        .map_err(|_| anyhow::anyhow!("Runtime custody viewer session is unavailable"))?;
-    bytes
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("Runtime custody viewer session is unavailable"))
-}
-
-fn decode_hex_bytes(value: &str) -> Result<Vec<u8>, hex::FromHexError> {
-    hex::decode(value.strip_prefix("0x").unwrap_or(value))
-}
-
-fn runtime_open_audit_id(
-    principal_id: &str,
-    mint_id: Digest32,
-    now: u64,
-) -> RuntimeReleaseAuditIdV1 {
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(b"elastos.protected-content.runtime-open-audit.v1");
-    hasher.update(principal_id.as_bytes());
-    hasher.update(mint_id.as_bytes());
-    hasher.update(now.to_be_bytes());
-    // Each new open needs a distinct audit ID; pending retries reuse the persisted ID.
-    let mut nonce = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut nonce);
-    hasher.update(nonce);
-    RuntimeReleaseAuditIdV1::new(Digest32::new(hasher.finalize().into())).unwrap_or_else(|_| {
-        RuntimeReleaseAuditIdV1::new(Digest32::new([1; 32])).expect("nonzero audit id")
-    })
 }
 
 pub(crate) fn load_runtime_custody_profile_did(
@@ -7772,116 +2229,19 @@ pub(crate) fn load_runtime_custody_profile_did(
     Ok(profile.document().profile_did.clone())
 }
 
-fn profile_identity_from_did(profile_did: &str) -> anyhow::Result<ProfileIdentityV1> {
-    let key = crate::crypto::decode_did_key(profile_did).map_err(release_unavailable!())?;
-    ProfileIdentityV1::from_public_key_bytes(key.to_bytes()).map_err(release_unavailable!())
-}
+/// Content kind discriminant on the viewer open response.
+///
+/// A viewer must never have to infer the shape of the session it just opened
+/// from which optional geometry fields happen to be present: the media
+/// response carries `mime_type`/`codecs`/`has_init_segment`/`segment_count`,
+/// and the object response (deferred with the object open path) carries its own
+/// chunk geometry instead. This field names the kind outright so each viewer
+/// can fail closed on the other one — `capsules/elacity-player` rejects
+/// anything but `"media"`.
+pub(crate) const RUNTIME_CUSTODY_VIEWER_CONTENT_KIND_MEDIA: &str = "media";
 
-fn update_length_prefixed_session_field(
-    hasher: &mut sha2::Sha256,
-    value: &[u8],
-) -> anyhow::Result<()> {
-    let encoded_len = u32::try_from(value.len()).map_err(release_unavailable!())?;
-    hasher.update(encoded_len.to_be_bytes());
-    hasher.update(value);
-    Ok(())
-}
-
-fn derive_runtime_custody_session_binding(
-    principal_id: &str,
-    profile_did: &str,
-    launch_id: &str,
-    proof_binding_id: &str,
-    session_id: &str,
-    grant_id: &str,
-    mint_id: Digest32,
-) -> anyhow::Result<RuntimeSessionBindingV1> {
-    if !valid_runtime_viewer_launch_id(launch_id) {
-        return Err(release_unavailable_missing!()());
-    }
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(b"elastos.protected-content.runtime-session-binding.v2");
-    update_length_prefixed_session_field(&mut hasher, principal_id.as_bytes())?;
-    update_length_prefixed_session_field(&mut hasher, profile_did.as_bytes())?;
-    update_length_prefixed_session_field(&mut hasher, ELACITY_PLAYER_CAPSULE_ID.as_bytes())?;
-    update_length_prefixed_session_field(&mut hasher, launch_id.as_bytes())?;
-    update_length_prefixed_session_field(&mut hasher, proof_binding_id.as_bytes())?;
-    update_length_prefixed_session_field(&mut hasher, session_id.as_bytes())?;
-    update_length_prefixed_session_field(&mut hasher, grant_id.as_bytes())?;
-    update_length_prefixed_session_field(&mut hasher, mint_id.as_bytes())?;
-    RuntimeSessionBindingV1::new(Digest32::new(hasher.finalize().into()))
-        .map_err(release_unavailable!())
-}
-
-#[allow(clippy::too_many_arguments)]
-fn require_runtime_custody_session_binding(
-    principal_id: &str,
-    profile_did: &str,
-    launch_id: Option<&str>,
-    proof_binding_id: Option<&str>,
-    session_id: Option<&str>,
-    grant_id: Option<&str>,
-    mint_id: Digest32,
-    missing_message: &'static str,
-) -> anyhow::Result<RuntimeSessionBindingV1> {
-    let launch_id = launch_id.filter(|value| valid_runtime_viewer_launch_id(value));
-    let proof_binding_id = proof_binding_id.filter(|value| !value.is_empty());
-    let session_id = session_id.filter(|value| !value.is_empty());
-    let grant_id = grant_id.filter(|value| !value.is_empty());
-    let (Some(launch_id), Some(proof_binding_id), Some(session_id), Some(grant_id)) =
-        (launch_id, proof_binding_id, session_id, grant_id)
-    else {
-        anyhow::bail!(missing_message);
-    };
-    derive_runtime_custody_session_binding(
-        principal_id,
-        profile_did,
-        launch_id,
-        proof_binding_id,
-        session_id,
-        grant_id,
-        mint_id,
-    )
-    .map_err(|_| anyhow::anyhow!(missing_message))
-}
-
-fn valid_runtime_viewer_launch_id(value: &str) -> bool {
-    value
-        .strip_prefix("launch:")
-        .is_some_and(|suffix| suffix.len() == 32 && suffix.chars().all(|ch| ch.is_ascii_hexdigit()))
-}
-
-fn runtime_custody_viewer_public_response(
-    media_identity: &CencFmp4MediaIdentityV1,
-    mint_id: Digest32,
-    viewer_session_handle: &[u8; MAX_PROVIDER_OPAQUE_HANDLE_BYTES_V1],
-    expires_at: u64,
-) -> anyhow::Result<Value> {
-    let segment_count = u32::try_from(media_identity.encrypted_segments().len())
-        .map_err(|_| anyhow::anyhow!("Runtime custody viewer session is unavailable"))?;
-    Ok(json!({
-        "schema": "elastos.library.runtime-custody-viewer/v1",
-        "mint_id": hex::encode(mint_id.as_bytes()),
-        "viewer_session_handle": hex::encode(viewer_session_handle),
-        "expires_at": expires_at,
-        "mime_type": media_identity.mime_type(),
-        "codecs": media_identity.codecs(),
-        "has_init_segment": true,
-        "segment_count": segment_count,
-    }))
-}
-
-fn audit_nonce_bytes(audit_request_id: RuntimeReleaseAuditIdV1) -> [u8; 16] {
-    let mut nonce = [0u8; 16];
-    nonce.copy_from_slice(&audit_request_id.digest().as_bytes()[..16]);
-    nonce
-}
-
-fn runtime_listing_path(data_dir: &Path, mint_id: Digest32) -> PathBuf {
-    data_dir
-        .join(RUNTIME_LISTING_ROOT)
-        .join(format!("{}.json", hex::encode(mint_id.as_bytes())))
-}
+/// Object twin of [`RUNTIME_CUSTODY_VIEWER_CONTENT_KIND_MEDIA`].
+pub(crate) const RUNTIME_CUSTODY_VIEWER_CONTENT_KIND_OBJECT: &str = "object";
 
 fn runtime_purchase_path(data_dir: &Path, principal_id: &str, mint_id: Digest32) -> PathBuf {
     let mut hasher = sha2::Sha256::new();
@@ -7892,22 +2252,14 @@ fn runtime_purchase_path(data_dir: &Path, principal_id: &str, mint_id: Digest32)
         .join(format!("{}.json", hex::encode(mint_id.as_bytes())))
 }
 
-fn runtime_viewer_path(data_dir: &Path, principal_id: &str, mint_id: Digest32) -> PathBuf {
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(principal_id.as_bytes());
-    data_dir
-        .join(RUNTIME_OPEN_MATERIAL_ROOT)
-        .join(hex::encode(mint_id.as_bytes()))
-        .join("viewers")
-        .join(format!("{}.json", hex::encode(hasher.finalize())))
-}
-
 fn runtime_storage_write_error(reason: String) -> anyhow::Error {
     anyhow::anyhow!("Runtime custody protected-content storage is unavailable: {reason}")
 }
 
 #[cfg(unix)]
-fn ensure_owner_only_runtime_storage_parent(path: &Path) -> anyhow::Result<()> {
+pub(crate) fn ensure_owner_only_runtime_storage_parent(path: &Path) -> anyhow::Result<()> {
+    use std::os::unix::fs::DirBuilderExt as _;
+
     let mut missing = Vec::new();
     let mut cursor = path;
     loop {
@@ -7937,8 +2289,23 @@ fn ensure_owner_only_runtime_storage_parent(path: &Path) -> anyhow::Result<()> {
             .ok_or_else(|| runtime_storage_write_error("parent path is unavailable".to_string()))?;
     }
     for dir in missing.iter().rev() {
-        fs::create_dir(dir)?;
-        fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
+        // A sibling writer racing to bootstrap the same directory chain (for
+        // example, another principal's first purchase creating the shared
+        // `runtime-purchases/` root) may have created this exact level
+        // between our existence check above and this call. Create with mode
+        // 0700 atomically (the same idiom `create_owner_only_directory` uses
+        // elsewhere in this codebase) rather than `mkdir` then `chmod`: a
+        // losing racer's `AlreadyExists` is only ever returned after the
+        // winner's `mkdir(..., 0700)` has already completed in the kernel,
+        // so there is no window where the directory briefly has loose
+        // default permissions for the validation pass below to observe.
+        let mut builder = fs::DirBuilder::new();
+        builder.mode(0o700);
+        match builder.create(dir) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error.into()),
+        }
     }
     for dir in missing {
         let metadata = fs::symlink_metadata(&dir)
@@ -7993,7 +2360,7 @@ fn runtime_storage_temp_path(path: &Path) -> anyhow::Result<PathBuf> {
     );
 }
 
-fn write_owner_only_bytes(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+pub(crate) fn write_owner_only_bytes(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     if let Some(parent) = path.parent() {
         #[cfg(unix)]
         ensure_owner_only_runtime_storage_parent(parent)?;
@@ -8004,7 +2371,11 @@ fn write_owner_only_bytes(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     {
         let temp_path = runtime_storage_temp_path(path)?;
         let mut options = fs::OpenOptions::new();
-        options.create_new(true).write(true).mode(0o600);
+        options
+            .create_new(true)
+            .write(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
         let mut file = options.open(&temp_path)?;
         let result = (|| -> anyhow::Result<()> {
             file.write_all(bytes)?;
@@ -8028,93 +2399,4 @@ fn write_owner_only_bytes(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
         fs::rename(temp_path, path)?;
     }
     Ok(())
-}
-
-fn runtime_viewer_lifecycle_guards(
-) -> &'static StdMutex<HashMap<PathBuf, Weak<tokio::sync::Mutex<()>>>> {
-    RUNTIME_VIEWER_LIFECYCLE_GUARDS.get_or_init(|| StdMutex::new(HashMap::new()))
-}
-
-fn runtime_viewer_lifecycle_guard_key(
-    data_dir: &Path,
-    principal_id: &str,
-    mint_id: Digest32,
-) -> PathBuf {
-    runtime_viewer_lifecycle_guard_key_for_path(&runtime_viewer_path(
-        data_dir,
-        principal_id,
-        mint_id,
-    ))
-}
-
-fn runtime_viewer_lifecycle_guard_key_for_path(path: &Path) -> PathBuf {
-    path.to_path_buf()
-}
-
-fn runtime_viewer_lifecycle_lock_by_key(key: &Path) -> Arc<tokio::sync::Mutex<()>> {
-    let mut guards = match runtime_viewer_lifecycle_guards().lock() {
-        Ok(guards) => guards,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    if let Some(lock) = guards.get(key).and_then(Weak::upgrade) {
-        return lock;
-    }
-    let lock = Arc::new(tokio::sync::Mutex::new(()));
-    guards.insert(key.to_path_buf(), Arc::downgrade(&lock));
-    lock
-}
-
-struct RuntimeViewerLifecycleExecutionGuard {
-    key: PathBuf,
-    lock: Arc<tokio::sync::Mutex<()>>,
-    _guard: tokio::sync::OwnedMutexGuard<()>,
-}
-
-impl Drop for RuntimeViewerLifecycleExecutionGuard {
-    fn drop(&mut self) {
-        if Arc::strong_count(&self.lock) > 2 {
-            return;
-        }
-        let mut guards = match runtime_viewer_lifecycle_guards().lock() {
-            Ok(guards) => guards,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        if guards
-            .get(&self.key)
-            .and_then(Weak::upgrade)
-            .is_some_and(|lock| Arc::ptr_eq(&lock, &self.lock))
-        {
-            guards.remove(&self.key);
-        }
-    }
-}
-
-async fn acquire_runtime_custody_viewer_lifecycle_guard(
-    data_dir: &Path,
-    principal_id: &str,
-    mint_id: Digest32,
-) -> RuntimeViewerLifecycleExecutionGuard {
-    let key = runtime_viewer_lifecycle_guard_key(data_dir, principal_id, mint_id);
-    acquire_runtime_custody_viewer_lifecycle_guard_by_key(key).await
-}
-
-async fn acquire_runtime_custody_viewer_lifecycle_guard_for_path(
-    path: &Path,
-) -> RuntimeViewerLifecycleExecutionGuard {
-    acquire_runtime_custody_viewer_lifecycle_guard_by_key(
-        runtime_viewer_lifecycle_guard_key_for_path(path),
-    )
-    .await
-}
-
-async fn acquire_runtime_custody_viewer_lifecycle_guard_by_key(
-    key: PathBuf,
-) -> RuntimeViewerLifecycleExecutionGuard {
-    let lock = runtime_viewer_lifecycle_lock_by_key(&key);
-    let guard = lock.clone().lock_owned().await;
-    RuntimeViewerLifecycleExecutionGuard {
-        key,
-        lock,
-        _guard: guard,
-    }
 }

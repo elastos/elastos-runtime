@@ -611,7 +611,10 @@ async function run() {
     await frame.locator(".wallet-account").click();
     await frame.locator("#wallet-account-card").waitFor({ state: "visible", timeout: 5000 });
     assert(await frame.locator("#wallet-account-card-name").textContent() === "Family", "Hero card must reflect the selected grouped account.");
-    assert(await frame.locator("#wallet-account-card-network").textContent() === "Built-in · EVM", "Hero card must keep the grouped EVM label.");
+    assert(
+      await frame.locator("#wallet-account-card-network").textContent() === "Built-in · Elastos Smart Chain",
+      "Hero card must show the network where the EVM account is the transaction default.",
+    );
 
     await frame.locator("#wallet-send").click();
     await frame

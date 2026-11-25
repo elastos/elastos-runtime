@@ -188,6 +188,11 @@ verify:
     node scripts/run-node-tests.mjs scripts/home-fullscreen-toggle.test.mjs
     node scripts/run-node-tests.mjs scripts/home-phone-home.test.mjs
     node scripts/run-node-tests.mjs scripts/chat-room-enter.test.mjs
+    node scripts/run-node-tests.mjs capsules/library/browser/src/*.test.mjs
+    node scripts/run-node-tests.mjs capsules/creator/browser/*.test.mjs
+    node scripts/run-node-tests.mjs capsules/custody/browser/*.test.mjs
+    node scripts/run-node-tests.mjs capsules/elacity-reader/browser/*.test.mjs
+    node scripts/run-node-tests.mjs capsules/elacity-player/browser/*.test.mjs
     python3 scripts/source-home-capsule-inventory-smoke.py
     ./scripts/command-smoke.sh
     ./scripts/browser-local-exit-orphan-cleanup-smoke.sh
@@ -224,6 +229,7 @@ product-ui-browser:
     node scripts/inbox-product-layout-smoke.mjs
     node scripts/archive-product-layout-smoke.mjs
     node scripts/marketplace-product-layout-smoke.mjs
+    node scripts/marketplace-card-states-dom-smoke.mjs
     node scripts/isolation-ui-truth-browser-smoke.mjs
     node scripts/documents-product-layout-smoke.mjs
     node scripts/library-product-layout-smoke.mjs
@@ -238,6 +244,7 @@ product-ui-browser:
     node scripts/wallet-product-layout-smoke.mjs
     node scripts/wallet-signin-browser-smoke.mjs
     node scripts/walletconnect-storage-smoke.mjs
+    node scripts/elacity-reader-smoke.mjs
 
 # Real source Home headers and app scripts in Chromium and WebKit.
 # On the Mac, run under the shared lease: elastos-heavy just product-ui-capsule-browser.

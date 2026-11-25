@@ -414,15 +414,15 @@ pub(crate) async fn call(
             transfer: ProviderTransfer::Json,
             range: None,
             progress: None,
-            transport: ProviderInvocationTransport::Carrier(ProviderCarrierRoute::ConnectTicket {
-                connect_ticket: ticket.into(),
-                peer_did: Some(super::public_key_to_did(&endpoint)?),
-                timeout_ms: Some(if matches!(operation, "prepare_launch" | "launch") {
+            transport: ProviderInvocationTransport::Carrier(ProviderCarrierRoute::connect_ticket(
+                ticket.into(),
+                Some(super::public_key_to_did(&endpoint)?),
+                Some(if matches!(operation, "prepare_launch" | "launch") {
                     60_000
                 } else {
                     5_000
                 }),
-            }),
+            )),
         })
         .await
         .map_err(|_| {
