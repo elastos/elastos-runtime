@@ -923,12 +923,8 @@ try {
     await wallet.locator(`[data-wallet-open-method="${target}"]`).waitFor({
       state: "attached", timeout: 15_000,
     });
-    // Keep Settings open for the continuity proof while activating the handler.
+    // The approved Add control returns to the same Wallet list.
     await wallet.evaluate(({ connectorTarget }) => {
-      const drawer = document.querySelector("#wallet-settings-drawer");
-      if (drawer?.hidden !== false) {
-        document.querySelector("#wallet-settings-open").click();
-      }
       document
         .querySelector(`[data-wallet-open-method="${connectorTarget}"]`)
         .click();
@@ -986,7 +982,7 @@ try {
     );
     assert(
       walletUiDuringConnector.route === walletUiBeforeConnectors.route &&
-        walletUiDuringConnector.settingsOpen === true &&
+        walletUiDuringConnector.settingsOpen === false &&
         walletUiDuringConnector.statePreserved === true,
       `${target} replaced or reset the Wallet frame state`,
       { walletUiBeforeConnectors, walletUiDuringConnector },
@@ -1025,7 +1021,6 @@ try {
       // Wallet's real request card opens the second request while the first connector stays open.
       await homeGui.evaluate(() => document.querySelector('.window[data-target="wallet"] iframe').contentWindow.postMessage({type:'elastos:wallet-refresh'},'*'));
       await homeGui.locator('.window[data-target="wallet"] .window-head').click({position:{x:80,y:14}});
-      await wallet.getByRole('button',{name:'Close settings',exact:true}).click();
       await wallet.getByRole('button',{name:'Add wallet for apps',exact:true}).click();await wallet.locator('.one-dialog [data-wallet-open-method="wallet-metamask"]').click();
       await waitFor(() => page.frames().filter(frame=>frame.url().includes('/apps/wallet-metamask/')).length === 2,5000,'fresh MetaMask request window');
       const fresh = page.frames().filter(frame=>frame.url().includes('/apps/wallet-metamask/')).find(frame=>frame!==connector);
@@ -1033,7 +1028,6 @@ try {
       assert(await connector.getByText('Second MetaMask request',{exact:true}).count() === 0,'original MetaMask frame retains its load-time list');
       await homeGui.locator('.window[data-target="wallet-metamask"] [data-action="close"]').last().click();
       state.approvalRequests = [];
-      await wallet.locator('#wallet-settings-open').evaluate(node=>node.click());
       await homeGui.locator('.window[data-target="wallet-metamask"] .window-head').click({position:{x:80,y:14}});
     }
     if (target === "wallet-walletconnect") {
@@ -1137,7 +1131,7 @@ try {
         walletWindowAfterClose.walletContentWindowPreserved === true &&
         rectsEqual(walletWindowAfterClose.rect, walletWindowBeforeConnectors.rect) &&
         walletUiAfterClose.route === walletUiBeforeConnectors.route &&
-        walletUiAfterClose.settingsOpen === true &&
+        walletUiAfterClose.settingsOpen === false &&
         walletUiAfterClose.statePreserved === true,
       `${target} close did not return focus to the unchanged Wallet`,
       {

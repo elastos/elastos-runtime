@@ -550,6 +550,7 @@ async function controlRect(frame, selector, label) {
 }
 
 async function openAccountMenu(frame) {
+  await frame.locator('.one-wallet-top button:visible').first().waitFor();
   if(!await frame.getByRole('button',{name:'Manage address',exact:true}).isVisible())await frame.getByRole('button',{name:/Open (Family|Home address|ELA Wallet)/}).first().click();
   await frame.getByRole('button',{name:'Manage address',exact:true}).click();
   await frame
