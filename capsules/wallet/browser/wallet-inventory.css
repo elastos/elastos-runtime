@@ -75,3 +75,7 @@ html[data-wallet-flow] .wallet-one-list .wallet-hero.is-flipped,html[data-wallet
  .one-dialog-footer { flex-direction:column-reverse; }
  .one-dialog-footer .el-button { width:100%; }
 }
+
+.one-identity strong { overflow-wrap:anywhere; }
+.one-wallet-top>.el-button { flex-shrink:0; }
+.one-owner>div { min-width:0; overflow-wrap:anywhere; }

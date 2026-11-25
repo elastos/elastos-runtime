@@ -6,6 +6,7 @@ export function handleWalletAppUse(event, context, {inventory, connect, current,
   if (context?.kind !== 'app-frame' || context.targetId !== 'wallet' || context.source !== event.source
     || context.homeToken !== data.homeToken || !context.walletEffectState
     || typeof data.requestId !== 'string' || !/^[a-zA-Z0-9-]{1,64}$/.test(data.requestId)) return true;
+  if (!current()) return true;
   const state = context.walletEffectState;
   if (data.type === 'home:wallet-app-connect-cancel') {
     if (exact(['type', 'requestId', 'homeToken']) && state.appConnection?.id === data.requestId) state.appConnection.cancelled = true;

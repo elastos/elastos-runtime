@@ -604,6 +604,7 @@ async function showHostAuthGate(options = {}) {
 }
 
 async function launchHomeTarget(target, query = {}, { renewHomeToken = "" } = {}) {
+  const authorityCurrent = createHomeAuthorityCheck();
   const pickerOwner = target === "library" && query.pickerRequestId
     ? [...launchedAppContexts.values()].map((context) => context.pickerRequest)
       .find((record) => record?.id === query.pickerRequestId && currentLibraryPicker(record))
@@ -626,7 +627,7 @@ async function launchHomeTarget(target, query = {}, { renewHomeToken = "" } = {}
     body: JSON.stringify(body),
   });
   if (launched?.attach_kind === "iframe") {
-    rememberLaunchedAppContext(launched, readBackgroundImage);
+    rememberLaunchedAppContext(launched, readBackgroundImage, authorityCurrent);
     if (pickerOwner) {
       const token = homeLaunchTokenFromRoute(launched.route);
       if (!currentLibraryPicker(pickerOwner) || pickerOwner.pickerToken) {
@@ -1022,7 +1023,7 @@ function replyToShellRequest(event, requestId, result, error = null) {
   }, OPAQUE_FRAME_TARGET);
 }
 
-function rememberLaunchedAppContext(launched, readBackgroundImage) {
+function rememberLaunchedAppContext(launched, readBackgroundImage, authorityCurrent) {
   const token = homeLaunchTokenFromRoute(launched?.route || "");
   if (!token || !launched?.target) {
     throw new Error("Runtime returned an incomplete isolated launch");
@@ -1032,6 +1033,7 @@ function rememberLaunchedAppContext(launched, readBackgroundImage) {
   }
   launchedAppContexts.set(token, {
     targetId: launched.target,
+    authorityCurrent,
     expiresAt: Number(launched.expires_at) * 1000,
     readBackgroundImage,
     browserInstance:
@@ -1877,7 +1879,7 @@ window.addEventListener("message", (event) => {
     return;
   }
   if (handleWalletAppUse(event, context, {
-    current: () => homeMessageContext(event, data)?.homeToken === context.homeToken,
+    current: () => context.authorityCurrent?.() === true && launchedAppContexts.get(context.homeToken)?.expiresAt > Date.now() && homeMessageContext(event, data)?.homeToken === context.homeToken,
     inventory: () => fetchJson('/api/apps/wallet/wallet/inventory', {headers:{'x-elastos-home-token':getHomeAuthorityToken()}}),
     connect: async (entry, active) => {
       const opened = await signinConnectorWindow(entry.sign_in.connector);
@@ -2500,6 +2502,7 @@ function homeMessageContext(event, data) {
     source: launched.source,
     clipboardState: launched.clipboardState,
     walletEffectState: launched.walletEffectState,
+    authorityCurrent: launched.authorityCurrent,
     browserInstance: launched.browserInstance,
   };
 }

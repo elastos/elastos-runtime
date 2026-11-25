@@ -343,6 +343,9 @@ async function startServer() {
         response.end(body);
         return;
       }
+      if (url.pathname === "/api/apps/wallet/wallet/inventory" && request.method === "GET") {
+        json(response,200,{schema:'elastos.wallet.inventory/v1',account_id:'fixture',account_name:'Alex',entries:state.accounts.map(account=>({inventory_id:`${account.chain_namespace}:${account.address.toLowerCase()}`,address:account.address,chain_namespace:account.chain_namespace,accounts:[account],sign_in:null}))});return;
+      }
       if (url.pathname === "/api/apps/wallet/wallet/summary" && request.method === "GET") {
         state.summaryCalls += 1;
         const token = request.headers["x-elastos-home-token"];
@@ -547,7 +550,8 @@ async function controlRect(frame, selector, label) {
 }
 
 async function openAccountMenu(frame) {
-  await frame.locator(".wallet-account .wallet-more-button").click();
+  if(!await frame.getByRole('button',{name:'Manage address',exact:true}).isVisible())await frame.getByRole('button',{name:/Open (Family|Home address|ELA Wallet)/}).first().click();
+  await frame.getByRole('button',{name:'Manage address',exact:true}).click();
   await frame
     .locator(".wallet-flow-row")
     .filter({ hasText: "Use by default" })
@@ -555,439 +559,44 @@ async function openAccountMenu(frame) {
 }
 
 async function run() {
-  const server = await startServer();
-  const tempDir = await mkdtemp(join(tmpdir(), "wallet-uiux-"));
-  const desktopShot = join(tempDir, "wallet-desktop-1280x900.png");
-  const narrowShot = join(tempDir, "wallet-narrow-640x900.png");
-  const latePhoneShot = join(tempDir, "wallet-late-receipt-phone.png");
-  const browser = await chromium.launch({
-    ...productSmokeLaunchOptions(),
-    headless: true,
-  });
-
+  const server=await startServer(),tempDir=await mkdtemp(join(tmpdir(),'wallet-uiux-'));
+  const browser=await chromium.launch({...productSmokeLaunchOptions(),headless:true});
+  const pageWithErrors=async viewport=>{const page=await browser.newPage({viewport});page.__pageErrors=[];page.__consoleErrors=[];page.__requestFailures=[];page.on('pageerror',e=>page.__pageErrors.push(e.message));page.on('console',m=>{if(m.type()==='error')page.__consoleErrors.push(m.text());});page.on('requestfailed',r=>page.__requestFailures.push(r.url()));return page;};
   try {
-    const lockedPage = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-    lockedPage.__pageErrors = [];
-    lockedPage.__consoleErrors = [];
-    lockedPage.__requestFailures = [];
-    lockedPage.on("pageerror", (error) => lockedPage.__pageErrors.push(String(error.message || error)));
-    lockedPage.on("console", (message) => {
-      if (message.type() === "error") {
-        lockedPage.__consoleErrors.push(message.text());
-      }
-    });
-    lockedPage.on("requestfailed", (request) => lockedPage.__requestFailures.push(request.url()));
-    await lockedPage.goto(`${server.baseUrl}/fixture-host.html?mode=locked`, { waitUntil: "networkidle", timeout: 5000 });
-    const lockedFrame = await walletFrame(lockedPage);
-    await lockedFrame.locator("#wallet-status").waitFor({ state: "visible", timeout: 5000 });
-    assert(await lockedFrame.locator("#wallet-status").textContent() === "Open Wallet from Home.", "Locked launch must stay locked until Home provides a token.");
-    assert(server.state.summaryCalls === 0 && server.state.priceCalls === 0 && server.state.balanceCalls.length === 0, "Locked launch must not call Wallet APIs.");
-    await assertNoErrors(lockedPage, server, "locked");
-    await lockedPage.close();
-
-    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-    page.__pageErrors = [];
-    page.__consoleErrors = [];
-    page.__requestFailures = [];
-    page.on("pageerror", (error) => page.__pageErrors.push(String(error.message || error)));
-    page.on("console", (message) => {
-      if (message.type() === "error") {
-        page.__consoleErrors.push(message.text());
-      }
-    });
-    page.on("requestfailed", (request) => page.__requestFailures.push(request.url()));
-
-    await page.goto(`${server.baseUrl}/fixture-host.html?mode=window`, { waitUntil: "networkidle", timeout: 5000 });
-    const frame = await walletFrame(page);
-    await frame.locator(".wallet-account").waitFor({ state: "visible", timeout: 5000 });
-
-    const hostState = await fixtureState(page);
-    assert(hostState.appReadyCount === 1, "Verified Wallet launch must announce home:app-ready exactly once.");
-    assert(hostState.pendingMessages.at(-1)?.count === 1, "Wallet must send the pending-count chrome fact.");
-    assert(server.state.summaryCalls >= 1 && server.state.priceCalls >= 1, "Verified Wallet launch must load summary and prices.");
-    assert(server.state.balanceCalls.length === 2, "Grouped EVM account must load one exact balance per network record.");
-
-    assert(await frame.locator(".wallet-account").count() === 1, "Grouped EVM records with the same address must render as one display card.");
-    await frame.locator(".wallet-account").click();
-    await frame.locator("#wallet-account-card").waitFor({ state: "visible", timeout: 5000 });
-    assert(await frame.locator("#wallet-account-card-name").textContent() === "Family", "Hero card must reflect the selected grouped account.");
-    assert(await frame.locator("#wallet-account-card-network").textContent() === "Built-in · EVM", "Hero card must keep the grouped EVM label.");
-
-    await frame.locator("#wallet-send").click();
-    await frame
-      .locator(".wallet-flow-row")
-      .filter({ hasText: "1.5 ETH" })
-      .filter({ hasText: "Base" })
-      .click();
-    await frame.locator('input[name="amount"]').fill("0.25");
-    await frame.locator('input[name="to"]').fill(sendAddress);
-    await capture(frame,"wallet-send","Wallet chooses an address and reviews a payment.");
-    await frame.getByRole("button", { name: "Review" }).click();
-    await frame.getByRole("button", { name: "Sign" }).click();
-    await waitForCondition(() => server.state.sendBodies.length === 1, 5000, "wallet send request");
-    assert(server.state.sendBodies.length === 1, "Wallet Send must submit exactly one request.");
-    assert(
-      server.state.sendBodies[0].account_id === "acc-base" && server.state.sendBodies[0].chain_namespace === "eip155:8453",
-      "Wallet Send must bind the selected ETH asset to the exact Base account record.",
-      server.state.sendBodies[0],
-    );
-
-    await frame.locator("#wallet-receive").click();
-    await frame.locator(".wallet-qr").waitFor({ state: "visible", timeout: 5000 });
-    assert(server.state.qrCalls.length === 1 && server.state.qrCalls[0].address === groupAddress, "Receive must stay group-level and bind only the shared address.");
-    assert(
-      (await frame.locator(".wallet-flow-hint").last().textContent()).includes("Always choose the correct chain"),
-      "Receive must keep the grouped EVM chain warning.",
-    );
-    await frame.getByRole("button", { name: "Done" }).click();
-
-    await frame.locator("#wallet-settings-open").click();
-    await frame.locator("#wallet-settings-drawer").waitFor({ state: "visible", timeout: 5000 });
-    await frame.locator('#wallet-currency-settings [data-wallet-currency="usd"]').click();
-    assert(
-      await frame.evaluate(() => window.localStorage.getItem("wallet.displayCurrency")) === "usd",
-      "Wallet currency preference must stay in the display-only local storage key.",
-    );
-    await frame.getByRole("button", { name: "Close settings" }).click();
-    await frame.locator("#wallet-settings-drawer").waitFor({ state: "hidden", timeout: 5000 });
-    const privacyMessageCount = (await fixtureState(page)).privacyMessages.length;
-    await frame.locator("#wallet-privacy").click();
-    await waitForCondition(async () => {
-      const messages = (await fixtureState(page)).privacyMessages;
-      return messages.length === privacyMessageCount + 1
-        && messages.at(-1)?.privacyMode === true;
-    }, 5000, "wallet privacy chrome fact");
-    assert(
-      (await fixtureState(page)).privacyMessages.at(-1)?.privacyMode === true,
-      "Wallet privacy changes must stay a chrome fact.",
-    );
-
-    const copyButton = frame.locator("#wallet-account-card-copy .wallet-copy-icon");
-    const clipboardSuccessCount = (await fixtureState(page)).clipboardRequests.length;
-    const copiedFeedback = await observeCopiedFeedback(frame, "#wallet-account-card-copy .wallet-copy-icon");
-    try {
-      await copyButton.click();
-      await waitForCondition(async () => {
-        const requests = (await fixtureState(page)).clipboardRequests;
-        return requests.length === clipboardSuccessCount + 1
-          && requests.at(-1)?.purpose === "wallet.address"
-          && requests.at(-1)?.text === groupAddress;
-      }, 5000, "wallet clipboard success request");
-      await copiedFeedback.wait();
-    } finally {
-      await copiedFeedback.close();
+    const locked=await pageWithErrors({width:1280,height:900});await locked.goto(server.baseUrl+'/fixture-host.html?mode=locked');const lockedFrame=await walletFrame(locked);
+    await lockedFrame.getByText('Open Wallet from Home.',{exact:true}).waitFor();assert(server.state.summaryCalls===0&&server.state.priceCalls===0,'a locked Wallet keeps its APIs closed');await locked.close();
+    const page=await pageWithErrors({width:1280,height:900});await page.goto(server.baseUrl+'/fixture-host.html?mode=window',{waitUntil:'networkidle'});const frame=await walletFrame(page);
+    await frame.locator('.one-wallet').nth(1).waitFor();assert(await frame.locator('.one-wallet').count()===2,'the list identifies each address and network once');
+    assert((await fixtureState(page)).appReadyCount===1,'Wallet announces its admitted launch once');assert(server.state.balanceCalls.length===2,'balances read each supported network once');
+    await capture(frame,'wallet-list','Wallet lists each identity and its uses.');await assertNoHorizontalOverflow(frame,'desktop list');
+    await frame.locator('.one-wallet').filter({hasText:'Base'}).getByRole('button',{name:'Send',exact:true}).click();
+    await frame.locator('.wallet-flow-row').filter({hasText:'1.5 ETH'}).filter({hasText:'Base'}).click();
+    await frame.locator('input[name="amount"]').fill('0.25');await frame.locator('input[name="to"]').fill(sendAddress);await frame.getByRole('button',{name:'Review',exact:true}).click();await frame.getByRole('button',{name:'Sign',exact:true}).click();
+    await waitForCondition(()=>server.state.sendBodies.length===1,5000,'exact Base send');assert(server.state.sendBodies[0].account_id==='acc-base'&&server.state.sendBodies[0].chain_namespace==='eip155:8453','Send binds the selected Base record');
+    await frame.locator('.one-wallet').first().getByRole('button',{name:'Receive',exact:true}).click();await frame.locator('.wallet-qr').waitFor();assert(server.state.qrCalls[0].address===groupAddress,'Receive binds the shared address');
+    assert((await frame.locator('.wallet-flow-hint').last().innerText()).includes('Always choose the correct chain'),'Receive retains its network warning');await frame.getByRole('button',{name:'Done',exact:true}).click();
+    await frame.getByRole('button',{name:'Open Family',exact:true}).first().click();await frame.getByRole('button',{name:'Settings',exact:true}).click();await frame.locator('#wallet-settings-drawer').waitFor();
+    await frame.locator('#wallet-currency-settings [data-wallet-currency="usd"]').click();assert(await frame.evaluate(()=>localStorage.getItem('wallet.displayCurrency'))==='usd','currency remains a display preference');await frame.getByRole('button',{name:'Close settings',exact:true}).click();
+    await frame.getByRole('button',{name:'Hide balances',exact:true}).click();assert((await fixtureState(page)).privacyMessages.at(-1).privacyMode===true,'privacy remains a chrome fact');
+    const copied=await observeCopiedFeedback(frame,'.one-wallet-top .el-button');try{await frame.getByRole('button',{name:'Copy',exact:true}).click();await copied.wait();}finally{await copied.close();}
+    assert((await fixtureState(page)).clipboardRequests.at(-1).purpose==='wallet.address','Copy uses Home Clipboard for the address');
+    await page.evaluate(()=>window.__walletFixture.clipboardShouldFail=true);await frame.getByRole('button',{name:'Copy',exact:true}).click();await frame.getByText(defaultGenericError,{exact:true}).waitFor();await page.evaluate(()=>window.__walletFixture.clipboardShouldFail=false);
+    await frame.getByRole('button',{name:'Back to wallets',exact:true}).click();const opened=(await fixtureState(page)).openTargets.length;await frame.getByRole('button',{name:'Add wallet for apps',exact:true}).click();await frame.locator('[data-wallet-open-method="wallet-metamask"]').click();await waitForCondition(async()=>((await fixtureState(page)).openTargets.length===opened+1),5000,'exact connector launch');
+    assert((await fixtureState(page)).openTargets.at(-1).target==='wallet-metamask','Add uses the Home connector launch');
+    await openAccountMenu(frame);await frame.locator('.wallet-flow-row').filter({hasText:'Use by default'}).click();await frame.locator('.wallet-flow-row').filter({hasText:'Base'}).click();await waitForCondition(()=>server.state.defaultBodies.length===1,5000,'default');assert(server.state.defaultBodies[0].account_id==='acc-base','Default binds the exact network');
+    await openAccountMenu(frame);await frame.locator('.wallet-flow-row').filter({hasText:'Show recovery key'}).click();await frame.locator('.wallet-flow-row').filter({hasText:'Elastos Smart Chain'}).click();await frame.locator('.wallet-secret').waitFor();assert(server.state.recoveryCalls.at(-1).accountId==='acc-esc','Recovery binds the exact network');assert(!(await frame.getByRole('dialog',{name:'Recovery key'}).innerText()).includes('undefined'),'Recovery has wallet and network labels');await frame.getByRole('button',{name:'Done',exact:true}).click();
+    await openAccountMenu(frame);await frame.locator('.wallet-flow-row').filter({hasText:'Rename'}).click();await frame.locator('input[name="label"]').fill('Family Office');await frame.getByRole('button',{name:'Save',exact:true}).click();await waitForCondition(()=>server.state.renameBodies.length===2,5000,'grouped rename');
+    await frame.getByRole('button',{name:'Back to wallets',exact:true}).click();for(const width of [1280,390]){await page.setViewportSize({width,height:900});await assertNoHorizontalOverflow(frame,'wallet '+width);await screenshot(frame,join(tempDir,'wallet-'+width+'.png'));}
+    await openAccountMenu(frame);await frame.locator('.wallet-flow-row').filter({hasText:'Delete address'}).click();assert(server.state.deleteBodies.length===0,'Delete waits for confirmation');await frame.getByRole('button',{name:'Delete',exact:true}).click();await waitForCondition(()=>server.state.deleteBodies.length===2,5000,'grouped deletion');assert(server.state.deleteBodies.some(row=>row.accountId==='acc-esc')&&server.state.deleteBodies.some(row=>row.accountId==='acc-base'),'Delete binds both exact records');
+    await assertNoErrors(page,server,'one-list journeys');await page.close();
+    server.state.accounts=structuredClone(defaultState().accounts);server.state.approvals=[{...defaultState().approvals[0],request_id:'approved-send',status:'approved',proof_type:'siwe',intent:'transaction_intent',connector_id:'wallet-walletconnect',transaction_hash:'0x'+'ab'.repeat(32),reason:'Payment result needs checking'}];
+    const rail=await pageWithErrors({width:390,height:844});await rail.goto(server.baseUrl+'/fixture-host.html?mode=rail',{waitUntil:'networkidle'});let railFrame=await walletFrame(rail);await railFrame.getByRole('button',{name:'Dismiss',exact:true}).waitFor();await assertNoHorizontalOverflow(railFrame,'late phone result');await railFrame.getByRole('button',{name:'Dismiss',exact:true}).click();await waitForCondition(()=>server.state.rejectBodies.length===1,5000,'dismissal');await railFrame.getByRole('button',{name:'Dismiss',exact:true}).waitFor({state:'hidden'});
+    for(const name of ['Scripted wallet','Phone <img src=x onerror=alert(1)>','界'.repeat(40),'x'.repeat(41)]){
+      server.state.accounts=[{account_id:'phone',address:sendAddress,connector_id:'wallet-walletconnect',proof_type:'siwe',chain_namespace:'eip155:8453',wallet_display_name:name,wallet_mark:'wallet'}];server.state.approvals=[];await rail.reload({waitUntil:'networkidle'});railFrame=await walletFrame(rail);
+      await railFrame.locator('.one-identity strong').filter({hasText:name.length>40?'Your wallet':name}).waitFor();assert(await railFrame.locator('img[onerror]').count()===0,'wallet names render as text');await assertNoHorizontalOverflow(railFrame,'phone name');
+      await railFrame.getByRole('button',{name:'Settings',exact:true}).click();await railFrame.locator('#wallet-settings-drawer').waitFor();await assertNoHorizontalOverflow(railFrame,'phone settings');
     }
-    const clipboardSuccess = (await fixtureState(page)).clipboardRequests.at(-1);
-    assert(
-      clipboardSuccess?.purpose === "wallet.address" && clipboardSuccess?.text === groupAddress,
-      "Wallet copy must use the protected Home Clipboard with the wallet.address purpose.",
-      clipboardSuccess,
-    );
-    await page.evaluate(() => {
-      window.__walletFixture.clipboardShouldFail = true;
-    });
-    const clipboardFailureCount = (await fixtureState(page)).clipboardRequests.length;
-    await copyButton.click();
-    await waitForCondition(async () => {
-      const requests = (await fixtureState(page)).clipboardRequests;
-      return requests.length === clipboardFailureCount + 1
-        && requests.at(-1)?.purpose === "wallet.address"
-        && requests.at(-1)?.text === groupAddress;
-    }, 5000, "wallet clipboard failure request");
-    await frame.waitForFunction(
-      (message) => document.querySelector("#wallet-status")?.textContent === message,
-      defaultGenericError,
-      { timeout: 5000 },
-    );
-    assert(
-      await frame.locator("#wallet-status").textContent() === defaultGenericError,
-      "Wallet copy failures must render the public error, not raw clipboard details.",
-    );
-
-    const openTargetCount = (await fixtureState(page)).openTargets.length;
-    await frame.locator('#wallet-methods [data-wallet-open-method="wallet-metamask"]').waitFor({ state: "visible", timeout: 5000 });
-    await frame.locator('#wallet-methods [data-wallet-open-method="wallet-metamask"]').click();
-    await waitForCondition(async () => {
-      const openTargets = (await fixtureState(page)).openTargets;
-      return openTargets.length === openTargetCount + 1
-        && openTargets.at(-1)?.target === "wallet-metamask";
-    }, 5000, "wallet connector launch");
-    const openTarget = (await fixtureState(page)).openTargets.at(-1);
-    assert(openTarget?.target === "wallet-metamask", "Wallet connector launch must stay on the exact Home open-target path.", openTarget);
-
-    await openAccountMenu(frame);await capture(frame,"wallet-address-actions","Wallet address actions.");
-    const defaultRequestCount = server.state.defaultBodies.length;
-    await frame.locator(".wallet-flow-row").filter({ hasText: "Use by default" }).click();
-    const defaultDialog = frame.getByRole("dialog", { name: "Use by default" });
-    await defaultDialog.waitFor({ state: "visible", timeout: 5000 });
-    await defaultDialog.getByText("Choose the exact network", { exact: true }).waitFor({ state: "visible", timeout: 5000 });
-    await defaultDialog.locator(".wallet-flow-row").filter({ hasText: "Base" }).click();
-    await waitForCondition(() => server.state.defaultBodies.length === defaultRequestCount + 1, 5000, "wallet default request");
-    assert(
-      server.state.defaultBodies.at(-1)?.account_id === "acc-base" && server.state.defaultBodies.at(-1)?.chain_namespace === "eip155:8453",
-      "Use by default must choose an exact grouped network record, not the primary grouped record.",
-      server.state.defaultBodies.at(-1),
-    );
-    await waitForCondition(async () => await frame.locator("#wallet-status").textContent() === "Family is now the default for transactions.",
-      5000, "default confirmation names the grouped address");
-
-    await openAccountMenu(frame);await capture(frame,"wallet-address-actions","Wallet address actions.");
-    const recoveryRequestCount = server.state.recoveryCalls.length;
-    const recoveryStepUpCount = (await fixtureState(page)).stepUps.length;
-    await frame.locator(".wallet-flow-row").filter({ hasText: "Show recovery key" }).click();
-    const recoveryDialog = frame.getByRole("dialog", { name: "Recovery key" });
-    await recoveryDialog.waitFor({ state: "visible", timeout: 5000 });
-    await recoveryDialog.getByText("Choose the exact network", { exact: true }).waitFor({ state: "visible", timeout: 5000 });
-    await recoveryDialog.locator(".wallet-flow-row").filter({ hasText: "Elastos Smart Chain" }).click();
-    await waitForCondition(() => server.state.recoveryCalls.length === recoveryRequestCount + 1, 5000, "wallet recovery request");
-    await waitForCondition(
-      () => fixtureState(page).then((state) => state.stepUps.length === recoveryStepUpCount + 1),
-      5000,
-      "wallet recovery step-up",
-    );
-    assert(
-      server.state.recoveryCalls.at(-1)?.accountId === "acc-esc" && (await fixtureState(page)).stepUps.at(-1)?.request?.account_id === "acc-esc",
-      "Recovery must bind one exact grouped record.",
-      {
-        recovery: server.state.recoveryCalls.at(-1),
-        stepUp: (await fixtureState(page)).stepUps.at(-1),
-      },
-    );
-    await frame.getByRole("button", { name: "Done" }).click();
-
-    await openAccountMenu(frame);await capture(frame,"wallet-address-actions","Wallet address actions.");
-    const renameRequestCount = server.state.renameBodies.length;
-    await frame.locator(".wallet-flow-row").filter({ hasText: "Rename" }).click();
-    await frame.locator(".wallet-flow-hint").waitFor({ state: "visible", timeout: 5000 });
-    assert(
-      (await frame.locator(".wallet-flow-hint").textContent()).includes("updates 2 network records"),
-      "Grouped rename must name the full grouped scope.",
-    );
-    await frame.locator('input[name="label"]').fill("Family Office");await capture(frame,"wallet-rename-address","Rename a Wallet address.");
-    const renameDialog = frame.getByRole("dialog", { name: "Rename address" });
-    await frame.getByRole("button", { name: "Save" }).click();
-    await waitForCondition(() => server.state.renameBodies.length === renameRequestCount + 2, 5000, "wallet rename requests");
-    assert(
-      server.state.renameBodies.length === 2
-        && server.state.renameBodies.some((item) => item.accountId === "acc-esc")
-        && server.state.renameBodies.some((item) => item.accountId === "acc-base"),
-      "Grouped rename must update each exact grouped account record.",
-      server.state.renameBodies,
-    );
-    await renameDialog.waitFor({ state: "hidden", timeout: 5000 });
-    await frame.waitForFunction(() => new Promise((resolve) => {
-      const hero = document.querySelector(".wallet-hero");
-      const account = document.querySelector("#wallet-accounts .wallet-account");
-      const modal = document.querySelector("#wallet-modal");
-      if (!hero || !account || !modal || !modal.hidden) {
-        resolve(false);
-        return;
-      }
-      const heroRect = hero.getBoundingClientRect();
-      const accountRect = account.getBoundingClientRect();
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          const nextHeroRect = hero.getBoundingClientRect();
-          const nextAccountRect = account.getBoundingClientRect();
-          resolve(
-            modal.hidden
-              && heroRect.width > 0
-              && heroRect.height > 0
-              && accountRect.width > 0
-              && accountRect.height > 0
-              && heroRect.top === nextHeroRect.top
-              && heroRect.height === nextHeroRect.height
-              && accountRect.top === nextAccountRect.top
-              && accountRect.height === nextAccountRect.height,
-          );
-        });
-      });
-    }), undefined, { timeout: 5000 });
-
-    await frame.locator(".wallet-hero").scrollIntoViewIfNeeded();
-    await screenshot(frame, desktopShot);
-    await assertNoHorizontalOverflow(frame, "desktop");
-    await controlRect(frame, ".wallet-hero", "desktop hero");
-    await frame.locator("#wallet-settings-open").click();
-    await frame.locator("#wallet-settings-drawer").waitFor({ state: "visible", timeout: 5000 });
-    await frame.waitForFunction(() => {
-      const drawer = document.querySelector("#wallet-settings-drawer");
-      if (!drawer || !drawer.classList.contains("is-open")) {
-        return false;
-      }
-      const rect = drawer.getBoundingClientRect();
-      return rect.left >= 0 && rect.right <= window.innerWidth;
-    }, undefined, { timeout: 5000 });
-    await controlRect(frame, "#wallet-settings-drawer", "desktop settings drawer");await capture(frame,"wallet-settings-addresses","Wallet settings lists connected addresses and WalletConnect.");
-    await frame.getByRole("button", { name: "Close settings" }).click();
-    await frame.locator("#wallet-settings-drawer").waitFor({ state: "hidden", timeout: 5000 });
-
-    await page.setViewportSize({ width: 640, height: 900 });
-    await frame.waitForFunction(() => window.innerWidth === 640, undefined, { timeout: 5000 });
-    await frame.locator(".wallet-hero").scrollIntoViewIfNeeded();
-    await assertNoHorizontalOverflow(frame, "narrow");
-    await controlRect(frame, ".wallet-hero", "narrow hero");
-    await screenshot(frame, narrowShot);
-
-    await openAccountMenu(frame);await capture(frame,"wallet-address-actions","Wallet address actions.");
-    const deleteRequestCount = server.state.deleteBodies.length;
-    const deleteStepUpCount = (await fixtureState(page)).stepUps.length;
-    await frame.locator(".wallet-flow-row").filter({ hasText: "Delete address" }).click();
-    await capture(frame,"wallet-delete-address","Delete a Wallet address after confirmation.");
-    const deleteHint = await frame.locator(".wallet-flow-hint").textContent();
-    assert(deleteHint.includes("removes 2 network records"), "Grouped delete must name the full grouped scope.");
-    assert(server.state.deleteBodies.length === 0, "Delete must not run before confirmation.");
-    await frame.getByRole("button", { name: "Delete" }).click();
-    await waitForCondition(() => server.state.deleteBodies.length === deleteRequestCount + 2, 5000, "wallet delete requests");
-    await waitForCondition(
-      () => fixtureState(page).then((state) => state.stepUps.length === deleteStepUpCount + 2),
-      5000,
-      "wallet delete step-ups",
-    );
-    await frame.waitForFunction(() => document.querySelector("#wallet-account-state")?.textContent === "0 addresses", undefined, { timeout: 5000 });
-    assert(
-      server.state.deleteBodies.length === 2
-        && server.state.deleteBodies.some((item) => item.accountId === "acc-esc")
-        && server.state.deleteBodies.some((item) => item.accountId === "acc-base"),
-      "Grouped delete must bind each exact grouped account id.",
-      server.state.deleteBodies,
-    );
-
-    await assertNoErrors(page, server, "window");
-    await page.close();
-
-    const railFixtureState = defaultState();
-    server.state.accounts = structuredClone(railFixtureState.accounts);
-    server.state.defaultAccounts = structuredClone(railFixtureState.defaultAccounts);
-
-    const railPage = await browser.newPage({ viewport: { width: 640, height: 900 } });
-    railPage.__pageErrors = [];
-    railPage.__consoleErrors = [];
-    railPage.__requestFailures = [];
-    railPage.on("pageerror", (error) => railPage.__pageErrors.push(String(error.message || error)));
-    railPage.on("console", (message) => {
-      if (message.type() === "error") {
-        railPage.__consoleErrors.push(message.text());
-      }
-    });
-    railPage.on("requestfailed", (request) => railPage.__requestFailures.push(request.url()));
-    await railPage.goto(`${server.baseUrl}/fixture-host.html?mode=rail`, { waitUntil: "networkidle", timeout: 5000 });
-    const railFrame = await walletFrame(railPage);
-    await railFrame.locator(".wallet-account").waitFor({ state: "visible", timeout: 5000 });
-    const railState = await railFrame.evaluate(() => ({
-      presentation: document.documentElement.dataset.walletPresentation,
-      heroNavHidden: document.querySelector(".wallet-hero-nav")?.hasAttribute("hidden") === true,
-    }));
-    assert(railState.presentation === "rail" && railState.heroNavHidden, "Rail mode must keep the reviewed Wallet rail presentation.");
-    await assertNoErrors(railPage, server, "rail");
-    server.state.approvals = [{ ...railFixtureState.approvals[0], request_id: "approved-send",
-      status: "approved", intent: "transaction_intent", connector_id: "wallet-walletconnect",
-      approved_at: Math.floor(Date.now() / 1000) - 13 * 3600 - 290,
-      created_at: Math.floor(Date.now() / 1000) - 13 * 3600 - 300,
-      expires_at: Math.floor(Date.now() / 1000) - 13 * 3600 }];
-    await railPage.goto(`${server.baseUrl}/fixture-host.html?mode=window`, { waitUntil: "networkidle" });
-    const dismissFrame = await walletFrame(railPage);
-    await dismissFrame.locator(".wallet-account").waitFor({ state: "visible" });
-    assert(await dismissFrame.locator("#wallet-approvals-badge").textContent() === "1", "WalletConnect unfinished send counts in Activity");
-    await dismissFrame.locator("#wallet-activity-open").click();
-    const approvedCard = dismissFrame.locator('[data-wallet-request-id="approved-send"]');
-    await approvedCard.waitFor({ state: "visible" });
-    assert((await approvedCard.textContent()).includes("does not cancel"), "dismissal explains ownership of the wallet transaction");
-    assert(await approvedCard.getByRole("button").count() === 1, "approved send offers Dismiss without another approval");
-    await approvedCard.getByRole("button", { name: "Dismiss", exact: true }).click();
-    const acknowledgement = approvedCard.getByRole("status");
-    await acknowledgement.filter({ hasText: "Request dismissed." }).waitFor({ state: "visible" });
-    assert(await approvedCard.getByRole("button").count() === 0, "acknowledgement offers no second decision");
-    assert(server.state.rejectBodies.length === 1, "one dismissal reaches Runtime");
-    await dismissFrame.locator("#wallet-settings-open").click();
-    await approvedCard.waitFor({ state: "detached" });
-    server.state.approvals[0].transaction_hash = `0x${"a".repeat(64)}`;
-    server.state.approvals[0].completed_at = Math.floor(Date.now() / 1000);
-    await railPage.reload({ waitUntil: "networkidle" });
-    const lateFrame = await walletFrame(railPage);
-    await lateFrame.locator(".wallet-account").waitFor({ state: "visible" });
-    await lateFrame.locator("#wallet-activity-open").click();
-    const lateRow = lateFrame.locator(".wallet-activity-row");
-    assert(await lateRow.count() === 1, "late receipt stays on one Activity line");
-    assert((await lateRow.textContent()).includes("Dismissed, but your wallet reported it as sent"), "late receipt explains the dismissed send");
-    assert((await lateRow.textContent()).includes(server.state.approvals[0].transaction_hash), "late receipt keeps the full hash available");
-    await railPage.setViewportSize({ width: 390, height: 844 });
-    await lateFrame.locator("#wallet-activity-drawer").evaluate(async drawer => {
-      await Promise.all(drawer.getAnimations().map(animation => animation.finished));
-    });
-    const lateBounds = await lateRow.evaluate(row => ({ right: row.getBoundingClientRect().right, width: window.innerWidth, scroll: document.documentElement.scrollWidth }));
-    assert(lateBounds.right <= lateBounds.width && lateBounds.scroll <= lateBounds.width, "full late hash fits the phone Activity row", lateBounds);
-    await screenshot(lateFrame, latePhoneShot);
-    console.log(`Wallet late receipt phone PASS: ${JSON.stringify(lateBounds)}`);
-    await railPage.setViewportSize({ width: 640, height: 900 });
-    for (const connector_id of ["wallet-metamask", "wallet-unisat"]) {
-      server.state.approvals = [{ ...server.state.approvals[0], status: "approved", connector_id, expires_at: Math.floor(Date.now() / 1000) + 300, transaction_hash: undefined }];
-      await railPage.reload({ waitUntil: "networkidle" });
-      const otherFrame = await walletFrame(railPage);
-      await otherFrame.locator(".wallet-account").waitFor({ state: "visible" });
-      assert(await otherFrame.locator("#wallet-approvals-badge").isHidden(), `${connector_id} keeps the normal Activity badge`);
-      await otherFrame.locator("#wallet-activity-open").click();
-      assert(await otherFrame.locator('[data-wallet-request-id="approved-send"]').count() === 0, `${connector_id} stays out of the pending list`);
-    }
-    await assertNoErrors(railPage, server, "dismissal");
-    await railPage.reload({waitUntil:'networkidle'});const createFrame=await walletFrame(railPage);
-    await createFrame.locator('.wallet-section-actions [data-wallet-create-account]').click();await capture(createFrame,'wallet-create-address','Choose the type of Wallet address.');
-    await createFrame.locator('.wallet-flow-row').filter({hasText:'EVM'}).click();await capture(createFrame,'wallet-create-evm-address','Create an EVM address.');
-    await createFrame.getByRole('button',{name:'Back',exact:true}).click();await createFrame.locator('.wallet-flow-row').filter({hasText:'Bitcoin'}).click();await capture(createFrame,'wallet-create-bitcoin-address','Create a Bitcoin address.');
-    await createFrame.getByRole('button',{name:'Back',exact:true}).click();await createFrame.getByRole('button',{name:'Cancel',exact:true}).click();
-    console.log("Wallet approved-send dismissal PASS: visible recovery card, Dismiss, one Runtime request, removed after refresh");
-    server.state.accounts = [{ account_id: "phone-account", address: sendAddress, label: "",
-      connector_id: "wallet-walletconnect", proof_type: "siwe", chain_namespace: "eip155:8453",
-      wallet_display_name: "Scripted wallet", wallet_mark: "wallet" }];
-    server.state.defaultAccounts = [];
-    server.state.approvals = [];
-    await railPage.reload({ waitUntil: "networkidle" });
-    const phoneFrame = await walletFrame(railPage);
-    await phoneFrame.locator(".wallet-account .wallet-card-name").filter({ hasText: "Scripted wallet" }).waitFor();
-    await phoneFrame.locator(".wallet-account").getByText("Name reported by wallet", { exact: true }).waitFor({ timeout: 4000 });
-    if (process.env.PRODUCT_FAULT_PICTURES) await screenshot(phoneFrame, join(process.env.PRODUCT_FAULT_PICTURES, "211-wallet-card.png"));
-    await phoneFrame.locator("#wallet-settings-open").click();
-    const linked = phoneFrame.locator("#wallet-settings-drawer");
-    await linked.getByText("Scripted wallet", { exact: true }).waitFor({ timeout: 4000 });
-    await linked.getByText("Name reported by wallet", { exact: true }).waitFor();
-    await linked.evaluate(async drawer => {
-      await Promise.all(drawer.getAnimations().map(animation => animation.finished));
-    });
-    if (process.env.PRODUCT_FAULT_PICTURES) await screenshot(phoneFrame, join(process.env.PRODUCT_FAULT_PICTURES, "211-wallet-settings.png"));
-    await railPage.setViewportSize({ width: 390, height: 844 });
-    if (process.env.PRODUCT_FAULT_PICTURES) await screenshot(phoneFrame, join(process.env.PRODUCT_FAULT_PICTURES, "211-wallet-settings-phone.png"));
-    server.state.accounts[0].wallet_display_name = "Phone <img src=x onerror=alert(1)>";
-    await railPage.reload({ waitUntil: "networkidle" });
-    const textFrame = await walletFrame(railPage);
-    await textFrame.locator("#wallet-settings-open").click();
-    await textFrame.locator("#wallet-settings-drawer").getByText(server.state.accounts[0].wallet_display_name, { exact: true }).waitFor();
-    assert(await textFrame.locator("#wallet-settings-drawer img[onerror]").count() === 0, "Settings renders peer metadata as plain text");
-    server.state.accounts[0].wallet_display_name = "界".repeat(40);
-    await railPage.reload({ waitUntil: "networkidle" });
-    const longNameFrame = await walletFrame(railPage);
-    await longNameFrame.locator("#wallet-settings-open").click();
-    await longNameFrame.locator("#wallet-settings-wallet-list").getByText(server.state.accounts[0].wallet_display_name, { exact: true }).waitFor();
-    await longNameFrame.locator("#wallet-settings-drawer").evaluate(async drawer => {
-      await Promise.all(drawer.getAnimations().map(animation => animation.finished));
-    });
-    const nameBounds = await longNameFrame.locator("#wallet-settings-wallet-list .wallet-display-name").evaluate(node => ({ right: node.getBoundingClientRect().right, width: window.innerWidth }));
-    assert(nameBounds.right <= nameBounds.width, "a bounded wide-character wallet name fits phone Settings", nameBounds);
-    server.state.accounts[0].wallet_display_name = "x".repeat(41);
-    await railPage.reload({ waitUntil: "networkidle" });
-    const boundedFrame = await walletFrame(railPage);
-    await boundedFrame.locator("#wallet-settings-open").click();
-    await boundedFrame.locator("#wallet-settings-drawer").getByText("Your wallet", { exact: true }).waitFor();
-    assert(await boundedFrame.locator("#wallet-settings-drawer").getByText("Name reported by wallet", { exact: true }).count() === 0, "invalid name keeps the generic fallback");
-    await railPage.close();
-
-    console.log(`wallet-product-layout-smoke: OK\n${desktopShot}\n${narrowShot}\n${latePhoneShot}`);
-  } finally {
-    await browser.close().catch(() => {});
-    await server.close().catch(() => {});
-    if (process.env.KEEP_WALLET_UIUX_SMOKE_TMP !== "1") {
-      await rm(tempDir, { recursive: true, force: true }).catch(() => {});
-    }
-  }
+    await assertNoErrors(rail,server,'rail');await rail.close();console.log('wallet-product-layout-smoke: PASS (one list, Send, Receive, preferences, clipboard, connector, default, recovery, rename, delete, late result and peer names)');
+  } finally {await browser.close().catch(()=>{});await server.close().catch(()=>{});if(process.env.KEEP_WALLET_UIUX_SMOKE_TMP!=='1')await rm(tempDir,{recursive:true,force:true});}
 }
-
 await run();

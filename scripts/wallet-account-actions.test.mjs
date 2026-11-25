@@ -53,8 +53,8 @@ for (const namespace of ['eip155:20', 'eip155:8453']) {
       });
       await actions.onAccountClick({target:{closest:()=>({dataset:{walletAccountMenu:view.account_id}})}, stopPropagation(){}});
       await rows.find(row => row.title === 'Recovery key').action();
-      await rows.find(row => row.title === (namespace === 'eip155:20' ? 'ESC' : 'Base')).action();
-      assert.equal(details.find(row => row.label === 'Network').value, namespace === 'eip155:20' ? 'ESC' : 'Base');
+      await rows.find(row => row.title === (namespace === 'eip155:20' ? 'Elastos Smart Chain' : 'Base')).action();
+      assert.equal(details.find(row => row.label === 'Network').value, namespace === 'eip155:20' ? 'Elastos Smart Chain' : 'Base');
       assert.equal(typeof details.find(row => row.label === 'Wallet').value, 'string');
       assert(details.find(row => row.label === 'Wallet').value.length > 0);
       assert.equal(details.filter(row => row.label).some(row => row.value === undefined || row.value === 'undefined'), false);

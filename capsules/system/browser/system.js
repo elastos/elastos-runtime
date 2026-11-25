@@ -2748,7 +2748,7 @@ function walletAccountRow(method) {
   title.textContent = method.wallet_display_name || connectorName(method.connector); title.dir = 'auto';
   address.className = 'system-wallet-meta';
   const code = document.createElement('code'); code.textContent = shortWalletAddress(method.address); code.title = method.address;
-  const network = document.createElement('span'); network.textContent = walletNetwork(method) + (method.connector === 'walletconnect' ? ' · WalletConnect' : '');
+  const network = document.createElement('span'); network.textContent = (method.chain_id === 20 ? 'ESC' : walletNetwork(method)) + (method.connector === 'walletconnect' ? ' · WalletConnect' : '');
   address.append(code, network); copy.append(title, address); identity.append(icon, copy);
   const actions = document.createElement('div'); actions.className = 'system-wallet-actions';
   const open = document.createElement('a'); open.href = '#wallet'; open.className = 'wallet-inventory-link'; open.textContent = 'Open Wallet';

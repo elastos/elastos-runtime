@@ -1,4 +1,5 @@
-import {chainLabel, shortAddress, isPasskeyManagedAccount} from './wallet-format.js';
+import {pulseCopied} from './wallet-render.js';
+import {chainLabel, shortAddress, isPasskeyManagedAccount, walletDisplay, accountName} from './wallet-format.js';
 
 const text = (tag, value, className = '') => {
   const node = document.createElement(tag); node.textContent = value; node.className = className; return node;
@@ -9,14 +10,16 @@ const button = (label, action, primary = false) => {
 };
 export function inventoryWalletName(entry) {
   const account = entry.accounts[0];
-  if (account && isPasskeyManagedAccount(account)) return account.label || 'Home address';
-  return account?.wallet_display_name || entry.wallet_display_name || ({metamask:'MetaMask', unisat:'UniSat', walletconnect:'Your wallet'}[account?.connector_id?.replace('wallet-', '') || entry.sign_in?.connector]) || 'Your wallet';
+  if (account && isPasskeyManagedAccount(account)) return accountName(account);
+  const reported=account?.wallet_display_name || entry.wallet_display_name;
+  if(reported)return walletDisplay({wallet_display_name:reported}).name;
+  return ({metamask:'MetaMask', unisat:'UniSat', walletconnect:'Your wallet'}[account?.connector_id?.replace('wallet-', '') || entry.sign_in?.connector]) || 'Your wallet';
 }
 const kind = entry => entry.accounts[0]?.connector_id?.replace('wallet-', '') || entry.sign_in?.connector || 'passkey';
 const bitcoin = entry => entry.chain_namespace.startsWith('bip122:');
 const appsStatement = entry => bitcoin(entry) ? 'Proves you own this Bitcoin address to apps' : 'Apps and websites can ask; you approve each request.';
 
-export function createWalletInventory({root, openSystem, connectApps, removeApps, copyAddress, send, receive, manageBuiltIn, getBalance = () => '', openActivity, openSettings}) {
+export function createWalletInventory({root, openSystem, connectApps, removeApps, copyAddress, send, receive, manageBuiltIn, getBalance = () => '', openActivity, openSettings, togglePrivacy, isPrivate=()=>false, onError=()=>{}}) {
   let inventory = {entries:[]}, selected = new URLSearchParams(location.search).get('wallet_entry') || '';
   let result = '', dialog, operation = 0, busy = false, renderKey = '';
   let connectionController;
@@ -31,13 +34,13 @@ export function createWalletInventory({root, openSystem, connectApps, removeApps
     const copy = text('div', ''); const name = text('strong', inventoryWalletName(entry));
     name.dir = 'auto';
     const meta = text('div', '', 'one-meta'), address = text('code', shortAddress(entry.address)); address.title = entry.address;
-    meta.append(address, text('span', chainLabel(entry.chain_namespace) + (kind(entry) === 'walletconnect' ? ' · WalletConnect' : '')));
+    meta.append(address, text('span', (entry.chain_namespace === 'eip155:20' ? 'ESC' : chainLabel(entry.chain_namespace)) + (kind(entry) === 'walletconnect' ? ' · WalletConnect' : '')));
     copy.append(name, meta); node.append(image, copy); return node;
   }
   function card(entry, detail) {
     const article = text('article', '', 'one-wallet'); article.dataset.wallet = entry.inventory_id;
     const top = text('div', '', 'one-wallet-top');
-    top.append(identity(entry), detail ? button('Copy', () => copyAddress(entry.address)) : button('Open', () => open(entry.inventory_id)));
+    top.append(identity(entry), detail ? button('Copy', async event => {const control=event.currentTarget;control.disabled=true;try{await copyAddress(entry.address);pulseCopied(control);}catch(error){onError(error);}finally{control.disabled=false;}}) : button('Open', () => open(entry.inventory_id)));
     if (!detail) top.lastChild.setAttribute('aria-label', `Open ${inventoryWalletName(entry)}`);
     article.append(top);
     const managed = entry.accounts.some(isPasskeyManagedAccount);
@@ -71,7 +74,7 @@ export function createWalletInventory({root, openSystem, connectApps, removeApps
       if (bitcoin(entry) && !managed) article.append(text('p', 'Sending Bitcoin from this Home is not available yet.', 'one-note'));
       if (managed) {
         const controls = text('div', '', 'one-built-actions');
-        controls.append(button('Manage address', () => manageBuiltIn(entry)), button('Activity', openActivity), button('Settings', openSettings)); article.append(controls);
+        controls.append(button('Manage address', () => manageBuiltIn(entry)), button('Activity', openActivity), button('Settings', openSettings), button(isPrivate()?'Show balances':'Hide balances',togglePrivacy)); article.append(controls);
       }
     }
     return article;
@@ -84,7 +87,7 @@ export function createWalletInventory({root, openSystem, connectApps, removeApps
     if (selected && !entry) selected = '';
     if (entry) title.append(button('Back to wallets', () => open('')));
     title.append(text('h1', entry ? 'Wallet' : 'Wallets')); heading.append(title);
-    if (!entry) heading.append(button('Add wallet for apps', choose, true));
+    if (!entry) {const add=button('Add wallet for apps', choose, true);add.id='wallet-add-apps';heading.append(add);}
     section.append(heading);
     if (result) section.append(text('p', result, 'one-result'));
     if (!entry) {
@@ -93,7 +96,7 @@ export function createWalletInventory({root, openSystem, connectApps, removeApps
     }
     const list = text('div', '', 'one-list');
     for (const row of entry ? [entry] : inventory.entries) list.append(card(row, Boolean(entry)));
-    if (!inventory.entries.length) list.append(text('p', 'Add a wallet for apps, or create a Home address in Settings.', 'one-muted'), button('Settings', openSettings));
+    if (!inventory.entries.length) list.append(text('p', 'Add a wallet for apps, or create a Home address in Settings.', 'one-muted'));
     section.append(list);
     if (!entry && !inventory.entries.some(entry=>entry.accounts.some(isPasskeyManagedAccount))) {
       const controls = text('div', '', 'one-built-actions'); controls.append(button('Activity', openActivity), button('Settings', openSettings)); section.append(controls);

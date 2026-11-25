@@ -145,6 +145,7 @@ const inventoryView = createWalletInventory({
   manageBuiltIn: entry => {const account=buildViewAccounts().find(account=>account.account_ids.includes(entry.accounts[0].account_id));if(account)openAccountMenu(account.account_id);},
   getBalance: entry => {const account=viewAccountForGroup({records:entry.accounts,method:methodForAccount(entry.accounts[0]),firstIndex:0});return getPrivacyMode() ? "••••" : account.balanceAvailable ? `${account.amount.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:6})} ${account.symbol}` : "Balance unavailable";},
   openActivity: () => openActivityChrome(), openSettings: () => openDrawer('settings'),
+  togglePrivacy: () => togglePrivacy(), isPrivate: () => getPrivacyMode(), onError: error => showStatus(String(error.message || error),'error'),
 });
 
 async function connectInventoryApps(entry, current, method, signal) {

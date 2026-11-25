@@ -41,3 +41,10 @@ test('a second app-use request stays outside the active proof and session change
   assert.equal(f.replies[0].result.status,'failed');live=false;release({entries:[f.entry]});await tick();
   assert.equal(f.calls.length,0);assert.equal(f.replies.length,1);
 });
+
+test('an old Wallet frame cannot use a new Home account authority', async () => {
+  const f=fixture();let reads=0;
+  f.dependencies.current=()=>false;f.dependencies.inventory=async()=>{reads++;return {entries:[f.entry]};};
+  handleWalletAppUse({source:f.source,data:f.data},f.context,f.dependencies);await tick();
+  assert.equal(reads,0);assert.deepEqual(f.calls,[]);assert.deepEqual(f.replies,[]);
+});
