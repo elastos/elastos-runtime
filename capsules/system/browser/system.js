@@ -2747,7 +2747,7 @@ function walletAccountRow(method) {
   const copy = document.createElement('div'), title = document.createElement('strong'), address = document.createElement('div');
   title.textContent = method.wallet_display_name || connectorName(method.connector); title.dir = 'auto';
   address.className = 'system-wallet-meta';
-  const code = document.createElement('code'); code.textContent = shortWalletAddress(method.address); code.title = method.address;
+  const code = document.createElement('code'); code.textContent = method.connector === 'unisat' ? `${method.address.slice(0,8)}…${method.address.slice(-6)}` : shortWalletAddress(method.address); code.title = method.address;
   const network = document.createElement('span'); network.textContent = (method.chain_id === 20 ? 'ESC' : walletNetwork(method)) + (method.connector === 'walletconnect' ? ' · WalletConnect' : '');
   address.append(code, network); copy.append(title, address); identity.append(icon, copy);
   const actions = document.createElement('div'); actions.className = 'system-wallet-actions';

@@ -1026,7 +1026,7 @@ try {
       await homeGui.evaluate(() => document.querySelector('.window[data-target="wallet"] iframe').contentWindow.postMessage({type:'elastos:wallet-refresh'},'*'));
       await homeGui.locator('.window[data-target="wallet"] .window-head').click({position:{x:80,y:14}});
       await wallet.getByRole('button',{name:'Close settings',exact:true}).click();
-      await wallet.getByRole('button',{name:'Add wallet for apps',exact:true}).click();await wallet.locator('[data-wallet-open-method="wallet-metamask"]').click();
+      await wallet.getByRole('button',{name:'Add wallet for apps',exact:true}).click();await wallet.locator('.one-dialog [data-wallet-open-method="wallet-metamask"]').click();
       await waitFor(() => page.frames().filter(frame=>frame.url().includes('/apps/wallet-metamask/')).length === 2,5000,'fresh MetaMask request window');
       const fresh = page.frames().filter(frame=>frame.url().includes('/apps/wallet-metamask/')).find(frame=>frame!==connector);
       await fresh.getByText('Second MetaMask request',{exact:true}).waitFor();
