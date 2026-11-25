@@ -670,7 +670,8 @@ mod tests {
     fn ten_cancelled_pairings_fit_local_and_remote_issue_budgets() {
         for local in [true, false] {
             let mut inner = Inner::default();
-            let source = Some("203.0.113.1".parse().unwrap());
+            let source_ip: std::net::IpAddr = "203.0.113.1".parse().unwrap();
+            let source = Some(source_ip);
             for cycle in 0..32 {
                 assert!(
                     capacity(&mut inner, local, None, None, source).is_ok(),
@@ -681,7 +682,7 @@ mod tests {
                 if !local {
                     inner
                         .address_issues
-                        .entry(source.unwrap())
+                        .entry(source_ip)
                         .or_default()
                         .push_back(Instant::now());
                 }
