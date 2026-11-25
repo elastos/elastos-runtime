@@ -14875,6 +14875,7 @@ async fn adoption_buyer_on(asset: &TwoRuntimeMarketAsset, pool: BuyerPool<'_>) -
         carrier_endpoint: None,
         collaboration_discovery_service: None,
         browser_internet: Default::default(),
+        walletconnect: Default::default(),
         identity_manager: std::sync::Arc::new(std::sync::OnceLock::new()),
         cache_dir: runtime.path().to_path_buf(),
         data_dir: runtime.path().to_path_buf(),

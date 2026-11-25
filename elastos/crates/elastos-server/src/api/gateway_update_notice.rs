@@ -297,6 +297,8 @@ pub(super) async fn notification_with_cache(
         read: account.is_some_and(|account| account.read),
         created_at: offer.observed_at,
         action_ref: None,
+        passkey_approval: false,
+        step_up_request: None,
     })
 }
 

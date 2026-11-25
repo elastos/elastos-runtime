@@ -9926,7 +9926,7 @@ fn attach_typed_library_error(response: &mut Value, error: &anyhow::Error) {
     // replaces the generic one: `code` is the field Marketplace branches on,
     // and `terms_changed` carries the offer the buyer has to decide on anew.
     if let Some(refusal) = error.downcast_ref::<crate::api::gateway::RuntimeMarketBuyRefusal>() {
-        refusal.project_onto(&mut response);
+        refusal.project_onto(response);
     }
     // An item whose pool this Home cannot reach (Plan B T4.7): the page says
     // so from `code` rather than reporting a failure.

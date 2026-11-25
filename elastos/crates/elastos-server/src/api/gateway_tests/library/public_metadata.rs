@@ -841,6 +841,9 @@ async fn public_progress_reports_metadata_stage() {
 #[test]
 fn public_inbox_card_states_public_metadata() {
     let request = |reason: &str| SystemWalletApprovalSummary {
+        wallet_outcome: None,
+        requesting_app_name: None,
+        requesting_origin: None,
         request_id: format!("wallet-request:{}", reason.len()),
         status: "pending".to_string(),
         intent: "transaction_intent".to_string(),
@@ -848,6 +851,7 @@ fn public_inbox_card_states_public_metadata() {
         resource: "elastos://wallet/transaction".to_string(),
         reason: reason.to_string(),
         account_id: "wallet:eip155:8453:0xabc".to_string(),
+        chain_namespace: String::new(),
         address: "0xabc".to_string(),
         proof_type: "managed_evm".to_string(),
         connector_id: None,
@@ -855,6 +859,7 @@ fn public_inbox_card_states_public_metadata() {
         created_at: 10,
         expires_at: 20,
         completed_at: None,
+        approved_at: None,
         transaction_hash: None,
     };
     let mut notifications = HomeNotificationsSummary::default();
@@ -886,6 +891,9 @@ fn public_inbox_line_only_when_offered() {
     append_wallet_approval_notifications(
         &mut notifications,
         vec![SystemWalletApprovalSummary {
+            wallet_outcome: None,
+            requesting_app_name: None,
+            requesting_origin: None,
             request_id: "wallet-request:closed".to_string(),
             status: "pending".to_string(),
             intent: "transaction_intent".to_string(),
@@ -893,6 +901,7 @@ fn public_inbox_line_only_when_offered() {
             resource: "elastos://wallet/transaction".to_string(),
             reason: RUNTIME_CUSTODY_CREATOR_APPROVAL_REASON.to_string(),
             account_id: "wallet:eip155:8453:0xabc".to_string(),
+            chain_namespace: String::new(),
             address: "0xabc".to_string(),
             proof_type: "managed_evm".to_string(),
             connector_id: None,
@@ -900,6 +909,7 @@ fn public_inbox_line_only_when_offered() {
             created_at: 10,
             expires_at: 20,
             completed_at: None,
+            approved_at: None,
             transaction_hash: None,
         }],
         false,

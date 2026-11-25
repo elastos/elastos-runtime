@@ -9,6 +9,9 @@ fn test_inbox_wallet_approval_offers_passkey_approval_only_for_built_in_wallets(
     let request =
         |request_id: &str, capsule_id: &str, proof_type: &str, connector_id: Option<&str>| {
             SystemWalletApprovalSummary {
+                wallet_outcome: None,
+                requesting_app_name: None,
+                requesting_origin: None,
                 request_id: request_id.to_string(),
                 status: "pending".to_string(),
                 intent: "publish_envelope".to_string(),
@@ -16,6 +19,7 @@ fn test_inbox_wallet_approval_offers_passkey_approval_only_for_built_in_wallets(
                 resource: "elastos://content/publish".to_string(),
                 reason: "Open protected content".to_string(),
                 account_id: format!("wallet:{request_id}"),
+                chain_namespace: String::new(),
                 address: "0xabc".to_string(),
                 proof_type: proof_type.to_string(),
                 connector_id: connector_id.map(str::to_string),
@@ -23,6 +27,7 @@ fn test_inbox_wallet_approval_offers_passkey_approval_only_for_built_in_wallets(
                 created_at: 10,
                 expires_at: 20,
                 completed_at: None,
+                approved_at: None,
                 transaction_hash: None,
             }
         };
@@ -995,6 +1000,8 @@ async fn test_inbox_reject_resolved_wallet_request_returns_bad_request() {
                     "address":"0xabc", "created_at":now_ts()-2, "expires_at":now_ts()+300
                 })]),
                 defaults: TokioMutex::default(),
+                approvals_unavailable: TokioMutex::default(),
+                reject_behaviour: TokioMutex::default(),
             };
             let state = wallet_test_state_with_provider(dir.path(), provider).await;
             let app = gateway_router(state);

@@ -1850,6 +1850,7 @@ mod tests {
             PasskeyStepUpBeginRequest {
                 schema: PASSKEY_STEP_UP_BEGIN_REQUEST_SCHEMA.to_string(),
                 app_token: creator_token,
+                approving_passkey_id: None,
                 operation: crate::public_metadata_consent::ENABLE_OPERATION.to_string(),
                 request: crate::public_metadata_consent::enable_step_up_request(),
             },
@@ -1870,6 +1871,7 @@ mod tests {
             PasskeyStepUpBeginRequest {
                 schema: PASSKEY_STEP_UP_BEGIN_REQUEST_SCHEMA.to_string(),
                 app_token: inbox_token,
+                approving_passkey_id: None,
                 operation: crate::public_metadata_consent::ENABLE_OPERATION.to_string(),
                 request: crate::public_metadata_consent::enable_step_up_request(),
             },

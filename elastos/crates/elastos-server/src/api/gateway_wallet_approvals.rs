@@ -963,6 +963,7 @@ mod wallet_display_tests {
                 append_wallet_approval_notifications(
                     &mut notifications,
                     vec![system_wallet_approval_summary(&record).unwrap()],
+                    false,
                 );
                 let external = !is_managed_wallet_proof_type(proof) || !connector.is_null();
                 assert_eq!(
