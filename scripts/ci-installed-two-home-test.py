@@ -89,6 +89,40 @@ class TwoHomeReceiptTests(unittest.TestCase):
             self.assertEqual(len(removed), 1)
             self.assertFalse(removed[0].exists())
 
+    def test_missing_matrix_summary_reports_the_journey_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {**os.environ, 'RUNNER_TEMP':str(root), 'CI_SOURCE_HOME':str(root/'home'),
+                   'GITHUB_STEP_SUMMARY':str(root/'summary.md'), 'CI_TWO_HOME_MESSAGES':'true',
+                   'CI_TWO_HOME_NETWORK_MATRIX':'true'}
+            result = subprocess.run(['bash', 'scripts/ci-installed-journeys.sh', 'summary'],
+                                    cwd=ROOT, env=env, capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn('installed journey acceptance is incomplete', result.stderr)
+            self.assertNotIn('Traceback', result.stderr)
+            summary = json.loads((root/'source-home-journeys/core-summary.json').read_text())
+            self.assertEqual(summary['two_home_messages'], {})
+            for name in ('community_post', 'direct_received', 'sender_delivered', 'offline_pending', 'restart_delivery'):
+                self.assertEqual(summary['results']['two_home_'+name], 'failed or not run')
+
+    def test_namespace_preflight_checks_the_exact_combination_and_explains_refusal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            command = Path(directory)/'unshare'
+            command.write_text('#!/bin/sh\nprintf "%s\\n" "$*" > "$PROBE_ARGS"\necho "uid_map: Operation not permitted" >&2\nexit "${PROBE_EXIT:-0}"\n')
+            command.chmod(0o755)
+            env = {**os.environ, 'PATH':directory+os.pathsep+os.environ['PATH'],
+                   'PROBE_ARGS':str(Path(directory)/'args')}
+            for code in (0, 1):
+                result = subprocess.run(['bash', 'scripts/ci-two-home-namespace-preflight.sh'],
+                    cwd=ROOT, env={**env, 'PROBE_EXIT':str(code)}, capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, code, result.stderr)
+                self.assertEqual((Path(directory)/'args').read_text().strip(),
+                                 '--user --map-root-user --mount --net true')
+                if code:
+                    self.assertIn('two-Home matrix requires user, mapped-root, mount and network namespaces', result.stderr)
+                    self.assertIn('kernel.apparmor_restrict_unprivileged_userns=0', result.stderr)
+                    self.assertIn('uid_map: Operation not permitted', result.stderr)
+
     def test_network_matrix_scope_stays_with_the_existing_x64_job(self):
         source = (ROOT / '.github/workflows/ci.yml').read_text()
         for job, enabled in [('source-home-linux', 'true'), ('source-home-linux-arm64', 'false')]:

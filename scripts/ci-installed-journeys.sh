@@ -41,6 +41,7 @@ PY
         ;;
     two-home-messages)
         if [[ "${CI_TWO_HOME_NETWORK_MATRIX:-false}" == true ]]; then
+            bash scripts/ci-two-home-namespace-preflight.sh
             scripts/test-behaviour.sh inputs
             inputs="${BEHAVIOUR_INPUTS:-${RUNNER_TEMP:-${HOME}/.cache/elastos-runtime}/behaviour}"
             export NODE_PATH="$inputs/browser/node_modules"
@@ -151,7 +152,7 @@ if messages_required:
                 and matrix["identity"]["candidate"] == commit and matrix["identity"]["source_tree"] == tree
                 and all(journey["two_home_receipt_valid"](row, matrix["identity"], arrangement)
                         for arrangement, row in matrix["arrangements"].items()))
-            messages = matrix
+            messages = matrix or {}
         else:
             message_current = journey["two_home_receipt_valid"](messages, journey["installed_message_identity"](data))
     except (OSError, ValueError, KeyError, AssertionError):
