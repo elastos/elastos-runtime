@@ -454,6 +454,11 @@ async function handleApi(req, res, url) {
     res.end();
     return true;
   }
+  if (url.pathname === "/api/auth/passkeys" && req.method === "GET") {
+    if (!requireToken(req, homeAuthorityToken, res)) return true;
+    json(res, 200, { passkeys: [] });
+    return true;
+  }
   if (url.pathname === "/api/auth/sessions/refresh" && req.method === "POST") {
     json(res, 200, { home_token: homeAuthorityToken });
     return true;
