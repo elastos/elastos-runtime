@@ -154,7 +154,7 @@ test('V2-8 four shared copies and the switched extension controller are byte ide
     for(const kind of ['metamask','unisat','walletconnect'])assert.deepEqual(await readFile(`capsules/wallet-${kind}/browser/${file}`),shared);
   }
   assert.deepEqual(await readFile('capsules/wallet-unisat/browser/extension-window.mjs'),await readFile('capsules/wallet-metamask/browser/extension-window.mjs'));
-  assert.match(process.env.COMPAT_WALLET_PRODUCT_REF ? execFileSync('git',['show',process.env.COMPAT_WALLET_PRODUCT_REF+':capsules/wallet/browser/wallet-preferences.js'],{encoding:'utf8'}) : await readFile('capsules/wallet/browser/wallet-preferences.js','utf8'),/MetaMask or another wallet in this browser/);
+
 });
 
 async function addApproval(f,id,address) {

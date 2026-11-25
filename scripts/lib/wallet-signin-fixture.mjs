@@ -176,7 +176,7 @@ export async function signinFixture() {
         if(path==='/api/provider/chain/balance')return json({status:'ok',data:{balance_hex:'0x'+BigInt(state.balanceValues?.[body.address]?.[body.network] || 0).toString(16)}});
         if(path==='/api/wallet/prices')return json({prices:{},stale:false});
         if(path==='/api/apps/wallet/wallet/inventory')return json(fixtureInventory(state));
-        if(path==='/api/apps/wallet/wallet/summary')return json({wallet_accounts:{accounts:state.connected},wallet_approvals:{approval_requests:[]},approval_methods:{walletconnect:{available:true}}});
+        if(path==='/api/apps/wallet/wallet/summary')return json({wallet_accounts:{accounts:state.connected},wallet_approvals:{approval_requests:[]},approval_methods:{walletconnect:{available:state.walletconnectAvailable!==false}}});
         if(path==='/api/auth/sessions/refresh'&&state.boundSigninCookies&&!/(?:^|; )fixture-session=passkey(?:;|$)/.test(req.headers.cookie||''))return json({},403);
         if(path==='/api/auth/sessions/refresh')return state.signed?json({home_token:'fixture-home',session_id:'fixture-session',principal_id:'principal:alex',proof_binding_id:'wallet:metamask'}):json({},403);
         if(path==='/api/apps/home/summary')return json({authority:{signed_in:state.signed},signed_in:state.signed,active_shell:{},targets:[]});

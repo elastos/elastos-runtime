@@ -74,7 +74,7 @@ const freshOperations = [
     ["wallet.recovery-key.import"],
     "headers",
   ],
-  ["capsules/wallet/browser/wallet-preferences.js", ["wallet.account.delete"], "headers"],
+  ["capsules/wallet/browser/wallet.js", ["wallet.account.delete"], "headers"],
   ["capsules/wallet/browser/wallet-requests.js", ["wallet.approve"], "headers"],
   ["capsules/system/browser/system.js", ["auth.full-recovery-bundle.export"], "headers"],
   [

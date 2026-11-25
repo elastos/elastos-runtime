@@ -19,7 +19,7 @@ const kind = entry => entry.accounts[0]?.connector_id?.replace('wallet-', '') ||
 const bitcoin = entry => entry.chain_namespace.startsWith('bip122:');
 const appsStatement = entry => bitcoin(entry) ? 'Proves you own this Bitcoin address to apps' : 'Apps and websites can ask; you approve each request.';
 
-export function createWalletInventory({root, openSystem, connectApps, removeApps, copyAddress, send, receive, manageBuiltIn, getBalance = () => '', openActivity, openSettings, togglePrivacy, isPrivate=()=>false, onError=()=>{}}) {
+export function createWalletInventory({root, getApprovalMethods=()=>({}), openSystem, connectApps, removeApps, copyAddress, send, receive, manageBuiltIn, getBalance = () => '', openActivity, openSettings, togglePrivacy, isPrivate=()=>false, onError=()=>{}}) {
   let inventory = {entries:[]}, selected = new URLSearchParams(location.search).get('wallet_entry') || '';
   let result = '', dialog, operation = 0, busy = false, renderKey = '';
   let connectionController;
@@ -145,6 +145,7 @@ export function createWalletInventory({root, openSystem, connectApps, removeApps
   function choose() {
     const list = text('div', '', 'one-choices');
     for (const [method, name] of [['metamask', 'MetaMask'], ['unisat', 'UniSat'], ['walletconnect', 'WalletConnect']]) {
+      if (method === 'walletconnect' && getApprovalMethods().walletconnect?.available !== true) continue;
       const row = button(name, event => {event.stopPropagation(); close(); connectApps(null, () => true, method).catch(error => {result = error.message; render();});});
       row.dataset.walletOpenMethod = `wallet-${method}`;
       if (method === 'walletconnect') row.append(text('small', 'Rainbow, Trust and other phone wallets'));

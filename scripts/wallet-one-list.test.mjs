@@ -34,8 +34,10 @@ async function shot(frame,id,width,engine) {
 async function setup(engine,width,{pictures=false}={}) {
   if(output)assert.equal(execFileSync('git',['status','--porcelain'],{encoding:'utf8'}).trim(),'','pictures require committed source');
   const fixture=await signinFixture(),addresses=seed(fixture.state,{pictures});
-  const browser=await requireProductSmokePlaywright()[engine].launch({headless:true,...(engine==='chromium'?productSmokeLaunchOptions():{})});
-  const context=await browser.newContext({viewport:{width,height:1000},colorScheme:'dark',reducedMotion:'reduce'});
+  let browser,context;
+  try {
+  browser=await requireProductSmokePlaywright()[engine].launch({headless:true,...(engine==='chromium'?productSmokeLaunchOptions():{})});
+  context=await browser.newContext({viewport:{width,height:1000},colorScheme:'dark',reducedMotion:'reduce'});
   await context.addInitScript(installSigninProviders,{evmAddress:addresses.evm,bitcoinAddress:addresses.bitcoin,theme:'dark'});
   if(process.env.WALLET_ONE_LIST_BASELINE)await context.route('**/apps/wallet/**',async route=>{
     const path='capsules/wallet/browser/'+new URL(route.request().url()).pathname.split('/apps/wallet/')[1].split('?')[0];
@@ -46,6 +48,7 @@ async function setup(engine,width,{pictures=false}={}) {
   await page.goto(fixture.origin+'/home/');await page.waitForFunction(()=>window.fixtureReady);await page.evaluate(()=>{walletFixture.chain=8453;window.showFixtureApps();});
   const wallet=page.frameLocator('iframe[title=wallet]'),system=page.frameLocator('iframe[title=system]');
   return {fixture,browser,context,page,wallet,system,addresses,errors,close:async()=>{await context.close();await browser.close();await fixture.close();}};
+  } catch(error) {await context?.close().catch(()=>{});await browser?.close().catch(()=>{});await fixture.close();throw error;}
 }
 async function show(f,target) {await f.page.evaluate(target=>document.querySelector('#show-'+target).click(),target);}
 async function refresh(f) {await f.wallet.locator('body').evaluate(()=>window.dispatchEvent(new Event('focus')));}
@@ -59,6 +62,8 @@ for(const engine of ['chromium','webkit'])for(const width of [1440,390]) {
       assert.match(await f.wallet.locator('#wallet-inventory').innerText(),/To sign in with a wallet, use System > Accounts\./);
       assert.equal(await f.wallet.locator('#wallet-methods').count(),0);
       await shot(f.wallet,'wallet-list',width,engine);
+      await f.wallet.getByRole('button',{name:'Add wallet for apps',exact:true}).click();
+      assert.equal(await f.wallet.locator('[data-wallet-open-method]').count(),3);await f.wallet.getByRole('button',{name:'Cancel',exact:true}).click();
       await f.wallet.getByRole('button',{name:'Open UniSat',exact:true}).click();
       await f.wallet.getByRole('heading',{name:'Used by',exact:true}).waitFor();
       const toggle=f.wallet.getByRole('switch',{name:'Apps and websites',exact:true});
@@ -141,4 +146,17 @@ for(const engine of ['chromium','webkit'])for(const width of [1440,390]) {
     } finally {await f.close();}
   });
 }
+for(const engine of ['chromium','webkit'])test(`one wallet list keeps saved identities while unavailable methods leave Add in ${engine}`,{timeout:30000},async()=>{
+  const f=await setup(engine,390);
+  try {
+    await show(f,'wallet');await f.wallet.locator('.one-wallet').nth(3).waitFor();f.fixture.state.walletconnectAvailable=false;
+    const response=f.page.waitForResponse(r=>r.url().includes('/api/apps/wallet/wallet/summary'));
+    await refresh(f);await response;
+    // Wait for that refresh to finish before opening the controls it owns.
+    await f.wallet.locator('body').evaluate(()=>new Promise(resolve=>setTimeout(resolve,100)));
+    await f.wallet.getByRole('button',{name:'Add wallet for apps',exact:true}).click();
+    assert.equal(await f.wallet.locator('[data-wallet-open-method]').count(),2);assert.equal(await f.wallet.locator('[data-wallet-open-method="wallet-walletconnect"]').count(),0);
+    await f.wallet.getByRole('button',{name:'Cancel',exact:true}).click();assert.equal(await f.wallet.getByRole('button',{name:'Open Rainbow',exact:true}).count(),1);
+  } finally {await f.close();}
+});
 test.after(async()=>{if(output){const sources={};for(const path of ['capsules/wallet/browser/index.html','capsules/wallet/browser/wallet.js','capsules/wallet/browser/wallet-inventory.js','capsules/wallet/browser/wallet-inventory.css','capsules/system/browser/system.js','capsules/system/browser/style.css','capsules/home/browser/wallet-signin-view.mjs','capsules/home/browser/wallet-signin-management.mjs','capsules/_shared/wallet-connection-view.mjs'])sources[path]=createHash('sha256').update(await readFile(path)).digest('hex');await writeFile(join(output,'captures.json'),JSON.stringify({sources,head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),tree:execFileSync('git',['rev-parse','HEAD^{tree}'],{encoding:'utf8'}).trim(),captures:captureRecords},null,2)+'\n');}});

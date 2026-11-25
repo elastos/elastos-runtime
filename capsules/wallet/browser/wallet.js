@@ -127,14 +127,17 @@ document.querySelector('.wallet-page').prepend(statusNode);
 document.querySelector('#wallet-inventory').after(requestsNode);
 const inventoryView = createWalletInventory({
   root: document.querySelector('#wallet-inventory'),
+  getApprovalMethods: () => currentApprovalMethods,
   openSystem: () => window.top.postMessage({type:'home:open-target', target:'system', homeToken:activeHomeToken, query:{settings:'account'}}, homeParentOrigin),
   connectApps: connectInventoryApps,
   removeApps: async (entry, current) => {
     for (const account of entry.accounts) {
-      const token = await requestPasskeyStepUp('wallet.account.delete', {account_id:account.account_id});
+      const stepUpToken = await requestPasskeyStepUp("wallet.account.delete", {account_id:account.account_id});
       if (!current()) return;
       await fetchJson(`/api/apps/wallet/wallet/accounts/${encodeURIComponent(account.account_id)}`, {
-        method:'DELETE', headers:shellHeaders({'content-type':'application/json'}), body:JSON.stringify({step_up_token:token}),
+        method: 'DELETE',
+        headers: shellHeaders({ "content-type": "application/json" }),
+        body: JSON.stringify({ step_up_token: stepUpToken }),
       });
     }
     notifyHomeSummaryChanged(); await refreshWalletState();
@@ -155,6 +158,7 @@ async function connectInventoryApps(entry, current, method, signal) {
     if (current()) await refreshWalletState();
     return;
   }
+  if (connector === 'walletconnect' && currentApprovalMethods.walletconnect?.available !== true) throw new Error('WalletConnect connection is unavailable.');
   openApprovalMethod(`wallet-${connector}`);
   if (!entry) return;
   // The connector owns the existing ownership proof and transport permissions.
