@@ -441,7 +441,7 @@ for (const stage of ["before-begin", "after-create"]) {
   home.element("#home-unlock-primary").emit("click"); await tick();
   assert.equal(f.gets(), 1);
   assert.equal(f.creates(), 0);
-  assert.deepEqual(home.opened(), { response: grant });
+  assert.deepEqual(home.opened(), { response: grant, flow: null });
 }
 
 
