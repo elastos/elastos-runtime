@@ -497,3 +497,45 @@ test('a wallet retry waits for the preceding cancellation to release server capa
     release();await Promise.all([cancelling,retrying]);assert.equal(begins,2);assert.equal(flow.state.stage,'review');
   } finally {release();await flow.cancel();}
 });
+
+test('WalletConnect app use checks the saved identity and preserves the phone session on Cancel',async()=>{
+  let selected=wallet.address,chainId=20,connects=0,disconnects=0,hold,release;
+  const routes=[],calls=[];
+  const provider={chainId,session:{expiry:Date.now()/1000+600,namespaces:{eip155:{chains:['eip155:20','eip155:8453'],accounts:[`eip155:20:${wallet.address}`]}}},on(){},request:async input=>{
+    calls.push(input);if(input.method==='eth_accounts')return [selected];if(input.method==='eth_chainId')return chainId;
+    if(hold)await new Promise(resolve=>release=resolve);return 'proof';
+  }};
+  const api=async(path,input)=>{
+    routes.push(path);if(path==='wallet/config')return {walletconnect:{project_id:'fixture',storage_revision:'"0"'}};
+    if(path==='internet')return {status:'granted'};if(path==='storage')return {'wc//session':[{expiry:Date.now()/1000+600}]};
+    if(path.endsWith('/challenge'))return {message:'Ownership',expires_at:Math.floor(Date.now()/1000)+180};
+    if(path.endsWith('/verify'))return {};
+    throw new Error('Unexpected path '+path);
+  };
+  const client=createWalletConnectClient({origin:'http://localhost',api,loadAdapter:async()=>({restoreWalletConnectEvm:async()=>provider,connectWalletConnectEvm:async()=>{connects++;return provider;},disconnectWalletConnectEvm:async()=>{disconnects++;}})});
+  await client.effect({kind:'status'});
+  const action={kind:'link',expectedAddress:wallet.address,expectedChain:'eip155:20'};
+  selected='0x'+'99'.repeat(20);await assert.rejects(client.effect(action),{code:'changed'});
+  selected=wallet.address;chainId=8453;await assert.rejects(client.effect(action),{code:'changed'});
+  assert.equal(routes.filter(p=>p.endsWith('/challenge')).length,0);assert.equal(calls.filter(c=>c.method==='personal_sign').length,0);
+  chainId=20;assert.deepEqual(await client.effect(action),{status:'linked'});
+  assert.equal(calls.filter(c=>c.method==='personal_sign').length,1);assert.equal(routes.filter(p=>p.endsWith('/verify')).length,1);
+  hold=true;const pending=client.effect(action);const cancelled=assert.rejects(pending);
+  while(!release)await new Promise(resolve=>setImmediate(resolve));await client.effect({kind:'stop-signin'});release();await cancelled;
+  assert.equal(routes.filter(p=>p.endsWith('/verify')).length,1);assert.equal(connects,0);assert.equal(disconnects,0);
+});
+
+test('Home app-use bridge binds the phone identity and stops a cancelled ownership request',async()=>{
+  for(const cancel of [false,true]) {
+    const listen=new EventTarget(),controller=new AbortController(),sent=[];
+    const source={postMessage(data){sent.push(data);if(data.operation==='stop')return;
+      if(data.operation==='connect-apps'&&cancel){queueMicrotask(()=>controller.abort());return;}
+      const result=data.operation==='select'?{...wallet,connector:'walletconnect'}:{status:'linked'};
+      queueMicrotask(()=>listen.dispatchEvent(Object.assign(new Event('message'),{source,origin:'null',data:{type:'home:wallet-signin-effect-result',homeToken:'connector',requestId:data.requestId,result}})));
+    }};
+    const pending=selectConnectedWalletConnect({signal:controller.signal,method:wallet,appUse:true},{listen,open:async()=>({source,homeToken:'connector'}),current:()=>true});
+    if(cancel)await assert.rejects(pending);else assert.deepEqual(await pending,{status:'linked'});
+    const connect=sent.find(data=>data.operation==='connect-apps');assert.equal(connect.address,wallet.address);assert.equal(connect.chain_id,wallet.chain_id);
+    assert.equal(sent.filter(data=>data.operation==='stop').length,1);assert(!sent.some(data=>data.operation==='sign'));
+  }
+});

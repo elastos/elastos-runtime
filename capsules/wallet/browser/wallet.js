@@ -153,26 +153,13 @@ const inventoryView = createWalletInventory({
 
 async function connectInventoryApps(entry, current, method, signal) {
   const connector = method || entry.accounts[0]?.connector_id?.replace('wallet-', '') || entry.sign_in?.connector;
-  if (entry && connector !== 'walletconnect') {
+  if (connector === 'walletconnect' && currentApprovalMethods.walletconnect?.available !== true) throw new Error('WalletConnect connection is unavailable.');
+  if (entry) {
     await requestWalletAppConnection(entry, {token:activeHomeToken, origin:homeParentOrigin, current, signal});
     if (current()) await refreshWalletState();
     return;
   }
-  if (connector === 'walletconnect' && currentApprovalMethods.walletconnect?.available !== true) throw new Error('WalletConnect connection is unavailable.');
   openApprovalMethod(`wallet-${connector}`);
-  if (!entry) return;
-  // The connector owns the existing ownership proof and transport permissions.
-  // Observe only the exact selected identity, then refresh the saved projection.
-  const deadline = Date.now() + 180000;
-  while (current() && Date.now() < deadline) {
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    const next = await readWalletInventory(activeHomeToken);
-    if (!current()) return;
-    if (next.account_id !== currentInventory.account_id) throw new Error('Your account changed. Open Wallet again.');
-    const connected = entry ? next.entries.find(row=>row.inventory_id===entry.inventory_id && row.accounts.length) : next.entries.find(row=>row.accounts.length && !currentInventory.entries.some(old=>old.inventory_id===row.inventory_id && old.accounts.length));
-    if (connected) {await refreshWalletState(); return;}
-  }
-  if (current()) throw new Error('Home has not confirmed the connection. Check Wallet, then try again.');
 }
 
 const { renderActivity } = createWalletActivity({ activityNode, textNode });

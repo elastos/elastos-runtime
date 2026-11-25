@@ -1886,8 +1886,16 @@ window.addEventListener("message", (event) => {
       const connector = launchedAppContexts.get(opened.homeToken);
       if (!connector || !active()) {if (opened.created) await opened.close(); return;}
       postToActiveShell({type:'home:gui-command',command:'focus-window',homeToken:context.homeToken});
-      try {await connectInventoryWallet(entry, {...connector, homeToken:opened.homeToken}, () => active() && currentSigninConnector(opened));}
-      finally {if (opened.created) await opened.close();}
+      let watch;
+      const abort = new AbortController();
+      try {
+        if (entry.sign_in.connector === 'walletconnect') {
+          watch = setInterval(() => {if (!active()) abort.abort();}, 100);
+          await selectConnectedWalletConnect({signal:abort.signal,method:entry.sign_in,appUse:true}, {
+            open:async()=>opened,current:currentSigninConnector,
+          });
+        } else await connectInventoryWallet(entry, {...connector, homeToken:opened.homeToken}, () => active() && currentSigninConnector(opened));
+      } finally {clearInterval(watch);abort.abort();if (opened.created) await opened.close();}
     },
     changed: () => {void refreshSignedHomeSession();},
     focus: () => postToActiveShell({type:'home:gui-command',command:'focus-window',homeToken:context.homeToken}),
