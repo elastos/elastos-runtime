@@ -40,6 +40,9 @@ function webkitEntries(base=root,entrypoints){
  while(pending.length){
   const path=pending.pop();if(seen.has(path)||path===self)continue;seen.add(path);
   const source=readFileSync(path,'utf8');
+  // This entry invokes the real smoke with a generated fake SDK that stops
+  // at launch. Its child graph does not require an installed browser.
+  if(path.endsWith('/home-phone-layout-launch.test.mjs'))continue;
   pending.push(...executionPaths(path,source,base));
   // This helper's regression deliberately injects an invalid executable to
   // prove cleanup after failed acquisition; it is not an optional engine run.
@@ -64,6 +67,15 @@ function probe(args,env){
  assert.equal(result.status,0,result.stdout+result.stderr);
  return result.stdout;
 }
+
+test('the phone launch mock SDK fixture needs no installed WebKit',t=>{
+ const base=mkdtempSync(resolve(tmpdir(),'webkit-phone-launch-discovery-'));
+ t.after(()=>rmSync(base,{recursive:true,force:true}));
+ mkdirSync(resolve(base,'scripts'));
+ writeFileSync(resolve(base,'scripts/home-phone-layout-launch.test.mjs'),readFileSync(resolve(root,'scripts/home-phone-layout-launch.test.mjs')));
+ writeFileSync(resolve(base,'scripts/home-phone-layout-smoke.mjs'),"import {webkit} from 'playwright';await webkit.launch({});");
+ assert.deepEqual(webkitEntries(base,['scripts/home-phone-layout-launch.test.mjs']),[]);
+});
 
 test('every behaviour-suite WebKit entry uses the shared missing-engine rule',{timeout:180000},()=>{
  const entries=webkitEntries();assert.ok(entries.length>0,'WebKit entries were discovered');
