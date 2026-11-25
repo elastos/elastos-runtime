@@ -56,7 +56,7 @@ html[data-wallet-flow] .wallet-one-list #wallet-inventory { display:none; }
 html[data-wallet-flow] .wallet-one-list .wallet-hero.is-flipped,html[data-wallet-flow] .wallet-one-list .wallet-accounts-section.is-flipped { display:block; }
 @media(max-width:600px) {
  .wallet-one-list .wallet-page { padding:24px 16px; }
- .one-wallet { padding:16px; }
+ .one-wallet { padding:18px 20px; }
  .one-heading { margin-bottom:20px; }
  .one-heading h1 { font-size:var(--el-text-display); }
  .one-heading>div { flex-wrap:wrap; gap:12px; align-items:flex-start; }
