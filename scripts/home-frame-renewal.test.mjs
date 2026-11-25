@@ -216,29 +216,68 @@ for (const target of ["elacity-player", "elacity-reader"]) {
 }
 
 test("Home GUI renews the open window of every app Home renews, and of no other", async () => {
+  function element() {
+    const node = new Proxy({
+      style: {},
+      dataset: {},
+      classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
+      hidden: false,
+      textContent: "",
+      innerHTML: "",
+      className: "",
+      value: "",
+      children: [],
+    }, {
+      get(target, prop, receiver) {
+        if (prop in target) return target[prop];
+        if (typeof prop !== "string") return undefined;
+        const method = () => receiver;
+        target[prop] = method;
+        return method;
+      },
+      set(target, prop, value) {
+        target[prop] = value;
+        return true;
+      },
+    });
+    node.content = { cloneNode() { return element(); }, firstElementChild: node };
+    node.querySelector = () => element();
+    node.querySelectorAll = () => [];
+    node.closest = () => node;
+    node.appendChild = child => child;
+    node.insertBefore = child => child;
+    node.cloneNode = () => element();
+    node.replaceChildren = () => {};
+    return node;
+  }
   const documentStub = {
     addEventListener() {},
     removeEventListener() {},
-    body: { dataset: {}, appendChild() {}, querySelector: () => null },
-    documentElement: { style: {} },
-    querySelector: () => null,
-    getElementById: () => null,
-    createElement() {
-      return { style: {}, classList: { add() {}, remove() {}, toggle() {} }, setAttribute() {}, addEventListener() {}, appendChild() {}, querySelector: () => null };
-    },
+    body: element(),
+    head: element(),
+    documentElement: element(),
+    querySelector() { return element(); },
+    querySelectorAll() { return []; },
+    getElementById() { return element(); },
+    createElement() { return element(); },
+    elementFromPoint() { return null; },
   };
   globalThis.document = documentStub;
-  globalThis.window = {
-    location: { href: `${homeOrigin}/apps/home-gui/`, origin: homeOrigin },
-    addEventListener() {},
-    removeEventListener() {},
-    setTimeout() { return 0; },
-    clearTimeout() {},
-    matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
-    innerWidth: 1280,
-    innerHeight: 800,
-    document: documentStub,
-  };
+  globalThis.window = globalThis;
+  globalThis.location = { href: `${homeOrigin}/apps/home-gui/`, origin: homeOrigin };
+  globalThis.addEventListener = globalThis.addEventListener || function () {};
+  globalThis.removeEventListener = globalThis.removeEventListener || function () {};
+  globalThis.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+  globalThis.innerWidth = 1280;
+  globalThis.innerHeight = 800;
+  globalThis.requestAnimationFrame = () => 0;
+  globalThis.cancelAnimationFrame = () => {};
+  globalThis.getComputedStyle = () => new Proxy({}, { get: () => () => "" });
+  globalThis.fetch = async () => ({ ok: true, status: 200, text: async () => "<div></div>", json: async () => ({}) });
+  globalThis.localStorage = { getItem: () => null, setItem() {}, removeItem() {} };
+  globalThis.HTMLElement = globalThis.HTMLElement || class HTMLElement {};
+  globalThis.MutationObserver = globalThis.MutationObserver || class { observe() {} disconnect() {} };
+  globalThis.ResizeObserver = globalThis.ResizeObserver || class { observe() {} disconnect() {} };
   const gui = await import("../capsules/home-gui/browser/home-gui.js");
   const shell = await import("../capsules/home-gui/browser/shell-core.js?v=home-20261101d");
   for (const [target, renews] of [...RENEWING_TARGETS.map(target => [target, true]), ["wallet", false], ["browser", false]]) {
