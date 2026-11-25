@@ -2095,7 +2095,7 @@ async function runProfile(browser, engineId, profile, origin) {
         throw error;
       }
       bootRetries += 1;
-      console.warn(`[home-phone-layout] ${engineId}/${profile.id} boot retry: ${error.message.split("\n")[0]}`);
+      console.warn(`[home-phone-layout] ${engineId}/${profile.id} boot retry: ${error.message}`);
       await Promise.all(context.pages().map((page) => page.close()));
       booted = await bootHome(context, origin);
     }
