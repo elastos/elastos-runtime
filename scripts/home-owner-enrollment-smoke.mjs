@@ -630,6 +630,7 @@ console.log("PASS Home owner/guest Create/Recover, exact reload retry, storage, 
 
 const engines = process.argv.includes("--browser") ? await importProductSmokePlaywright() : null;
 if (engines) for (const engine of ["chromium", "webkit"]) {
+  const tabKey = engine === "webkit" && process.platform === "darwin" ? "Alt+Tab" : "Tab";
   if (engine === "webkit" && !existsSync(engines.webkit.executablePath())) {
     console.log("SKIP enrollment browser: WebKit is not installed");
     continue;
@@ -718,7 +719,7 @@ if (engines) for (const engine of ["chromium", "webkit"]) {
         assert(controls.includes("home-unlock-primary"));
         await radio.focus();
         for (const [index, id] of controls.entries()) {
-          if (index) await page.keyboard.press("Tab");
+          if (index) await page.keyboard.press(tabKey);
           const control = page.locator("#" + id);
           assert(await control.evaluate(el => el === document.activeElement), "native Tab must reach " + id);
           await control.scrollIntoViewIfNeeded();

@@ -293,6 +293,8 @@ test("System distinguishes two passkeys and identifies this window at desktop an
 
 
 for (const engine of ["chromium", "webkit"]) test(`Accounts groups methods beneath their owner with equal add controls in both themes and widths in ${engine}`, windowTestOptions(engine, 30000), async () => {
+  const tabKey = engine === "webkit" && process.platform === "darwin" ? "Alt+Tab" : "Tab";
+  const previousKey = engine === "webkit" && process.platform === "darwin" ? "Alt+Shift+Tab" : "Shift+Tab";
   await fixture(async ({ page, open, writes }) => {
     const created = Date.UTC(2026, 10, 23, 13, 3) / 1000;
     const key = { ...owner, created_at: created, last_used_at: created + 240, added_from: "Device passkey (added from Chrome on Mac or iPad)" };
@@ -348,8 +350,8 @@ for (const engine of ["chromium", "webkit"]) test(`Accounts groups methods benea
           assert.equal(new Set(await block.locator(".passkey-name").allTextContents()).size, 2);
           const remove = block.locator(".passkey-remove").first();
           await page.bringToFront();
-          await remove.press("Tab");
-          await page.keyboard.press("Shift+Tab");
+          await remove.press(tabKey);
+          await page.keyboard.press(previousKey);
           const focused = await frame.waitForFunction(id=>{
             const node=[...document.querySelectorAll('[data-passkey-revoke]')].find(button=>button.dataset.passkeyRevoke===id);
             if(node!==document.activeElement||!node.matches(':focus-visible'))return false;
