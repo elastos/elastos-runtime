@@ -469,6 +469,14 @@ async fn full_recovery_import_rebuilds_profile_contexts_without_restart() {
         let before = service.registered_context_snapshot_for_test();
         assert_eq!(before["direct"][0]["profile_revision"], 2);
         assert_eq!(before["profile_updates"][0]["profile_revision"], 2);
+        let stale_revision = crate::collaboration_profile_authority::load_profile_authority(
+            dir.path(),
+            &principal.principal_id,
+            &principal.localhost_root,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(stale_revision.document().revision, 2);
 
         let (status, body) = import_raw_full_recovery_bundle(
             &app,
@@ -508,6 +516,96 @@ async fn full_recovery_import_rebuilds_profile_contexts_without_restart() {
         let after = service.registered_context_snapshot_for_test();
         for kind in ["sync", "direct", "profile_updates"] {
             assert_eq!(after[kind][0]["profile_revision"], 1, "{after}");
+        }
+        // The revision 2 Profile is the one the import replaced. Registration
+        // must refuse it, and the owner must still be able to rename.
+        let device = crate::collaboration_profile_authority::load_existing_device_did(dir.path())
+            .unwrap()
+            .unwrap();
+        let stale_store = std::sync::Arc::new(
+            crate::collaboration_contact_store::CollaborationContactStore::new(
+                dir.path(),
+                &principal.principal_id,
+                &principal.localhost_root,
+                service.network_profile(),
+                &stale_revision,
+                &device,
+            )
+            .unwrap(),
+        );
+        let refuse = |label: &str, result: Result<(), anyhow::Error>| match result {
+            Ok(()) => panic!("{label} accepted revision 2 after import"),
+            Err(error) => {
+                let text = error.to_string();
+                assert!(
+                    text.contains("Profile context no longer matches disk authority"),
+                    "{label} refused with {text}"
+                );
+            }
+        };
+        refuse(
+            "direct message map",
+            service
+                .direct_message_service()
+                .register_runtime_owned_context(
+                    stale_store.clone(),
+                    stale_revision.clone(),
+                    &authority.proof_binding_id,
+                ),
+        );
+        refuse(
+            "profile update map",
+            service
+                .profile_update_service()
+                .register_runtime_owned_context(
+                    stale_store.clone(),
+                    stale_revision.clone(),
+                    &authority.proof_binding_id,
+                ),
+        );
+        refuse(
+            "profile update session map",
+            service.profile_update_service().register_context(
+                stale_store,
+                stale_revision,
+                "stale-session",
+                Some(&authority.proof_binding_id),
+                "stale-grant",
+            ),
+        );
+        let after_refusal = service.registered_context_snapshot_for_test();
+        for kind in ["sync", "direct", "profile_updates"] {
+            assert_eq!(
+                after_refusal[kind][0]["profile_revision"], 1,
+                "{after_refusal}"
+            );
+        }
+        let (status, body) = home_test_post_json(
+            &app,
+            "/api/apps/people/profile",
+            &authority.people_token,
+            "null",
+            json!({"display_name": "Renamed After Import"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        for target in ["home-gui", "people"] {
+            let (status, body) = home_test_post_json(
+                &app,
+                "/api/apps/home/launch",
+                &authority.home_token,
+                "http://localhost:61180",
+                json!({"target": target}),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{target}: {body}");
+        }
+        let after_rename = service.registered_context_snapshot_for_test();
+        for kind in ["sync", "direct", "profile_updates"] {
+            assert_eq!(
+                after_rename[kind][0]["profile_revision"], 2,
+                "{after_rename}"
+            );
         }
     }
 }
