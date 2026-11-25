@@ -440,7 +440,7 @@ async fn full_recovery_import_rebuilds_profile_contexts_without_restart() {
                 .unwrap(),
         )
         .unwrap();
-        let bundle = &exported["bundle"];
+        let bundle = &exported;
         assert_eq!(exported["included"]["people_identity"], true);
         let (status, body) = home_test_post_json(
             &app,
@@ -485,7 +485,7 @@ async fn full_recovery_import_rebuilds_profile_contexts_without_restart() {
             "{body}"
         );
         // This is the tester's first failure after System reports success.
-        for target in ["desktop", "people"] {
+        for target in ["home-gui", "people"] {
             let (status, body) = home_test_post_json(
                 &app,
                 "/api/apps/home/launch",
