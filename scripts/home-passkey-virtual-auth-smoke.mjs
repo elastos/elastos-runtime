@@ -25,6 +25,7 @@ import { recoveredInputClickRect } from "./lib/browser-journey-recovered-input.m
 import { censusBrowserViewerReload, diagnoseBrowserViewerReload, readBrowserViewerReloadDocument, browserViewerSignalMetadata } from "./lib/browser-journey-viewer-reload.mjs";
 import { runBrowserOperatorJourney } from "./lib/browser-journey-operator.mjs";
 import { qualificationOptions, createQualificationHarness, createQualificationCancellation, qualificationInteraction } from "./lib/browser-qualification-observer.mjs";
+import { readSystemUpdateState } from "./lib/system-update-observer.mjs";
 import { productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 
 import { cleanupVirtualPasskey, shouldRetainVirtualAuthProfile, retainedFirstOwnerProfileMessage,
@@ -4402,26 +4403,7 @@ async function checkSystemUpdate(page, passkey) {
         await frame.locator('button[data-settings="about"]').evaluate((button) => button.click());
         shownFrame = frame;
       }
-      return await frame.evaluate(() => {
-        const field = (name) => document.querySelector(`[data-field="${name}"]`);
-        const text = (node) => node?.textContent?.trim() || "";
-        const apply = document.querySelector("#runtime-update-apply");
-        return {
-          frame: true,
-          shown: document.querySelector("#runtime-update")?.hidden === false,
-          status: text(document.querySelector("#runtime-update-status")),
-          offer: field("update-offer")?.hidden === false,
-          can_apply: Boolean(apply && !apply.hidden && !apply.disabled),
-          current_version: text(field("runtime-status")),
-          // The published baseline uses version fields; this candidate names the target in its heading.
-          new_version: text(field("update-heading")).match(/^Updat(?:e|ing) to (.+)$/)?.[1]
-            || text(field("update-new-version")),
-          changes: field("update-changes")?.hidden === false ? text(field("update-changes")) : "",
-          installed_version: text(field("source-installed-version")),
-          // Set before an approval: true while the same System window stays open.
-          same_window: window.__elastosUpdateWindowMarker === true,
-        };
-      });
+      return await frame.evaluate(readSystemUpdateState);
     } catch (error) {
       return { frame: false, error: String(error.message || error).slice(0, 200) };
     }
