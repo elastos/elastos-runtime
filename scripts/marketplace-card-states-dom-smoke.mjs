@@ -117,6 +117,14 @@ const cases = [
     expect: { text: "Unavailable", enabled: false, action: null },
   },
   {
+    // PR5 point 1: granted, but every reachable Home refused its document,
+    // and no copy is here.
+    name: "granted but served by no reachable Home",
+    listing: { accessState: "available" },
+    ctx: { access: "held", noHolder: true },
+    expect: { text: "Unavailable", enabled: false, action: null },
+  },
+  {
     name: "no access",
     listing: { accessState: "available" },
     ctx: { access: "available" },

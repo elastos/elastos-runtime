@@ -820,6 +820,13 @@ pub(crate) async fn build_market_listing_object(
     if let Some(access_subject) = access_subject {
         object["access_subject"] = serde_json::Value::String(access_subject);
     }
+    // Every Home this one can reach refused the item's document
+    // (`no_holder`), for an account the chain grants it: advice for a card
+    // that would open the item from its pool, which cannot succeed until a
+    // holder serves it again. The access answer itself is unchanged.
+    if no_holder {
+        object["no_reachable_holder"] = serde_json::Value::Bool(true);
+    }
     // Stated only when proven (S4-Q18): `pool` when this Home can reach the
     // item's pool, `unresolved` when it cannot, so the page disables Buy,
     // Open and Download only then.

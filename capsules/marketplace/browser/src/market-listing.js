@@ -77,7 +77,7 @@ const CONTENT_CID = /^(Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{45,95})$/;
 const ASSET_URI = /^elastos:\/\/(?:Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{45,95})$/;
 
 const TOP_KEYS = ["schema", "item", "asset", "offers", "access_state", "source"];
-const TOP_OPTIONAL_KEYS = ["offers_truncated", "access_unknown", "custody_route", "access_subject"];
+const TOP_OPTIONAL_KEYS = ["offers_truncated", "access_unknown", "custody_route", "access_subject", "no_reachable_holder"];
 // Whether this Home can reach the pool that keeps the item's keys, stated
 // only when Runtime proved it: `pool` -- its own, one it serves or one added
 // in Custody; `unresolved` -- none it knows, so Buy, Open and Download wait.
@@ -171,6 +171,9 @@ export function parseMarketListing(value) {
     && (typeof value.access_subject !== "string" || !ACCESS_SUBJECT.test(value.access_subject))) {
     return fail("invalid market listing access subject");
   }
+  if ("no_reachable_holder" in value && value.no_reachable_holder !== true) {
+    return fail("invalid market listing holder flag");
+  }
 
   const listing = {
     schema: value.schema,
@@ -192,32 +195,40 @@ export function parseMarketListing(value) {
   if (typeof value.access_subject === "string") {
     listing.accessSubject = value.access_subject;
   }
+  if (value.no_reachable_holder === true) {
+    listing.noReachableHolder = true;
+  }
   return { ok: true, listing };
 }
 
 /** A positive card answer carries no offer terms or purchase authority. */
 export function parseMarketCardAccess(value) {
   const error = keysError(value,
-    ["schema", "item", "asset", "access_state", "access_subject"], ["custody_route"]);
+    ["schema", "item", "asset", "access_state", "access_subject"], ["custody_route", "no_reachable_holder"]);
   if (error) return fail(error);
   if (value.schema !== MARKET_CARD_ACCESS_SCHEMA_V1
     || !["creator", "purchased"].includes(value.access_state)
     || typeof value.access_subject !== "string" || !ACCESS_SUBJECT.test(value.access_subject)
-    || ("custody_route" in value && !MARKET_CUSTODY_ROUTES.includes(value.custody_route))) {
+    || ("custody_route" in value && !MARKET_CUSTODY_ROUTES.includes(value.custody_route))
+    || ("no_reachable_holder" in value && value.no_reachable_holder !== true)) {
     return fail("invalid market card access");
   }
   const item = parseMarketItem(value.item);
   if (!item.ok) return item;
   const asset = parseMarketAsset(value.asset);
   if (!asset.ok) return asset;
-  return { ok: true, listing: {
+  const listing = {
     schema: value.schema,
     item: item.item,
     asset: asset.asset,
     accessState: value.access_state,
     accessSubject: value.access_subject,
     custodyRoute: value.custody_route,
-  } };
+  };
+  if (value.no_reachable_holder === true) {
+    listing.noReachableHolder = true;
+  }
+  return { ok: true, listing };
 }
 
 /**
@@ -453,6 +464,13 @@ export function buyRefusalCopy(answer) {
   }
   return answer.code === "custody_elsewhere" ? CUSTODY_ELSEWHERE_REFUSAL_COPY : null;
 }
+
+/**
+ * What a card says of an item the chain grants this account when every Home
+ * this one can reach refused its document (`no_reachable_holder`): it cannot
+ * be opened from its pool until a holder serves it again.
+ */
+export const NO_REACHABLE_HOLDER_COPY = "No copy is available from a reachable Home.";
 
 /** What every other download refusal says. */
 export const DOWNLOAD_UNAVAILABLE_COPY = "That copy could not be downloaded.";

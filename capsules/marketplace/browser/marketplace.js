@@ -2568,6 +2568,7 @@ import { createHomeNavigationClient } from "/apps/home/home-navigation-client.js
       mint: listing.mintId || "",
       finalityPending: finalityWatch.pendingReadyAt(key) !== null,
       access: otherChain ? "available" : accessWatch.state(key),
+      noHolder: !otherChain && accessWatch.listing(key)?.noReachableHolder === true,
       readability: marketAssetReadability.get(key),
       hasItem: marketAssetItems.has(key),
       downloading: pendingMarketDownloads.has(key),

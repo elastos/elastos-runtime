@@ -216,7 +216,30 @@ export function createAccessWatch({
       // It stands for the account the chain answers for now.
       subject = subjects.get(chain).subject;
     }
-    entries.set(key, { state: cardAccessState(listing), listing, at: now(), chain, subject, failures: 0, dueAt: null });
+    const entry = { state: cardAccessState(listing), listing, at: now(), chain, subject, failures: 0, dueAt: null };
+    entries.set(key, entry);
+    if (retryTimers.has(key)) {
+      clearTimer(retryTimers.get(key));
+      retryTimers.delete(key);
+    }
+    // A held answer no reachable Home serves leaves its card disabled; a
+    // card nobody scrolls is never shown again, so its TTL reread is woken here,
+    // once per answer. It runs only for this answer, still shown, and still
+    // due, so the visibility, pause and account rules stand.
+    if (listing.noReachableHolder === true) {
+      retryTimers.set(key, setTimer(() => {
+        retryTimers.delete(key);
+        if (entries.get(key) !== entry) {
+          return;
+        }
+        // The firing timer is the due signal; the wall clock may read a hair early.
+        entry.at = Math.min(entry.at, now() - ACCESS_SETTLED_TTL_MS);
+        if (shown.has(key) && needsRead(key)) {
+          queue.push(key);
+          pump();
+        }
+      }, ACCESS_SETTLED_TTL_MS));
+    }
     onChange(key);
   }
 

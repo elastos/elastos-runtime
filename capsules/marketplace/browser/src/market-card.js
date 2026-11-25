@@ -7,6 +7,7 @@
 import {
   CUSTODY_ELSEWHERE_COPY,
   CUSTODY_UNRESOLVED_LABEL,
+  NO_REACHABLE_HOLDER_COPY,
   NO_WALLET_ACCOUNT_LABEL,
   downloadControl,
 } from "./market-listing.js";
@@ -51,6 +52,8 @@ export function formatBadge(listing) {
  * - `downloading`: a copy of it is being built now;
  * - `listingLoading`: its listing is being read for a sheet;
  * - `mint`: this Home's own listing of it, when it holds one;
+ * - `noHolder`: the access answer said no reachable Home serves its
+ *   document, so opening it from its pool cannot succeed now;
  * - `size`: the button size class.
  */
 export function catalogCardControl(listing, ctx) {
@@ -118,6 +121,12 @@ export function catalogCardControl(listing, ctx) {
     case "held": {
       if (mint) {
         return `<button class="btn btn-primary ${size}" type="button" data-action="open-media" ${mint} ${watch}>Open</button>`;
+      }
+      if (ctx.noHolder) {
+        // Granted, but no reachable Home serves it, and it has no copy here:
+        // nothing to press. The card keeps its watch key, so the access read
+        // on its TTL brings Open back once a holder serves it again.
+        return `<button class="btn btn-ghost ${size}" type="button" disabled aria-disabled="true" title="${escapeAttr(NO_REACHABLE_HOLDER_COPY)}" ${watch}>Unavailable</button>`;
       }
       if (ctx.readability === "foreign") {
         return `<span class="store-row-state" ${watch}>Opens on ela.city</span>`;

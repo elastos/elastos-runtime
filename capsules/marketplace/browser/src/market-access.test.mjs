@@ -287,6 +287,82 @@ test("a settled answer is read again when shown after its TTL", async () => {
   assert.equal(watch.state("a"), "available", "the old answer stands while the new one is read");
 });
 
+// PR5 point 1: the no-holder hint rides on a settled held answer, and its
+// card is woken for a reread once its TTL passes -- shown once, never shown
+// or repainted again -- so Open comes back without a reload.
+function noHolderWatch() {
+  const state = { nowMs: 0, holder: false, reads: 0 };
+  const timers = fakeTimers();
+  const { watch } = watchWith(async () => {
+    state.reads += 1;
+    const value = listing({ accessState: "purchased" });
+    if (!state.holder) value.noReachableHolder = true;
+    return { kind: "listing", listing: value };
+  }, { now: () => state.nowMs, timers });
+  return { watch, timers, state };
+}
+
+test("a held answer with no reachable holder is reread when its TTL passes, and recovers", async () => {
+  const { watch, timers, state } = noHolderWatch();
+  watch.show(["a"]);
+  await flush();
+  assert.equal(watch.state("a"), "held", "the access answer itself is unchanged");
+  assert.equal(watch.listing("a").noReachableHolder, true);
+  assert.deepEqual(timers.delays(), [ACCESS_SETTLED_TTL_MS], "one wakeup, at the settled TTL");
+  state.holder = true;
+  state.nowMs += ACCESS_SETTLED_TTL_MS;
+  await timers.runAll();
+  assert.equal(state.reads, 2, "the timer alone reads it again");
+  assert.equal(watch.state("a"), "held");
+  assert.equal(watch.listing("a").noReachableHolder, undefined, "the hint is gone once a holder serves it");
+  assert.deepEqual(timers.delays(), [], "a served answer schedules nothing");
+});
+
+test("a no-holder wakeup reads nothing off screen or while paused, and runs once back", async () => {
+  const offScreen = noHolderWatch();
+  offScreen.watch.show(["a"]);
+  await flush();
+  offScreen.watch.show([]);
+  offScreen.state.nowMs += ACCESS_SETTLED_TTL_MS;
+  await offScreen.timers.runAll();
+  assert.equal(offScreen.state.reads, 1, "an off-screen card is not read");
+
+  const hidden = noHolderWatch();
+  hidden.watch.show(["a"]);
+  await flush();
+  hidden.watch.pause();
+  hidden.state.holder = true;
+  hidden.state.nowMs += ACCESS_SETTLED_TTL_MS;
+  await hidden.timers.runAll();
+  assert.equal(hidden.state.reads, 1, "a hidden tab reads nothing");
+  hidden.watch.resume();
+  await flush();
+  assert.equal(hidden.state.reads, 2, "back in sight, the due reread runs");
+  assert.equal(hidden.watch.listing("a").noReachableHolder, undefined);
+});
+
+test("a superseded no-holder answer's wakeup does nothing", async () => {
+  const { watch, timers, state } = noHolderWatch();
+  watch.show(["a"]);
+  await flush();
+  // A newer answer (from the sheet, say) replaces it before the TTL.
+  watch.note("a", listing({ accessState: "purchased" }));
+  state.nowMs += ACCESS_SETTLED_TTL_MS;
+  await timers.runAll();
+  assert.equal(state.reads, 1, "only the current answer's wakeup may read");
+});
+
+test("another account drops the no-holder hint with its answer", () => {
+  const base = "eip155:8453";
+  const { watch } = watchWith(async () => ({ kind: "retry" }));
+  const held = listing({ accessState: "purchased", accessSubject: "aa".repeat(16), chain: base });
+  held.noReachableHolder = true;
+  watch.note("a", held);
+  assert.equal(watch.listing("a").noReachableHolder, true);
+  watch.note("b", listing({ accessSubject: "bb".repeat(16), chain: base }));
+  assert.equal(watch.listing("a"), null, "the old account's listing, and its hint, no longer count");
+});
+
 test("an answer the page already has -- from the sheet -- is the card's too", () => {
   const { watch } = watchWith(async () => { throw new Error("not asked"); });
   watch.note("a", listing({ accessState: "purchased" }));

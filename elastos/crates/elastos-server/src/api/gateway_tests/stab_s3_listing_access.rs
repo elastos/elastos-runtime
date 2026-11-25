@@ -46,6 +46,12 @@ async fn stab_s3_listing_with_unproven_kid_asks_the_chain_by_item_and_answers_he
         "an account the chain grants the item must be answered as holding it, \
          asked by item when the KID is unproven: {object}"
     );
+    // An unreadable document is not a refusal by every holder: the card
+    // keeps its Open (PR5 point 1).
+    assert!(
+        object.get("no_reachable_holder").is_none(),
+        "only a typed no-holder answer carries the hint: {object}"
+    );
 }
 
 /// D4-A guard (ADV-19, DKMS-14): a row whose KID-to-item binding the chain
