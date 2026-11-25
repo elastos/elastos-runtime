@@ -40,6 +40,7 @@ async function setup(engine,width,{pictures=false}={}) {
     const path='capsules/wallet/browser/'+new URL(route.request().url()).pathname.split('/apps/wallet/')[1].split('?')[0];
     try {const body=execFileSync('git',['show',`${process.env.WALLET_ONE_LIST_BASELINE}:${path.endsWith('/')?path+'index.html':path}`]);await route.fulfill({body,contentType:path.endsWith('.js')?'text/javascript':path.endsWith('.css')?'text/css':'text/html'});}catch{await route.continue();}
   });
+  if(process.env.WALLET_CONNECTOR_BASELINE)await context.route('**/apps/home/wallet-connection-view.mjs*',route=>route.fulfill({contentType:'text/javascript',body:execFileSync('git',['show',`${process.env.WALLET_CONNECTOR_BASELINE}:capsules/_shared/wallet-connection-view.mjs`])}));
   const page=await context.newPage();page.setDefaultTimeout(8000);const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.goto(fixture.origin+'/home/');await page.waitForFunction(()=>window.fixtureReady);await page.evaluate(()=>window.showFixtureApps());
   const wallet=page.frameLocator('iframe[title=wallet]'),system=page.frameLocator('iframe[title=system]');
