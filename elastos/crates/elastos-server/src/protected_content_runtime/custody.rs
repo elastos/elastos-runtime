@@ -1194,6 +1194,72 @@ pub async fn register_custody_provider(
     spawn_custody_provider(registry, binary_path, data_dir, bridge_config).await
 }
 
+/// What starting this Home's custody provider at boot came to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CustodyProviderStartup {
+    /// The provider is running on this Home's roots.
+    Registered,
+    /// This Home has never provisioned custody, so there is nothing to start.
+    /// It starts on demand when a pool creates its first root.
+    NotProvisioned,
+}
+
+/// Starts this Home's custody provider at boot, unless the Home has never
+/// provisioned custody. Only genuine absence is skipped: a present root that
+/// is malformed or unreadable still goes to registration, which refuses it,
+/// and an error reading the custody folder is returned, so both still warn.
+pub async fn start_custody_provider_at_boot(
+    registry: &Arc<ProviderRegistry>,
+    binary_path: &Path,
+    data_dir: &Path,
+) -> anyhow::Result<CustodyProviderStartup> {
+    if custody_never_provisioned(data_dir)? {
+        return Ok(CustodyProviderStartup::NotProvisioned);
+    }
+    register_custody_provider(registry, binary_path, data_dir).await?;
+    Ok(CustodyProviderStartup::Registered)
+}
+
+/// Whether neither the `inactive` root nor the pool roots folder exists at
+/// all. Anything present, in any form, is not absence; neither is an error
+/// other than "not found". The custody folder itself is read without
+/// following links: a link there (dangling or to an empty folder) or a
+/// non-folder is refused, not taken for absence.
+fn custody_never_provisioned(data_dir: &Path) -> anyhow::Result<bool> {
+    let base = custody_provider_base(data_dir);
+    match fs::symlink_metadata(&base) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+            return Err(invalid_custody_config(
+                "custody provider folder must be a real folder",
+            ))
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+        Err(error) => {
+            return Err(invalid_custody_config(format!(
+                "custody provider folder cannot be read: {}",
+                error.kind()
+            )))
+        }
+    }
+    for path in [
+        base.join(custody_provider::CUSTODY_INACTIVE_ROOT_PATH),
+        base.join(custody_provider::CUSTODY_POOL_ROOTS_DIR),
+    ] {
+        match fs::symlink_metadata(&path) {
+            Ok(_) => return Ok(false),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(invalid_custody_config(format!(
+                    "custody provider folder cannot be read: {}",
+                    error.kind()
+                )))
+            }
+        }
+    }
+    Ok(true)
+}
+
 /// Starts a custody host's provider with its one legacy root: `base_path` is
 /// the `inactive` root itself and `extra` is null (Plan B T2.1).
 pub async fn register_custody_host_provider(
