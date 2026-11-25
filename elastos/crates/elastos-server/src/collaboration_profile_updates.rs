@@ -10,7 +10,7 @@
 //! by Profile DID because the endpoint is exactly what may be changing, and
 //! folding the two together would give Chat identity authority.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use anyhow::Context;
@@ -65,6 +65,7 @@ struct ProfileUpdateInner {
     network: VerifiedCollaborationNetworkProfile,
     registry: Arc<ProviderRegistry>,
     contexts: Mutex<BTreeMap<String, ProfileUpdateContext>>,
+    recovered_roots: Mutex<BTreeSet<crate::collaboration_discovery_runtime::RecoveredProfileRoot>>,
     /// Highest local revision a contact has acknowledged, keyed by local and
     /// remote Profile DID. Announcement is a pure function of the local head and
     /// the accepted contacts, so this only avoids repeat traffic; losing it on
@@ -202,6 +203,7 @@ impl CollaborationProfileUpdateService {
             network,
             registry: registry.clone(),
             contexts: Mutex::new(BTreeMap::new()),
+            recovered_roots: Mutex::new(BTreeSet::new()),
             acknowledged: Mutex::new(BTreeMap::new()),
         });
         let provider: Arc<dyn Provider> = Arc::new(CollaborationProfileUpdateProvider {
@@ -230,6 +232,11 @@ impl CollaborationProfileUpdateService {
             .contexts
             .lock()
             .map_err(|_| anyhow::anyhow!("profile update context lock is poisoned"))?;
+        crate::collaboration_discovery_runtime::ensure_recovered_profile_not_ahead_of_disk(
+            &self.inner.recovered_roots,
+            contact_store.as_ref(),
+            &profile,
+        )?;
         let key = profile.document().profile_did.clone();
         if !contexts.contains_key(&key) && contexts.len() >= MAX_PROFILE_UPDATE_CONTEXTS {
             anyhow::bail!("profile update context limit reached");
@@ -531,6 +538,11 @@ impl CollaborationProfileUpdateService {
             .contexts
             .lock()
             .map_err(|_| anyhow::anyhow!("profile update context lock is poisoned"))?;
+        crate::collaboration_discovery_runtime::ensure_recovered_profile_not_ahead_of_disk(
+            &self.inner.recovered_roots,
+            contact_store.as_ref(),
+            &profile,
+        )?;
         let key = profile.document().profile_did.clone();
         if let Some(existing) = contexts.get_mut(&key) {
             let ordering = Self::compare_registered_profile(&existing.profile, &profile)?;
@@ -570,6 +582,41 @@ impl CollaborationProfileUpdateService {
                 },
             },
         );
+        Ok(())
+    }
+
+    pub(crate) fn forget_owner_contexts_for_recovery(
+        &self,
+        data_dir: &std::path::Path,
+        principal_id: &str,
+        localhost_root: &str,
+    ) -> anyhow::Result<()> {
+        let mut contexts = self
+            .inner
+            .contexts
+            .lock()
+            .map_err(|_| anyhow::anyhow!("profile update context lock is poisoned"))?;
+        crate::collaboration_discovery_runtime::mark_recovered_profile_root(
+            &self.inner.recovered_roots,
+            data_dir,
+            principal_id,
+            localhost_root,
+        )?;
+        let mut acknowledged = self
+            .inner
+            .acknowledged
+            .lock()
+            .map_err(|_| anyhow::anyhow!("profile update ack lock is poisoned"))?;
+        contexts.retain(|profile_did, context| {
+            let store = &context.contact_store;
+            let keep = store.data_root() != data_dir
+                || store.principal_id() != principal_id
+                || store.localhost_root() != localhost_root;
+            if !keep {
+                acknowledged.retain(|(local, _), _| local != profile_did);
+            }
+            keep
+        });
         Ok(())
     }
 }

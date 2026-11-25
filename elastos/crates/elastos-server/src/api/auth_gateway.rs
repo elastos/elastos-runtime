@@ -2497,13 +2497,14 @@ async fn full_recovery_bundle_import_inner(
         .proof_binding_id
         .clone()
         .ok_or_else(|| anyhow::anyhow!("missing proof-bound auth session"))?;
-    let people_identity_restore = restore_people_identity_from_full_bundle(
-        &state.data_dir,
+    let people_identity_restore = restore_people_identity_and_contexts(
+        state,
         &bundle,
         &recovery_response.principal_id,
         &recovery_response.localhost_root,
         &restored_proof_binding_id,
-    );
+    )
+    .await;
     let wallet_authority = if recovery_response.status == "reassigned" {
         replacement_wallet_authority(
             &state.data_dir,
@@ -2759,6 +2760,56 @@ fn people_identity_for_full_bundle(
             );
     }
     Ok(Some(people_identity))
+}
+
+/// Restores the People identity, then makes the restored Profile the head in
+/// memory. A Home with no collaboration service has no cached Profile to
+/// rebuild. When the rebuild fails, the outcome does not claim success.
+async fn restore_people_identity_and_contexts(
+    state: &GatewayState,
+    bundle: &Value,
+    principal_id: &str,
+    localhost_root: &str,
+    proof_binding_id: &str,
+) -> FullRecoveryPeopleIdentityOutcomeV1 {
+    let Some(service) = state.collaboration_discovery_service.clone() else {
+        return restore_people_identity_from_full_bundle(
+            &state.data_dir,
+            bundle,
+            principal_id,
+            localhost_root,
+            proof_binding_id,
+        );
+    };
+    let outcome = service
+        .with_owner_profile_recovery(
+            &state.data_dir,
+            principal_id,
+            localhost_root,
+            proof_binding_id,
+            || {
+                let outcome = restore_people_identity_from_full_bundle(
+                    &state.data_dir,
+                    bundle,
+                    principal_id,
+                    localhost_root,
+                    proof_binding_id,
+                );
+                let reconcile = outcome.status == "restored";
+                (outcome, reconcile)
+            },
+        )
+        .await;
+    match outcome {
+        Ok(outcome) => outcome,
+        Err(err) => FullRecoveryPeopleIdentityOutcomeV1 {
+            status: "incomplete".to_string(),
+            profile_did: None,
+            rebound_device: false,
+            contact_store_restored: false,
+            reason: Some(format!("{err:#}")),
+        },
+    }
 }
 
 /// Restores the People identity after the root itself recovered: writes the

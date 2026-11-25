@@ -6,7 +6,7 @@
 //! Profile. The scoped envelope signer and the route endpoint are verified
 //! independently.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -93,6 +93,7 @@ struct DirectServiceInner {
     network: VerifiedCollaborationNetworkProfile,
     registry: Arc<ProviderRegistry>,
     contexts: Mutex<BTreeMap<String, DirectContext>>,
+    recovered_roots: Mutex<BTreeSet<crate::collaboration_discovery_runtime::RecoveredProfileRoot>>,
     retry_offsets: Mutex<BTreeMap<String, usize>>,
     failure_warning: Mutex<Option<std::time::Instant>>,
     delivery_issues: Mutex<BTreeMap<String, DirectDeliveryIssue>>,
@@ -842,6 +843,7 @@ impl CollaborationDirectMessageService {
             network,
             registry: registry.clone(),
             contexts: Mutex::new(BTreeMap::new()),
+            recovered_roots: Mutex::new(BTreeSet::new()),
             retry_offsets: Mutex::new(BTreeMap::new()),
             failure_warning: Mutex::new(None),
             delivery_issues: Mutex::new(BTreeMap::new()),
@@ -920,6 +922,11 @@ impl CollaborationDirectMessageService {
             .contexts
             .lock()
             .map_err(|_| anyhow::anyhow!("direct message context lock is poisoned"))?;
+        crate::collaboration_discovery_runtime::ensure_recovered_profile_not_ahead_of_disk(
+            &self.inner.recovered_roots,
+            contact_store.as_ref(),
+            &profile,
+        )?;
         if !contexts.contains_key(&key) && contexts.len() >= MAX_DIRECT_CONTEXTS {
             anyhow::bail!("direct message context limit reached");
         }
@@ -949,6 +956,33 @@ impl CollaborationDirectMessageService {
                 },
             },
         );
+        Ok(())
+    }
+
+    /// Owner recovery replaces only this root's cached receiving authority.
+    pub(crate) fn forget_owner_contexts_for_recovery(
+        &self,
+        data_dir: &std::path::Path,
+        principal_id: &str,
+        localhost_root: &str,
+    ) -> anyhow::Result<()> {
+        let mut contexts = self
+            .inner
+            .contexts
+            .lock()
+            .map_err(|_| anyhow::anyhow!("direct message context lock is poisoned"))?;
+        crate::collaboration_discovery_runtime::mark_recovered_profile_root(
+            &self.inner.recovered_roots,
+            data_dir,
+            principal_id,
+            localhost_root,
+        )?;
+        contexts.retain(|_, context| {
+            let store = &context.contact_store;
+            store.data_root() != data_dir
+                || store.principal_id() != principal_id
+                || store.localhost_root() != localhost_root
+        });
         Ok(())
     }
 

@@ -1,6 +1,6 @@
 //! Runtime-owned discovery relay path for signed advertisements and contact requests.
 
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -132,6 +132,9 @@ pub struct CollaborationDiscoveryService {
     bootstrap_peers: Arc<Vec<CollaborationBootstrapPeer>>,
     state: Arc<Mutex<BTreeMap<String, DiscoveryClientState>>>,
     sync_contexts: Arc<Mutex<BTreeMap<DiscoverySyncContextKey, DiscoverySyncContext>>>,
+    /// Roots whose Profile head was replaced by this process's owner import.
+    /// Registration for these roots must follow the Profile on disk.
+    recovered_profile_roots: Arc<Mutex<BTreeSet<RecoveredProfileRoot>>>,
     sync_pass_lock: Arc<tokio::sync::Mutex<()>>,
     intent_mutex: Arc<Mutex<()>>,
     direct_messages: CollaborationDirectMessageService,
@@ -630,6 +633,7 @@ impl CollaborationDiscoveryService {
             bootstrap_peers: Arc::new(profile.profile().bootstrap_peers.clone()),
             state: Arc::new(Mutex::new(BTreeMap::new())),
             sync_contexts: Arc::new(Mutex::new(BTreeMap::new())),
+            recovered_profile_roots: Arc::new(Mutex::new(BTreeSet::new())),
             sync_pass_lock: Arc::new(tokio::sync::Mutex::new(())),
             intent_mutex: Arc::new(Mutex::new(())),
             direct_messages,
@@ -774,6 +778,142 @@ impl CollaborationDiscoveryService {
         Ok(registered)
     }
 
+    /// The owner import may replace a newer in-memory Profile with the head it
+    /// just wrote. Worker passes stay out until that head is the one in memory.
+    /// `restore` reports whether that write is the Profile the import claims.
+    pub(crate) async fn with_owner_profile_recovery<T>(
+        &self,
+        data_dir: &Path,
+        principal_id: &str,
+        localhost_root: &str,
+        proof_binding_id: &str,
+        restore: impl FnOnce() -> (T, bool),
+    ) -> anyhow::Result<T> {
+        let _pass = self.sync_pass_lock.lock().await;
+        let (value, reconcile) = restore();
+        if reconcile {
+            self.install_restored_profile_contexts(
+                data_dir,
+                principal_id,
+                localhost_root,
+                proof_binding_id,
+            )?;
+        }
+        Ok(value)
+    }
+
+    /// Drop this root's cached Profiles and publish the Profile now on disk.
+    /// Callers hold the sync pass lock so a worker cannot advertise the old head.
+    fn install_restored_profile_contexts(
+        &self,
+        data_dir: &Path,
+        principal_id: &str,
+        localhost_root: &str,
+        proof_binding_id: &str,
+    ) -> anyhow::Result<()> {
+        let profile = crate::collaboration_profile_authority::load_profile_authority(
+            data_dir,
+            principal_id,
+            localhost_root,
+        )?
+        .ok_or_else(|| anyhow::anyhow!("restored Profile authority not found"))?;
+        let device_did =
+            crate::collaboration_profile_authority::load_existing_device_did(data_dir)?
+                .ok_or_else(|| anyhow::anyhow!("restored Profile device not found"))?;
+        let store = Arc::new(CollaborationContactStore::new(
+            data_dir,
+            principal_id,
+            localhost_root,
+            self.network_profile(),
+            &profile,
+            &device_did,
+        )?);
+        let profile_did = profile.document().profile_did.clone();
+        let mut dropped_profile_dids = Vec::new();
+        {
+            let mut contexts = self
+                .sync_contexts
+                .lock()
+                .map_err(|_| anyhow::anyhow!("discovery sync context lock is poisoned"))?;
+            mark_recovered_profile_root(
+                &self.recovered_profile_roots,
+                data_dir,
+                principal_id,
+                localhost_root,
+            )?;
+            let now = current_timestamp();
+            contexts.retain(|key, context| {
+                if context.store.data_root() != data_dir
+                    || key.principal_id != principal_id
+                    || key.localhost_root != localhost_root
+                {
+                    return true;
+                }
+                if key.profile_did != profile.document().profile_did {
+                    dropped_profile_dids.push(key.profile_did.clone());
+                    return false;
+                }
+                context.store = store.clone();
+                context.profile = profile.clone();
+                context.discovery_next_wake_at = now;
+                context.discovery_failures = 0;
+                context.direct_next_wake_at = now;
+                context.direct_failures = 0;
+                context.profile_next_wake_at = now;
+                context.profile_failures = 0;
+                #[cfg(test)]
+                if context.verified_for_test {
+                    return true;
+                }
+                ensure_sync_context_authorized(
+                    &store,
+                    &profile,
+                    principal_id,
+                    &context.session_id,
+                    context.proof_binding_id.as_deref(),
+                    &context.grant_id,
+                    now,
+                )
+                .is_ok()
+            });
+            self.direct_messages.forget_owner_contexts_for_recovery(
+                data_dir,
+                principal_id,
+                localhost_root,
+            )?;
+            self.direct_messages.register_runtime_owned_context(
+                store.clone(),
+                profile.clone(),
+                proof_binding_id,
+            )?;
+            self.profile_updates.forget_owner_contexts_for_recovery(
+                data_dir,
+                principal_id,
+                localhost_root,
+            )?;
+            self.profile_updates.register_runtime_owned_context(
+                store,
+                profile,
+                proof_binding_id,
+            )?;
+        }
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| anyhow::anyhow!("discovery client state lock is poisoned"))?;
+        state.remove(&profile_did);
+        for did in &dropped_profile_dids {
+            state.remove(did);
+        }
+        drop(state);
+        let mut outbox = self.lock_profile_outbox()?;
+        outbox.marks.remove(&profile_did);
+        for did in &dropped_profile_dids {
+            outbox.marks.remove(did);
+        }
+        Ok(())
+    }
+
     /// Registers a verified principal-scoped context with the Runtime-owned
     /// collaboration worker. It only retains already-validated objects; it
     /// never creates contact, Profile, or device state.
@@ -805,6 +945,13 @@ impl CollaborationDiscoveryService {
             .sync_contexts
             .lock()
             .map_err(|_| anyhow::anyhow!("discovery sync context lock is poisoned"))?;
+        // An owner import may have restored an older Profile while this
+        // registration waited. That root now follows the Profile on disk.
+        ensure_recovered_profile_not_ahead_of_disk(
+            &self.recovered_profile_roots,
+            store.as_ref(),
+            &profile,
+        )?;
         if let Some(existing_key) = contexts.keys().find(|existing| {
             existing.principal_id == key.principal_id
                 && existing.localhost_root == key.localhost_root
@@ -2593,6 +2740,87 @@ pub(crate) fn signed_profile_bytes(
     profile: &VerifiedCollaborationProfileDocument,
 ) -> anyhow::Result<Vec<u8>> {
     Ok(serde_json::to_vec(profile.signed_envelope())?)
+}
+
+/// One Home root whose owner import replaced the in-memory Profile.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct RecoveredProfileRoot {
+    data_root: std::path::PathBuf,
+    principal_id: String,
+    localhost_root: String,
+}
+
+impl RecoveredProfileRoot {
+    fn new(data_root: &Path, principal_id: &str, localhost_root: &str) -> Self {
+        Self {
+            data_root: data_root.to_path_buf(),
+            principal_id: principal_id.to_string(),
+            localhost_root: localhost_root.to_string(),
+        }
+    }
+
+    fn from_store(store: &CollaborationContactStore) -> Self {
+        Self::new(
+            store.data_root(),
+            store.principal_id(),
+            store.localhost_root(),
+        )
+    }
+}
+
+pub(crate) fn mark_recovered_profile_root(
+    recovered: &Mutex<BTreeSet<RecoveredProfileRoot>>,
+    data_root: &Path,
+    principal_id: &str,
+    localhost_root: &str,
+) -> anyhow::Result<()> {
+    recovered
+        .lock()
+        .map_err(|_| anyhow::anyhow!("recovered Profile root lock is poisoned"))?
+        .insert(RecoveredProfileRoot::new(
+            data_root,
+            principal_id,
+            localhost_root,
+        ));
+    Ok(())
+}
+
+/// After this process imports a root, registration cannot put a Profile ahead
+/// of the restored head back into memory. Other roots keep the old rule.
+pub(crate) fn ensure_recovered_profile_not_ahead_of_disk(
+    recovered: &Mutex<BTreeSet<RecoveredProfileRoot>>,
+    store: &CollaborationContactStore,
+    profile: &VerifiedCollaborationProfileDocument,
+) -> anyhow::Result<()> {
+    let restored = recovered
+        .lock()
+        .map_err(|_| anyhow::anyhow!("recovered Profile root lock is poisoned"))?
+        .contains(&RecoveredProfileRoot::from_store(store));
+    if restored {
+        ensure_profile_not_ahead_of_disk(store, profile)?;
+    }
+    Ok(())
+}
+
+/// The Profile a caller wants to cache is not the head on disk.
+pub(crate) fn ensure_profile_not_ahead_of_disk(
+    store: &CollaborationContactStore,
+    profile: &VerifiedCollaborationProfileDocument,
+) -> anyhow::Result<()> {
+    if let Some(current) = crate::collaboration_profile_authority::load_profile_authority(
+        store.data_root(),
+        store.principal_id(),
+        store.localhost_root(),
+    )? {
+        if current.document().profile_did != profile.document().profile_did
+            || current.document().revision < profile.document().revision
+            || (current.document().revision == profile.document().revision
+                && signed_profile_bytes(&current)? != signed_profile_bytes(profile)?)
+        {
+            anyhow::bail!("Profile context no longer matches disk authority");
+        }
+    }
+    Ok(())
 }
 
 /// Revalidates the existing Home-launch authority on each Runtime worker pass.
@@ -8970,6 +9198,7 @@ pub(crate) mod tests {
             state: local_service.state.clone(),
             profile_updates: local_service.profile_updates.clone(),
             sync_contexts: local_service.sync_contexts.clone(),
+            recovered_profile_roots: local_service.recovered_profile_roots.clone(),
             sync_pass_lock: local_service.sync_pass_lock.clone(),
             intent_mutex: local_service.intent_mutex.clone(),
             direct_messages: local_service.direct_messages.clone(),
@@ -9188,6 +9417,7 @@ pub(crate) mod tests {
             state: service.state.clone(),
             profile_updates: service.profile_updates.clone(),
             sync_contexts: service.sync_contexts.clone(),
+            recovered_profile_roots: service.recovered_profile_roots.clone(),
             sync_pass_lock: service.sync_pass_lock.clone(),
             intent_mutex: service.intent_mutex.clone(),
             direct_messages: service.direct_messages.clone(),
