@@ -2629,7 +2629,7 @@ function renderAccounts(accounts) {
       const wallets = document.createElement('section'); wallets.className = 'system-signin-wallets';
       const heading = document.createElement('h3'); heading.textContent = 'Wallets for sign-in'; wallets.append(heading);
       for (const method of walletSigninMethods.methods) wallets.append(walletAccountRow(method));
-      if (walletAddButton) wallets.append(walletAddButton);
+      if (walletAddButton) {walletAddButton.className='el-button el-button-primary';wallets.append(walletAddButton);}
       block.append(wallets);
     }
     accountListNode.append(block);

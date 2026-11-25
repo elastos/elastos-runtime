@@ -79,3 +79,4 @@ html[data-wallet-flow] .wallet-one-list .wallet-hero.is-flipped,html[data-wallet
 .one-identity strong { overflow-wrap:anywhere; }
 .one-wallet-top>.el-button { flex-shrink:0; }
 .one-owner>div { min-width:0; overflow-wrap:anywhere; }
+.wallet-one-list .el-button { min-height:44px; }

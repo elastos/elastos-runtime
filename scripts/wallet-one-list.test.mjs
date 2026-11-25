@@ -32,6 +32,7 @@ async function shot(frame,id,width,engine) {
   captureRecords.push({file,sha256:createHash('sha256').update(bytes).digest('hex'),...bounds});
 }
 async function setup(engine,width,{pictures=false}={}) {
+  if(output)assert.equal(execFileSync('git',['status','--porcelain'],{encoding:'utf8'}).trim(),'','pictures require committed source');
   const fixture=await signinFixture(),addresses=seed(fixture.state,{pictures});
   const browser=await requireProductSmokePlaywright()[engine].launch({headless:true,...(engine==='chromium'?productSmokeLaunchOptions():{})});
   const context=await browser.newContext({viewport:{width,height:1000},colorScheme:'dark',reducedMotion:'reduce'});
@@ -42,7 +43,7 @@ async function setup(engine,width,{pictures=false}={}) {
   });
   if(process.env.WALLET_CONNECTOR_BASELINE)await context.route('**/apps/home/wallet-connection-view.mjs*',route=>route.fulfill({contentType:'text/javascript',body:execFileSync('git',['show',`${process.env.WALLET_CONNECTOR_BASELINE}:capsules/_shared/wallet-connection-view.mjs`])}));
   const page=await context.newPage();page.setDefaultTimeout(8000);const errors=[];page.on('pageerror',e=>errors.push(e.message));
-  await page.goto(fixture.origin+'/home/');await page.waitForFunction(()=>window.fixtureReady);await page.evaluate(()=>window.showFixtureApps());
+  await page.goto(fixture.origin+'/home/');await page.waitForFunction(()=>window.fixtureReady);await page.evaluate(()=>{walletFixture.chain=8453;window.showFixtureApps();});
   const wallet=page.frameLocator('iframe[title=wallet]'),system=page.frameLocator('iframe[title=system]');
   return {fixture,browser,context,page,wallet,system,addresses,errors,close:async()=>{await context.close();await browser.close();await fixture.close();}};
 }
@@ -140,4 +141,4 @@ for(const engine of ['chromium','webkit'])for(const width of [1440,390]) {
     } finally {await f.close();}
   });
 }
-test.after(async()=>{if(output)await writeFile(join(output,'captures.json'),JSON.stringify({head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),tree:execFileSync('git',['rev-parse','HEAD^{tree}'],{encoding:'utf8'}).trim(),captures:captureRecords},null,2)+'\n');});
+test.after(async()=>{if(output){const sources={};for(const path of ['capsules/wallet/browser/index.html','capsules/wallet/browser/wallet.js','capsules/wallet/browser/wallet-inventory.js','capsules/wallet/browser/wallet-inventory.css','capsules/system/browser/system.js','capsules/system/browser/style.css','capsules/home/browser/wallet-signin-view.mjs','capsules/home/browser/wallet-signin-management.mjs','capsules/_shared/wallet-connection-view.mjs'])sources[path]=createHash('sha256').update(await readFile(path)).digest('hex');await writeFile(join(output,'captures.json'),JSON.stringify({sources,head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),tree:execFileSync('git',['rev-parse','HEAD^{tree}'],{encoding:'utf8'}).trim(),captures:captureRecords},null,2)+'\n');}});

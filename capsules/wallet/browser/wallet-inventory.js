@@ -89,7 +89,7 @@ export function createWalletInventory({root, openSystem, connectApps, removeApps
     title.append(text('h1', entry ? 'Wallet' : 'Wallets')); heading.append(title);
     if (!entry) {const add=button('Add wallet for apps', choose, true);add.id='wallet-add-apps';heading.append(add);}
     section.append(heading);
-    if (result) section.append(text('p', result, 'one-result'));
+    if (result) {const status=text('p',result,'one-result');status.setAttribute('role','status');section.append(status);}
     if (!entry) {
       const note = text('p', '', 'one-muted one-list-note');
       note.append('To sign in with a wallet, use ', link('System > Accounts', openSystem), '.'); section.append(note);
@@ -104,7 +104,7 @@ export function createWalletInventory({root, openSystem, connectApps, removeApps
     root.replaceChildren(section);
   }
   function open(id) {if (busy) return false; selected = id; result = ''; render(); return true;}
-  function close() {operation++; connectionController?.abort(); connectionController = null; dialog?.close(); dialog?.remove(); dialog = null; busy = false; render();}
+  function close() {const restore=Boolean(dialog);operation++;connectionController?.abort();connectionController=null;dialog?.close();dialog?.remove();dialog=null;busy=false;render();if(restore)(root.querySelector('[role=switch]')||root.querySelector('#wallet-add-apps'))?.focus({preventScroll:true});}
   function modal(title, nodes, approve, label) {
     close(); const modal = document.createElement('dialog'); dialog = modal; modal.className = 'one-dialog';
     modal.setAttribute('aria-label', title);

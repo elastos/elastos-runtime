@@ -153,6 +153,7 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
         const rows=(state.methods||[]).filter(m=>m.connector===choice.connector&&(!choice.providerId||m.providerId===choice.providerId));return {...choice,used:rows.length>0&&rows.every(m=>m.sign_in_enabled)};
       });
       renderWalletSigninManagement(body,footer,state,{account:initial.account||'Your account',methods:choices,choose:chooseAdd,confirm:()=>flow.confirm(),approve:()=>flow.approve(),cancel,retry:()=>chooserAction(state.stage==='unknown'?'check':'retry')});
+      if(hadFocus)dialog.querySelector('button')?.focus();
       return;
     }
     if(state.stage==='pairing') {

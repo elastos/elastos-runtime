@@ -2030,3 +2030,4 @@ input[type="file"].visually-hidden {
  .system-wallet-actions .el-button { font-size:12px; }
  .system-signin-wallets>#wallet-signin-add { width:100%; }
 }
+.system-wallet-actions .el-button,.system-signin-wallets>#wallet-signin-add { min-height:44px; }
