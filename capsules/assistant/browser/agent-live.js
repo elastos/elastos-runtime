@@ -45,9 +45,9 @@ const PROBE_TTL_MS = 15000;
 const ADMITTED_OFFER_ID = /^model:[0-9a-f]{64}$/;
 
 /** While Assistant is open, the catalog is read again this often when a model
-   downloads and nothing is selectable yet (progress), or when an admitted
-   model is advertised before its catalog row is bound to its offer (just after
-   Get, or after a failed catalog read). The second case is bounded. */
+   downloads or activates and nothing is selectable yet, or when an admitted
+   model's offer and ready catalog row have not joined yet (just after Get,
+   or after a failed catalog read). The second case is bounded. */
 const LIVE_REFRESH_MS = 3000;
 const CATALOG_JOIN_RETRIES = 10;
 
@@ -119,16 +119,16 @@ export function watchLiveModels(on) {
   scheduleLiveRefresh();
 }
 
-/** One timer for both re-reads, and none while a probe is already in flight. */
+/** One timer for preparation and catalog joins. */
 function scheduleLiveRefresh() {
   clearTimeout(liveRefreshTimer);
   liveRefreshTimer = null;
   const pending = liveCatalogPending();
   if (!pending) catalogJoinRetries = 0;
   if (!watchingLiveModels) return;
-  const downloading = !selectedLiveOffer() && liveDownloadingModel();
+  const preparing = !selectedLiveOffer() && (liveDownloadingModel() || liveState.catalogModels.some(model => model.activating));
   const joining = pending && catalogJoinRetries < CATALOG_JOIN_RETRIES;
-  if (!downloading && !joining) return;
+  if (!preparing && !joining) return;
   if (pending) catalogJoinRetries += 1;
   liveRefreshTimer = setTimeout(() => {
     liveRefreshTimer = null;
@@ -263,10 +263,11 @@ export function liveMenuOffers() {
   const content = liveContentModels();
   return liveState.models.filter(m => !ADMITTED_OFFER_ID.test(m.offerId) && !content.some(c => c.offerId === m.offerId));
 }
-/** An admitted model is advertised but its catalog row is not bound to it yet. */
+/** The admitted model's advertised offer and ready catalog row have not joined. */
 export function liveCatalogPending() {
   const content = liveContentModels();
-  return liveState.models.some(m => ADMITTED_OFFER_ID.test(m.offerId) && !content.some(c => c.offerId === m.offerId));
+  return liveState.models.some(m => ADMITTED_OFFER_ID.test(m.offerId) && !content.some(c => c.offerId === m.offerId)) ||
+    liveState.catalogModels.some(model => model.ready && !liveState.models.some(offer => offer.offerId === model.offerId));
 }
 /** The catalog model a running preparation is downloading, or null. */
 export function liveDownloadingModel() {

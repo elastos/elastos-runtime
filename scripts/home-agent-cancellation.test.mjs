@@ -307,6 +307,67 @@ test("a ready local model is listed by its catalog title, never by its raw offer
   assert.equal(catalogReads, 3, "a closed Assistant does not read the catalog again");
 });
 
+test("an open Assistant follows download through activation before selecting the ready model", async t => {
+  live.selectLiveOffer("");
+  t.after(() => { live.watchLiveModels(false); live.selectLiveOffer(""); });
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const cid = `bafybei${"a".repeat(52)}`;
+  const localId = `model:${"a".repeat(64)}`;
+  const offer = { id: localId, title: "SmolLM2", operation: "text",
+    input_modalities: ["text/plain"], output_modalities: ["text/plain"] };
+  let offers = [], reads = 0;
+  let runtime = { admitted: false, dispatch_ready: false, offer_id: null,
+    preparation: { state: "preparing", completed_bytes: 65_000_000, total_bytes: 144_800_000, cancel_requested: false } };
+  globalThis.fetch = async url => ({ ok: true, json: async () => {
+    if (new URL(url).pathname !== "/api/capsules/catalog") return { offers };
+    reads++;
+    return { schema: "elastos.capsules.catalog/v1", model_catalog_state: "verified", capsules: [{
+      source: "signed-model-catalog", role: "content", installed: false, launchable: false, cid,
+      title: "SmolLM2", signature_state: "catalog-signature-verified", model_runtime: runtime }] };
+  } });
+  live.watchLiveModels(true);
+  await live.probeLiveInference({ force: true });
+  assert.equal(live.liveDownloadingModel().title, "SmolLM2");
+  runtime = { admitted: true, dispatch_ready: false, offer_id: null,
+    preparation: { state: "admitted", activation_pending: true, cancel_requested: false } };
+  for (let i = 0; i < 12; i++) {
+    t.mock.timers.tick(3000);
+    await live.probeLiveInference();
+    assert.equal(reads, i + 2, "activation keeps polling without an advertised offer, even beyond catalog join retries");
+    assert.equal(live.selectedLiveOffer(), null, "admitted content is not yet ready to use");
+    assert.equal(live.getLiveInferenceState().live, false);
+  }
+  runtime = { admitted: true, dispatch_ready: true, offer_id: localId,
+    preparation: { state: "admitted", activation_pending: false, cancel_requested: false } };
+  t.mock.timers.tick(3000);
+  await live.probeLiveInference();
+  assert.equal(live.selectedLiveOffer(), null, "a ready catalog row still needs its advertised offer");
+  assert.equal(live.liveCatalogPending(), true, "the offer read can lag behind the ready catalog read");
+  offers = [offer];
+  t.mock.timers.tick(3000);
+  await live.probeLiveInference();
+  assert.equal(live.selectedLiveOffer().offerId, localId);
+  assert.equal(live.liveContentModels()[0].title, "SmolLM2");
+  assert.equal(live.getLiveInferenceState().live, true);
+  const settledReads = reads;
+  t.mock.timers.tick(60000);
+  assert.equal(reads, settledReads, "ready models stop preparation polling");
+  offers = [];
+  runtime = { admitted: true, dispatch_ready: false, offer_id: null,
+    preparation: { state: "admitted", activation_pending: true, cancel_requested: false } };
+  await live.probeLiveInference({ force: true });
+  live.watchLiveModels(false);
+  t.mock.timers.tick(60000);
+  assert.equal(reads, settledReads + 1, "closing Assistant stops activation polling");
+  live.watchLiveModels(true);
+  runtime.preparation = { ...runtime.preparation, activation_pending: false, failure_class: "activation_unavailable" };
+  t.mock.timers.tick(3000);
+  await live.probeLiveInference();
+  const failedReads = reads;
+  t.mock.timers.tick(60000);
+  assert.equal(reads, failedReads, "a settled activation failure stops polling");
+});
+
 test("an in-flight offers refresh keeps the current offer selectable", async t => {
   t.after(() => live.selectLiveOffer(""));
   const chosen = {

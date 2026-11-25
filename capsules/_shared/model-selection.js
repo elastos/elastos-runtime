@@ -20,6 +20,8 @@ export function catalogModels(catalog) {
         typeof facts.admitted !== "boolean" || typeof facts.dispatch_ready !== "boolean" ||
         (facts.dispatch_ready ? !facts.admitted || !text(facts.offer_id) : facts.offer_id !== null)) throw new Error("Model catalog unavailable");
     return { cid: row.cid, title: row.title, offerId: facts.offer_id, ready: facts.dispatch_ready,
+      activating: Boolean(facts.admitted && !facts.dispatch_ready && facts.preparation?.activation_pending &&
+        !facts.preparation.cancel_requested && !facts.preparation.failure_class && !facts.dispatch_unavailable_reason),
       downloadPercent: downloadPercent(facts.preparation),
       download: downloadProgress(facts.preparation) };
   });

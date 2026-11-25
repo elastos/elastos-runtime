@@ -78,3 +78,20 @@ test("Assistant keeps an unknown-size model preparation visible without a percen
   assert.equal(models[0].downloadPercent, null);
   assert.deepEqual(models[0].download, { completed: 1500, total: 0 });
 });
+
+test("Assistant tracks activation separately from downloading and readiness", () => {
+  const runtime = { admitted: true, dispatch_ready: false, offer_id: null,
+    preparation: { state: "admitted", activation_pending: true, cancel_requested: false } };
+  const models = facts => catalogModels(catalog([{ ...row, model_runtime: facts }]));
+  assert.equal(models(runtime)[0].activating, true);
+  assert.equal(downloadingModel(models(runtime)), null);
+  assert.deepEqual(readyModelChoices(models(runtime), [offer]), []);
+  for (const facts of [
+    { ...runtime, admitted: false },
+    { ...runtime, dispatch_ready: true, offer_id: offer.id },
+    { ...runtime, dispatch_unavailable_reason: "engine_unavailable" },
+    { ...runtime, preparation: null },
+    ...[{ activation_pending: false }, { cancel_requested: true }, { failure_class: "activation_unavailable" }]
+      .map(change => ({ ...runtime, preparation: { ...runtime.preparation, ...change } })),
+  ]) assert.equal(models(facts)[0].activating, false);
+});
