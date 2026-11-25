@@ -114,7 +114,7 @@ use sha2::Digest as _;
 /// and List, Marketplace Media) ships after 0.8.0 (#91). It stays off, and Home
 /// hides those surfaces and refuses protected publishing, unless the host sets
 /// `elastos config set protected_content true`.
-pub(crate) fn protected_content_enabled(data_dir: &Path) -> bool {
+pub fn protected_content_enabled(data_dir: &Path) -> bool {
     protected_content_enabled_in(read_home_config(data_dir).as_ref())
 }
 
