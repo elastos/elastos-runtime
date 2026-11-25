@@ -161,4 +161,25 @@ for(const engine of ['chromium','webkit'])test(`one wallet list keeps saved iden
     await f.wallet.getByRole('button',{name:'Cancel',exact:true}).click();assert.equal(await f.wallet.getByRole('button',{name:'Open Rainbow',exact:true}).count(),1);
   } finally {await f.close();}
 });
+for(const engine of ['chromium','webkit'])test(`one wallet list: phone app use signs once and Cancel preserves sign-in in ${engine}`,{timeout:45000},async()=>{
+  const f=await setup(engine,390);
+  try {
+    const phone=f.fixture.state.connected.find(a=>a.connector_id==='wallet-walletconnect');
+    f.fixture.state.revokedAccounts=[phone];f.fixture.state.connected=f.fixture.state.connected.filter(a=>a!==phone);
+    f.fixture.state.methods.find(m=>m.connector==='walletconnect').chain_id=20;
+    await show(f,'wallet');await refresh(f);await f.wallet.getByRole('button',{name:'Open Rainbow',exact:true}).click();
+    const toggle=f.wallet.getByRole('switch',{name:'Apps and websites',exact:true});
+    await f.wallet.locator('[role=switch][aria-checked=false]').waitFor();
+    f.fixture.state.holdSignature=true;
+    await toggle.click();await f.wallet.getByRole('button',{name:'Sign message',exact:true}).click();
+    await f.page.waitForResponse(r=>r.url().endsWith('/api/fixture-sdk')&&r.request().postDataJSON().method==='personal_sign');
+    await f.wallet.getByRole('button',{name:'Cancel',exact:true}).click();assert.equal(await toggle.getAttribute('aria-checked'),'false');
+    assert.equal(f.fixture.state.calls.filter(c=>c.path==='/api/auth/evm/verify').length,0);assert(f.fixture.state.methods.some(m=>m.connector==='walletconnect'));
+    await f.page.locator('iframe[data-target=wallet-walletconnect]').waitFor({state:'detached'});
+    f.fixture.state.holdSignature=false;
+    await toggle.click();await f.wallet.getByRole('button',{name:'Sign message',exact:true}).click();
+    await f.wallet.getByText('Connected for apps.',{exact:true}).waitFor();assert.equal(await toggle.getAttribute('aria-checked'),'true');
+    assert.equal(f.fixture.state.calls.filter(c=>c.path==='/api/auth/evm/verify').length,1);assert.deepEqual(f.errors,[]);
+  } finally {await f.close();}
+});
 test.after(async()=>{if(output){const sources={};for(const path of ['capsules/wallet/browser/index.html','capsules/wallet/browser/wallet.js','capsules/wallet/browser/wallet-inventory.js','capsules/wallet/browser/wallet-inventory.css','capsules/system/browser/system.js','capsules/system/browser/style.css','capsules/home/browser/wallet-signin-view.mjs','capsules/home/browser/wallet-signin-management.mjs','capsules/_shared/wallet-connection-view.mjs'])sources[path]=createHash('sha256').update(await readFile(path)).digest('hex');await writeFile(join(output,'captures.json'),JSON.stringify({sources,head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),tree:execFileSync('git',['rev-parse','HEAD^{tree}'],{encoding:'utf8'}).trim(),captures:captureRecords},null,2)+'\n');}});

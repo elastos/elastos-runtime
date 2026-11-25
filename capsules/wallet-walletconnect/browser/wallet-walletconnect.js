@@ -379,7 +379,7 @@ draw();watchConnection();refreshWalletState().catch(showError);
 async function stopHomeSignin() {
   const owned=signinRequest,result=signinResult;signinSelection=undefined;
   if(owned){signinResult={request:owned,stage:'request-cancelled'};signinRequest=undefined;hostEffectInFlight=false;currentPhase='idle';draw();}
-  appUseRequest=undefined;
+  if(appUseRequest){appUseRequest=undefined;hostEffectInFlight=false;currentPhase='idle';draw();}
   await connector.effect({kind:'stop-signin'});
   if(result&&signinResult===result){signinResult=undefined;window.top.postMessage({type:'home:close-self',homeToken:frameHomeToken},homeOrigin);}
 }

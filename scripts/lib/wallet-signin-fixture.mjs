@@ -164,6 +164,8 @@ export async function signinFixture() {
           if(!state.connected.some(a=>a.address===selectedEvm))state.connected.push({account_id:'payment:new',connector_id:'wallet-metamask',address:selectedEvm,chain_namespace:'eip155:20',proof_type:'siwe'});
           return json({schema:'elastos.home.wallet-connector.effect.result/v1',action:'evm_link_complete',connector_id:'wallet-metamask',status:'linked'});
         }
+        if(path==='/api/auth/evm/challenge')return json({message:'Runtime phone ownership message',expires_at:Math.floor(now)+180});
+        if(path==='/api/auth/evm/verify') {state.connected.push({account_id:'app:phone',connector_id:'wallet-walletconnect',address:state.walletAddresses?.phone||walletconnectAddress,chain_namespace:'eip155:20',proof_type:'siwe',wallet_display_name:'Rainbow'});return json({status:'linked'});}
         if(path==='/api/apps/wallet-walletconnect/storage')return json({});
         if(path==='/api/apps/wallet-walletconnect/relay-admission')return json({token:'fixture-relay'});
         if(path==='/api/apps/system/summary' || path==='/api/apps/system/update')return json({wallet_accounts:{accounts:state.connected},identity:{profile:{schema:'elastos.profile-summary/v1',display_name:'Alex'}},access:{role:state.role},authority:{proof_binding_id:state.walletSession?'proof:signin-wallet:fixture':'proof:passkey:fixture'},runtime:{},source:{},appearance:{schema:'elastos.home.appearance/v1',revision:0,theme:state.theme,accent:'blue',accent_custom:'#4f7fff',dock_auto_hide:false,sounds:false,focus_mode:false,background_image_url:null,background_overlay_enabled:true,background_overlay_opacity:0.55}});
@@ -245,7 +247,7 @@ addEventListener('message',event=>{
  if(handleWalletAppUse(event,context,{
   inventory:()=>walletSigninApi('/api/apps/wallet/wallet/inventory',undefined,'fixture-home'),
   current:()=>frame.isConnected,
-  connect:async(entry,current)=>{const opened=await openFixtureConnector('wallet-'+entry.sign_in.connector);const target=document.querySelector('iframe[data-target=wallet-'+entry.sign_in.connector+']');const c={kind:'app-frame',targetId:target.dataset.target,source:opened.source,homeToken:opened.homeToken,walletEffectState:{inFlight:false,requestIds:new Set()}};for(const f of document.querySelectorAll('#fixture-desktop iframe'))f.hidden=f!==frame;try{await connectInventoryWallet(entry,c,current);}finally{opened.close();}},
+  connect:async(entry,current)=>{const opened=await openFixtureConnector('wallet-'+entry.sign_in.connector);const target=document.querySelector('iframe[data-target=wallet-'+entry.sign_in.connector+']');const c={kind:'app-frame',targetId:target.dataset.target,source:opened.source,homeToken:opened.homeToken,walletEffectState:{inFlight:false,requestIds:new Set()}};for(const f of document.querySelectorAll('#fixture-desktop iframe'))f.hidden=f!==frame;let watch;const controller=new AbortController();try{if(entry.sign_in.connector==='walletconnect'){watch=setInterval(()=>{if(!current())controller.abort();},100);await selectConnectedWalletConnect({signal:controller.signal,method:entry.sign_in,appUse:true},{open:async()=>opened,current:()=>target.isConnected});}else await connectInventoryWallet(entry,c,current);}finally{clearInterval(watch);controller.abort();opened.close();}},
   changed:()=>{},focus:()=>{for(const f of document.querySelectorAll('#fixture-desktop iframe'))f.hidden=f!==frame;},
  }))return;
  if(handleHomeWalletConnectorEffect(event,context,event.data))return;
