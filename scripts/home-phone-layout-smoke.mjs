@@ -1929,7 +1929,26 @@ async function screenshot(page, dir, name) {
 }
 
 async function bootHome(context, origin) {
+  if (process.env.HOME_PHONE_FRAME_TRACE) {
+    await context.addInitScript(() => {
+      const writes = window.__phoneFrameWrites = [];
+      const descriptor = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, "src");
+      Object.defineProperty(HTMLIFrameElement.prototype, "src", {
+        ...descriptor,
+        set(value) {
+          writes.push({ at: performance.now(), id: this.id, value, connected: this.isConnected,
+            hidden: this.hidden, parentHidden: this.parentElement?.hidden, stack: new Error().stack });
+          return descriptor.set.call(this, value);
+        },
+      });
+    });
+  }
   const page = await context.newPage();
+  if (process.env.HOME_PHONE_FRAME_TRACE) {
+    for (const event of ["request", "requestfailed", "framenavigated", "framedetached"]) {
+      page.on(event, (item) => console.log("FRAME_TRACE", event, item.url(), item.failure?.()));
+    }
+  }
   page.on("pageerror", (error) => {
     const text = String(error?.stack || error).slice(0, 2000);
     // Capsules fail their own API calls under the fixture (no Runtime); that
@@ -1961,6 +1980,7 @@ async function bootHome(context, origin) {
   } catch (error) {
     const hostState = await page.evaluate(() => ({
       dataset: { ...document.body.dataset },
+      frameWrites: window.__phoneFrameWrites,
       frames: Array.from(document.querySelectorAll("iframe")).map((frame) => ({
         id: frame.id,
         src: frame.getAttribute("src"),
@@ -1984,6 +2004,9 @@ async function bootHome(context, origin) {
   }
   const frame = homeGuiFrame(page);
   await waitFor(() => frame.locator(".taskbar").isVisible(), BOOT_TIMEOUT_MS, "Home GUI dock");
+  if (process.env.HOME_PHONE_FRAME_TRACE) {
+    console.log("FRAME_TRACE writes", JSON.stringify(await page.evaluate(() => window.__phoneFrameWrites)));
+  }
   await sleep(SHEET_SETTLE_MS);
   return { page, frame };
 }
@@ -3665,7 +3688,9 @@ async function launchEngine(playwright, engineId) {
         "--no-proxy-server",
       ]
     : [];
-  return engine.launch({ executablePath: executable, headless: true, args });
+  // Let the shared wrapper select WebKit's macOS test-engine copy. Passing
+  // the default path explicitly bypasses its initialization sandbox repair.
+  return engine.launch({ ...(engineId === "chromium" ? { executablePath: executable } : {}), headless: true, args });
 }
 
 const requestedEngines = (process.env.HOME_PHONE_SMOKE_ENGINES || "chromium,webkit")
