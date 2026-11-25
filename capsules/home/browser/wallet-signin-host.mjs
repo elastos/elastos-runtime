@@ -1,4 +1,4 @@
-import {connectedWalletSigninMethods,requestConnectedSigninWallets} from './wallet-signin-methods.mjs';
+import {inventorySigninMethods} from './wallet-signin-methods.mjs';
 // The shell supplies a source/token-bound context from its launch registry.
 export function handleWalletSigninRequest(event,context,{api,manage,current,changed,authorityToken,authorityCurrent,sessionMethodId=()=>'',openConnector,selectWalletConnect,openChooser,focusCaller=()=>{}}) {
   const data=event.data;
@@ -24,14 +24,10 @@ export function handleWalletSigninRequest(event,context,{api,manage,current,chan
       if(data.action==='list')return reply({status:'complete',...wallets,can_manage:passkey?.role==='admin'});
       if(data.action!=='add' && !method)return reply({status:'changed'});
       const result=await manage({action:data.action,method,token,account:passkey?.display_name||'Your account',accountId:wallets.account_id,sessionMethodId:sessionMethodId(),sessionCurrent:sameAuthority,isCurrent:active,openChooser,openConnector,selectWalletConnect,loadConnected:async()=>{
-        const accounts=await requestConnectedSigninWallets(event.source,data.requestId);
+        const inventory=await api('/api/apps/wallet/wallet/inventory',undefined,token);
         if(!active())throw new Error('Home session changed');
-        const latest=await api('/api/auth/wallet-methods',undefined,token);
-        if(!active())throw new Error('Home session changed');
-        return connectedWalletSigninMethods(accounts,latest.methods).map(row=>{
-          const existing=latest.methods.find(m=>(row.connector==='unisat'?m.address===row.address:m.address.toLowerCase()===row.address.toLowerCase())&&m.chain_id===row.chain_id&&m.network===row.network);
-          return existing?{...row,...existing,connector:row.connector,paymentOnly:false}:row;
-        });
+        if(inventory.account_id!==wallets.account_id)throw new Error('Home account changed');
+        return inventorySigninMethods(inventory);
       }});
       reply(result);if(result?.status==='complete')changed();if(active()&&result?.refocus!==false)focusCaller();
     }).catch(()=>reply({status:'failed'}));

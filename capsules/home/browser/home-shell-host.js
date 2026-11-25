@@ -117,7 +117,7 @@ const SHELL_MESSAGE_OPEN_TARGET_SOURCES = Object.freeze({
   marketplace: "runtime-target",
   people: new Set(["chat-room", "inbox", "system"]),
   system: "visible-target",
-  "wallet": new Set(["wallet-metamask", "wallet-unisat", "wallet-walletconnect"]),
+  "wallet": new Set(["wallet-metamask", "wallet-unisat", "wallet-walletconnect", "system"]),
 });
 const SHELL_MESSAGE_DELIVER_TARGET_SOURCES = Object.freeze({
   "chat-room": new Set(["documents"]),
@@ -1760,7 +1760,7 @@ window.addEventListener("message", (event) => {
     authorityToken: getHomeAuthorityToken,
     authorityCurrent: createHomeAuthorityCheck,
     sessionMethodId:()=>shellState.currentSummary?.authority?.proof_binding_id||'',
-    api: (path, body, token) => path === "/api/auth/passkeys"
+    api: (path, body, token) => ["/api/auth/passkeys", "/api/apps/wallet/wallet/inventory"].includes(path)
       ? fetchJson(path, {headers:{"x-elastos-home-token":token}}) : walletSigninApi(path, body, token),
     manage: manageWalletSignin,
     openConnector: openSigninConnector,
@@ -2264,6 +2264,16 @@ window.addEventListener("message", (event) => {
   const target = typeof data.target === "string" ? data.target.trim() : "";
   if (!target) {
     return;
+  }
+  if (context.kind === "app-frame" && context.targetId === "system" && target === "wallet") {
+    if (!hasExactMessageKeys(data, ["type", "target", "query", "homeToken"])
+      || !data.query || !hasExactMessageKeys(data.query, ["wallet_entry"])
+      || typeof data.query.wallet_entry !== "string" || data.query.wallet_entry.length > 256
+      || !/^(eip155:[1-9][0-9]*:0x[0-9a-f]{40}|bip122:[a-zA-Z0-9]+:[a-zA-Z0-9]+)$/.test(data.query.wallet_entry)) return;
+  }
+  if (context.kind === "app-frame" && context.targetId === "wallet" && target === "system") {
+    if (!hasExactMessageKeys(data, ["type", "target", "query", "homeToken"])
+      || !data.query || !hasExactMessageKeys(data.query, ["settings"]) || data.query.settings !== "account") return;
   }
   // Marketplace selects a connection window; Wallet remains its launch owner.
   // Home constructs the payload, so app queries cannot become Wallet commands.

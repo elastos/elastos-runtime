@@ -1,4 +1,4 @@
-import { readWalletSigninMethods, requestWalletSigninChange, walletSigninControls, watchWalletSigninMethods } from "/apps/home/wallet-signin-methods.mjs?v=wallet-signin-1";
+import { readWalletInventory, requestWalletSigninChange, walletSigninControls, watchWalletSigninMethods } from "/apps/home/wallet-signin-methods.mjs?v=wallet-signin-1";
 import { connectorName, walletNetwork, shortWalletAddress } from "/apps/home/wallet-signin-flow.mjs?v=wallet-signin-1";
 import { createTransferProgress, announceTransferProgress } from "./transfer-progress.js?v=download-progress-20261112";
 import {
@@ -2519,11 +2519,7 @@ async function changeWalletSignin(action, methodId = "") {
   const button=action==="add"?document.querySelector("#wallet-signin-add"):null;
   if(button){button.setAttribute("aria-busy","true");}
   try {
-    const result = await requestWalletSigninChange({action, methodId, token:apiHomeToken, origin:homeParentOrigin,loadConnected:async()=>{
-      const summary=await fetchJson('/api/apps/system/summary',{headers:shellHeaders()});
-      if(!Array.isArray(summary.wallet_accounts?.accounts))throw new Error('Wallet accounts unavailable');
-      return summary.wallet_accounts.accounts;
-    }});
+    const result = await requestWalletSigninChange({action, methodId, token:apiHomeToken, origin:homeParentOrigin});
     await refreshAccountList();
     if(result?.status === "unknown") showSigninListFailure("Home has not confirmed this change.",()=>changeWalletSignin(action,methodId),"Check again");
     if(result?.status === "busy") showSigninListFailure("Finish the open wallet request before you start another change.",()=>changeWalletSignin(action,methodId));
@@ -2552,7 +2548,8 @@ async function refreshAccountList() {
     return;
   }
   try {
-    const methods = await readWalletSigninMethods(apiHomeToken);
+    const inventory = await readWalletInventory(apiHomeToken);
+    const methods = {account_id: inventory.account_id, methods: inventory.entries.filter(entry => entry.sign_in).map(entry => ({...entry.sign_in, inventory_id:entry.inventory_id, wallet_display_name:entry.accounts[0]?.wallet_display_name}))};
     if (version !== walletSigninListVersion) return;
     walletSigninMethods = methods;
     renderAccounts(Array.isArray(data.passkeys) ? data.passkeys : []);
@@ -2747,7 +2744,7 @@ function walletAccountRow(method) {
   const name = document.createElement("div");
   name.className = "account-name-wrap";
   const title = document.createElement("strong");
-  title.textContent = connectorName(method.connector);
+  title.textContent = method.wallet_display_name || connectorName(method.connector);
   const address = document.createElement("small");
   address.textContent = `${shortWalletAddress(method.address)} · ${walletNetwork(method)}`;
   name.title = method.address;
@@ -2758,7 +2755,14 @@ function walletAccountRow(method) {
   const actions = accountCell("Actions", "account-actions-cell");
   const controls = walletSigninControls(method, { canManage: currentAccess.role === "admin", onAction: changeWalletSignin,
     buttonClass: "system-button account-remove-action" });
-  actions.append(controls);
+  const open = document.createElement("a");
+  open.href = "#wallet"; open.className = "wallet-inventory-link"; open.textContent = "Open Wallet";
+  open.onclick = event => {
+    event.preventDefault();
+    window.top.postMessage({type:"home:open-target", target:"wallet", homeToken:apiHomeToken,
+      query:{wallet_entry:method.inventory_id}}, homeParentOrigin);
+  };
+  actions.append(open, controls);
   row.append(identity, used, actions);
   return row;
 }
