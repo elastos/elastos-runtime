@@ -407,7 +407,7 @@ export function renderConnection(document, view) {
     }
     h.append(el('h2',selected ? (view.stage==='site-access-ended'?'Required account':'Account to confirm') : isolated(matchesAction ? account.name : 'Your wallet','wallet'),'connection-account-name'));
     if(view.panel&&supports('open-wallet'))h.append(button({id:'open-wallet',label:isolated('Manage','copy'),quiet:true}));
-    if (selected || view.panel || view.window === 'walletconnect') card.append(h);
+    if (selected || view.panel || view.window === 'walletconnect' || view.window === 'metamask' && account.name !== view.title) card.append(h);
     if(account.connection && (view.panel||view.window!=='walletconnect'))card.append(el('p','WalletConnect','connection-note connection-via'));
     for (const row of account.accounts) {
       const r=el('div',null,'connection-address-row');r.append(el('code',isolated(short(row.address),'address'),'connection-address'));
