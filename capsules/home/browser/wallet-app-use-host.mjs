@@ -31,3 +31,8 @@ export function handleWalletAppUse(event, context, {inventory, connect, current,
     .finally(() => {if (state.appConnection === pending) state.appConnection = null;});
   return true;
 }
+
+// A new Wallet document starts with a new request, even when its frame is reused.
+export function retireWalletAppUse(context) {
+  if (context?.walletEffectState?.appConnection) context.walletEffectState.appConnection.cancelled = true;
+}

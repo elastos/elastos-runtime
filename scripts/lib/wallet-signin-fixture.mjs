@@ -193,7 +193,7 @@ import {selectConnectedWalletConnect,openWalletSigninChooser} from '/apps/home/w
 import {openWalletSigninEntry} from '/apps/home/wallet-signin-window.mjs';
 import {homeGuiReply} from '/apps/home-gui/home-gui-authority.js';
 import {handleHomeWalletConnectorEffect,connectInventoryWallet} from '/apps/home/home-wallet-connector-host.js?v=home-wallpaper-20261030b';
-import {handleWalletAppUse} from '/apps/home/wallet-app-use-host.mjs';
+import {handleWalletAppUse,retireWalletAppUse} from '/apps/home/wallet-app-use-host.mjs';
 const contexts=new WeakMap();
 async function openFixtureConnector(target) {
   let frame=document.querySelector('iframe[data-target='+target+']');
@@ -244,6 +244,7 @@ addEventListener('message',event=>{
  if(event.data?.type==='home:open-target'&&frame.dataset.target==='wallet'&&event.data.target==='system'){for(const f of document.querySelectorAll('#fixture-desktop iframe'))f.hidden=f.dataset.target!=='system';return;}
  if(event.data?.type==='home:open-target'&&frame.dataset.target==='wallet'&&event.data.homeToken==='fixture-wallet'&&['wallet-metamask','wallet-unisat','wallet-walletconnect'].includes(event.data.target)){void openConnector(event.data.target);return;}
  const context=contexts.get(frame)||{kind:'app-frame',targetId:frame.dataset.target,source:event.source,homeToken:'fixture-'+frame.dataset.target,walletEffectState:{inFlight:false,requestIds:new Set()}};contexts.set(frame,context);
+ if(event.data?.type==='home:app-ready'&&event.data.homeToken===context.homeToken)retireWalletAppUse(context);
  if(handleWalletAppUse(event,context,{
   inventory:()=>walletSigninApi('/api/apps/wallet/wallet/inventory',undefined,'fixture-home'),
   current:()=>frame.isConnected,

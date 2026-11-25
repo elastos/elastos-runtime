@@ -1,4 +1,4 @@
-import {handleWalletAppUse} from "./wallet-app-use-host.mjs";
+import {handleWalletAppUse,retireWalletAppUse} from "./wallet-app-use-host.mjs";
 import {openWalletSigninEntry} from './wallet-signin-window.mjs';
 import {selectConnectedWalletConnect} from './wallet-signin-connector.mjs';
 import { handleWalletSigninRequest } from "./wallet-signin-host.mjs?v=wallet-signin-1";
@@ -1848,6 +1848,7 @@ window.addEventListener("message", (event) => {
     return;
   }
   if (data.type === "home:app-ready") {
+    retireWalletAppUse(context);
     if (context.kind === "app-frame" && ["documents", "library", "archive-manager", "gba-emulator", "chat-room"].includes(context.targetId) &&
         hasExactMessageKeys(data, ["type", "homeToken"])) {
       postToActiveShell({ type: "home:gui-command", command: "navigation-hint",

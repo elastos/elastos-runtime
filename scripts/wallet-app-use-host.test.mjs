@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {handleWalletAppUse} from '../capsules/home/browser/wallet-app-use-host.mjs';
+import {handleWalletAppUse,retireWalletAppUse} from '../capsules/home/browser/wallet-app-use-host.mjs';
 const tick = () => new Promise(resolve => setImmediate(resolve));
 function fixture() {
   const replies = [], source = {postMessage: message => replies.push(message)}, calls = [];
@@ -47,4 +47,12 @@ test('an old Wallet frame cannot use a new Home account authority', async () => 
   f.dependencies.current=()=>false;f.dependencies.inventory=async()=>{reads++;return {entries:[f.entry]};};
   handleWalletAppUse({source:f.source,data:f.data},f.context,f.dependencies);await tick();
   assert.equal(reads,0);assert.deepEqual(f.calls,[]);assert.deepEqual(f.replies,[]);
+});
+
+test('a replacement Wallet document retires the old proof in its reused frame', async () => {
+  const f=fixture();let release;
+  f.dependencies.connect=async(_entry,current)=>{await new Promise(resolve=>release=resolve);if(current())f.calls.push('committed');};
+  handleWalletAppUse({source:f.source,data:f.data},f.context,f.dependencies);await tick();
+  retireWalletAppUse(f.context);release();await tick();
+  assert.deepEqual(f.calls,[]);assert.deepEqual(f.replies,[]);assert.equal(f.context.walletEffectState.appConnection,null);
 });
