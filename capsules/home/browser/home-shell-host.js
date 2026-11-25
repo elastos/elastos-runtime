@@ -1,5 +1,6 @@
+import {handleWalletAppUse} from "./wallet-app-use-host.mjs";
 import {openWalletSigninEntry} from './wallet-signin-window.mjs';
-import {selectConnectedWalletConnect,openWalletSigninChooser} from './wallet-signin-connector.mjs';
+import {selectConnectedWalletConnect} from './wallet-signin-connector.mjs';
 import { handleWalletSigninRequest } from "./wallet-signin-host.mjs?v=wallet-signin-1";
 import { walletSigninApi } from "./wallet-signin-view.mjs?v=wallet-signin-1";
 import {
@@ -40,6 +41,7 @@ import {
 } from "./shell-auth.js?v=home-wallpaper-20261030b";
 import {
   handleHomeWalletConnectorEffect,
+  connectInventoryWallet,
   notifyOpenWallets,
   WALLET_CONNECTOR_EFFECT_TYPE,
 } from "./home-wallet-connector-host.js?v=home-wallpaper-20261030b";
@@ -266,7 +268,7 @@ async function signinConnectorWindow(connector='walletconnect') {
   const opened=!prior?await openSigninConnector(target):null;
   const deadline=Date.now()+15000;
   while(!existing()) {if(opened?.isOpen()===false)throw new Error('Wallet window closed');if(Date.now()>deadline)throw new Error('Wallet window did not open');await new Promise(resolve=>setTimeout(resolve,50));}
-  const [homeToken,context]=existing();return {homeToken,source:context.source,focus:()=>postToActiveShell({type:'home:gui-command',command:'focus-window',homeToken})};
+  const [homeToken,context]=existing();return {homeToken,source:context.source,created:!prior,close:()=>opened?.close(),focus:()=>postToActiveShell({type:'home:gui-command',command:'focus-window',homeToken})};
 }
 function currentSigninConnector(context) {
   const active=launchedAppContexts.get(context.homeToken);return active?.source===context.source&&active.expiresAt>Date.now()&&!context.source.closed;
@@ -1764,7 +1766,6 @@ window.addEventListener("message", (event) => {
       ? fetchJson(path, {headers:{"x-elastos-home-token":token}}) : walletSigninApi(path, body, token),
     manage: manageWalletSignin,
     openConnector: openSigninConnector,
-    openChooser: onAction=>openWalletSigninChooser({open:openSigninConnector,current:currentSigninConnector,focus:homeToken=>postToActiveShell({type:"home:gui-command",command:"focus-window",homeToken}),setStage:(homeToken,stage)=>postToActiveShell({type:"home:gui-command",command:"wallet-signin-state",homeToken,stage}),onAction}),
     focusCaller: ()=>postToActiveShell({type:"home:gui-command",command:"focus-window",homeToken:context.homeToken}),
     selectWalletConnect: options=>selectConnectedWalletConnect(options,{open:()=>signinConnectorWindow(),current:currentSigninConnector}),
     current: () => homeMessageContext(event, data)?.homeToken === context.homeToken,
@@ -1875,6 +1876,20 @@ window.addEventListener("message", (event) => {
   if (homeClipboardHost.handle(event, context, data)) {
     return;
   }
+  if (handleWalletAppUse(event, context, {
+    current: () => homeMessageContext(event, data)?.homeToken === context.homeToken,
+    inventory: () => fetchJson('/api/apps/wallet/wallet/inventory', {headers:{'x-elastos-home-token':getHomeAuthorityToken()}}),
+    connect: async (entry, active) => {
+      const opened = await signinConnectorWindow(entry.sign_in.connector);
+      const connector = launchedAppContexts.get(opened.homeToken);
+      if (!connector || !active()) {if (opened.created) await opened.close(); return;}
+      postToActiveShell({type:'home:gui-command',command:'focus-window',homeToken:context.homeToken});
+      try {await connectInventoryWallet(entry, {...connector, homeToken:opened.homeToken}, () => active() && currentSigninConnector(opened));}
+      finally {if (opened.created) await opened.close();}
+    },
+    changed: () => {void refreshSignedHomeSession();},
+    focus: () => postToActiveShell({type:'home:gui-command',command:'focus-window',homeToken:context.homeToken}),
+  })) return;
   if (handleHomeWalletConnectorEffect(event, context, data)) {
     return;
   }

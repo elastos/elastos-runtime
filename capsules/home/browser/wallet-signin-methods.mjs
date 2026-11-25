@@ -43,17 +43,17 @@ export function watchWalletSigninMethods(refresh,origin) {
 
 // Runtime owns the identity join. Clients select a view of that projection.
 export async function readWalletInventory(token) {
-  const response = await fetch('/api/apps/wallet/wallet/inventory', {
-    cache: 'no-store', signal: AbortSignal.timeout(15000),
-    headers: {'x-elastos-home-token': token},
-  });
-  if (!response.ok) throw new Error('Home could not load your wallets.');
-  const inventory = await response.json();
-  if (inventory.schema !== 'elastos.wallet.inventory/v1' || typeof inventory.account_id !== 'string'
-    || !Array.isArray(inventory.entries) || inventory.entries.length > 512) {
-    throw new Error('Home could not load your wallets.');
-  }
-  return inventory;
+  const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = await fetch('/api/apps/wallet/wallet/inventory', {
+      cache:'no-store', signal:controller.signal, headers:{'x-elastos-home-token':token},
+    });
+    if (!response.ok) throw new Error('Home could not load your wallets.');
+    const inventory = await response.json();
+    if (inventory.schema !== 'elastos.wallet.inventory/v1' || typeof inventory.account_id !== 'string'
+      || !Array.isArray(inventory.entries) || inventory.entries.length > 512) throw new Error('Home could not load your wallets.');
+    return inventory;
+  } finally {clearTimeout(timer);}
 }
 
 export function inventorySigninMethods(inventory) {
