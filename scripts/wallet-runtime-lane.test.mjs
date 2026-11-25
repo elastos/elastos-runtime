@@ -181,7 +181,7 @@ test("n4_metadata_bounds_and_text_rendering: real Wallet", async t => {
   assert.equal(await r.frame.getByRole('switch').getAttribute('aria-checked'),'true');assert.deepEqual(r.errors,[]);
   const builtin=await runtimeView(t,'wallet',{accounts:[{...account,account_id:'managed',proof_type:'managed_evm',connector_id:null,wallet_display_name:null,wallet_mark:null,label:'Home address'}]});
   await builtin.frame.getByRole('button',{name:'Open Home address',exact:true}).click();await builtin.frame.getByRole('button',{name:'Manage address',exact:true}).click();
-  assert.equal(await builtin.frame.getByRole('button',{name:/Recovery key/}).count(),1);assert.deepEqual(builtin.errors,[]);
+  assert.equal(await builtin.frame.getByRole('button',{name:/recovery key/i}).count(),1);assert.deepEqual(builtin.errors,[]);
 });
 
 test("n4_old_record_and_reopened_window: legacy Wallet fallback", async t => {

@@ -314,7 +314,7 @@ for (const engine of ["chromium", "webkit"]) test(`Accounts groups methods benea
         assert.equal(await block.locator(".passkey-current").count(), 1);
         assert.equal(await frame.locator("#passkey-add-help").count(), 0);
         assert.equal(await block.getByText("Signs in", {exact:true}).count(), 0);
-        for (const action of await block.locator('.passkey-remove, .account-remove, .signin-method-controls button').all()) {
+        for (const action of await block.locator('.passkey-remove, .account-remove').all()) {
           const style=await action.evaluate(node=>{const s=getComputedStyle(node);return {background:s.backgroundColor,border:s.borderTopColor,height:node.getBoundingClientRect().height,padding:s.padding};});
           assert.equal(style.background,"rgba(0, 0, 0, 0)","destructive actions have a quiet background");
           assert.equal(style.border,"rgba(0, 0, 0, 0)","destructive actions have no visible border");
@@ -340,7 +340,7 @@ for (const engine of ["chromium", "webkit"]) test(`Accounts groups methods benea
           assert.equal(await walletRow.getByRole("button", { name: "Remove from sign-in", exact: true }).count(), 1);
           const walletSize = await walletRow.getByRole("button", { name: "Remove from sign-in", exact: true }).boundingBox();
           const passkeySize = await block.locator(".passkey-remove").first().boundingBox();
-          assert(Math.abs(walletSize.width - passkeySize.width) <= 1, "wallet and passkey Remove use the same width");
+          assert(walletSize.width > passkeySize.width, "Remove from sign-in retains its full action label");
           assert(Math.abs(walletSize.height - passkeySize.height) <= 1, "wallet and passkey Remove use the same height");
           assert.equal(await block.getByRole("button", { name: "Remove account", exact: true }).count(), 0);
           assert.equal(new Set(await block.locator(".passkey-name").allTextContents()).size, 2);

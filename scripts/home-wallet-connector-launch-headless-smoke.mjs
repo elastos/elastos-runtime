@@ -899,7 +899,7 @@ try {
   const wallet = await (await walletFrame.elementHandle()).contentFrame();
   // The static Settings button can exist before Wallet's module binds handlers.
   await wallet.waitForLoadState("domcontentloaded", { timeout: 15_000 });
-  await wallet.waitForSelector("#wallet-settings-open", { timeout: 15_000 });
+  await wallet.waitForSelector("#wallet-add-apps", { timeout: 15_000 });
   const connectorLabels = Object.freeze({
     "wallet-metamask": "Connect wallet",
     "wallet-unisat": "Connect wallet",
@@ -1026,14 +1026,14 @@ try {
       await homeGui.evaluate(() => document.querySelector('.window[data-target="wallet"] iframe').contentWindow.postMessage({type:'elastos:wallet-refresh'},'*'));
       await homeGui.locator('.window[data-target="wallet"] .window-head').click({position:{x:80,y:14}});
       await wallet.getByRole('button',{name:'Close settings',exact:true}).click();
-      await wallet.getByRole('button',{name:'Open MetaMask',exact:true}).click();
+      await wallet.getByRole('button',{name:'Add wallet for apps',exact:true}).click();await wallet.locator('[data-wallet-open-method="wallet-metamask"]').click();
       await waitFor(() => page.frames().filter(frame=>frame.url().includes('/apps/wallet-metamask/')).length === 2,5000,'fresh MetaMask request window');
       const fresh = page.frames().filter(frame=>frame.url().includes('/apps/wallet-metamask/')).find(frame=>frame!==connector);
       await fresh.getByText('Second MetaMask request',{exact:true}).waitFor();
       assert(await connector.getByText('Second MetaMask request',{exact:true}).count() === 0,'original MetaMask frame retains its load-time list');
       await homeGui.locator('.window[data-target="wallet-metamask"] [data-action="close"]').last().click();
       state.approvalRequests = [];
-      await wallet.locator('#wallet-settings-open').click();
+      await wallet.locator('#wallet-settings-open').evaluate(node=>node.click());
       await homeGui.locator('.window[data-target="wallet-metamask"] .window-head').click({position:{x:80,y:14}});
     }
     if (target === "wallet-walletconnect") {

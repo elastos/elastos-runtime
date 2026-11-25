@@ -141,7 +141,7 @@ test('W2 System chooser shows wallet choices and one refusal with recovery contr
     await page.frameLocator('iframe[title=system]').getByRole('button',{name:'Add wallet',exact:true}).click();
     const dialog=page.locator('.signin-dialog');await dialog.locator('.connection-option').nth(2).waitFor();assert.equal(await dialog.locator('.connection-option').count(),3);
     await page.evaluate(()=>walletFixture.mode='rejected');await dialog.locator('.connection-option').filter({hasText:'MetaMask'}).click();await dialog.getByRole('button',{name:'Sign message',exact:true}).click();
-    await page.locator('.signin-dialog[data-state=error]').waitFor();assert.equal(await dialog.getByText('Your wallet declined the request.',{exact:true}).count(),1);
+    await page.locator('.signin-dialog[data-state=error]').waitFor();assert.equal(await dialog.getByText('Your wallet declined the request; select Try again or choose another wallet.',{exact:true}).count(),1);
     assert.equal(await dialog.getByRole('button',{name:'Try again',exact:true}).count(),1);assert.equal(await dialog.getByRole('button',{name:'Cancel',exact:true}).count(),1);
     await capture(page,'system-chooser-refusal','System keeps the wallet refusal and recovery controls together.');
   }finally{await context.close();await browser.close();await source.close();}

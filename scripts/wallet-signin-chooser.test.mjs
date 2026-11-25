@@ -39,8 +39,8 @@ test('a new sign-in wallet whose proof is refused leaves app records unchanged',
   assert.equal(f.state.methods.length,0);assert.equal(f.state.connected.length,0);
 });
 test('a connected wallet that selects another account stops before Add signs',async t=>{
-  const {f,page,dialog,open,choose}=await fixture(t);await page.evaluate(()=>walletFixture.address='0x'+'34'.repeat(20));
-  await open();await choose();await page.locator('.signin-dialog[data-state=error]').waitFor();
+  const {f,page,dialog,open,choose}=await fixture(t);await open();await choose();await dialog.getByRole('button',{name:'Sign message',exact:true}).waitFor();
+  await page.evaluate(()=>walletFixture.address='0x'+'34'.repeat(20));await dialog.getByRole('button',{name:'Sign message',exact:true}).click();await page.locator('.signin-dialog[data-state=error]').waitFor();
   assert.equal(await page.evaluate(()=>walletFixture.calls.filter(c=>c.method==='personal_sign').length),0);
-  assert(!f.state.calls.some(c=>c.path==='/api/auth/wallet-methods/begin'));assert.equal(f.state.methods.length,0);
+  assert(!f.state.calls.some(c=>c.path==='/api/auth/wallet-methods/complete'));assert.equal(f.state.methods.length,0);
 });

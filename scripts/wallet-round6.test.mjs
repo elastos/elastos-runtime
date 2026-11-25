@@ -89,6 +89,6 @@ for(const width of [1280,390])test(`round6 Wallet Activity names the recorded wa
  const args=fixtureArguments(states.find(r=>r.window==='walletconnect'&&r.stage==='request-waiting'));
  const request={...args[1].summary,status:'rejected',approved_at:1800000000,wallet_outcome:'declined'};
  const r=await runtimeView(t,'wallet',{approvals:[request]});await r.page.setViewportSize({width,height:900});
- await r.frame.locator('#wallet-activity-open').click();await r.frame.locator('.wallet-activity-row strong').filter({hasText:'Wallet declined'}).waitFor();
+ await r.frame.getByRole('button',{name:'Activity',exact:true}).click();await r.frame.locator('.wallet-activity-row strong').filter({hasText:'Wallet declined'}).waitFor();
  assert.doesNotMatch(await r.frame.locator('#wallet-activity-drawer').innerText(),/Dismissed/);await shot(r.page,`wallet-activity-declined-${width}`);
 });

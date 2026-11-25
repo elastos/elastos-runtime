@@ -499,6 +499,7 @@ test('a wallet retry waits for the preceding cancellation to release server capa
 });
 
 test('WalletConnect app use checks the saved identity and preserves the phone session on Cancel',async()=>{
+  const wallet={...method};const {createWalletConnectClient}=await import('../capsules/wallet-walletconnect/browser/walletconnect-client.mjs');
   let selected=wallet.address,chainId=20,connects=0,disconnects=0,hold,release;
   const routes=[],calls=[];
   const provider={chainId,session:{expiry:Date.now()/1000+600,namespaces:{eip155:{chains:['eip155:20','eip155:8453'],accounts:[`eip155:20:${wallet.address}`]}}},on(){},request:async input=>{
@@ -526,6 +527,7 @@ test('WalletConnect app use checks the saved identity and preserves the phone se
 });
 
 test('Home app-use bridge binds the phone identity and stops a cancelled ownership request',async()=>{
+  const wallet={...method};const {selectConnectedWalletConnect}=await import('../capsules/home/browser/wallet-signin-connector.mjs');
   for(const cancel of [false,true]) {
     const listen=new EventTarget(),controller=new AbortController(),sent=[];
     const source={postMessage(data){sent.push(data);if(data.operation==='stop')return;

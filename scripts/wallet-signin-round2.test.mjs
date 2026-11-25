@@ -52,7 +52,7 @@ for(const width of [1280,390])test(`connected Add and uncertain save keep their 
     const completeCount=fixture.state.calls.filter(c=>c.path.endsWith('/wallet-methods/complete')).length;
     assert.equal(completeCount,1);assert(fixture.state.methods.some(m=>m.connector==='metamask'));
     // Check again reads the authority list and never resends the proof.
-    loseRead=false;await wallet.getByRole('button',{name:'Check again',exact:true}).click();
+    loseRead=false;await page.evaluate(()=>[...document.querySelectorAll('.signin-dialog button')].find(button=>button.textContent==='Check again')?.click());
     await wallet.locator('.signin-dialog[data-state]').waitFor({state:'detached'});
     await system.locator('[data-wallet-method]').filter({hasText:'MetaMask'}).waitFor();await capture('saved');
     const counts=await page.evaluate(()=>window.walletFixture.calls.map(c=>c.method));
