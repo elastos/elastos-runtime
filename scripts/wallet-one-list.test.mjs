@@ -133,11 +133,13 @@ for(const engine of ['chromium','webkit'])for(const width of [1440,390]) {
         await f.page.goto(f.fixture.origin+'/apps/wallet/');
         const measurements=await f.page.evaluate(async kind=>{
           const {connectionView,renderConnection}=await import('/apps/home/wallet-connection-view.mjs');
+          const sheet=document.createElement('link');sheet.rel='stylesheet';sheet.href='/apps/home/wallet-connection-view.css';document.head.append(sheet);await new Promise((resolve,reject)=>{sheet.onload=resolve;sheet.onerror=reject;});
           const name=kind==='walletconnect'?'Rainbow':kind==='unisat'?'UniSat':'MetaMask';
           const view=connectionView({window:kind,stage:'linked',localSafety:false,account:{name,mark:kind==='walletconnect'?'wallet':kind,connection:kind==='walletconnect'?'WalletConnect':null,accounts:[{address:kind==='unisat'?'bc1qtestaddress':'0x'+'12'.repeat(20),networks:[kind==='unisat'?'Bitcoin':'Base']}]},supportedActions:['copy-address','close-window']});
           const bar=document.createElement('header');bar.textContent=kind==='walletconnect'?'WalletConnect':name;
           document.body.replaceChildren(bar,renderConnection(document,view));
-          return {text:document.body.innerText,peer:document.querySelector('.connection-account-name')?.textContent};
+          const visible=[...document.body.querySelectorAll('*')].filter(el=>!el.closest('.connection-sr-only')&&el.getClientRects().length&&getComputedStyle(el).visibility!=='hidden').flatMap(el=>[...el.childNodes].filter(n=>n.nodeType===Node.TEXT_NODE).map(n=>n.textContent)).join(' ');
+          return {text:visible,peer:document.querySelector('.connection-account-name')?.textContent};
         },kind);
         const brand=kind==='walletconnect'?'WalletConnect':kind==='unisat'?'UniSat':'MetaMask';
         assert.equal(measurements.text.split(brand).length-1,1,measurements.text);
