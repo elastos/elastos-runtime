@@ -1144,7 +1144,9 @@ async fn public_status_timeout_is_unknown_and_never_restarts() {
     assert_eq!(busy.liveness, StoreLiveness::Unknown);
 
     let supervisor = PublicIpfsSupervisor::spawn(home.registry.clone(), home.data_dir.clone());
-    tokio::time::sleep(SUPERVISOR_TICK * 3).await;
+    // Release one second before the 4th tick, never on it: a tick and the
+    // release woken at the same instant could run in either order.
+    tokio::time::sleep(SUPERVISOR_TICK * 3 - Duration::from_secs(1)).await;
     assert_eq!(store.launches(), 0, "Unknown never starts a store");
     assert!(!slow.ops().contains(&"ensure_started".to_string()));
     assert_eq!(slow.ops(), ["status"]);
