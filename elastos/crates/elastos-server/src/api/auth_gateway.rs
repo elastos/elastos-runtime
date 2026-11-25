@@ -2803,7 +2803,7 @@ async fn restore_people_identity_and_contexts(
     match outcome {
         Ok(outcome) => outcome,
         Err(err) => FullRecoveryPeopleIdentityOutcomeV1 {
-            status: "incomplete".to_string(),
+            status: "incomplete",
             profile_did: None,
             rebound_device: false,
             contact_store_restored: false,
