@@ -90,10 +90,17 @@ for(const engine of ['chromium','webkit'])test(`round3 locked UniSat request kee
  try{await f.state('request-waiting');await f.top.evaluate(()=>testState.requestError={method:'signMessage',message:'Wallet is locked'});await f.action('send-request').click();await f.state('request-wallet-error');assert.equal(await f.action('connect').count(),0);assert.equal(await f.action('send-request').count(),0);assert.equal(await f.top.evaluate(()=>testState.requests[0].status),'approved');assert.equal(await f.top.evaluate(()=>testState.receipts.length),0);await f.assertShared();}
  finally{await f.close();await browser.close();}
 });
-for(const width of [1280,390])for(const kind of ['metamask','unisat'])test(`round3 ${kind} refusal names the wallet decision at ${width}`,{timeout:30000},async()=>{
- const browser=await requireProductSmokePlaywright().chromium.launch({headless:true,...productSmokeLaunchOptions()});
+for(const engine of ['chromium','webkit'])for(const width of [1280,390])for(const kind of ['metamask','unisat'])test(`round3 ${kind} refusal names the wallet decision at ${width} in ${engine}`,windowTestOptions(engine,30000),async()=>{
+ const browser=await requireProductSmokePlaywright()[engine].launch({headless:true,...(engine==='chromium'?productSmokeLaunchOptions():{})});
  const f=await extensionFixture(browser,kind,{stateTimeout:15000,saved:true,requests:true,pictures:false,...(process.env.WALLET_ROUND3_BASELINE?{hostSource:execFileSync('git',['show','61ed90494:capsules/home/browser/home-wallet-connector-host.js'],{encoding:'utf8'})}:{})});
- try{await f.top.setViewportSize({width,height:560});await f.top.locator('iframe').evaluate((frame,width)=>frame.style.width=width+'px',width);await f.state('request-waiting');await f.top.evaluate(()=>testState.mode='decline');await f.action('send-request').click();await f.state('request-declined');assert.match(await f.frame.locator('main').innerText(),/declined|did not approve/);await shot(f.top,`${kind}-declined-${width}`);}
+ try{await f.top.setViewportSize({width,height:560});await f.top.locator('iframe').evaluate((frame,width)=>frame.style.width=width+'px',width);await f.state('request-waiting');
+  await f.frame.waitForFunction(()=>window.__windowReadsFinished>0);
+  await f.frame.evaluate(()=>document.fonts.ready);
+  await f.top.evaluate(()=>testState.mode='decline');
+  // Keyboard activation does not depend on pointer geometry after the fixture resize.
+  await f.action('send-request').press('Enter');
+  await f.top.waitForFunction(()=>testState.effects.length===1);
+  await f.state('request-declined');assert.match(await f.frame.locator('main').innerText(),/declined|did not approve/);await shot(f.top,`${kind}-declined-${width}`);}
  finally{await f.close();await browser.close();}
 });
 for(const width of [1280,390])for(const method of ['requestAccounts','signMessage'])test(`round3 locked first-use UniSat at ${method} offers unlock and a working retry at ${width}`,{timeout:30000},async()=>{

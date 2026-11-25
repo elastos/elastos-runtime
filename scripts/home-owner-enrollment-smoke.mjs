@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import vm from "node:vm";
+import { webcrypto } from "node:crypto";
 import {readSigninChoice} from "../capsules/home/browser/wallet-signin-options.mjs";
 import { ownerRecoveryCommand } from "../capsules/home/browser/owner-recovery-command.js";
 import { resolve } from "node:path";
@@ -91,7 +92,7 @@ function fixture({ guest = false, purpose = "create", terminalLoss = false, owne
           response: { clientDataJSON: new Uint8Array([2]).buffer, authenticatorData: new Uint8Array([3]).buffer,
             signature: new Uint8Array([4]).buffer, userHandle: null } };
       } } },
-      Date: class extends Date { static now() { return now; } }, Uint8Array, ArrayBuffer, TextEncoder, AbortController, AbortSignal, atob, btoa,
+      Date: class extends Date { static now() { return now; } }, crypto: webcrypto, Uint8Array, ArrayBuffer, TextEncoder, AbortController, AbortSignal, atob, btoa,
       setHomeAuthorityToken(value) {authorityToken=value||"";}, getHomeAuthorityToken() {return authorityToken;}, clearHomeAuthorityToken() {authorityToken="";},
       async fetchJson(path, options = {}) {
         requests.push({ path, options });
@@ -122,8 +123,15 @@ function fixture({ guest = false, purpose = "create", terminalLoss = false, owne
           identity: { profile_readiness: { status: "ready" }, profile: { display_name: "Original Person" } } };
         if (path.endsWith("/status")) return { registered: guest || verified || ownerRecovery,
           owner_setup_pending: !guest && verified && !terminalLoss && !acknowledged, guest_registration_enabled: guest };
-        if (path.includes("/authenticate/")) return path.endsWith("/begin")
-          ? { options: { publicKey: { challenge: "AQ", allowCredentials: [] } } } : grant;
+        if (path.includes("/authenticate/")) {
+          assert.equal(options.method, "POST");
+          if (path.endsWith("/begin")) {
+            assert.match(options.headers["x-elastos-passkey-secret"], /^[0-9a-f]{64}$/);
+            return { ceremony_id: "existing-signin", options: { publicKey: { challenge: "AQ", allowCredentials: [] } } };
+          }
+          assert.equal(JSON.parse(options.body).ceremony_id, "existing-signin");
+          return grant;
+        }
         if (path.endsWith("/begin")) {
           assert.equal(options.headers["x-elastos-owner-enrollment"], guest || ownerClaimed ? undefined : "operator-secret");
           beforeBegin(options);
@@ -433,6 +441,7 @@ for (const stage of ["before-begin", "after-create"]) {
   home.element("#home-unlock-primary").emit("click"); await tick();
   assert.equal(f.gets(), 1);
   assert.equal(f.creates(), 0);
+  assert.deepEqual(home.opened(), { response: grant });
 }
 
 
@@ -619,18 +628,23 @@ const section = (text, start, end) => {
 }
 console.log("PASS Home owner/guest Create/Recover, exact reload retry, storage, host navigation and account boundaries");
 
-if (process.argv.includes("--browser")) {
-  const { chromium } = await importProductSmokePlaywright();
+const engines = process.argv.includes("--browser") ? await importProductSmokePlaywright() : null;
+if (engines) for (const engine of ["chromium", "webkit"]) {
+  if (engine === "webkit" && !existsSync(engines.webkit.executablePath())) {
+    console.log("SKIP enrollment browser: WebKit is not installed");
+    continue;
+  }
   const executablePath = process.env.ELASTOS_BROWSER_EXECUTABLE || productSmokeLaunchOptions().executablePath;
-  const browser = await chromium.launch({
+  const browser = await engines[engine].launch({
     headless: true,
-    ...(executablePath ? { executablePath } : {}),
-    args: ["--disable-background-networking", "--disable-component-update", "--no-first-run"],
+    ...(engine === "chromium" && executablePath ? { executablePath } : {}),
+    ...(engine === "chromium" ? { args: ["--disable-background-networking", "--disable-component-update", "--no-first-run"] } : {}),
   });
   try {
     const page = await browser.newPage({ reducedMotion: "reduce" });
     const errors = [];
     const statusRequests = [];
+    let registered = false;
     page.on("pageerror", error => errors.push(error.message));
     const assets = new Map([
       ["index.html", "text/html"], ["style.css", "text/css"], ["wallet-signin.css", "text/css"], ["elastos-ui.css", "text/css"],
@@ -645,7 +659,7 @@ if (process.argv.includes("--browser")) {
       if (url.pathname === "/api/auth/passkey/status") {
         assert.equal(route.request().method(), "GET");
         statusRequests.push(url.pathname);
-        return route.fulfill({ json: { registered: false, guest_registration_enabled: false } });
+        return route.fulfill({ json: { registered, guest_registration_enabled: false } });
       }
       const name = url.pathname.slice("/apps/home/".length);
       assert(url.pathname.startsWith("/apps/home/"));
@@ -719,8 +733,18 @@ if (process.argv.includes("--browser")) {
       assert(await page.getByLabel("Your display name", { exact: true }).isVisible());
     }
     assert.equal(statusRequests.length, 3);
+    registered = true;
+    for (const [width, height] of [[1280, 900], [390, 844], [320, 568]]) {
+      await page.setViewportSize({ width, height });
+      await page.goto("https://home-enrollment.test/apps/home/index.html");
+      const recover = page.getByRole("button", { name: "Recover this Home with your Recovery Kit", exact: true });
+      await recover.click();
+      await page.getByRole("dialog", { name: "Recover this Home", exact: true }).waitFor();
+      assert(await page.getByLabel("Code from the terminal", { exact: true }).isVisible());
+    }
+    assert.equal(statusRequests.length, 6);
     assert.deepEqual(errors, []);
-    console.log("PASS isolated browser: six Create/Recover views, accessible dialog, native radios, 44px targets, scrollable keyboard controls, viewport bounds, zero page errors");
+    console.log("PASS " + engine + " isolated browser: six Create/Recover views, accessible dialog, native radios, 44px targets, scrollable keyboard controls, viewport bounds, zero page errors");
   } finally {
     await browser.close();
   }

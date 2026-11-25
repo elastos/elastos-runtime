@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { chromium, jsonResponse, textResponse, makeAppearanceRecord, makeSystemSummary, startSystemFixtureServer } from "./system-uiux-fixture.mjs";
-import { productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
+import { jsonResponse, textResponse, makeAppearanceRecord, makeSystemSummary, startSystemFixtureServer } from "./system-uiux-fixture.mjs";
+import { productSmokeLaunchOptions, requireProductSmokePlaywright } from "./product-smoke-browser.mjs";
+import { windowTestOptions } from "./lib/walletconnect-window-resources.mjs";
 
 const explanation = "Add another admin passkey first.";
 const disabledExplanation = "Add another admin passkey first.";
@@ -13,7 +14,7 @@ const guest = { principal_id: "sam", proof_binding_id: "proof:passkey:sam", disp
 
 const guestBackup={...guest,proof_binding_id:'proof:passkey:sam-backup'};
 
-async function fixture(run) {
+async function fixture(run, engine = "chromium") {
   let passkeys = [owner], role = "admin", theme = "light", failure = null, afterFailurePasskeys = null;
   let methods = [];
   let listReads = 0;
@@ -52,7 +53,7 @@ async function fixture(run) {
       return false;
     },
   });
-  const browser = await chromium.launch({ headless: true, ...productSmokeLaunchOptions() });
+  const browser = await requireProductSmokePlaywright()[engine].launch({ headless: true, ...(engine === "chromium" ? productSmokeLaunchOptions() : {}) });
   try {
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
     page.setDefaultTimeout(5000);
@@ -291,7 +292,7 @@ test("System distinguishes two passkeys and identifies this window at desktop an
 });
 
 
-test("Accounts groups methods beneath their owner with equal add controls in both themes and widths", async () => {
+for (const engine of ["chromium", "webkit"]) test(`Accounts groups methods beneath their owner with equal add controls in both themes and widths in ${engine}`, windowTestOptions(engine, 30000), async () => {
   await fixture(async ({ page, open, writes }) => {
     const created = Date.UTC(2026, 10, 23, 13, 3) / 1000;
     const key = { ...owner, created_at: created, last_used_at: created + 240, added_from: "Device passkey (added from Chrome on Mac or iPad)" };
@@ -349,11 +350,15 @@ test("Accounts groups methods beneath their owner with equal add controls in bot
           await page.bringToFront();
           await remove.press("Tab");
           await page.keyboard.press("Shift+Tab");
-          await frame.waitForFunction(id=>{
+          const focused = await frame.waitForFunction(id=>{
             const node=[...document.querySelectorAll('[data-passkey-revoke]')].find(button=>button.dataset.passkeyRevoke===id);
-            return node===document.activeElement&&node.matches(':focus-visible')&&parseFloat(getComputedStyle(node).outlineWidth)>=2;
+            if(node!==document.activeElement||!node.matches(':focus-visible'))return false;
+            const style=getComputedStyle(node);
+            return parseFloat(style.outlineWidth)>=2&&{width:style.outlineWidth,style:style.outlineStyle};
           },key.proof_binding_id);
-          const focus = await remove.evaluate(node => { const style = getComputedStyle(node); return { width: style.outlineWidth, style: style.outlineStyle }; });
+          // Keep the measurement from the focused frame, before another window can take focus.
+          const focus = await focused.jsonValue();
+          await focused.dispose();
           assert.notEqual(focus.style, "none");
           assert.ok(parseFloat(focus.width) >= 2);
           await remove.evaluate(node => node.blur());
@@ -373,5 +378,5 @@ test("Accounts groups methods beneath their owner with equal add controls in bot
       assert.equal(await frame.locator(".account-header .passkey-promote").count(), 1);
     }
     assert.equal(writes.length, 0);
-  });
+  }, engine);
 });
