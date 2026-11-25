@@ -171,8 +171,8 @@ for(const engine of ['chromium','webkit'])test(`one wallet list: phone app use s
     const toggle=f.wallet.getByRole('switch',{name:'Apps and websites',exact:true});
     await f.wallet.locator('[role=switch][aria-checked=false]').waitFor();
     f.fixture.state.holdSignature=true;
-    await toggle.click();await f.wallet.getByRole('button',{name:'Sign message',exact:true}).click();
-    await f.page.waitForResponse(r=>r.url().endsWith('/api/fixture-sdk')&&r.request().postDataJSON().method==='personal_sign');
+    await toggle.click();const signature=f.page.waitForResponse(r=>r.url().endsWith('/api/fixture-sdk')&&r.request().postDataJSON().method==='personal_sign');
+    await f.wallet.getByRole('button',{name:'Sign message',exact:true}).click();await signature;
     await f.wallet.getByRole('button',{name:'Cancel',exact:true}).click();assert.equal(await toggle.getAttribute('aria-checked'),'false');
     assert.equal(f.fixture.state.calls.filter(c=>c.path==='/api/auth/evm/verify').length,0);assert(f.fixture.state.methods.some(m=>m.connector==='walletconnect'));
     await f.page.locator('iframe[data-target=wallet-walletconnect]').waitFor({state:'detached'});

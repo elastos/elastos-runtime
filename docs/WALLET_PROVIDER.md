@@ -46,12 +46,14 @@ own approval. Built-in addresses keep their balances, Send, Receive and key
 management controls. UniSat proves Bitcoin address ownership to apps. Sending
 Bitcoin from this Home is not available yet.
 
-For a sign-in-only extension wallet, Wallet sends Home the inventory identity.
+For a sign-in-only wallet, Wallet sends Home the inventory identity.
 Home reads its own account inventory, obtains a live connector launch, and uses
 the existing ownership challenge and verification endpoints with that connector's
 authority. Home checks the selected address and network before signing and the
-request lifetime before submission. WalletConnect retains its connector window,
-pairing and persistent internet permission steps. These transport permissions
+request lifetime before submission. For WalletConnect, Home binds the admitted
+connector to the saved address and network. Cancel retires the ownership request
+while the saved phone session stays connected. WalletConnect retains its connector
+window, pairing and persistent internet permission steps. These transport permissions
 remain separate from sign-in enrollment.
 
 ### General approval-method interface (proposed)
