@@ -647,7 +647,7 @@ if (engines) for (const engine of ["chromium", "webkit"]) {
     let registered = false;
     page.on("pageerror", error => errors.push(error.message));
     const assets = new Map([
-      ["index.html", "text/html"], ["style.css", "text/css"], ["wallet-signin.css", "text/css"], ["elastos-ui.css", "text/css"],
+      ["index.html", "text/html"], ["style.css", "text/css"], ["wallet-signin.css", "text/css"], ["wallet-signin-connection.css", "text/css"], ["elastos-ui.css", "text/css"],
       ["shell-auth.js", "text/javascript"], ["shell-core.js", "text/javascript"],
       ["home-boot-hint.js", "text/javascript"], ["manifest.webmanifest", "application/manifest+json"],
       ["elastos-logo.svg", "image/svg+xml"], ["elastos-home-icon.svg", "image/svg+xml"],
@@ -656,6 +656,9 @@ if (engines) for (const engine of ["chromium", "webkit"]) {
     await page.route("**/*", async route => {
       const url = new URL(route.request().url());
       assert.equal(url.origin, "https://home-enrollment.test");
+      if (url.pathname === "/apps/home-gui/wallpaper.webp") {
+        return route.fulfill({ contentType: "image/webp", body: readFileSync(new URL("../capsules/home-gui/browser/wallpaper.webp", import.meta.url)) });
+      }
       if (url.pathname === "/api/auth/passkey/status") {
         assert.equal(route.request().method(), "GET");
         statusRequests.push(url.pathname);
