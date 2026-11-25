@@ -52,7 +52,7 @@ for (const namespace of ['eip155:20', 'eip155:8453']) {
         shellHeaders: headers => headers,
       });
       await actions.onAccountClick({target:{closest:()=>({dataset:{walletAccountMenu:view.account_id}})}, stopPropagation(){}});
-      await rows.find(row => row.title === 'Recovery key').action();
+      await rows.find(row => row.title === 'Show recovery key').action();
       await rows.find(row => row.title === (namespace === 'eip155:20' ? 'Elastos Smart Chain' : 'Base')).action();
       assert.equal(details.find(row => row.label === 'Network').value, namespace === 'eip155:20' ? 'Elastos Smart Chain' : 'Base');
       assert.equal(typeof details.find(row => row.label === 'Wallet')?.value, 'string', 'recovery has a wallet label instead of undefined');
