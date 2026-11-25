@@ -130,6 +130,10 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
     if(state.action==='signin'&&['review','signing','completing'].includes(state.stage)&&(!dialog?.querySelector('.connection-options-list')||currentState?.stage==='pairing')&&initial.signinMethods)options(initial.signinMethods);
     if(state.stage==='closed'){if(initial.action==='signin'&&dialog&&initial.signinMethods){options(initial.signinMethods);return;}close();return;}
     currentState=state;if(management.kind==='active')management.stage=state.stage;
+    if(state.action==='add'&&!chooser&&initial.delegateWalletConnect&&['connecting','signing'].includes(state.stage)&&!state.message) {
+      if(dialog){dialog.dataset.state=state.stage;dialog.close();}
+      initial.focusCurrent?.();return;
+    }
     if(state.action==='add'&&chooser&&state.stage!=='pairing'){dialog?.close();if(state.message||['error','list-error','unknown'].includes(state.stage))chooser.focus();chooser.render({stage:state.stage,message:state.message||'',approvalNotice:state.approvalNotice||'',walletName:state.wallet?.connector==='walletconnect'?state.wallet.displayName||'':'',methods:Array.isArray(state.methods)?[...(signinBrowserWallets().length?signinBrowserWallets().map(p=>({connector:'metamask',providerId:p.rdns,label:p.name})): [{connector:'metamask'}]),{connector:'unisat'},{connector:'walletconnect'}].map(choice=>{const rows=state.methods.filter(m=>m.connector===choice.connector&&(!choice.providerId||m.providerId===choice.providerId));return {...choice,connected:rows.length>0,used:rows.length>0&&rows.every(m=>m.sign_in_enabled)};}):undefined});return;}
     if(state.action==='signin'&&['choice','connecting','review','signing','completing','passkey-signin'].includes(state.stage)&&dialog?.querySelector('.connection-options-list')){
       dialog.dataset.state=state.stage;
