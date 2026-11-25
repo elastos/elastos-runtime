@@ -2010,3 +2010,23 @@ input[type="file"].visually-hidden {
 :root[data-el-form-factor="phone"] .settings-content .pc2-input {
   font-size: 16px;
 }
+
+/* Wallet identities come from Runtime; System owns their account sign-in use. */
+.system-signin-wallets { padding:20px 16px; border-top:1px solid var(--el-hairline); }
+.system-signin-wallets h3 { font-size:14px; font-weight:600; margin:0 0 16px; }
+.system-signin-wallet { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 0; border-top:1px solid var(--el-hairline); }
+.system-wallet-identity { display:flex; align-items:center; gap:12px; min-width:0; }
+.system-wallet-identity img { width:26px; height:26px; object-fit:contain; }
+.system-wallet-identity strong { font-size:15px; font-weight:600; }
+.system-wallet-meta { display:flex; align-items:center; gap:12px; flex-wrap:wrap; color:var(--el-muted); margin-top:5px; font-size:12px; }
+.system-wallet-meta code { font-family:var(--el-font-mono); }
+.system-wallet-actions { display:flex; align-items:center; gap:20px; flex-shrink:0; font-size:var(--el-text-sm); }
+.wallet-inventory-link { color:var(--el-accent); text-decoration:underline; text-underline-offset:3px; white-space:nowrap; display:inline-flex; align-items:center; min-height:44px; }
+.wallet-inventory-link:focus-visible { outline:2px solid var(--el-accent); outline-offset:4px; }
+.system-signin-wallets>#wallet-signin-add { margin-top:16px; }
+@media(max-width:600px) {
+ .system-signin-wallet { align-items:flex-start; flex-wrap:wrap; }
+ .system-wallet-actions { margin-left:32px; width:calc(100% - 32px); justify-content:space-between; gap:8px; }
+ .system-wallet-actions .el-button { font-size:12px; }
+ .system-signin-wallets>#wallet-signin-add { width:100%; }
+}

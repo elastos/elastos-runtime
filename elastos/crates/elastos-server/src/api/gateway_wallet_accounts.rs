@@ -99,6 +99,24 @@ fn wallet_inventory_entries(
             });
         }
     }
+    entries.sort_by_key(|entry| {
+        let connector = entry
+            .accounts
+            .first()
+            .and_then(|account| account.connector_id.as_deref())
+            .or_else(|| {
+                entry
+                    .sign_in
+                    .as_ref()
+                    .and_then(|method| method["connector"].as_str())
+            });
+        match connector {
+            None => 0,
+            Some("wallet-metamask" | "metamask") => 1,
+            Some("wallet-unisat" | "unisat") => 2,
+            _ => 3,
+        }
+    });
     entries
 }
 

@@ -59,6 +59,7 @@ export function createWalletFlows({
   function openFlowModal(title, subtitle, nodes, actions = [modalButton("Cancel", closeModal, true)], options = {}) {
     const useAccounts = shouldUseAccountsFlip(title, options);
     const useHero = !useAccounts && shouldUseHeroFlip(title, options);
+    if (useAccounts || useHero) document.documentElement.dataset.walletFlow = 'true';
     const host = useAccounts ? accountsBackNode : useHero ? heroBackNode : modalNode;
     if (!host) {
       return;
@@ -419,6 +420,7 @@ export function createWalletFlows({
   }
 
   function closeModal() {
+    delete document.documentElement.dataset.walletFlow;
     if (accountsFlowActive) {
       accountsFlowActive = false;
       hideAccountsBack();

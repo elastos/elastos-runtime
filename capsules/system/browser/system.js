@@ -2623,11 +2623,15 @@ function renderAccounts(accounts) {
         methodName: repeated ? `${label} ${labels.slice(0, index + 1).filter(value => value === label).length}` : label,
       }));
     }
-    if (id === walletSigninMethods.account_id) {
-      for (const method of walletSigninMethods.methods) body.append(walletAccountRow(method));
-    }
     table.append(body);
     block.append(header, table);
+    if (id === walletSigninMethods.account_id) {
+      const wallets = document.createElement('section'); wallets.className = 'system-signin-wallets';
+      const heading = document.createElement('h3'); heading.textContent = 'Wallets for sign-in'; wallets.append(heading);
+      for (const method of walletSigninMethods.methods) wallets.append(walletAccountRow(method));
+      if (walletAddButton) wallets.append(walletAddButton);
+      block.append(wallets);
+    }
     accountListNode.append(block);
   }
   if (focusedPasskey) [...accountListNode.querySelectorAll('[data-passkey-revoke]')]
@@ -2737,34 +2741,23 @@ function accountRow(passkey, listState = {}) {
 }
 
 function walletAccountRow(method) {
-  const row = document.createElement("tr");
-  row.className = "account-row";
-  row.dataset.walletMethod = method.method_id;
-  const identity = accountCell("Method", "account-name");
-  const name = document.createElement("div");
-  name.className = "account-name-wrap";
-  const title = document.createElement("strong");
-  title.textContent = method.wallet_display_name || connectorName(method.connector);
-  const address = document.createElement("small");
-  address.textContent = `${shortWalletAddress(method.address)} · ${walletNetwork(method)}`;
-  name.title = method.address;
-  name.append(title, address);
-  identity.append(name);
-  const used = accountCell("Last used", "account-used");
-  used.textContent = method.last_used_at ? formatAccountDate(method.last_used_at) : "Not used yet";
-  const actions = accountCell("Actions", "account-actions-cell");
-  const controls = walletSigninControls(method, { canManage: currentAccess.role === "admin", onAction: changeWalletSignin,
-    buttonClass: "system-button account-remove-action" });
-  const open = document.createElement("a");
-  open.href = "#wallet"; open.className = "wallet-inventory-link"; open.textContent = "Open Wallet";
+  const row = document.createElement('div'); row.className = 'system-signin-wallet'; row.dataset.walletMethod = method.method_id;
+  const identity = document.createElement('div'); identity.className = 'system-wallet-identity';
+  const icon = document.createElement('img'); icon.alt = ''; icon.src = `/apps/home/connection-${method.connector}.png`;
+  const copy = document.createElement('div'), title = document.createElement('strong'), address = document.createElement('div');
+  title.textContent = method.wallet_display_name || connectorName(method.connector); title.dir = 'auto';
+  address.className = 'system-wallet-meta';
+  const code = document.createElement('code'); code.textContent = shortWalletAddress(method.address); code.title = method.address;
+  const network = document.createElement('span'); network.textContent = walletNetwork(method) + (method.connector === 'walletconnect' ? ' · WalletConnect' : '');
+  address.append(code, network); copy.append(title, address); identity.append(icon, copy);
+  const actions = document.createElement('div'); actions.className = 'system-wallet-actions';
+  const open = document.createElement('a'); open.href = '#wallet'; open.className = 'wallet-inventory-link'; open.textContent = 'Open Wallet';
   open.onclick = event => {
-    event.preventDefault();
-    window.top.postMessage({type:"home:open-target", target:"wallet", homeToken:apiHomeToken,
+    event.preventDefault(); window.top.postMessage({type:'home:open-target', target:'wallet', homeToken:apiHomeToken,
       query:{wallet_entry:method.inventory_id}}, homeParentOrigin);
   };
-  actions.append(open, controls);
-  row.append(identity, used, actions);
-  return row;
+  actions.append(open, walletSigninControls(method, {onAction:changeWalletSignin, buttonClass:'el-button'}));
+  row.append(identity, actions); return row;
 }
 
 function accountCell(label, className) {

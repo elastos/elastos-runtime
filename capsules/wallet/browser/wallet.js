@@ -1,3 +1,6 @@
+import {requestWalletAppConnection} from "./wallet-app-connect.js";
+import {createWalletInventory} from "./wallet-inventory.js";
+import {readWalletInventory} from "/apps/home/wallet-signin-methods.mjs";
 import { createWalletActivity } from "./wallet-activity.js?v=wallet-20261115a";
 import {
   createWalletApi,
@@ -63,7 +66,6 @@ const sendButton = document.querySelector("#wallet-send");
 const receiveButton = document.querySelector("#wallet-receive");
 const getStartedNode = document.querySelector("#wallet-get-started");
 const connectCtaButton = document.querySelector("#wallet-connect-cta");
-const signersSection = document.querySelector("#wallet-signers");
 const accountCardNode = document.querySelector("#wallet-account-card");
 const accountCardAddressNode = document.querySelector("#wallet-account-card-address");
 const accountCardCopyNode = document.querySelector("#wallet-account-card-copy");
@@ -86,7 +88,7 @@ const homeClipboard = createHomeClipboardClient({
 });
 homeClipboard.start();
 let currentAccounts = [];
-let signinChooser=null;
+let currentInventory = {entries:[]};
 let currentDefaults = [];
 let currentBalanceRows = [];
 let currentPrices = {};
@@ -121,6 +123,52 @@ const {
   accountsBackNode,
   showStatus,
 });
+document.querySelector('.wallet-page').prepend(statusNode);
+document.querySelector('#wallet-inventory').after(requestsNode);
+const inventoryView = createWalletInventory({
+  root: document.querySelector('#wallet-inventory'),
+  openSystem: () => window.top.postMessage({type:'home:open-target', target:'system', homeToken:activeHomeToken, query:{settings:'account'}}, homeParentOrigin),
+  connectApps: connectInventoryApps,
+  removeApps: async (entry, current) => {
+    for (const account of entry.accounts) {
+      const token = await requestPasskeyStepUp('wallet.account.delete', {account_id:account.account_id});
+      if (!current()) return;
+      await fetchJson(`/api/apps/wallet/wallet/accounts/${encodeURIComponent(account.account_id)}`, {
+        method:'DELETE', headers:shellHeaders({'content-type':'application/json'}), body:JSON.stringify({step_up_token:token}),
+      });
+    }
+    notifyHomeSummaryChanged(); await refreshWalletState();
+  },
+  copyAddress: address => copyText(address),
+  send: entry => {selectedAccountId=entry.accounts[0].account_id; document.documentElement.dataset.walletFlow='true'; openSendFlow();},
+  receive: entry => {document.documentElement.dataset.walletFlow='true'; renderReceiveAddress(buildViewAccounts().find(account => account.account_ids.includes(entry.accounts[0].account_id)));},
+  manageBuiltIn: entry => {const account=buildViewAccounts().find(account=>account.account_ids.includes(entry.accounts[0].account_id));if(account)openAccountMenu(account.account_id);},
+  getBalance: entry => {const account=viewAccountForGroup({records:entry.accounts,method:methodForAccount(entry.accounts[0]),firstIndex:0});return getPrivacyMode() ? "••••" : account.balanceAvailable ? `${account.amount.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:6})} ${account.symbol}` : "Balance unavailable";},
+  openActivity: () => openActivityChrome(), openSettings: () => openDrawer('settings'),
+});
+
+async function connectInventoryApps(entry, current, method, signal) {
+  const connector = method || entry.accounts[0]?.connector_id?.replace('wallet-', '') || entry.sign_in?.connector;
+  if (entry && connector !== 'walletconnect') {
+    await requestWalletAppConnection(entry, {token:activeHomeToken, origin:homeParentOrigin, current, signal});
+    if (current()) await refreshWalletState();
+    return;
+  }
+  openApprovalMethod(`wallet-${connector}`);
+  // The connector owns the existing ownership proof and transport permissions.
+  // Observe only the exact selected identity, then refresh the saved projection.
+  const deadline = Date.now() + 180000;
+  while (current() && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    const next = await readWalletInventory(activeHomeToken);
+    if (!current()) return;
+    if (next.account_id !== currentInventory.account_id) throw new Error('Your account changed. Open Wallet again.');
+    const connected = entry ? next.entries.find(row=>row.inventory_id===entry.inventory_id && row.accounts.length) : next.entries.find(row=>row.accounts.length && !currentInventory.entries.some(old=>old.inventory_id===row.inventory_id && old.accounts.length));
+    if (connected) {await refreshWalletState(); return;}
+  }
+  if (current()) throw new Error('Home has not confirmed the connection. Check Wallet, then try again.');
+}
+
 const { renderActivity } = createWalletActivity({ activityNode, textNode });
 const { loadBalanceRows, loadPrices } = createWalletStateLoader({ fetchJson, shellHeaders });
 const {
@@ -132,10 +180,8 @@ const {
   getPrivacyMode,
   openApprovalMethod,
   openDrawer,
-  renderMethods,
   togglePrivacy,
 } = createWalletPreferences({
-  getSigninChooser: () => signinChooser,
   closeModal,
   fetchJson,
   getHomeToken: () => activeHomeToken,
@@ -238,7 +284,7 @@ const { canSendFromAccount, openSendFlow } = createWalletSendFlow({
   textNode,
   validateAddress,
 });
-const { onAccountClick, onDocumentClick } = createWalletAccountActions({
+const { onAccountClick, onDocumentClick, openAccountMenu } = createWalletAccountActions({
   buildViewAccounts,
   clearAccountSelection,
   closeModal,
@@ -289,7 +335,6 @@ function boot() {
         || heroNode?.classList.contains("is-flipped")
         || accountsSectionNode?.classList.contains("is-flipped"),
     );
-    if(signinChooser){signinChooser.act('cancel');return;}
     closeModal();
     closeDrawers();
     if (!hadOverlay) {
@@ -304,8 +349,6 @@ function boot() {
   window.addEventListener("message", onShellMenuCommand);
   window.addEventListener("message", onWalletChromeCommand);
   window.addEventListener("message", onHomeConnectCommand);
-  window.addEventListener("message", onSigninChooserCommand);
-  window.addEventListener("focus",()=>{if(signinChooser?.stage==="options")signinChooser.act("refresh");});
   window.addEventListener("pagehide", () => {
     if (activeHomeToken && homeParentOrigin && window.top !== window) {
       window.top.postMessage({type:"home:app-retired", homeToken:activeHomeToken}, homeParentOrigin);
@@ -317,6 +360,7 @@ function boot() {
 function walletSelectionBlocked() {
   return Boolean((modalNode && !modalNode.hidden)
     || document.querySelector("#wallet-settings-drawer:not([hidden]), #wallet-activity-drawer:not([hidden]), .wallet-request button:disabled")
+    || document.querySelector('.one-dialog[open]')
     || heroNode?.classList.contains("is-flipped") || accountsSectionNode?.classList.contains("is-flipped"));
 }
 
@@ -344,7 +388,7 @@ function configureWalletWindowSelection() {
         homeToken, documentNonce, requestId: data.requestId }, "*");
       return;
     }
-    if (data.type !== "elastos:wallet-chrome-command" || data.cmd !== "review-request"
+    if (data.type !== "elastos:wallet-chrome-command" || !["review-request", "open-entry"].includes(data.cmd)
       || !exact(data, ["type", "cmd", "homeToken", "requestId", "documentNonce", "sequence", "expiresAt", "query"])
       || data.documentNonce !== documentNonce || !Number.isSafeInteger(data.sequence)
       || data.sequence <= lastSequence || !Number.isSafeInteger(data.expiresAt)
@@ -353,7 +397,19 @@ function configureWalletWindowSelection() {
     const current = () => active && homeToken === activeHomeToken && Date.now() < data.expiresAt;
     let ok = false;
     let failureCopy = "Finish the current review or edit, then open this request again.";
-    if (!busy && !walletSelectionBlocked() && exact(data.query, ["wallet_request"])
+    if (data.cmd === 'open-entry' && !busy && !walletSelectionBlocked()
+      && exact(data.query, ['wallet_entry']) && typeof data.query.wallet_entry === 'string'
+      && /^[a-zA-Z0-9:._-]{1,256}$/.test(data.query.wallet_entry)) {
+      busy = true;
+      try {
+        const inventory = await readWalletInventory(activeHomeToken);
+        if (current() && !walletSelectionBlocked() && inventory.entries.some(entry => entry.inventory_id === data.query.wallet_entry)) {
+          currentInventory = inventory; inventoryView.update(inventory); ok = inventoryView.open(data.query.wallet_entry);
+        }
+      } catch (_) {failureCopy = 'Could not open this wallet. Refresh Wallet and try again.';}
+      finally {busy = false;}
+    }
+    if (data.cmd === "review-request" && !busy && !walletSelectionBlocked() && exact(data.query, ["wallet_request"])
       && typeof data.query.wallet_request === "string" && /^[a-zA-Z0-9:._-]{1,256}$/.test(data.query.wallet_request)) {
       busy = true;
       try {
@@ -423,35 +479,6 @@ function onShellMenuCommand(event) {
   }
 }
 
-function leaveSigninChooser() {
-  signinChooser=null;delete document.documentElement.dataset.signinChooser;delete signersSection.dataset.signin;
-  document.querySelector('#wallet-signin-actions')?.remove();
-  signersSection.querySelector('h2').textContent='Wallets & signers';renderAll();
-}
-
-function onSigninChooserCommand(event) {
-  const data=event.data;
-  if(event.source!==window.top||event.origin!==homeParentOrigin||data?.type!=='home:wallet-signin-chooser'||data.homeToken!==activeHomeToken||typeof data.requestId!=='string'||Object.keys(data).length!==4)return;
-  const state=data.state;
-  if(!state||typeof state.stage!=='string')return;
-  if(signinChooser&&signinChooser.requestId!==data.requestId)return;
-  window.top.postMessage({type:'home:wallet-signin-chooser-action',homeToken:activeHomeToken,requestId:data.requestId,action:'ready'},homeParentOrigin);
-  if(state.stage==='closed'){leaveSigninChooser();return;}
-  signinChooser={...state,methods:state.methods||signinChooser?.methods||[],requestId:data.requestId,act:action=>{
-    if(action==='cancel'&&['completing','unknown'].includes(signinChooser?.stage))return;
-    window.top.postMessage({type:'home:wallet-signin-chooser-action',homeToken:activeHomeToken,requestId:data.requestId,action},homeParentOrigin);
-    if(action==='cancel')leaveSigninChooser();
-  }};
-  document.documentElement.dataset.signinChooser='true';signersSection.dataset.signin=state.stage;
-  signersSection.querySelector('h2').textContent=['options','loading','list-error'].includes(state.stage)?'Choose wallet':'Add wallet';
-  document.querySelector('#wallet-signin-actions')?.remove();
-  const actions=document.createElement('div');actions.id='wallet-signin-actions';actions.className='wallet-modal-actions';
-  const status=textNode('p',state.message||({loading:'Loading wallets…',connecting:'Continue in your wallet.',signing:state.walletName?`Continue in ${state.walletName}.`:'Continue in your wallet.',passkey:'Confirm with your passkey.',completing:'Saving change…'}[state.stage]||''),'wallet-state');status.setAttribute('role','status');actions.append(status);
-  if(state.approvalNotice)actions.append(textNode('p',state.approvalNotice,'wallet-state'));
-  for(const [action,label] of state.stage==='approval'?[['approve','Use passkey']]:state.stage==='unknown'?[['check','Check again']]:['error','list-error'].includes(state.stage)?[['retry','Try again']]:[])actions.append(modalButton(label,()=>signinChooser?.act(action)));
-  if(!['completing','unknown'].includes(state.stage))actions.append(modalButton('Cancel',()=>signinChooser?.act('cancel'),true));signersSection.append(actions);
-  renderMethods(buildViewAccounts(),currentApprovalMethods);
-}
 
 function onHomeConnectCommand(event) {
   if (event.source !== window.top || event.origin !== homeParentOrigin) return;
@@ -574,10 +601,12 @@ async function loadWalletState() {
     showStatus("Open Wallet from Home.", "error");
     return;
   }
-  const [summary, prices] = await Promise.all([
+  const [summary, prices, inventory] = await Promise.all([
     fetchJson("/api/apps/wallet/wallet/summary", { headers: shellHeaders() }),
     loadPrices({ requestAccess: walletShownToUser }),
+    readWalletInventory(activeHomeToken),
   ]);
+  currentInventory = inventory;
   const walletAccounts = summary && summary.wallet_accounts;
   const walletApprovals = summary && summary.wallet_approvals;
   const requestsUnavailable = walletApprovals?.available === false;
@@ -609,7 +638,7 @@ function renderAll() {
   renderAccounts(allAccounts);
   renderSettingsWallets(allAccounts);
   renderWalletReviewRequests();
-  renderMethods(allAccounts, currentApprovalMethods);
+  inventoryView.update(currentInventory);
   renderActivity(currentRequests);
   renderApprovalsBadge(pending.length);
   updateFlowButtons(allAccounts);
@@ -938,16 +967,7 @@ function updateFlowButtons(accounts) {
   }
 }
 
-function focusSignersSection() {
-  if (!signersSection) {
-    return;
-  }
-  signersSection.classList.add("is-highlighted");
-  signersSection.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  window.setTimeout(() => {
-    signersSection.classList.remove("is-highlighted");
-  }, 1600);
-}
+function focusSignersSection() {inventoryView.openAdd();}
 
 function renderApprovalsBadge(pendingCount) {
   const badge = document.querySelector("#wallet-approvals-badge");
