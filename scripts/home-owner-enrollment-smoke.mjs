@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import vm from "node:vm";
 import { webcrypto } from "node:crypto";
 import {readSigninChoice} from "../capsules/home/browser/wallet-signin-options.mjs";
 import { ownerRecoveryCommand } from "../capsules/home/browser/owner-recovery-command.js";
 import { resolve } from "node:path";
 import { importProductSmokePlaywright, productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
+import { windowTestOptions } from "./lib/walletconnect-window-resources.mjs";
 
 // Import the new dependency itself; the existing passkey VM exercises the full auth file.
 const previousDocument = globalThis.document;
@@ -628,11 +629,14 @@ const section = (text, start, end) => {
 }
 console.log("PASS Home owner/guest Create/Recover, exact reload retry, storage, host navigation and account boundaries");
 
-const engines = process.argv.includes("--browser") ? await importProductSmokePlaywright() : null;
-if (engines) for (const engine of ["chromium", "webkit"]) {
+const selectedEngine = process.env.HOME_OWNER_ENROLLMENT_ENGINE;
+const engines = process.argv.includes("--browser") || selectedEngine ? await importProductSmokePlaywright() : null;
+if (engines) for (const engine of selectedEngine ? [selectedEngine] : ["chromium", "webkit"]) {
+  assert.ok(["chromium", "webkit"].includes(engine), "supported enrollment browser engine: " + engine);
   const tabKey = engine === "webkit" && process.platform === "darwin" ? "Alt+Tab" : "Tab";
-  if (engine === "webkit" && !existsSync(engines.webkit.executablePath())) {
-    console.log("SKIP enrollment browser: WebKit is not installed");
+  const { skip } = windowTestOptions(engine);
+  if (skip) {
+    console.log(`Home owner enrollment smoke in ${engine} # SKIP ${skip}`);
     continue;
   }
   const executablePath = process.env.ELASTOS_BROWSER_EXECUTABLE || productSmokeLaunchOptions().executablePath;
