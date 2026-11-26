@@ -1,5 +1,5 @@
-import { historicalTestSource } from './lib/historical-test-source.mjs';
 #!/usr/bin/env node
+import { historicalTestSource } from './lib/historical-test-source.mjs';
 
 import {windowTestOptions} from './lib/walletconnect-window-resources.mjs';
 
