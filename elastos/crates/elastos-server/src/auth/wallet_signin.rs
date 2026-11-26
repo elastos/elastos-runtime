@@ -199,7 +199,7 @@ fn read_bytes(data: &Path, path: &Path) -> anyhow::Result<Option<Vec<u8>>> {
     options.read(true);
     #[cfg(unix)]
     options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-    let file = match options.open(&path) {
+    let file = match options.open(path) {
         Ok(file) => file,
         Err(err) if err.kind() == ErrorKind::NotFound => return Ok(None),
         Err(err) => return Err(err.into()),
@@ -229,6 +229,7 @@ fn read(data: &Path) -> anyhow::Result<Store> {
     Ok(store)
 }
 fn write_projection(data: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    require(bytes.len() as u64 <= MAX_BYTES)?;
     let file = path(data)?.with_file_name(CANONICAL_FILE);
     if read_bytes(data, &file)?.as_deref() != Some(bytes) {
         write_secret_bytes_atomic(&file, bytes)?;
