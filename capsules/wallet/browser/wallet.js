@@ -103,6 +103,9 @@ let selectedAccountId = "";
 let reviewWalletRequestId = readQueryParam("wallet_request");
 let refreshWalletStateInFlight = null;
 let walletRefreshQueued = false;
+let walletStateRevision = 0;
+let refreshWalletMarketInFlight = null;
+let walletMarketRefreshQueued = false;
 const { fetchJson, notifyHomeSummaryChanged, requestPasskeyStepUp, shellHeaders } = createWalletApi({
   getHomeToken: () => activeHomeToken,
 });
@@ -573,7 +576,7 @@ function onWalletActionClick(event) {
 async function refreshWalletState() {
   if (refreshWalletStateInFlight) {
     walletRefreshQueued = true;
-    return refreshWalletStateInFlight;
+    return refreshWalletStateInFlight.then(refreshWalletMarketState);
   }
   refreshWalletStateInFlight = (async () => {
     try {
@@ -585,10 +588,11 @@ async function refreshWalletState() {
       refreshWalletStateInFlight = null;
     }
   })();
-  return refreshWalletStateInFlight;
+  return refreshWalletStateInFlight.then(refreshWalletMarketState);
 }
 
 async function loadWalletState() {
+  walletStateRevision += 1;
   if (!activeHomeToken) {
     currentAccounts = [];
     currentDefaults = [];
@@ -599,9 +603,8 @@ async function loadWalletState() {
     showStatus("Open Wallet from Home.", "error");
     return;
   }
-  const [summary, prices, inventory] = await Promise.all([
+  const [summary, inventory] = await Promise.all([
     fetchJson("/api/apps/wallet/wallet/summary", { headers: shellHeaders() }),
-    loadPrices({ requestAccess: walletShownToUser }),
     readWalletInventory(activeHomeToken).catch(() => null),
   ]);
   const walletAccounts = summary && summary.wallet_accounts;
@@ -622,12 +625,39 @@ async function loadWalletState() {
     : [];
   if (!requestsUnavailable) currentRequests = requestsWithDecisions(Array.isArray(walletApprovals && walletApprovals.approval_requests)
     ? walletApprovals.approval_requests : []);
-  currentPrices = prices.prices || {};
-  pricesStale = Boolean(prices.stale);
-  pricesUnavailable = Boolean(prices.unavailable);
-  currentBalanceRows = await loadBalanceRows(currentAccounts);
+  // Saved wallets and the list's scroll range are ready before market reads.
   renderAll();
   if (requestsUnavailable) throw new Error("Wallet could not load your requests.");
+}
+
+async function refreshWalletMarketState() {
+  if (!activeHomeToken) return;
+  if (refreshWalletMarketInFlight) {
+    walletMarketRefreshQueued = true;
+    return refreshWalletMarketInFlight;
+  }
+  refreshWalletMarketInFlight = (async () => {
+    try {
+      do {
+        walletMarketRefreshQueued = false;
+        const revision = walletStateRevision;
+        const [prices, balances] = await Promise.all([
+          loadPrices({ requestAccess: walletShownToUser }),
+          loadBalanceRows(currentAccounts),
+        ]);
+        // A newer account read owns the view. Coalesce its market refresh too.
+        if (revision !== walletStateRevision) continue;
+        currentPrices = prices.prices || {};
+        pricesStale = Boolean(prices.stale);
+        pricesUnavailable = Boolean(prices.unavailable);
+        currentBalanceRows = balances;
+        renderAll();
+      } while (walletMarketRefreshQueued);
+    } finally {
+      refreshWalletMarketInFlight = null;
+    }
+  })();
+  return refreshWalletMarketInFlight;
 }
 
 function renderAll() {

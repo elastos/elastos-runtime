@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { historicalTestSource } from './lib/historical-test-source.mjs';
 
+import {installSigninProviders, evmAddress, bitcoinAddress} from './lib/wallet-signin-fixture.mjs';
 import {windowTestOptions} from './lib/walletconnect-window-resources.mjs';
 
 import { createServer } from "node:http";
@@ -28,9 +29,17 @@ else if (process.env.MARKETPLACE_CONNECT_BEFORE === "1") {
     await runSmoke();
   }
 }
-else await runSmoke();
+else if (process.env.WALLET_CONNECT_RETURN === "1") {
+  const failures = [];
+  const delays = process.env.WALLET_RETURN_SLOW === 'all' ? ['prices','balances','existing-balances'] : [process.env.WALLET_RETURN_SLOW || 'normal'];
+  for (const slowMarket of delays) for (const width of [1440, 390]) {
+    try { await runSmoke({connectReturn:true, width, slowMarket}); }
+    catch (error) { failures.push(error); console.error(`[wallet-connect-return] FAIL ${engine} ${width} ${slowMarket}: ${error.stack}`); }
+  }
+  if (failures.length) throw new AggregateError(failures, 'Wallet connection return failed');
+} else await runSmoke();
 
-async function runSmoke() {
+async function runSmoke({connectReturn = false, width = 1440, slowMarket = 'normal'} = {}) {
 const repoRoot = fileURLToPath(new URL("../", import.meta.url));
 const principalId = "did:elastos:fixture-wallet-connector-launch";
 const homeAuthorityToken = "fixture-home-authority-token";
@@ -59,8 +68,13 @@ const state = {
   },
   connectorEffects: 0,
   approvalRequests: [],
-  walletAccounts: [],
+  walletAccounts: connectReturn ? [
+    {account_id:'fixture-home',address:'0x'+'34'.repeat(20),chain_namespace:'eip155:20',proof_type:'managed_evm',label:'Home address'},
+    {account_id:'fixture-bitcoin',address:bitcoinAddress,chain_namespace:'bip122:000000000019d6689c085ae165831e93',proof_type:'bip322_simple',connector_id:'wallet-unisat',wallet_display_name:'UniSat'},
+  ] : [],
   walletSummaryReads: 0,
+  holdMarket: '',
+  heldMarket: [],
   homeStateWrites: [],
   serverErrors: [],
 };
@@ -328,11 +342,19 @@ async function handleApi(req, res, url) {
     });
     return true;
   }
+  if (connectReturn && url.pathname === '/api/provider/chain/balance') {
+    const value = {status:'ok',data:{balance_hex:'0x0'}};
+    if (state.holdMarket === 'balances') state.heldMarket.push(()=>json(res,200,value));
+    else json(res,200,value);
+    return true;
+  }
   if (url.pathname === "/api/wallet/prices" && req.method === "GET") {
     if (!requireToken(req, walletToken, res)) {
       return true;
     }
-    json(res, 200, { prices: {}, stale: false, unavailable: false });
+    const value = {prices:{},stale:false,unavailable:false};
+    if (state.holdMarket === 'prices') state.heldMarket.push(()=>json(res,200,value));
+    else json(res,200,value);
     return true;
   }
   for (const [target, token] of Object.entries(connectorTokens)) {
@@ -353,7 +375,7 @@ async function handleApi(req, res, url) {
       if (!requireToken(req, token, res)) {
         return true;
       }
-      json(res, 200, { accounts: [] });
+      json(res, 200, { accounts: connectReturn ? state.walletAccounts.filter(account=>account.connector_id===target) : [] });
       return true;
     }
     if (
@@ -369,6 +391,20 @@ async function handleApi(req, res, url) {
   }
   if (url.pathname.includes("/wallet-connector/")) {
     state.connectorEffects += 1;
+    if (connectReturn && req.method === 'POST') {
+      if (!requireToken(req, homeAuthorityToken, res)) return true;
+      const body = await readBody(req);
+      assert(body.connector_id === 'wallet-metamask', 'only the named test connector links');
+      const schema = 'elastos.home.wallet-connector.effect.result/v1';
+      if (url.pathname.endsWith('/evm/link/challenge')) {
+        json(res,200,{schema,action:'evm_link_challenge',connector_id:body.connector_id,challenge:{schema:'elastos.auth.challenge/v1',challenge_id:'fixture-return',message:'Isolated wallet return proof',expires_at:Math.floor(Date.now()/1000)+300,resources:[]}});return true;
+      }
+      if (url.pathname.endsWith('/evm/link/verify')) {
+        if (slowMarket !== 'normal') state.holdMarket = slowMarket === 'prices' ? 'prices' : 'balances';
+        state.walletAccounts.push({account_id:'fixture-new-metamask',address:evmAddress,chain_namespace:'eip155:20',proof_type:'siwe',connector_id:'wallet-metamask',wallet_display_name:'MetaMask'});
+        json(res,200,{schema,action:'evm_link_complete',connector_id:body.connector_id,status:'linked'});return true;
+      }
+    }
     json(res, 500, { error: "credential-free fixture forbids connector effects" });
     return true;
   }
@@ -806,11 +842,15 @@ try {
     ],
     } : {}),
   });
-  const phoneLayout = process.env.MARKETPLACE_OPEN_CASE === "connectors-phone" || process.env.WALLET_PHONE_OPEN === "1";
-  const context = await browser.newContext(process.env.MARKETPLACE_OPEN_CASE || phoneLayout
+  const phoneLayout = process.env.MARKETPLACE_OPEN_CASE === "connectors-phone" || process.env.WALLET_PHONE_OPEN === "1" || connectReturn && width === 390;
+  const context = await browser.newContext(process.env.MARKETPLACE_OPEN_CASE || phoneLayout || connectReturn
     ? { reducedMotion: "reduce", ...(phoneLayout
-      ? {viewport:{width:390,height:844},isMobile:true,hasTouch:true} : {}) } : {});
+      ? {viewport:{width:390,height:844},isMobile:!connectReturn,hasTouch:true} : {}) } : {});
+  if (connectReturn) {
+    await context.addInitScript(installSigninProviders, {evmAddress,bitcoinAddress,theme:'dark'});
+  }
   const page = await context.newPage();
+  if (connectReturn) await page.setViewportSize({width,height:780});
   const pageErrors = [];
   page.on("pageerror", (error) => pageErrors.push(String(error?.stack || error)));
   page.on("console", message => {
@@ -827,6 +867,57 @@ try {
   );
   await waitFor(() => frameFor(page, "home-gui"), 15_000, "real Home GUI frame");
   const homeGui = frameFor(page, "home-gui");
+  if (connectReturn) {
+    if (phoneLayout) await homeGui.locator('.taskbar-item[data-target="wallet"]').tap();
+    else {
+      await homeGui.locator('#launcher-toggle').click();
+      await homeGui.locator('#launcher-grid [data-target="wallet"]').click();
+    }
+    const windowNode = homeGui.locator('.window[data-target="wallet"]');
+    const walletFrame = windowNode.locator('iframe');
+    await walletFrame.waitFor({timeout:15000});
+    const wallet = await (await walletFrame.elementHandle()).contentFrame();
+    await wallet.locator('.one-wallet').nth(1).waitFor();
+    await wallet.evaluate(()=>{window.walletReturnDocument=document;});
+    if (slowMarket === 'existing-balances') {
+      state.holdMarket = 'balances';
+      await wallet.evaluate(()=>top.postMessage({type:'home:refresh-summary',homeToken:new URLSearchParams(location.hash.slice(1)).get('home_token')},new URLSearchParams(location.search).get('home_origin')));
+      await waitFor(()=>state.heldMarket.length>0,5000,'an earlier balance read waits');
+    }
+    await wallet.getByRole('button',{name:'Add wallet for apps',exact:true}).click();
+    await wallet.locator('[data-wallet-open-method="wallet-metamask"]').click();
+    await waitFor(()=>frameFor(page,'wallet-metamask'),15000,'MetaMask opens');
+    const connector = frameFor(page,'wallet-metamask');
+    await connector.locator('[data-action="connect"]').click();
+    await connector.locator('[data-state="linked"]').waitFor({timeout:15000}).catch(async error=>{
+      throw new Error(`${error.message}\n${await connector.locator('body').innerText()}\n${JSON.stringify({effects:state.connectorEffects,accounts:state.walletAccounts.length,errors:state.serverErrors,pageErrors})}`);
+    });
+    if (slowMarket !== 'normal') await waitFor(()=>state.heldMarket.length>0,5000,'market data waits after connect');
+    await connector.locator('[data-action="close-window"]').click();
+    await waitFor(()=>!frameFor(page,'wallet-metamask'),5000,'MetaMask closes');
+    await windowNode.evaluate(()=>{window.walletReturnFocus=document.activeElement;});
+    const before = await wallet.evaluate(()=>({rows:document.querySelectorAll('.one-wallet').length,scroll:document.scrollingElement.scrollTop,height:document.scrollingElement.scrollHeight,viewport:document.documentElement.clientHeight,modal:!!document.querySelector(':modal'),overflow:getComputedStyle(document.body).overflow,inert:document.body.inert}));
+    const frame = windowNode.locator('iframe');
+    const bounds = await frame.boundingBox();
+    await page.mouse.move(bounds.x+bounds.width/2,bounds.y+bounds.height/2);
+    await page.mouse.wheel(0,460);
+    await wallet.waitForFunction(top=>document.scrollingElement.scrollTop>top,before.scroll,{timeout:3000}).catch(()=>{});
+    const after = await wallet.evaluate(()=>({rows:document.querySelectorAll('.one-wallet').length,scroll:document.scrollingElement.scrollTop,bodyScroll:document.body.scrollTop,windowScroll:scrollY,metamask:!![...document.querySelectorAll('.one-wallet')].find(node=>node.textContent.includes('MetaMask')),sameDocument:window.walletReturnDocument===document}));
+    const chrome = await windowNode.evaluate(node=>({active:node.classList.contains('window-active'),inert:node.inert,pointer:getComputedStyle(node.querySelector('iframe')).pointerEvents,sameFocus:document.activeElement===window.walletReturnFocus,focus:document.activeElement?.outerHTML.slice(0,180)}));
+    console.log('[wallet-connect-return] measurement '+JSON.stringify({engine,width,slowMarket,held:state.heldMarket.length,before,after,chrome}));
+    const held = state.heldMarket.splice(0); state.holdMarket = ''; for (const release of held) release();
+    await wallet.locator('.one-wallet').nth(2).waitFor({timeout:5000});
+    assert(after.metamask && after.rows===3 && after.scroll>before.scroll && chrome.sameFocus,'Wallet lists the new MetaMask and accepts the first wheel after connector close without a focus change',{before,after,chrome});
+    const copy = await wallet.locator('body').innerText();
+    assert(!copy.includes('Built-in addresses')&&!copy.includes('Passkey-controlled')&&!copy.includes('Wallet Send')&&!copy.includes('Wallets & signers'),'rc.2 Wallet copy stays removed');
+    if (process.env.WALLET_RETURN_SCREENS) {
+      mkdirSync(process.env.WALLET_RETURN_SCREENS,{recursive:true});
+      await page.screenshot({path:join(process.env.WALLET_RETURN_SCREENS,`wallet-connected-${engine}-${width}-${slowMarket}.png`)});
+    }
+    assert(state.connectorEffects===2 && after.sameDocument && state.serverErrors.length===0 && pageErrors.length===0,'one real connector link completes in the same Wallet without source errors',{effects:state.connectorEffects,pageErrors,errors:state.serverErrors});
+    console.log(`[wallet-connect-return] PASS ${engine} ${width} ${slowMarket}: new entry and first wheel, same Wallet frame`);
+    return;
+  }
   if (process.env.WALLET_SIGNIN_ENTRY === "1") {
     await homeGui.evaluate(async()=>{const rail=await import('./shell-wallet-rail.js?v=home-20261101d');rail.preloadWalletRail();});
     await waitFor(()=>frameFor(page,'wallet'),15000,'preloaded hidden Wallet rail');
