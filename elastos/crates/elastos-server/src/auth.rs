@@ -34,6 +34,7 @@ use crate::host_lock::FileLock;
 pub(crate) mod wallet_signin;
 #[cfg(test)]
 #[allow(dead_code, unused_imports)]
+#[rustfmt::skip]
 #[path = "../tests/fixtures/wallet_signin_rc1.rs"]
 mod wallet_signin_rc1;
 
