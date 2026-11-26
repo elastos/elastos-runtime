@@ -12,7 +12,7 @@ test.beforeEach(t => t.mock.timers.enable({ apis: ["Date"], now: 59_000 }));
 const hostURL = new URL("../capsules/home/browser/home-shell-host.js", import.meta.url);
 const hostImports = [...readFileSync(hostURL, "utf8").matchAll(/import\s*\{([^}]+)\}\s*from\s*["']([^"']+)["']/g)];
 let fixtureNumber = 0;
-async function fixture(target = "chat-room", enabled = true) {
+async function fixture(target = "chat-room", enabled = true, { readyState = "" } = {}) {
   const listeners = new Map(), timers = new Map(), commands = [], launchQueries = [];
   let next = 0, receive, launches = 0, refreshed = 0, currentToken = "old-frame", holdPrepare = false;
   const authority = { signed_in: true, principal_id: "alice", proof_binding_id: "proof:alice" };
@@ -25,10 +25,11 @@ async function fixture(target = "chat-room", enabled = true) {
     setTimeout: home.setTimeout, clearTimeout: home.clearTimeout,
     addEventListener(type, fn) { if (!listeners.has(type)) listeners.set(type, new Set()); listeners.get(type).add(fn); },
     removeEventListener(type, fn) { listeners.get(type)?.delete(fn); },
+    ...(readyState ? { document: { readyState } } : {}),
   };
   const message = (data, source = frame, origin = "null") => receive({ data, source, origin });
   home.postMessage = data => message(data);
-  const old = { targetId: target, source: frame, origin: "null", expiresAt: 60_000 };
+  const old = { targetId: target, source: readyState ? null : frame, origin: "null", expiresAt: 60_000 };
   const shellState = { currentSummary: { authority }, activeShellRootTarget: "home-gui" };
   const receipt = command => message({ type: `home:frame-authority-${command.phase === "prepare" ? "renewed" : "committed"}`,
     homeToken: "shell-token", requestId: command.requestId, oldHomeToken: command.homeToken,
@@ -116,13 +117,17 @@ async function fixture(target = "chat-room", enabled = true) {
   const client = createHomeNavigationClient({ homeToken: currentToken, homeOrigin, target, enabled, windowRef,
     onHomeToken(token) { currentToken = token; } });
   return { client, context, frames, message, receipt, commands, launchQueries, authority, frame, old, timers, home, windowRef,
+    pageshow() { for (const fn of listeners.get("pageshow") || []) fn(); },
     hold() { holdPrepare = true; }, token: () => currentToken, launches: () => launches, refreshed: () => refreshed,
     close() { context.retireLaunchedAppContext("old-frame"); },
   };
 }
 const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
 
-for (const target of ["chat-room", "people", "documents", "assistant", "library"]) {
+const RENEWING_TARGETS = ["chat-room", "people", "documents", "assistant", "library",
+  "creator", "custody", "marketplace", "elacity-player", "elacity-reader"];
+
+for (const target of RENEWING_TARGETS) {
   test(`Home refresh replaces an expiring open ${target} frame authority`, async () => {
     const f = await fixture(target);
     await f.context.refreshSignedHomeSession(); await settle();
@@ -135,6 +140,34 @@ for (const target of ["chat-room", "people", "documents", "assistant", "library"
   });
 }
 
+// Creator, Player and Reader load the navigation client with a dynamic import
+// that usually resolves after the document's first pageshow.
+for (const target of ["creator", "elacity-player", "elacity-reader"]) {
+  test(`A ${target} navigation client attached after the page was shown is bound and renewed`, async () => {
+    const f = await fixture(target, true, { readyState: "complete" });
+    assert.equal(f.old.source, f.frame);
+    await f.context.refreshSignedHomeSession(); await settle();
+    assert.equal(f.token(), "fresh-frame");
+    assert.equal(f.frames.has("old-frame"), false);
+    assert.equal(f.frames.get("fresh-frame").source, f.frame);
+    assert.equal(f.launches(), 1);
+  });
+}
+
+test("A navigation client created while its page loads is bound by its pageshow", async () => {
+  const f = await fixture("elacity-player", true, { readyState: "interactive" });
+  assert.equal(f.old.source, null);
+  // Home renews only frames it has bound.
+  await f.context.refreshSignedHomeSession(); await settle();
+  assert.equal(f.launches(), 0);
+  assert.equal(f.token(), "old-frame");
+  f.pageshow();
+  assert.equal(f.old.source, f.frame);
+  await f.context.refreshSignedHomeSession(); await settle();
+  assert.equal(f.token(), "fresh-frame");
+  assert.equal(f.launches(), 1);
+});
+
 test("A stolen frame token, wrong origin or another target cannot request renewal", async () => {
   const f = await fixture();
   const request = { type: "home:launch-target", homeToken: "old-frame", requestId: "renew-1", target: "chat-room", query: {} };
@@ -146,7 +179,7 @@ test("A stolen frame token, wrong origin or another target cannot request renewa
   assert.equal(f.token(), "old-frame");
 });
 
-for (const target of ["chat-room", "people", "documents", "assistant", "library"]) {
+for (const target of RENEWING_TARGETS) {
   test(`${target} renewal refuses unexpected query keys and picker authority`, async () => {
     for (const query of [{ unexpected: "value" }, { pickerRequestId: "foreign-picker" }]) {
       const f = await fixture(target);
@@ -160,7 +193,8 @@ for (const target of ["chat-room", "people", "documents", "assistant", "library"
 
 for (const [target, query] of [["chat-room", { conversation_id: "direct:fixture" }],
   ["documents", { doc: "did:fixture" }], ["documents", { objectUri: "library://fixture/file" }],
-  ["library", { uri: "library://fixture/folder" }]]) {
+  ["library", { uri: "library://fixture/folder" }],
+  ["elacity-player", { mint_id: "a".repeat(64) }], ["elacity-reader", { mint_id: "b".repeat(64) }]]) {
   test(`${target} renewal accepts its ${Object.keys(query)[0]} selector`, async () => {
     const f = await fixture(target);
     f.client.setQuery(query);
@@ -169,6 +203,98 @@ for (const [target, query] of [["chat-room", { conversation_id: "direct:fixture"
     assert.deepEqual(JSON.parse(JSON.stringify(f.launchQueries[0])), query);
   });
 }
+
+for (const target of ["elacity-player", "elacity-reader"]) {
+  test(`${target} renewal refuses a mint_id that is not a mint`, async () => {
+    for (const mint_id of ["A".repeat(64), "a".repeat(63), `${"a".repeat(64)}/x`, ""]) {
+      const f = await fixture(target);
+      f.client.setQuery({ mint_id });
+      await assert.rejects(f.client.renewAuthority(), /could not reconnect/);
+      assert.equal(f.launches(), 0, mint_id);
+      assert.equal(f.token(), "old-frame");
+    }
+  });
+}
+
+test("Home GUI renews the open window of every app Home renews, and of no other", async () => {
+  function element() {
+    const node = new Proxy({
+      style: {},
+      dataset: {},
+      classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
+      hidden: false,
+      textContent: "",
+      innerHTML: "",
+      className: "",
+      value: "",
+      children: [],
+    }, {
+      get(target, prop, receiver) {
+        if (prop in target) return target[prop];
+        if (typeof prop !== "string") return undefined;
+        const method = () => receiver;
+        target[prop] = method;
+        return method;
+      },
+      set(target, prop, value) {
+        target[prop] = value;
+        return true;
+      },
+    });
+    node.content = { cloneNode() { return element(); }, firstElementChild: node };
+    node.querySelector = () => element();
+    node.querySelectorAll = () => [];
+    node.closest = () => node;
+    node.appendChild = child => child;
+    node.insertBefore = child => child;
+    node.cloneNode = () => element();
+    node.replaceChildren = () => {};
+    return node;
+  }
+  const documentStub = {
+    addEventListener() {},
+    removeEventListener() {},
+    body: element(),
+    head: element(),
+    documentElement: element(),
+    querySelector() { return element(); },
+    querySelectorAll() { return []; },
+    getElementById() { return element(); },
+    createElement() { return element(); },
+    elementFromPoint() { return null; },
+  };
+  globalThis.document = documentStub;
+  globalThis.window = globalThis;
+  globalThis.location = { href: `${homeOrigin}/apps/home-gui/`, origin: homeOrigin };
+  globalThis.addEventListener = globalThis.addEventListener || function () {};
+  globalThis.removeEventListener = globalThis.removeEventListener || function () {};
+  globalThis.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+  globalThis.innerWidth = 1280;
+  globalThis.innerHeight = 800;
+  globalThis.requestAnimationFrame = () => 0;
+  globalThis.cancelAnimationFrame = () => {};
+  globalThis.getComputedStyle = () => new Proxy({}, { get: () => () => "" });
+  globalThis.fetch = async () => ({ ok: true, status: 200, text: async () => "<div></div>", json: async () => ({}) });
+  globalThis.localStorage = { getItem: () => null, setItem() {}, removeItem() {} };
+  globalThis.HTMLElement = globalThis.HTMLElement || class HTMLElement {};
+  globalThis.MutationObserver = globalThis.MutationObserver || class { observe() {} disconnect() {} };
+  globalThis.ResizeObserver = globalThis.ResizeObserver || class { observe() {} disconnect() {} };
+  const gui = await import("../capsules/home-gui/browser/home-gui.js");
+  const shell = await import("../capsules/home-gui/browser/shell-core.js?v=home-20261101d");
+  for (const [target, renews] of [...RENEWING_TARGETS.map(target => [target, true]), ["wallet", false], ["browser", false]]) {
+    const route = token => `/apps/${target}/?home_origin=${encodeURIComponent(homeOrigin)}#home_token=${token}`;
+    const frame = { contentWindow: {}, src: route("old"), dataset: { route: route("old") }, getAttribute: () => route("old") };
+    shell.shellState.windows.clear();
+    shell.shellState.windows.set("window", {
+      id: "window",
+      targetId: target,
+      node: { querySelector: () => frame },
+      homeNavigation: null,
+    });
+    const launched = { target, attach_kind: "iframe", launch_status: "launched", route: route("fresh") };
+    assert.equal(gui.renewHomeGuiFrameAuthority("old", launched, homeOrigin, false), renews, target);
+  }
+});
 
 test("Home's own refused authority leaves the registered app unchanged", async () => {
   const f = await fixture(); f.authority.signed_in = false;

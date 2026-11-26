@@ -16,10 +16,6 @@ pub mod wallet_signin;
 pub struct PrincipalId(pub String);
 
 impl PrincipalId {
-    pub fn local_person(id: &str) -> Self {
-        Self(format!("person:local:{id}"))
-    }
-
     pub fn device_did(did: &str) -> Self {
         Self(format!("device:{did}"))
     }

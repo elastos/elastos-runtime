@@ -813,6 +813,7 @@ async fn test_metamask_connector_lists_external_wallet_accounts() {
         ]),
         approvals: TokioMutex::default(),
         defaults: TokioMutex::default(),
+        ..MockWalletProvider::default()
     };
     let (state, wallet_provider) =
         wallet_test_state_with_recording_provider(dir.path(), provider).await;
@@ -894,6 +895,7 @@ async fn test_wallet_connector_approvals_are_scoped_to_connector() {
             }),
         ]),
         defaults: TokioMutex::default(),
+        ..MockWalletProvider::default()
     };
     let (state, wallet_provider) =
         wallet_test_state_with_recording_provider(dir.path(), provider).await;
@@ -962,6 +964,7 @@ async fn test_unisat_connector_lists_only_unisat_bitcoin_accounts() {
         ]),
         approvals: TokioMutex::default(),
         defaults: TokioMutex::default(),
+        ..MockWalletProvider::default()
     };
     let (state, wallet_provider) =
         wallet_test_state_with_recording_provider(dir.path(), provider).await;
@@ -1024,6 +1027,7 @@ async fn test_wallet_app_can_approve_wallet_scoped_external_request() {
             "expires_at": 100
         })]),
         defaults: TokioMutex::default(),
+        ..MockWalletProvider::default()
     };
     let (state, wallet_provider) =
         wallet_test_state_with_recording_provider(dir.path(), provider).await;
@@ -1117,6 +1121,7 @@ async fn test_metamask_connector_approves_external_wallet_request_with_handoff()
             "expires_at": 20
         })]),
         defaults: TokioMutex::default(),
+        ..MockWalletProvider::default()
     };
     let app = gateway_router(wallet_test_state_with_provider(dir.path(), provider).await);
 
@@ -1223,6 +1228,7 @@ async fn test_metamask_connector_completes_external_wallet_handoff() {
             "expires_at": 20
         })]),
         defaults: TokioMutex::default(),
+        ..MockWalletProvider::default()
     };
     let (state, wallet_provider) =
         wallet_test_state_with_recording_provider(dir.path(), provider).await;

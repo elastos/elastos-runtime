@@ -613,7 +613,8 @@ try {
     if (app === "marketplace") {
       await frame.getByText("People", { exact: true }).first().waitFor();
       await frame.getByRole("button", { name: "Media", exact: true }).click();
-      assert.match(await frame.locator("#store-sections").innerText(), /No|media/i);
+      // Media loads the market first, so wait for its settled text.
+      await frame.locator("#store-sections").filter({ hasText: /No|media/i }).waitFor();
     }
     selectedCid = `bafybei${"b".repeat(52)}`; phase = "unprepared"; kept = false;
     await frame.locator("body").evaluate(() => { delete document.hidden; document.dispatchEvent(new Event("visibilitychange")); });

@@ -107,6 +107,8 @@ async fn n7_browser_site_projection_all_surfaces_existing_routes() {
                 accounts: TokioMutex::default(),
                 approvals: TokioMutex::new(vec![record]),
                 defaults: TokioMutex::default(),
+                approvals_unavailable: TokioMutex::default(),
+                reject_behaviour: TokioMutex::default(),
             };
             let (state, _) = wallet_test_state_with_recording_provider(dir.path(), provider).await;
             let app = gateway_router(state);
@@ -200,6 +202,8 @@ async fn n3_direct_external_approve_refused_existing_routes() {
                 accounts: TokioMutex::default(),
                 approvals: TokioMutex::new(vec![record.clone()]),
                 defaults: TokioMutex::default(),
+                approvals_unavailable: TokioMutex::default(),
+                reject_behaviour: TokioMutex::default(),
             };
             let (state, recorder) =
                 wallet_test_state_with_recording_provider(dir.path(), provider).await;
@@ -300,6 +304,8 @@ async fn n7_browser_site_projection_all_surfaces_transactions() {
             ]),
             approvals: TokioMutex::default(),
             defaults: TokioMutex::default(),
+            approvals_unavailable: TokioMutex::default(),
+            reject_behaviour: TokioMutex::default(),
         });
         let app = gateway_router(
             wallet_chain_test_state_with_shared_wallet_provider(dir.path(), provider.clone()).await,
@@ -403,6 +409,8 @@ async fn n4_pending_requests_current_session_only_existing_routes() {
         accounts: TokioMutex::default(),
         approvals: TokioMutex::new(vec![record.clone()]),
         defaults: TokioMutex::default(),
+        approvals_unavailable: TokioMutex::default(),
+        reject_behaviour: TokioMutex::default(),
     };
     let (state, recorder) = wallet_test_state_with_recording_provider(dir.path(), provider).await;
     let app = gateway_router(state);

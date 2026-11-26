@@ -5,11 +5,14 @@
 # busybox ash as /bin/sh (no bash) -- no [[ ]], no ${!name} indirection, no
 # `set -o pipefail`.
 #
-# One-shot-provisions this node's inactive custody state root and its public
-# descriptor on first boot (guarded by a receipt file so restarts are a
-# no-op), then execs the standalone provider host from Task 4
-# (`elastos run custody-provider --with availability-provider --with
-# ipfs-provider`). Only the descriptor -- a public artifact, and the sole
+# Provisions this node's inactive custody state root and its public
+# descriptor on first boot (a receipt file marks it done), provisions again
+# on every restart that has the same values (idempotent; it keeps the
+# node-local descriptor the node gives its card from), then execs the
+# standalone provider host from Task 4
+# (`elastos run custody-provider`, with the extra planes its --role calls for
+# -- see the role block below). Only the descriptor -- a public
+# artifact, and the sole
 # thing that crosses into /shared -- carries the node's identity forward
 # (its transport.peer_did field IS the DID; no separate .did file); all
 # custody state stays under the private, owner-only data root.
@@ -25,6 +28,50 @@ image_root="/opt/elastos-image"
 elastos_bin="${data_root}/bin/elastos"
 shared="/shared"
 init_receipt="${data_root}/protected-content/custody-provider/container-init.json"
+
+# --role decides which provider planes this node hosts. Container args reach
+# here because the image's ENTRYPOINT is this script, so `command:` in
+# docker-compose.yaml (or trailing args to `docker run`) land in "$@".
+#
+#   custody  (default) custody + chain ONLY. Key-share custody and release is
+#            the custody provider's whole job (`provision_node_share`,
+#            `release_contribution`, `prepare_evidence`, `settle_evidence`) --
+#            it never reads ciphertext, which arrives inside the signed
+#            release operation. A custody-only node therefore has no reason to
+#            run kubo, and must never be a content-availability failure point.
+#            This is the default precisely because custody is the role: a node
+#            has to be asked, explicitly, to take on storage as well.
+#   storage            custody + chain + ipfs. The node also serves as a
+#            content-availability replica, so it needs a working kubo. A
+#            replica placed here is proven by its own verified local pin; the
+#            node consults no external placement service.
+#
+# `--with chain-provider` is NOT optional in either role: a committee member
+# settles every release through its own chain rights evidence, so a node
+# without it fails closed on release.
+custody_node_role="custody"
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+    --role)
+        [ "$#" -ge 2 ] || fail "--role needs a value: storage or custody"
+        custody_node_role="$2"
+        shift 2
+        ;;
+    --role=*)
+        custody_node_role="${1#--role=}"
+        shift
+        ;;
+    *)
+        fail "unknown argument '$1' -- this entrypoint accepts only --role <storage|custody>"
+        ;;
+    esac
+done
+case "${custody_node_role}" in
+storage | custody) ;;
+*)
+    fail "--role must be 'storage' or 'custody' (got '${custody_node_role}')"
+    ;;
+esac
 
 fail() {
     echo "FAIL: $*" >&2
@@ -45,7 +92,7 @@ sync_image_artifacts() {
         changed=1
     fi
     if [ "${changed}" -eq 0 ]; then
-        for name in elastos custody-provider availability-provider ipfs-provider chain-provider; do
+        for name in elastos custody-provider ipfs-provider chain-provider; do
             if [ ! -f "${data_root}/bin/${name}" ] \
                 || [ "$(sha256sum <"${image_root}/bin/${name}")" != "$(sha256sum <"${data_root}/bin/${name}")" ]; then
                 changed=1
@@ -59,7 +106,7 @@ sync_image_artifacts() {
 
     mkdir -p "${data_root}/bin"
     chmod 0700 "${data_root}/bin"
-    for name in elastos custody-provider availability-provider ipfs-provider chain-provider; do
+    for name in elastos custody-provider ipfs-provider chain-provider; do
         cp "${image_root}/bin/${name}" "${data_root}/bin/${name}.tmp"
         chmod 0700 "${data_root}/bin/${name}.tmp"
         mv "${data_root}/bin/${name}.tmp" "${data_root}/bin/${name}"
@@ -91,29 +138,38 @@ if ! ( : >"${write_probe}" ) 2>/dev/null; then
 fi
 rm -f "${write_probe}"
 
-if [ ! -f "${init_receipt}" ]; then
-    # CUSTODY_TRUSTED_RUNTIME_ISSUER / CUSTODY_OPERATOR / CUSTODY_FAILURE_DOMAIN
-    # / ELASTOS_AVAILABILITY_ENSURE_URL are deployment-time configuration
-    # (docker-compose.yaml, or -e on `docker run`) -- this image declares no
-    # ENV/ARG default for any of them, and they are checked only here, at the
-    # moment they are actually needed (first boot, before a state root
-    # exists). ELASTOS_AVAILABILITY_ENSURE_URL is persisted into the receipt
-    # below and re-exported from it on every later boot (see the `else`
-    # branch), so a restart of an already-provisioned node needs none of the
-    # four: zero required env vars.
-    if [ -z "${CUSTODY_TRUSTED_RUNTIME_ISSUER:-}" ] || [ -z "${CUSTODY_OPERATOR:-}" ] \
-        || [ -z "${CUSTODY_FAILURE_DOMAIN:-}" ] || [ -z "${ELASTOS_AVAILABILITY_ENSURE_URL:-}" ]; then
-        fail "first boot needs CUSTODY_TRUSTED_RUNTIME_ISSUER, CUSTODY_OPERATOR, CUSTODY_FAILURE_DOMAIN, and ELASTOS_AVAILABILITY_ENSURE_URL to provision this node -- set them in docker-compose.yaml or pass -e to docker run"
-    fi
-    # This value is about to be hand-embedded in a plain JSON string field
-    # below (see the printf comment); reject anything that field can't
-    # safely hold rather than write corrupt JSON a later boot can't parse.
-    case "${ELASTOS_AVAILABILITY_ENSURE_URL}" in
-        *'"'* | *'\'*)
-            fail "ELASTOS_AVAILABILITY_ENSURE_URL contains a double-quote or backslash, which this entrypoint's plain-JSON receipt writer cannot safely embed"
-            ;;
-    esac
+# CUSTODY_TRUSTED_RUNTIME_ISSUER / CUSTODY_OPERATOR / CUSTODY_FAILURE_DOMAIN
+# are deployment-time configuration (docker-compose.yaml, or -e on
+# `docker run`) -- this image declares no ENV/ARG default for any of them.
+# First boot needs all three, to provision the node. On a restart they are
+# all or nothing: with all three the node is provisioned again (below), and
+# with none it boots on what it already has.
+first_boot=0
+[ -f "${init_receipt}" ] || first_boot=1
+provision_env=none
+if [ -n "${CUSTODY_TRUSTED_RUNTIME_ISSUER:-}" ] && [ -n "${CUSTODY_OPERATOR:-}" ] \
+    && [ -n "${CUSTODY_FAILURE_DOMAIN:-}" ]; then
+    provision_env=all
+elif [ -n "${CUSTODY_TRUSTED_RUNTIME_ISSUER:-}" ] || [ -n "${CUSTODY_OPERATOR:-}" ] \
+    || [ -n "${CUSTODY_FAILURE_DOMAIN:-}" ]; then
+    provision_env=some
+fi
+if [ "${first_boot}" -eq 1 ] && [ "${provision_env}" != "all" ]; then
+    fail "first boot needs CUSTODY_TRUSTED_RUNTIME_ISSUER, CUSTODY_OPERATOR and CUSTODY_FAILURE_DOMAIN to provision this node -- set them in docker-compose.yaml or pass -e to docker run"
+fi
+if [ "${provision_env}" = "some" ]; then
+    fail "set all of CUSTODY_TRUSTED_RUNTIME_ISSUER, CUSTODY_OPERATOR and CUSTODY_FAILURE_DOMAIN (the values this node was first provisioned with), or none of them"
+fi
 
+# Provisioning runs on every boot that has the three values, not only the
+# first. It is idempotent for the same identity, issuer and labels, and it
+# keeps the node's own descriptor at protected-content/custody-node.descriptor.json,
+# which the node needs to give its card to the Home it trusts
+# (`custody.node_card.read` over Carrier). A node provisioned before the
+# Runtime kept that file gains it on its next restart. A changed issuer or
+# label is refused, and the node does not start: a node never changes
+# either once an owner may hold its card.
+if [ "${provision_env}" = "all" ]; then
     # `elastos identity show` has no --json output (verified against
     # elastos/crates/elastos-server/src/identity_cmd.rs); parse the plain
     # "DID:       <did>" line instead. The underlying identity load creates
@@ -132,41 +188,56 @@ if [ ! -f "${init_receipt}" ]; then
             ;;
     esac
 
-    "${elastos_bin}" protected-content-config provision-custody-node \
+    # --output is create-only. First boot exports the descriptor to /shared;
+    # a restart already exported it there, so its copy goes to a private
+    # scratch directory that is removed straight after. A scratch directory
+    # left by a killed boot is removed first.
+    rm -rf "${data_root}"/.reprovision.*
+    reprovision_dir=""
+    if [ "${first_boot}" -eq 1 ]; then
+        descriptor_output="${shared}/${did}.descriptor.json"
+    else
+        reprovision_dir="$(mktemp -d "${data_root}/.reprovision.XXXXXX")" \
+            || fail "could not create a scratch directory under ${data_root} to provision this node again"
+        descriptor_output="${reprovision_dir}/descriptor.json"
+    fi
+    if ! "${elastos_bin}" protected-content-config provision-custody-node \
         --data-dir "${data_root}" \
         --trusted-runtime-issuer "${CUSTODY_TRUSTED_RUNTIME_ISSUER}" \
         --operator "${CUSTODY_OPERATOR}" \
         --failure-domain "${CUSTODY_FAILURE_DOMAIN}" \
         --transport-peer-did "${did}" \
-        --output "${shared}/${did}.descriptor.json" \
-        || fail "provision-custody-node failed; run: docker logs <container>"
+        --output "${descriptor_output}"; then
+        [ -z "${reprovision_dir}" ] || rm -rf "${reprovision_dir}"
+        if [ "${first_boot}" -eq 1 ]; then
+            fail "provision-custody-node failed; run: docker logs <container>"
+        fi
+        fail "provision-custody-node refused this restart (the error above names the cause) -- a restart must use the CUSTODY_TRUSTED_RUNTIME_ISSUER, CUSTODY_OPERATOR and CUSTODY_FAILURE_DOMAIN this node was first provisioned with; run: docker logs <container>"
+    fi
+    [ -z "${reprovision_dir}" ] || rm -rf "${reprovision_dir}"
     # The descriptor stays owner-only (0600, uid of this container's custody
     # user): the composition ceremony refuses any descriptor that is not, so
     # it is never relaxed here. A Linux host cannot read that file through
     # the bind mount; up.sh pulls its own owner-only copy out of the
     # container instead (docker compose exec cat) -- see "The /shared handoff".
+elif [ -f "${data_root}/protected-content/custody-node.descriptor.json" ]; then
+    echo "INFO: restart without the provisioning variables; this node keeps its card for the Home it trusts" >&2
+else
+    echo "WARNING: this node has no protected-content/custody-node.descriptor.json, so it answers its owner's card fetch with no_card. Restart it once with CUSTODY_TRUSTED_RUNTIME_ISSUER, CUSTODY_OPERATOR and CUSTODY_FAILURE_DOMAIN set to the values it was first provisioned with; until then the owner can paste its exported node card" >&2
+fi
 
+if [ "${first_boot}" -eq 1 ]; then
     # A plain JSON object hand-built with printf rather than piped through
     # jq: this is the only JSON this entrypoint ever writes, every value in
     # it is already checked above for characters this format can't safely
     # embed, and adding a jq dependency to the runtime image just for these
-    # few lines is not worth it. availability_ensure_url is persisted here
-    # so a restart never needs ELASTOS_AVAILABILITY_ENSURE_URL supplied
-    # again (see the `else` branch below).
-    printf '{"did":"%s","provisioned_at":"%s","availability_ensure_url":"%s"}\n' \
-        "${did}" "$(date -u +%FT%TZ)" "${ELASTOS_AVAILABILITY_ENSURE_URL}" >"${init_receipt}.tmp"
+    # few lines is not worth it. Receipts written before the storage role
+    # stopped hosting an external availability plane also carry an
+    # availability_ensure_url field; nothing reads it any more.
+    printf '{"did":"%s","provisioned_at":"%s"}\n' \
+        "${did}" "$(date -u +%FT%TZ)" >"${init_receipt}.tmp"
     chmod 0600 "${init_receipt}.tmp"
     mv "${init_receipt}.tmp" "${init_receipt}"
-else
-    # Already provisioned: restore the one env var the final exec still
-    # needs from where first boot persisted it, so a restart requires
-    # setting nothing at all (CUSTODY_* are never needed again either --
-    # provision-custody-node above only runs once, in the branch above).
-    ELASTOS_AVAILABILITY_ENSURE_URL="$(sed -n 's/.*"availability_ensure_url":"\([^"]*\)".*/\1/p' "${init_receipt}")"
-    if [ -z "${ELASTOS_AVAILABILITY_ENSURE_URL}" ]; then
-        fail "${init_receipt} has no availability_ensure_url field; run: docker exec <container> cat ${init_receipt}"
-    fi
-    export ELASTOS_AVAILABILITY_ENSURE_URL
 fi
 
 # A custody committee member settles every release through its own chain
@@ -201,14 +272,53 @@ if [ ! -f "${chain_config}" ] \
     echo "INFO: synced protected-content/chain-provider.json from ${shared_chain_config}" >&2
 fi
 
+# Kubo peering list, synced exactly like chain-provider.json above -- same
+# bind-mount readability rule, same sha256 compare, same owner-only private
+# copy -- with one difference: ABSENT IS FINE. Peering is an optimisation,
+# not a prerequisite; a node without the file boots with stock kubo defaults
+# and behaves exactly as it did before peering existed. It is only ever
+# missing on a first `up` (up.sh writes it after the nodes are already
+# running, because it needs their peer ids to write it at all), so the node
+# picks it up on the restart that follows.
+#
+# Why it exists: co-operating kubos that have never met cannot locate a CID
+# whose DHT provider record has not propagated yet, and stock kubo drops an
+# untagged connection seconds after crossing its ConnMgr high-water mark.
+# Peering tags the connection permanently, so a mint's remote pin resolves
+# instead of hanging.
+shared_peering="${shared}/ipfs-peering.json"
+node_peering="${data_root}/ipfs-peering.json"
+if [ -f "${shared_peering}" ]; then
+    if [ ! -r "${shared_peering}" ]; then
+        fail "${shared_peering} is not readable by uid $(id -u) (this container's custody user) -- the host must make it group/world-readable (chmod 0644; deploy/custody-host/up.sh up does this)"
+    fi
+    if [ ! -f "${node_peering}" ] \
+        || [ "$(sha256sum <"${shared_peering}")" != "$(sha256sum <"${node_peering}")" ]; then
+        cp "${shared_peering}" "${node_peering}.tmp"
+        chmod 0600 "${node_peering}.tmp"
+        mv "${node_peering}.tmp" "${node_peering}"
+        echo "INFO: synced ipfs-peering.json from ${shared_peering}" >&2
+    fi
+elif [ -f "${node_peering}" ]; then
+    # The deployment withdrew the list: drop the stale private copy rather
+    # than keep peering with nodes the operator has stopped naming.
+    rm -f "${node_peering}"
+    echo "INFO: ${shared_peering} is gone; removed the stale ${node_peering}" >&2
+else
+    echo "INFO: no ${shared_peering}; kubo peering is unconfigured (stock defaults)" >&2
+fi
+
 # --carrier-addr falls back to an ephemeral bind if 0.0.0.0:4433 is taken;
 # callers must check the readiness receipt's carrier_bound rather than
-# assume the requested port. ELASTOS_AVAILABILITY_ENSURE_URL is in the
-# environment either way by this point (just-validated first-boot value, or
-# restored from the receipt above) -- `elastos run --with
-# availability-provider` reads it directly, there is no CLI flag for it.
+# assume the requested port.
+if [ "${custody_node_role}" = "custody" ]; then
+    echo "INFO: starting in the 'custody' role -- custody + chain planes only, no ipfs" >&2
+    exec "${elastos_bin}" run custody-provider \
+        --with chain-provider \
+        --carrier-addr 0.0.0.0:4433
+fi
+
 exec "${elastos_bin}" run custody-provider \
-    --with availability-provider \
     --with ipfs-provider \
     --with chain-provider \
     --carrier-addr 0.0.0.0:4433

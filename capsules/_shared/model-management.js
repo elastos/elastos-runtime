@@ -481,9 +481,15 @@ import { createTransferProgress, announceTransferProgress } from "./transfer-pro
         document.removeEventListener("visibilitychange", onVisibility);
         window.removeEventListener("pagehide", destroy);
       }
+      // Home renews the frame's token while this view stays open (#532). Each
+      // request reads the current token; the model and any operation in
+      // progress are kept.
+      function setToken(value) {
+        if (typeof value === "string" && value.trim()) token = value.trim();
+      }
       document.addEventListener("visibilitychange", onVisibility);
       window.addEventListener("pagehide", destroy);
-      return { setVisible, refresh: load, destroy };
+      return { setVisible, refresh: load, destroy, setToken };
     },
   };
 

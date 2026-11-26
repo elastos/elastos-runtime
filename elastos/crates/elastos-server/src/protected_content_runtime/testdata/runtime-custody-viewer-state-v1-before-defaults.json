@@ -1,0 +1,16 @@
+{
+  "schema": "elastos.library.runtime-custody-viewer-state/v1",
+  "principal_id": "principal-fixture",
+  "profile_did": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+  "mint_id": "0x1111111111111111111111111111111111111111111111111111111111111111",
+  "content_id": "0x2222222222222222222222222222222222222222222222222222222222222222",
+  "runtime_session_binding_digest": "0x1212121212121212121212121212121212121212121212121212121212121212",
+  "audit_request_id": "audit-fixture",
+  "viewer_session_handle": "0x34343434343434343434343434343434",
+  "expires_at": 1763703600,
+  "lifecycle_status": "closed",
+  "pending_close_result": "closed",
+  "pending_cancel_result": null,
+  "created_at": 1763700400,
+  "updated_at": 1763700500
+}

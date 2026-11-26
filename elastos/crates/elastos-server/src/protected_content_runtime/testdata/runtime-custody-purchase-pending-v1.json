@@ -1,0 +1,47 @@
+{
+  "schema": "elastos.library.runtime-custody-purchase/v1",
+  "principal_id": "principal-fixture",
+  "profile_did": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+  "mint_id": "0x1111111111111111111111111111111111111111111111111111111111111111",
+  "content_id": "0x2222222222222222222222222222222222222222222222222222222222222222",
+  "cid": "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+  "listing_sha256": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "seller_address": "0x4444444444444444444444444444444444444444",
+  "chain_namespace": "eip155",
+  "network": "base-mainnet",
+  "ledger": "0x5555555555555555555555555555555555555555",
+  "token_id": "1",
+  "operative": "0x6666666666666666666666666666666666666666",
+  "price": "1000000",
+  "pay_token": "0x7777777777777777777777777777777777777777",
+  "availability_receipt_digest": "0x9999999999999999999999999999999999999999999999999999999999999999",
+  "account_id": "account-fixture",
+  "address": "0xffffffffffffffffffffffffffffffffffffffff",
+  "approval_stage": {
+    "stage": "approve",
+    "effect_id": "effect-approve",
+    "approval_request_id": "approval-approve",
+    "request_sha256": "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "chain_namespace": "eip155",
+    "network": "base-mainnet",
+    "to": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "value": "0",
+    "data": "0x"
+  },
+  "buy_stage": {
+    "stage": "buy",
+    "effect_id": "effect-buy",
+    "approval_request_id": "approval-buy",
+    "request_sha256": "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "chain_namespace": "eip155",
+    "network": "base-mainnet",
+    "to": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "value": "0",
+    "data": "0x"
+  },
+  "progress": {
+    "state": "pending"
+  },
+  "created_at": 1763700200,
+  "updated_at": 1763700300
+}

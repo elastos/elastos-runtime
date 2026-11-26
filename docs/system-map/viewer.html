@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <meta name="elastos-c4-sha256" content="afa157f5707c7351534087c0cf384598e812604e326ec8719649a27370b92ec9">
+  <meta name="elastos-c4-sha256" content="bbb0ef1a862517181d506bdc5789e9b409de134e5b7f495b9e8aa3c493da95f8">
   <title>ElastOS C4 model</title>
   <style>
     :root {
@@ -628,7 +628,38 @@
           ]
         },
         {
-          id: "deployment", group: "Deployment", number: "14", level: "C4 · Deployment",
+          id: "protected", group: "Dynamics", number: "14", level: "Dynamic view",
+          title: "Protected-content open", question: "Who coordinates rights, custody release, and decryption when a buyer opens protected content?",
+          note: "Content streams a remote sealer’s ciphertext into private offline IPFS and validates the file CIDs before pinning. Uploads and imports share the host storage limit with custody shares and kept copies. Carrier moves the ciphertext between eligible Homes. Public Kubo holds validated metadata and covers. Rights authorize reading across Homes; source interfaces do not prove installed playback.",
+          kind: "sequence",
+          participants: [
+            P("viewer", "Launched viewer", "Opaque launch authority and bounded reads."),
+            P("runtime", "Buyer Runtime", "Verifies descriptor, manifest and session binding. Refreshes through verified pool routes, including when the asset's epoch is missing. The 20-second budget applies to one resolve. Pending polls can repeat it."),
+            P("pool", "Verified pool server", "Stages content; serves encrypted output to the buyer delivery key."),
+            P("wallet", "Wallet Provider", "Signs the exact rights request and authorized recipients."),
+            P("custody", "Epoch custody nodes", "Independently verify rights before recipient-sealed release."),
+            P("chain", "Chain Provider", "Finalized account-rights evidence."),
+            P("decrypt", "Server private decrypt", "Reconstructs the CEK, decrypts/authenticates and reseals checked content. The pool service verifies signed-manifest proofs.")
+          ],
+          messages: [
+            M("viewer", "runtime", "Open with opaque launch authority"),
+            M("runtime", "runtime", "Verify descriptor and manifest against item epoch"),
+            M("runtime", "pool", "Prepare content and recipient attestation"),
+            M("pool", "runtime", "Verified staging and signed recipient identity", { return: true }),
+            M("runtime", "wallet", "Authorize exact rights request and recipients"),
+            M("wallet", "runtime", "Account signature", { return: true }),
+            M("runtime", "custody", "Signed release operation"),
+            M("custody", "chain", "Independently check finalized account rights"),
+            M("custody", "runtime", "Recipient-sealed contributions and receipts", { return: true }),
+            M("runtime", "pool", "Open bound server session"),
+            M("pool", "pool", "Check each part against signed manifest identity"),
+            M("pool", "decrypt", "Reconstruct CEK, decrypt and reseal checked parts"),
+            M("pool", "runtime", "Output encrypted to buyer delivery key", { return: true }),
+            M("runtime", "viewer", "Bounded ordered session reads", { return: true })
+          ]
+        },
+        {
+          id: "deployment", group: "Deployment", number: "15", level: "C4 · Deployment",
           title: "One node and one peer", question: "Where do the Level 2 containers run on a local installation?",
           note: "This is a generic deployment view. Assign target roles from verified host capabilities recorded in the owning GitHub issue.",
           groups: [G(15, 25, 215, 670, "Person device · Deployment node"), G(250, 25, 720, 670, "ElastOS host machine · Deployment node")],

@@ -571,6 +571,7 @@ async function run(engine) {
     assert((await fixtureState(page)).appReadyCount===1,'Wallet announces its admitted launch once');assert(server.state.balanceCalls.length===2,'balances read each supported network once');
     assert((await fixtureState(page)).pendingMessages.at(-1)?.count===1,'Wallet reports the current pending count to Home');
     assert(server.state.priceCalls>=1,'Wallet loads display prices');
+    assert(await frame.locator('#wallet-account-card-network').textContent()==='Built-in · Elastos Smart Chain','Hero card shows the network where the EVM account is the transaction default.');
     await capture(frame,'wallet-list','Wallet lists each identity and its uses.');await assertNoHorizontalOverflow(frame,'desktop list');
     await frame.locator('.one-wallet').filter({hasText:'Base'}).getByRole('button',{name:'Send',exact:true}).click();
     await frame.locator('.wallet-flow-row').filter({hasText:'1.5 ETH'}).filter({hasText:'Base'}).click();

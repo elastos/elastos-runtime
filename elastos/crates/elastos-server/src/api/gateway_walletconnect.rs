@@ -403,6 +403,8 @@ pub(super) fn notification(
         } else {
             None
         },
+        passkey_approval: false,
+        step_up_request: None,
     })
 }
 #[derive(Deserialize)]

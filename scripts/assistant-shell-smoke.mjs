@@ -22,7 +22,7 @@ const originalIndexSource = readFileSync(
 );
 const source = `${originalSource
   .replace(
-    '"/apps/home/home-clipboard-client.js?v=home-20260726a"',
+    '"/apps/home/home-clipboard-client.js?v=home-20261111a"',
     JSON.stringify(homeClipboardClientUrl),
   )
   .replace(
@@ -2080,7 +2080,7 @@ for (const [exact, editDuringCreate] of [[true, null], [true, "Newer edit"], [tr
 
 assert(!/\blocalStorage\b|\bsessionStorage\b|\bindexedDB\b/.test(originalSource));
 assert(!/navigator\.clipboard|execCommand/.test(originalSource));
-assert(originalSource.includes('"/apps/home/home-clipboard-client.js?v=home-20260726a"'));
+assert(originalSource.includes('"/apps/home/home-clipboard-client.js?v=home-20261111a"'));
 assert(originalSource.includes('"./vendor/katex/katex.mjs"'));
 assert(originalIndexSource.includes('./vendor/katex/katex.min.css'));
 assert(originalSource.includes("copyNode.hidden = view.copyHidden;"));

@@ -5210,53 +5210,6 @@ pub(crate) fn save_auth_state(
     })
 }
 
-pub fn store_challenge(data_dir: &Path, challenge: AuthChallengeV1) -> anyhow::Result<()> {
-    mutate_auth_state(data_dir, |state| {
-        let now = now_ts();
-        prune_auth_state(state, now);
-        state
-            .challenges
-            .retain(|stored| stored.challenge.challenge_id != challenge.challenge_id);
-        state.challenges.push(StoredAuthChallenge {
-            challenge,
-            consumed_at: None,
-        });
-        Ok(())
-    })
-}
-
-pub fn load_challenge(data_dir: &Path, challenge_id: &str) -> anyhow::Result<AuthChallengeV1> {
-    let state = load_auth_state(data_dir)?;
-    let stored = state
-        .challenges
-        .iter()
-        .find(|stored| stored.challenge.challenge_id == challenge_id)
-        .ok_or_else(|| anyhow!("auth challenge not found"))?;
-    if stored.consumed_at.is_some() {
-        anyhow::bail!("auth challenge already consumed");
-    }
-    Ok(stored.challenge.clone())
-}
-
-pub fn consume_challenge(
-    data_dir: &Path,
-    challenge_id: &str,
-    consumed_at: u64,
-) -> anyhow::Result<()> {
-    mutate_auth_state(data_dir, |state| {
-        let stored = state
-            .challenges
-            .iter_mut()
-            .find(|stored| stored.challenge.challenge_id == challenge_id)
-            .ok_or_else(|| anyhow!("auth challenge not found"))?;
-        if stored.consumed_at.is_some() {
-            anyhow::bail!("auth challenge already consumed");
-        }
-        stored.consumed_at = Some(consumed_at);
-        Ok(())
-    })
-}
-
 pub fn upsert_principal_for_binding(
     data_dir: &Path,
     binding: ProofBinding,

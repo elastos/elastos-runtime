@@ -6,7 +6,7 @@ use ed25519_dalek::SigningKey;
 use elastos_protected_content_contracts::{RuntimeReleaseAuditIdV1, TerminalReceiptIssuerKey};
 use elastos_protected_content_provider_contracts::{
     DecryptProviderRequestV1, DecryptProviderResponseStatusV1, DecryptProviderResponseV1,
-    ViewerMediaPartSelectorV1,
+    ProviderFailureCodeV1, ViewerMediaPartSelectorV1,
 };
 use protected_content_decrypt_provider::PROTECTED_CONTENT_DECRYPT_PROVIDER_TARGET;
 use serde_json::json;
@@ -152,6 +152,16 @@ fn typed_ok_response(response: serde_json::Value) -> DecryptProviderResponseV1 {
         &serde_json::to_vec(response.get("data").unwrap()).unwrap(),
     )
     .unwrap()
+}
+
+fn assert_failure_code(response: serde_json::Value, expected: ProviderFailureCodeV1) {
+    let typed = typed_ok_response(response);
+    assert_eq!(
+        typed.status(),
+        DecryptProviderResponseStatusV1::Failure,
+        "expected a failure response"
+    );
+    assert_eq!(typed.failure_code().unwrap(), expected);
 }
 
 #[test]
@@ -408,4 +418,511 @@ fn process_prepare_open_read_close_replay_and_restart_absence_flow() {
     );
 
     restarted.shutdown_and_assert_clean();
+}
+
+#[test]
+fn process_object_viewer_open_read_tamper_and_media_cross_kind_op_are_exact() {
+    const CHUNK_BYTES: usize = 1_048_576;
+    let runtime_seed = 0x52;
+    let terminal_issuer_seed = 0x71;
+    let base_time = now_unix_seconds();
+
+    // Two chunks (one full, one partial) so chunk index 0..n is genuinely
+    // exercised, each filled with a distinct byte so an exact plaintext
+    // mismatch could not be masked by both chunks looking alike.
+    let chunks = vec![
+        vec![0x11u8; CHUNK_BYTES],
+        vec![0x22u8; CHUNK_BYTES / 2 + 37],
+    ];
+    let (framed_header, framed_chunks, object_identity, envelope) =
+        support::object_components("application/pdf", &chunks, base_time);
+    let binding = support::binding_for_envelope(&envelope);
+
+    let prepare_audit = RuntimeReleaseAuditIdV1::new(support::digest(0xe1)).unwrap();
+    let prepare_request = DecryptProviderRequestV1::new_prepare_recipient(
+        &binding,
+        prepare_audit,
+        elastos_protected_content_contracts::RightsActionV1::View,
+        support::runtime_issuer(runtime_seed),
+        support::issued_at(base_time),
+        base_time + 30,
+    )
+    .unwrap();
+
+    let mut process = ProviderProcess::start();
+    let init = process.request_json(json!({
+        "op": "init",
+        "config": init_config(runtime_seed)
+    }));
+    assert_eq!(init["status"], "ok");
+
+    let prepared = typed_ok_response(process.request_json(wrap_runtime_request(&prepare_request)));
+    assert_eq!(
+        prepared.status(),
+        DecryptProviderResponseStatusV1::PreparedRecipient
+    );
+
+    let open_audit = RuntimeReleaseAuditIdV1::new(support::digest(0xe2)).unwrap();
+    let operation = support::make_signed_runtime_release_operation(
+        runtime_seed,
+        open_audit,
+        &envelope,
+        prepared.recipient_public_key().unwrap(),
+        prepared.recipient_identity().unwrap(),
+        base_time,
+    );
+    let contributions = vec![
+        support::make_signed_node_contribution(&operation, &envelope, runtime_seed, 1, base_time),
+        support::make_signed_node_contribution(&operation, &envelope, runtime_seed, 2, base_time),
+    ];
+    let terminal_receipt = support::make_signed_terminal_receipt(
+        &operation,
+        &contributions,
+        terminal_issuer_seed,
+        base_time,
+    );
+
+    let open_request = DecryptProviderRequestV1::new_open_viewer_session_for_object(
+        *prepared.prepared_recipient_handle().unwrap(),
+        &operation,
+        TerminalReceiptIssuerKey::new(
+            SigningKey::from_bytes(&[terminal_issuer_seed; 32])
+                .verifying_key()
+                .to_bytes(),
+        )
+        .unwrap(),
+        envelope.manifest().content_key_commitment(),
+        &object_identity,
+        &framed_header,
+        &contributions,
+        &terminal_receipt,
+    )
+    .unwrap();
+    let opened = typed_ok_response(process.request_json(wrap_runtime_request(&open_request)));
+    assert_eq!(
+        opened.status(),
+        DecryptProviderResponseStatusV1::ViewerSessionOpened,
+        "open failure_code={:?}",
+        opened.failure_code()
+    );
+    let viewer_handle = *opened.viewer_session_handle().unwrap();
+    assert_eq!(
+        &viewer_handle,
+        prepared.prepared_recipient_handle().unwrap()
+    );
+
+    // Read every chunk in order and assert byte-for-byte plaintext recovery
+    // (not merely "changed" the way the media path's fixture-based tests
+    // check, since these framed chunks are genuinely sealed under the
+    // content key this session reconstructs).
+    for (index, (chunk, framed_chunk)) in chunks.iter().zip(framed_chunks.iter()).enumerate() {
+        let read_request = DecryptProviderRequestV1::new_read_viewer_object_chunk(
+            open_audit,
+            viewer_handle,
+            u32::try_from(index).unwrap(),
+            framed_chunk,
+        )
+        .unwrap();
+        let read = typed_ok_response(process.request_json(wrap_runtime_request(&read_request)));
+        assert_eq!(
+            read.status(),
+            DecryptProviderResponseStatusV1::ViewerObjectChunk,
+            "chunk {index} failure_code={:?}",
+            read.failure_code()
+        );
+        assert_eq!(read.plaintext().unwrap(), chunk.as_slice());
+    }
+
+    // Tamper exactly one byte of a framed chunk, preserving its length, so
+    // rejection can only come from AEAD authentication, never a length
+    // check.
+    let mut tampered_chunk = framed_chunks[0].clone();
+    let tamper_offset = tampered_chunk.len() / 2;
+    tampered_chunk[tamper_offset] ^= 0x01;
+    assert_eq!(tampered_chunk.len(), framed_chunks[0].len());
+    let tampered_request = DecryptProviderRequestV1::new_read_viewer_object_chunk(
+        open_audit,
+        viewer_handle,
+        0,
+        &tampered_chunk,
+    )
+    .unwrap();
+    assert_failure_code(
+        process.request_json(wrap_runtime_request(&tampered_request)),
+        ProviderFailureCodeV1::BindingMismatch,
+    );
+
+    // Cross-kind: a media-part read against this object session must be
+    // rejected as an invalid request rather than silently misread.
+    let media_read_request = DecryptProviderRequestV1::new_read_viewer_media_part(
+        open_audit,
+        viewer_handle,
+        ViewerMediaPartSelectorV1::init(),
+    )
+    .unwrap();
+    assert_failure_code(
+        process.request_json(wrap_runtime_request(&media_read_request)),
+        ProviderFailureCodeV1::InvalidRequest,
+    );
+
+    let close_request =
+        DecryptProviderRequestV1::new_close_viewer_session(open_audit, viewer_handle).unwrap();
+    let closed = typed_ok_response(process.request_json(wrap_runtime_request(&close_request)));
+    assert_eq!(
+        closed.status(),
+        DecryptProviderResponseStatusV1::ClosedViewerSession
+    );
+
+    process.shutdown_and_assert_clean();
+}
+
+#[test]
+fn process_read_viewer_object_chunk_on_a_media_session_is_rejected() {
+    let runtime_seed = 0x53;
+    let media_seed = 0x24;
+    let terminal_issuer_seed = 0x72;
+    let base_time = now_unix_seconds();
+
+    let envelope = support::custody_envelope_for_media(media_seed, base_time);
+    let binding = support::binding_for_envelope(&envelope);
+    let media_identity = support::media_identity(media_seed);
+    let (protected_init_segment, _encrypted_segments, _, _) = support::media_components(media_seed);
+
+    let prepare_audit = RuntimeReleaseAuditIdV1::new(support::digest(0xf1)).unwrap();
+    let prepare_request = DecryptProviderRequestV1::new_prepare_recipient(
+        &binding,
+        prepare_audit,
+        elastos_protected_content_contracts::RightsActionV1::View,
+        support::runtime_issuer(runtime_seed),
+        support::issued_at(base_time),
+        base_time + 30,
+    )
+    .unwrap();
+
+    let mut process = ProviderProcess::start();
+    let init = process.request_json(json!({
+        "op": "init",
+        "config": init_config(runtime_seed)
+    }));
+    assert_eq!(init["status"], "ok");
+
+    let prepared = typed_ok_response(process.request_json(wrap_runtime_request(&prepare_request)));
+    assert_eq!(
+        prepared.status(),
+        DecryptProviderResponseStatusV1::PreparedRecipient
+    );
+
+    let open_audit = RuntimeReleaseAuditIdV1::new(support::digest(0xf2)).unwrap();
+    let operation = support::make_signed_runtime_release_operation(
+        runtime_seed,
+        open_audit,
+        &envelope,
+        prepared.recipient_public_key().unwrap(),
+        prepared.recipient_identity().unwrap(),
+        base_time,
+    );
+    let contributions = vec![
+        support::make_signed_node_contribution(&operation, &envelope, runtime_seed, 1, base_time),
+        support::make_signed_node_contribution(&operation, &envelope, runtime_seed, 2, base_time),
+    ];
+    let terminal_receipt = support::make_signed_terminal_receipt(
+        &operation,
+        &contributions,
+        terminal_issuer_seed,
+        base_time,
+    );
+
+    let open_request = DecryptProviderRequestV1::new_open_viewer_session(
+        *prepared.prepared_recipient_handle().unwrap(),
+        &operation,
+        TerminalReceiptIssuerKey::new(
+            SigningKey::from_bytes(&[terminal_issuer_seed; 32])
+                .verifying_key()
+                .to_bytes(),
+        )
+        .unwrap(),
+        envelope.manifest().content_key_commitment(),
+        &media_identity,
+        &protected_init_segment,
+        &contributions,
+        &terminal_receipt,
+    )
+    .unwrap();
+    let opened = typed_ok_response(process.request_json(wrap_runtime_request(&open_request)));
+    assert_eq!(
+        opened.status(),
+        DecryptProviderResponseStatusV1::ViewerSessionOpened,
+        "open failure_code={:?}",
+        opened.failure_code()
+    );
+    let viewer_handle = *opened.viewer_session_handle().unwrap();
+
+    // Cross-kind, the other way: an object-chunk read against a media
+    // session must be rejected as an invalid request rather than being
+    // handed to a decrypter that was never created for this session.
+    let object_chunk_request = DecryptProviderRequestV1::new_read_viewer_object_chunk(
+        open_audit,
+        viewer_handle,
+        0,
+        b"any-nonzero-length-bytes-not-a-real-framed-chunk",
+    )
+    .unwrap();
+    assert_failure_code(
+        process.request_json(wrap_runtime_request(&object_chunk_request)),
+        ProviderFailureCodeV1::InvalidRequest,
+    );
+
+    process.shutdown_and_assert_clean();
+}
+
+#[test]
+fn process_dash_v2_open_reads_with_proofs_bad_proof_and_close_are_exact() {
+    use support::dash::{dash_proof, media_dash_components, DashOptions, A, V};
+
+    let runtime_seed = 0x42;
+    let terminal_issuer_seed = 0x61;
+    let base_time = now_unix_seconds();
+    let comps = media_dash_components(0x31, base_time, DashOptions::default());
+    let binding = support::binding_for_envelope(&comps.envelope);
+
+    let prepare_request = DecryptProviderRequestV1::new_prepare_recipient(
+        &binding,
+        RuntimeReleaseAuditIdV1::new(support::digest(0xa1)).unwrap(),
+        elastos_protected_content_contracts::RightsActionV1::View,
+        support::runtime_issuer(runtime_seed),
+        support::issued_at(base_time),
+        base_time + 30,
+    )
+    .unwrap();
+
+    let mut process = ProviderProcess::start();
+    let init = process.request_json(json!({
+        "op": "init",
+        "config": init_config(runtime_seed)
+    }));
+    assert_eq!(init["status"], "ok");
+    let prepared = typed_ok_response(process.request_json(wrap_runtime_request(&prepare_request)));
+
+    let open_audit = RuntimeReleaseAuditIdV1::new(support::digest(0xa2)).unwrap();
+    let operation = support::make_signed_runtime_release_operation(
+        runtime_seed,
+        open_audit,
+        &comps.envelope,
+        prepared.recipient_public_key().unwrap(),
+        prepared.recipient_identity().unwrap(),
+        base_time,
+    );
+    let contributions = vec![
+        support::make_signed_node_contribution(
+            &operation,
+            &comps.envelope,
+            runtime_seed,
+            1,
+            base_time,
+        ),
+        support::make_signed_node_contribution(
+            &operation,
+            &comps.envelope,
+            runtime_seed,
+            2,
+            base_time,
+        ),
+    ];
+    let terminal_receipt = support::make_signed_terminal_receipt(
+        &operation,
+        &contributions,
+        terminal_issuer_seed,
+        base_time,
+    );
+    let open_request = DecryptProviderRequestV1::new_open_viewer_session_v2(
+        *prepared.prepared_recipient_handle().unwrap(),
+        &operation,
+        TerminalReceiptIssuerKey::new(
+            SigningKey::from_bytes(&[terminal_issuer_seed; 32])
+                .verifying_key()
+                .to_bytes(),
+        )
+        .unwrap(),
+        comps.envelope.manifest().content_key_commitment(),
+        &comps.head,
+        &comps.protected_inits,
+        &contributions,
+        &terminal_receipt,
+    )
+    .unwrap();
+    let opened = typed_ok_response(process.request_json(wrap_runtime_request(&open_request)));
+    assert_eq!(
+        opened.status(),
+        DecryptProviderResponseStatusV1::ViewerSessionOpened
+    );
+    let handle = *opened.viewer_session_handle().unwrap();
+
+    let read = |process: &mut ProviderProcess, selector: ViewerMediaPartSelectorV1| {
+        let request =
+            DecryptProviderRequestV1::new_read_viewer_media_part(open_audit, handle, selector)
+                .unwrap();
+        typed_ok_response(process.request_json(wrap_runtime_request(&request)))
+    };
+    for (rendition, kind) in [V, A].into_iter().enumerate() {
+        let init = read(
+            &mut process,
+            ViewerMediaPartSelectorV1::init_v2(rendition as u8).unwrap(),
+        );
+        assert_eq!(
+            init.clear_media_part().unwrap(),
+            comps.clear_inits[rendition]
+        );
+        let segments = &comps.protected_segments[rendition];
+        for index in 0..segments.len() {
+            let part = read(
+                &mut process,
+                ViewerMediaPartSelectorV1::segment_v2(
+                    rendition as u8,
+                    index as u32,
+                    segments[index].clone(),
+                    dash_proof(kind, segments, index),
+                )
+                .unwrap(),
+            );
+            assert_eq!(
+                part.clear_media_part().unwrap(),
+                comps.clear_segments[rendition][index]
+            );
+        }
+    }
+
+    // segment 1's proof with segment 0's bytes: refused before decrypting
+    let video = &comps.protected_segments[0];
+    let bad = DecryptProviderRequestV1::new_read_viewer_media_part(
+        open_audit,
+        handle,
+        ViewerMediaPartSelectorV1::segment_v2(0, 0, video[0].clone(), dash_proof(V, video, 1))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_failure_code(
+        process.request_json(wrap_runtime_request(&bad)),
+        ProviderFailureCodeV1::BindingMismatch,
+    );
+
+    let close_request =
+        DecryptProviderRequestV1::new_close_viewer_session(open_audit, handle).unwrap();
+    let closed = typed_ok_response(process.request_json(wrap_runtime_request(&close_request)));
+    assert_eq!(
+        closed.status(),
+        DecryptProviderResponseStatusV1::ClosedViewerSession
+    );
+    process.shutdown_and_assert_clean();
+}
+
+/// Opens a v2 item built from `options` against a fresh process, twice with the
+/// same request; returns the process and both raw open responses.
+fn open_dash_item(
+    options: support::dash::DashOptions,
+) -> (ProviderProcess, serde_json::Value, serde_json::Value) {
+    use support::dash::media_dash_components;
+
+    let runtime_seed = 0x42;
+    let terminal_issuer_seed = 0x61;
+    let base_time = now_unix_seconds();
+    let comps = media_dash_components(0x31, base_time, options);
+    let binding = support::binding_for_envelope(&comps.envelope);
+    let prepare_request = DecryptProviderRequestV1::new_prepare_recipient(
+        &binding,
+        RuntimeReleaseAuditIdV1::new(support::digest(0xa1)).unwrap(),
+        elastos_protected_content_contracts::RightsActionV1::View,
+        support::runtime_issuer(runtime_seed),
+        support::issued_at(base_time),
+        base_time + 30,
+    )
+    .unwrap();
+    let mut process = ProviderProcess::start();
+    let init = process.request_json(json!({
+        "op": "init",
+        "config": init_config(runtime_seed)
+    }));
+    assert_eq!(init["status"], "ok");
+    let prepared = typed_ok_response(process.request_json(wrap_runtime_request(&prepare_request)));
+    let operation = support::make_signed_runtime_release_operation(
+        runtime_seed,
+        RuntimeReleaseAuditIdV1::new(support::digest(0xa2)).unwrap(),
+        &comps.envelope,
+        prepared.recipient_public_key().unwrap(),
+        prepared.recipient_identity().unwrap(),
+        base_time,
+    );
+    let contributions = vec![
+        support::make_signed_node_contribution(
+            &operation,
+            &comps.envelope,
+            runtime_seed,
+            1,
+            base_time,
+        ),
+        support::make_signed_node_contribution(
+            &operation,
+            &comps.envelope,
+            runtime_seed,
+            2,
+            base_time,
+        ),
+    ];
+    let terminal_receipt = support::make_signed_terminal_receipt(
+        &operation,
+        &contributions,
+        terminal_issuer_seed,
+        base_time,
+    );
+    let open_request = DecryptProviderRequestV1::new_open_viewer_session_v2(
+        *prepared.prepared_recipient_handle().unwrap(),
+        &operation,
+        TerminalReceiptIssuerKey::new(
+            SigningKey::from_bytes(&[terminal_issuer_seed; 32])
+                .verifying_key()
+                .to_bytes(),
+        )
+        .unwrap(),
+        comps.envelope.manifest().content_key_commitment(),
+        &comps.head,
+        &comps.protected_inits,
+        &contributions,
+        &terminal_receipt,
+    )
+    .unwrap();
+    let first = process.request_json(wrap_runtime_request(&open_request));
+    // The same request again: a refused open must not have consumed the prepared
+    // recipient, so the answer is the same and not an unknown-handle failure.
+    let second = process.request_json(wrap_runtime_request(&open_request));
+    (process, first, second)
+}
+
+#[test]
+fn dash_open_refuses_renditions_under_different_systems() {
+    use support::dash::DashOptions;
+
+    for retired_system in [[false, true], [true, false]] {
+        let (process, first, second) = open_dash_item(DashOptions {
+            retired_system,
+            ..DashOptions::default()
+        });
+        assert_failure_code(first, ProviderFailureCodeV1::BindingMismatch);
+        assert_failure_code(second, ProviderFailureCodeV1::BindingMismatch);
+        process.shutdown_and_assert_clean();
+    }
+}
+
+#[test]
+fn dash_open_accepts_a_legacy_id_item() {
+    use support::dash::DashOptions;
+
+    let (process, first, _) = open_dash_item(DashOptions {
+        retired_system: [true, true],
+        ..DashOptions::default()
+    });
+    let opened = typed_ok_response(first);
+    assert_eq!(
+        opened.status(),
+        DecryptProviderResponseStatusV1::ViewerSessionOpened
+    );
+    process.shutdown_and_assert_clean();
 }

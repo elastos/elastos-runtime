@@ -1119,16 +1119,12 @@ fn publish_profile_capsules(profile: &str, available: &[String]) -> anyhow::Resu
             "availability-provider".to_string(),
             "chain-provider".to_string(),
             "content-block-graph-provider".to_string(),
-            "decrypt-provider".to_string(),
             "did-provider".to_string(),
-            "drm-provider".to_string(),
             "exit-provider".to_string(),
             "ipfs-provider".to_string(),
-            "key-provider".to_string(),
             "net-provider".to_string(),
             "object-provider".to_string(),
             "localhost-provider".to_string(),
-            "rights-provider".to_string(),
             "tunnel-provider".to_string(),
             "wallet-provider".to_string(),
             "webspace-provider".to_string(),
@@ -2283,7 +2279,14 @@ mod tests {
         assert_eq!(selected, expected);
         assert!(selected.contains(&"archive-manager".to_string()));
         // Hidden in 0.8.0: still published as release assets for `setup --with`.
-        for hidden in ["services", "content-block-graph-provider", "elacity-player"] {
+        for hidden in [
+            "services",
+            "content-block-graph-provider",
+            "creator",
+            "custody",
+            "elacity-player",
+            "elacity-reader",
+        ] {
             assert!(!selected.contains(&hidden.to_string()), "{hidden}");
         }
         assert!(selected.contains(&"chain-provider".to_string()));
@@ -2367,11 +2370,18 @@ mod tests {
         assert!(selected.contains(&"wallet-provider".to_string()));
         assert!(selected.contains(&"object-provider".to_string()));
         assert!(selected.contains(&"webspace-provider".to_string()));
-        assert!(selected.contains(&"drm-provider".to_string()));
-        assert!(selected.contains(&"rights-provider".to_string()));
-        assert!(selected.contains(&"key-provider".to_string()));
-        assert!(selected.contains(&"decrypt-provider".to_string()));
         assert!(selected.contains(&"availability-provider".to_string()));
+        for retired in [
+            "drm-provider",
+            "rights-provider",
+            "key-provider",
+            "decrypt-provider",
+        ] {
+            assert!(
+                !selected.contains(&retired.to_string()),
+                "retired provisional {retired} must not be publishable"
+            );
+        }
     }
 
     #[cfg(unix)]
