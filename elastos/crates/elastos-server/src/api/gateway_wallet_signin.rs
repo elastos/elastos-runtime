@@ -163,7 +163,7 @@ pub(super) async fn signin_begin(
             super::super::auth_gateway::local_first_owner_registration(&headers, peer.map(|p| p.0));
         let source = peer.map(|p| p.0.ip());
         let _issue = gateway_walletconnect::issue_lock(&state).await;
-        if input.connector == "walletconnect" {
+        if input.connector == "wallet-walletconnect" {
             gateway_walletconnect::preflight(&state, local, None, None, source).await?;
         }
         let result = auth::begin_for_peer(

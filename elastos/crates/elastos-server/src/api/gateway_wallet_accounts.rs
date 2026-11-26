@@ -107,15 +107,7 @@ pub(super) fn wallet_inventory_entries(
                     .iter()
                     .filter(|account| {
                         account["principal_id"].as_str() == Some(principal)
-                            && account["connector_id"].as_str()
-                                == method["connector"]
-                                    .as_str()
-                                    .map(|connector| match connector {
-                                        "metamask" => "wallet-metamask",
-                                        "unisat" => "wallet-unisat",
-                                        "walletconnect" => "wallet-walletconnect",
-                                        _ => "",
-                                    })
+                            && account["connector_id"].as_str() == method["connector"].as_str()
                             && account["chain_namespace"].as_str() == Some(&entry.chain_namespace)
                             && account["address"].as_str().is_some_and(|address| {
                                 wallet_inventory_identity(&entry.chain_namespace, address).1
@@ -139,8 +131,8 @@ pub(super) fn wallet_inventory_entries(
             });
         match connector {
             None => 0,
-            Some("wallet-metamask" | "metamask") => 1,
-            Some("wallet-unisat" | "unisat") => 2,
+            Some("wallet-metamask") => 1,
+            Some("wallet-unisat") => 2,
             _ => 3,
         }
     });
@@ -186,7 +178,7 @@ pub(in crate::api::gateway) async fn wallet_inventory(
         );
         Ok::<_, anyhow::Error>(serde_json::json!({
             "schema": "elastos.wallet.inventory/v1",
-            "account_id": actor.principal_id,
+            "principal_id": actor.principal_id,
             "account_name": methods["account_name"],
             "apps_available": apps_available,
             "entries": entries,
@@ -595,12 +587,26 @@ mod wallet_inventory_tests {
     #[test]
     fn wallet_inventory_keeps_signin_when_home_address_collides() {
         for (namespace, proof, connector, chain, network, address) in [
-            ("eip155:20", "managed_evm", "metamask", 20, "", "0x1234"),
-            ("eip155:8453", "managed_evm", "metamask", 8453, "", "0x1234"),
+            (
+                "eip155:20",
+                "managed_evm",
+                "wallet-metamask",
+                20,
+                "",
+                "0x1234",
+            ),
+            (
+                "eip155:8453",
+                "managed_evm",
+                "wallet-metamask",
+                8453,
+                "",
+                "0x1234",
+            ),
             (
                 "bip122:000000000019d6689c085ae165831e93",
                 "managed_btc_p2wpkh",
-                "unisat",
+                "wallet-unisat",
                 0,
                 "bitcoin",
                 "bc1qverified",
@@ -609,7 +615,7 @@ mod wallet_inventory_tests {
             let mut managed = account("owner", namespace, address);
             managed["proof_type"] = json!(proof);
             managed["connector_id"] = Value::Null;
-            let method = json!({"method_id":"signin", "connector":connector, "address":address, "chain_id":chain, "network":network});
+            let method = json!({"proof_binding_id":"signin", "connector":connector, "address":address, "chain_id":chain, "network":network});
             let entries =
                 wallet_inventory_entries("owner", &[managed], std::slice::from_ref(&method));
             assert_eq!(entries.len(), 1);
@@ -668,7 +674,7 @@ mod wallet_inventory_tests {
         app["connector_id"] = json!("wallet-walletconnect");
         app["wallet_display_name"] = json!("Rainbow");
         app["revoked_at"] = json!(2);
-        let method = json!({"method_id":"signin", "connector":"walletconnect", "address":"0x1234", "chain_id":8453, "network":""});
+        let method = json!({"proof_binding_id":"signin", "connector":"wallet-walletconnect", "address":"0x1234", "chain_id":8453, "network":""});
         let entries = wallet_inventory_entries(
             "owner",
             std::slice::from_ref(&app),
@@ -685,7 +691,7 @@ mod wallet_inventory_tests {
 
     #[test]
     fn wallet_inventory_keeps_bitcoin_network_and_connector_identity_separate() {
-        let method = json!({"method_id":"signin", "connector":"unisat", "address":"bc1qverified", "chain_id":0, "network":"bitcoin"});
+        let method = json!({"proof_binding_id":"signin", "connector":"wallet-unisat", "address":"bc1qverified", "chain_id":0, "network":"bitcoin"});
         let mut app = account(
             "owner",
             "bip122:000000000019d6689c085ae165831e93",

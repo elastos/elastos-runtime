@@ -53,7 +53,7 @@ async fn begin(
     id: &str,
     connector: &str,
 ) -> auth::BeginResult {
-    let (status,out)=call(app,"/api/auth/wallet-methods/begin",Some(token),Some(json!({"action":action,"method_id":id,"connector":connector,"address":f.address,"chain_id":20,"browser_secret":BROWSER,"allow_temporary_internet":connector=="walletconnect"}))).await;
+    let (status,out)=call(app,"/api/auth/wallet-methods/begin",Some(token),Some(json!({"action":action,"proof_binding_id":id,"connector":connector,"address":f.address,"chain_id":20,"browser_secret":BROWSER,"allow_temporary_internet":connector=="wallet-walletconnect"}))).await;
     assert_eq!(status, StatusCode::OK, "{out}");
     serde_json::from_value(out).unwrap()
 }
@@ -82,7 +82,7 @@ async fn change(
 }
 #[tokio::test]
 async fn round7_ten_cancelled_wallet_signins_keep_real_passkey_begin_available() {
-    for connector in ["metamask", "walletconnect"] {
+    for connector in ["wallet-metamask", "wallet-walletconnect"] {
         for source in ["127.0.0.1:49152", "203.0.113.7:49152"] {
             let f = wallet_fixture::fixture();
             install_real_approver(f.data.path(), &f.actor.principal_id, b"round7-passkey");
@@ -93,7 +93,7 @@ async fn round7_ten_cancelled_wallet_signins_keep_real_passkey_begin_available()
             let app = gateway_router(state);
             change(&app, &token, &f, "add", "", connector).await;
             for cycle in 0..10 {
-                let input = json!({"connector":connector,"address":if connector=="walletconnect" {""} else {&f.address},"chain_id":20,"browser_secret":BROWSER,"allow_temporary_internet":true});
+                let input = json!({"connector":connector,"address":if connector=="wallet-walletconnect" {""} else {&f.address},"chain_id":20,"browser_secret":BROWSER,"allow_temporary_internet":true});
                 let request = Request::builder()
                     .uri("/api/auth/wallet/signin/begin")
                     .method("POST")
@@ -160,10 +160,10 @@ async fn wallet_signin_http_add_signin_remove_journey() {
     let token =
         issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &f.actor).unwrap();
     let app = gateway_router(state);
-    let method = change(&app, &token, &f, "add", "", "metamask").await;
+    let method = change(&app, &token, &f, "add", "", "wallet-metamask").await;
     assert_eq!(method["sign_in_enabled"], true);
-    let id = method["method_id"].as_str().unwrap();
-    let (status,b)=call(&app,"/api/auth/wallet/signin/begin",None,Some(json!({"connector":"metamask","address":f.address,"chain_id":20,"browser_secret":BROWSER}))).await;
+    let id = method["proof_binding_id"].as_str().unwrap();
+    let (status,b)=call(&app,"/api/auth/wallet/signin/begin",None,Some(json!({"connector":"wallet-metamask","address":f.address,"chain_id":20,"browser_secret":BROWSER}))).await;
     assert_eq!(status, StatusCode::OK, "{b}");
     let b: auth::BeginResult = serde_json::from_value(b).unwrap();
     let c = wallet_fixture::completion(&f, &b);
@@ -181,7 +181,7 @@ async fn wallet_signin_http_add_signin_remove_journey() {
     let (status, list) = call(&app, "/api/auth/wallet-methods", Some(wallet_token), None).await;
     assert_eq!(status, StatusCode::OK, "{list}");
     assert_eq!(list["methods"][0]["sign_in_enabled"], true);
-    let b = begin(&app, wallet_token, &f, "remove", id, "metamask").await;
+    let b = begin(&app, wallet_token, &f, "remove", id, "wallet-metamask").await;
     let c = wallet_fixture::completion(&f, &b);
     let (status, _) = call(
         &app,
@@ -197,7 +197,7 @@ async fn wallet_signin_http_add_signin_remove_journey() {
     );
     // Same wallet session can obtain a token issued only after its account's
     // passkey ceremony. The test issuer models that completed WebAuthn proof.
-    change(&app, wallet_token, &f, "remove", id, "metamask").await;
+    change(&app, wallet_token, &f, "remove", id, "wallet-metamask").await;
     assert_eq!(
         call(&app, "/api/auth/wallet-methods", Some(wallet_token), None)
             .await
@@ -224,7 +224,7 @@ async fn wallet_one_state_http_refuses_retired_actions() {
     let app = gateway_router(test_state(f.data.path()));
     for action in ["add_signin", "enable", "disable"] {
         let (status, out) = call(&app, "/api/auth/wallet-methods/begin", Some(&token), Some(json!({
-            "action":action, "connector":"metamask", "address":f.address, "chain_id":20, "browser_secret":BROWSER
+            "action":action, "connector":"wallet-metamask", "address":f.address, "chain_id":20, "browser_secret":BROWSER
         }))).await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{out}");
         assert_eq!(out["error"], "wallet_signin_refused");
@@ -243,26 +243,26 @@ async fn wallet_one_state_http_remove_ends_pairing_and_preserves_payment_permiss
         .path()
         .join("ElastOS/SystemServices/WalletConnect/internet.json");
     assert!(!payment_path.exists());
-    let added = change(&app, &token, &f, "add", "", "walletconnect").await;
+    let added = change(&app, &token, &f, "add", "", "wallet-walletconnect").await;
     assert_eq!(added["sign_in_enabled"], true);
     assert!(
         !payment_path.exists(),
         "enrollment grants short sign-in access only"
     );
-    let id = added["method_id"].as_str().unwrap();
+    let id = added["proof_binding_id"].as_str().unwrap();
     // Existing payment permissions remain byte-identical across sign-in method removal.
     let payment = json!({"id":"payment-fixture", "status":"granted", "at":now_ts()});
     std::fs::create_dir_all(payment_path.parent().unwrap()).unwrap();
     std::fs::write(&payment_path, serde_json::to_vec(&payment).unwrap()).unwrap();
     let granted_bytes = std::fs::read(&payment_path).unwrap();
-    change(&app, &token, &f, "remove", id, "walletconnect").await;
+    change(&app, &token, &f, "remove", id, "wallet-walletconnect").await;
     assert_eq!(
         std::fs::read(&payment_path).unwrap(),
         granted_bytes,
         "method removal preserves a granted payment permission"
     );
-    let replacement = change(&app, &token, &f, "add", "", "walletconnect").await;
-    let id = replacement["method_id"].as_str().unwrap();
+    let replacement = change(&app, &token, &f, "add", "", "wallet-walletconnect").await;
+    let id = replacement["proof_binding_id"].as_str().unwrap();
     let inbox = wallet_app_token(f.data.path(), INBOX_CAPSULE_ID, &f.actor);
     let mut headers = HeaderMap::new();
     headers.insert(HOST, "localhost:61180".parse().unwrap());
@@ -293,7 +293,7 @@ async fn wallet_one_state_http_remove_ends_pairing_and_preserves_payment_permiss
     .await;
     assert_eq!(status, StatusCode::OK, "{out}");
     assert_eq!(
-        auth::list(f.data.path(), &f.actor).unwrap()["methods"][0]["method_id"],
+        auth::list(f.data.path(), &f.actor).unwrap()["methods"][0]["proof_binding_id"],
         id,
         "ending payment permission preserves sign-in authority"
     );
@@ -307,7 +307,7 @@ async fn wallet_one_state_http_remove_ends_pairing_and_preserves_payment_permiss
         ORIGIN,
         "home-test",
         serde_json::from_value(json!({
-            "connector":"walletconnect", "address":"", "chain_id":0,
+            "connector":"wallet-walletconnect", "address":"", "chain_id":0,
             "browser_secret":BROWSER, "allow_temporary_internet":true
         }))
         .unwrap(),
@@ -320,7 +320,7 @@ async fn wallet_one_state_http_remove_ends_pairing_and_preserves_payment_permiss
     let cancel =
         gateway_walletconnect::watch_attempt_socket_for_test(&state, &pair.ceremony_id).await;
     assert!(!*cancel.borrow());
-    change(&app, &token, &f, "remove", id, "walletconnect").await;
+    change(&app, &token, &f, "remove", id, "wallet-walletconnect").await;
     assert!(
         *cancel.borrow(),
         "the removal response follows anonymous relay retirement"
@@ -491,7 +491,7 @@ async fn wallet_step_up_defaults_to_the_accounts_matching_relying_party() {
     let token =
         issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &session).unwrap();
     let app = gateway_router(test_state(f.data.path()));
-    let b = begin(&app, &token, &f, "remove", &id, "metamask").await;
+    let b = begin(&app, &token, &f, "remove", &id, "wallet-metamask").await;
     let request = &b.approval.as_ref().unwrap()["request"];
     let (status, result) = call(
         &app,
@@ -535,7 +535,7 @@ async fn wallet_session_real_webauthn_approves_only_same_account_and_exact_metho
     let token =
         issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &session).unwrap();
     let app = gateway_router(test_state(f.data.path()));
-    let b = begin(&app, &token, &f, "remove", &id, "metamask").await;
+    let b = begin(&app, &token, &f, "remove", &id, "wallet-metamask").await;
     let request = &b.approval.as_ref().unwrap()["request"];
     let (status,_)=call(&app,"/api/auth/passkey-step-up/begin",Some(&token),Some(json!({"schema":"elastos.auth.passkey-step-up.begin.request/v1","app_token":token,"operation":auth::OPERATION,"request":request,"approving_passkey_id":other}))).await;
     assert!(matches!(
@@ -704,14 +704,14 @@ async fn wallet_signin_public_options_come_from_runtime_without_account_details(
     assert_eq!(state["walletconnect_signin_available"], true);
     assert_eq!(
         state["wallet_signin_connectors"],
-        json!(["metamask", "walletconnect"])
+        json!(["wallet-metamask", "wallet-walletconnect"])
     );
     assert_eq!(
         state["wallet_signin_relay_notice"],
         crate::auth::wallet_signin::RELAY_NOTICE
     );
     assert!(state.get("methods").is_none());
-    assert!(state.get("account_id").is_none());
+    assert!(state.get("principal_id").is_none());
     assert!(state.get("address").is_none());
 }
 #[tokio::test]
@@ -720,7 +720,7 @@ async fn wallet_method_management_accepts_trusted_opaque_system_origin() {
     let token =
         issue_home_launch_token_for_auth_grant(f.data.path(), SYSTEM_CAPSULE_ID, &f.actor).unwrap();
     let app = gateway_router(test_state(f.data.path()));
-    let response=app.oneshot(Request::builder().uri("/api/auth/wallet-methods/begin").method("POST").header(HOST,"localhost:61180").header("origin","null").header("x-elastos-home-token",token).header(CONTENT_TYPE,"application/json").body(Body::from(json!({"action":"add","connector":"metamask","address":f.address,"chain_id":20,"browser_secret":BROWSER}).to_string())).unwrap()).await.unwrap();
+    let response=app.oneshot(Request::builder().uri("/api/auth/wallet-methods/begin").method("POST").header(HOST,"localhost:61180").header("origin","null").header("x-elastos-home-token",token).header(CONTENT_TYPE,"application/json").body(Body::from(json!({"action":"add","connector":"wallet-metamask","address":f.address,"chain_id":20,"browser_secret":BROWSER}).to_string())).unwrap()).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 }
 
@@ -940,7 +940,7 @@ async fn wallet_session_can_sign_out_but_other_session_revocation_needs_passkey(
     let state = test_state(f.data.path());
     let pending = auth::begin(
         f.data.path(), ORIGIN, "home-test",
-        serde_json::from_value(json!({"action":"add","connector":"walletconnect","address":"","chain_id":0,"browser_secret":BROWSER,"allow_temporary_internet":true})).unwrap(),
+        serde_json::from_value(json!({"action":"add","connector":"wallet-walletconnect","address":"","chain_id":0,"browser_secret":BROWSER,"allow_temporary_internet":true})).unwrap(),
         Some(f.actor.clone()),
     ).unwrap();
     gateway_walletconnect::install_confirmation(&state, &pending, &f.actor.session_id)
@@ -1003,7 +1003,7 @@ async fn wallet_explicit_account_removal_requires_exact_passkey_intent() {
         ORIGIN,
         "home-test",
         serde_json::from_value(
-            json!({"connector":"walletconnect","address":"","chain_id":0,
+            json!({"connector":"wallet-walletconnect","address":"","chain_id":0,
             "browser_secret":BROWSER,"allow_temporary_internet":true}),
         )
         .unwrap(),
@@ -1200,7 +1200,7 @@ async fn walletconnect_review_note_storage_post_advances_etag_and_fences_stale_w
         ORIGIN,
         "home-test",
         serde_json::from_value(
-            json!({"connector":"walletconnect","address":"","chain_id":0,
+            json!({"connector":"wallet-walletconnect","address":"","chain_id":0,
             "browser_secret":BROWSER,"allow_temporary_internet":true}),
         )
         .unwrap(),
@@ -1277,7 +1277,7 @@ async fn walletconnect_live_relay_survives_its_own_storage_writes_but_retires_wi
     let state = test_state(f.data.path());
     let pending = auth::begin(
         f.data.path(), ORIGIN, "home-test",
-        serde_json::from_value(json!({"action":"add","connector":"walletconnect","address":"","chain_id":20,"browser_secret":BROWSER,"allow_temporary_internet":true})).unwrap(),
+        serde_json::from_value(json!({"action":"add","connector":"wallet-walletconnect","address":"","chain_id":20,"browser_secret":BROWSER,"allow_temporary_internet":true})).unwrap(),
         Some(f.actor.clone()),
     ).unwrap();
     gateway_walletconnect::install_confirmation(&state, &pending, &f.actor.session_id)
@@ -1341,7 +1341,7 @@ async fn walletconnect_passkey_session_end_retires_confirmation_relay() {
         let state = test_state(f.data.path());
         let pending = auth::begin(
             f.data.path(), ORIGIN, "home-test",
-            serde_json::from_value(json!({"action":"add","connector":"walletconnect","address":"","chain_id":0,"browser_secret":BROWSER,"allow_temporary_internet":true})).unwrap(),
+            serde_json::from_value(json!({"action":"add","connector":"wallet-walletconnect","address":"","chain_id":0,"browser_secret":BROWSER,"allow_temporary_internet":true})).unwrap(),
             Some(f.actor.clone()),
         ).unwrap();
         gateway_walletconnect::install_confirmation(&state, &pending, &f.actor.session_id)
@@ -1378,7 +1378,7 @@ async fn open_passkey_confirmation_relay(
         ORIGIN,
         "home-test",
         serde_json::from_value(json!({
-            "action":"add", "connector":"walletconnect", "address":"", "chain_id":0,
+            "action":"add", "connector":"wallet-walletconnect", "address":"", "chain_id":0,
             "browser_secret":BROWSER, "allow_temporary_internet":true
         }))
         .unwrap(),
@@ -1605,7 +1605,7 @@ async fn round9_pending_caps_and_owned_cancel_keep_other_peers_available() {
         let mut first = Value::Null;
         for index in 0..9 {
             let input = if path.contains("wallet") {
-                json!({"connector":"metamask","address":&f.address,"chain_id":20,"browser_secret":BROWSER})
+                json!({"connector":"wallet-metamask","address":&f.address,"chain_id":20,"browser_secret":BROWSER})
             } else {
                 json!({})
             };
@@ -1648,7 +1648,7 @@ async fn round9_pending_caps_and_owned_cancel_keep_other_peers_available() {
             .enumerate()
         {
             let input = if path.contains("wallet") {
-                json!({"connector":"metamask","address":&f.address,"chain_id":20,"browser_secret":BROWSER})
+                json!({"connector":"wallet-metamask","address":&f.address,"chain_id":20,"browser_secret":BROWSER})
             } else {
                 json!({})
             };
@@ -1735,7 +1735,7 @@ async fn round9_pending_caps_and_owned_cancel_keep_other_peers_available() {
             "127.0.0.1:1234",
         ] {
             let input = if path.contains("wallet") {
-                json!({"connector":"metamask","address":&f.address,"chain_id":20,"browser_secret":BROWSER})
+                json!({"connector":"wallet-metamask","address":&f.address,"chain_id":20,"browser_secret":BROWSER})
             } else {
                 json!({})
             };
@@ -1842,8 +1842,8 @@ async fn wallet_inventory_http_rejects_inbox_and_browser_and_survives_provider_d
         let out: Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(status, StatusCode::OK, "{capsule}: {out}");
         assert_eq!(
-            out["entries"][0]["sign_in"]["method_id"],
-            auth::list(f.data.path(), &f.actor).unwrap()["methods"][0]["method_id"]
+            out["entries"][0]["sign_in"]["proof_binding_id"],
+            auth::list(f.data.path(), &f.actor).unwrap()["methods"][0]["proof_binding_id"]
         );
         assert_eq!(out["apps_available"], false);
     }
