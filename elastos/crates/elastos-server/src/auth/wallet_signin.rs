@@ -244,16 +244,26 @@ fn remove_stale_projection(data: &Path) -> anyhow::Result<()> {
     if !metadata.is_file() || metadata.file_type().is_symlink() {
         return Ok(());
     }
-    let directory = open_migration_backup_directory(parent)?;
-    let name = file.file_name().ok_or(Refused)?;
-    if let Some((held, _)) = read_migration_cleanup_file(&directory, name, MAX_BYTES)? {
-        require(
-            regular_file_identity_from_metadata(&metadata, "retired wallet state")?
-                == regular_file_identity_from_metadata(&held.metadata()?, "retired wallet state")?,
-        )?;
-        unlink_migration_cleanup_file(&directory, name, &held)?;
-        directory.sync_all()?;
-    }
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    options.custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    let directory = options.open(parent)?;
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);
+    let held = match options.open(&file) {
+        Ok(held) => held,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(err.into()),
+    };
+    require(
+        regular_file_identity_from_metadata(&metadata, "retired wallet state")?
+            == regular_file_identity_from_metadata(&held.metadata()?, "retired wallet state")?,
+    )?;
+    unlink_migration_cleanup_file(&directory, file.file_name().ok_or(Refused)?, &held)?;
+    directory.sync_all()?;
     Ok(())
 }
 fn write(data: &Path, store: &Store) -> anyhow::Result<()> {
@@ -1768,6 +1778,15 @@ pub(crate) mod tests {
         let id = enabled(&f);
         let file = path(f.data.path()).unwrap();
         let retired = file.with_file_name("wallet-signin-bindings.json");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(
+                file.parent().unwrap(),
+                std::fs::Permissions::from_mode(0o755),
+            )
+            .unwrap();
+        }
         let saved = std::fs::read(&file).unwrap();
         change(&f, "remove", &id);
         write_secret_bytes_atomic(&retired, &saved).unwrap();
