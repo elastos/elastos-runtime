@@ -201,6 +201,33 @@ for(const engine of ['chromium','webkit'])test(`one wallet list: phone app use s
   } finally {await f.close();}
 });
 // Fix-round regressions run the real capsule modules against controlled Runtime replies.
+for(const engine of ['chromium','webkit'])for(const width of [1440,390]) {
+  test(`fix2 single saved ESC record shows every EVM balance in ${engine} at ${width}`,{timeout:45000},async()=>{
+    const f=await setup(engine,width);
+    try {
+      const home=f.fixture.state.connected[0];
+      assert.equal(f.fixture.state.connected.filter(account=>account.address===home.address).length,1);
+      assert.equal(home.chain_namespace,'eip155:20');
+      f.fixture.state.balanceValues[home.address]['base-mainnet']=String(5n*10n**17n);
+      await show(f,'wallet');await refresh(f);
+      const card=f.wallet.locator('.one-wallet').filter({hasText:'Home address'});
+      await card.getByText('0.50 ETH',{exact:true}).waitFor();
+      assert.deepEqual(await card.locator('.one-network-balance').allTextContents(),['ESC125.00 ELA','Base0.50 ETH']);
+      assert.match(await card.locator('.one-meta').innerText(),/\bEVM\b/);
+      await shot(f.wallet,'home-address-single-record',width,engine);
+      await card.getByRole('button',{name:'Open Home address',exact:true}).click();
+      assert.deepEqual(await card.locator('.one-network-balance').allTextContents(),['ESC125.00 ELA','Base0.50 ETH']);
+      // Only Base changes: the saved ESC record and its balance stay the same.
+      f.fixture.state.balanceValues[home.address]['base-mainnet']=String(75n*10n**16n);await refresh(f);
+      await card.getByText('0.75 ETH',{exact:true}).waitFor();
+      assert.equal(await card.getByText('125.00 ELA',{exact:true}).count(),1);
+      f.fixture.state.balanceValues[home.address]['base-mainnet']='0';await refresh(f);
+      await card.getByText('0.00 ETH',{exact:true}).waitFor();
+      assert.equal(f.fixture.state.connected.filter(account=>account.address===home.address).length,1);
+      assert.deepEqual(f.errors,[]);
+    }finally{await f.close();}
+  });
+}
 for(const engine of ['chromium','webkit']) {
   test(`fix1 built-in networks keep their own balances and one EVM card in ${engine}`,{timeout:45000},async()=>{
     const f=await setup(engine,390);
@@ -222,6 +249,7 @@ for(const engine of ['chromium','webkit']) {
       await card.getByText('0.75 ETH',{exact:true}).waitFor();
       f.fixture.state.balanceValues={};await refresh(f);
       await card.getByText('0.00 ETH',{exact:true}).waitFor();assert.equal(await card.getByText('0.00 ELA',{exact:true}).count(),1);
+      await shot(f.wallet,'home-address-networks-zero',390,engine);
       await f.page.setViewportSize({width:1440,height:1000});await shot(f.wallet,'home-address-networks-zero',1440,engine);
     }finally{await f.close();}
   });
