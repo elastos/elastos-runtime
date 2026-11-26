@@ -84,6 +84,16 @@ async function fixture(run, engine = "chromium") {
   }
 }
 
+async function waitForRemoveFocus(frame, remove) {
+  const proofBindingId = await remove.getAttribute("data-passkey-revoke");
+  // Refreshes replace the controls. Resolve the same passkey on every poll.
+  await frame.waitForFunction(id => {
+    const button = [...document.querySelectorAll(".passkey-remove")]
+      .find(node => node.dataset.passkeyRevoke === id);
+    return Boolean(button) && button === document.activeElement;
+  }, proofBindingId);
+}
+
 async function screenshot(page, name, directory = process.env.LAST_ADMIN_SCREENSHOT_DIR) {
   if (!directory) return;
   await mkdir(directory, { recursive: true });
@@ -141,18 +151,18 @@ test("every allowed removal asks first and returns focus after Cancel or Escape"
         await page.keyboard.press("Enter");
         await dialog.waitFor({ state: "hidden" });
         assert.equal(writes.length, before, "Enter takes the default Cancel action");
-        await frame.waitForFunction(node => node === document.activeElement, await remove.elementHandle());
+        await waitForRemoveFocus(frame, remove);
         await remove.click();
         await dialog.waitFor();
         await page.keyboard.press("Escape");
         await dialog.waitFor({ state: "hidden" });
         assert.equal(writes.length, before);
-        await frame.waitForFunction(node => node === document.activeElement, await remove.elementHandle());
+        await waitForRemoveFocus(frame, remove);
         await remove.click();
         await dialog.waitFor();
         await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
         assert.equal(writes.length, before);
-        await frame.waitForFunction(node => node === document.activeElement, await remove.elementHandle());
+        await waitForRemoveFocus(frame, remove);
         await remove.click();
         await dialog.waitFor();
         await dialog.getByRole("button", { name: "Remove passkey", exact: true }).click();
@@ -179,6 +189,41 @@ test("every allowed removal asks first and returns focus after Cancel or Escape"
   });
 });
 
+test("removal focus assertion follows a refreshed control and rejects lost focus", async () => {
+  await fixture(async ({ page, open, writes }) => {
+    const frame = await open([owner, guestBackup, guest]);
+    const remove = frame.locator(".account-row").last().locator(".passkey-remove");
+    await remove.click();
+    const dialog = frame.getByRole("dialog");
+    await dialog.waitFor();
+    const original = await remove.elementHandle();
+    // Start polling while Cancel has focus, then replace the opener through
+    // the real focus-triggered refresh before closing the dialog.
+    const restoredFocus = waitForRemoveFocus(frame, remove);
+    await frame.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
+    await frame.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await frame.waitForFunction(node => !node.isConnected, original);
+    await page.keyboard.press("Enter");
+    await dialog.waitFor({ state: "hidden" });
+    await restoredFocus;
+    await assert.rejects(
+      frame.waitForFunction(node => node === document.activeElement, original, { timeout: 100 }),
+      /Timeout 100ms exceeded/,
+    );
+    await original.dispose();
+
+    // A present, enabled Remove is insufficient: it must have actual focus.
+    await remove.evaluate(node => node.blur());
+    page.setDefaultTimeout(100);
+    try {
+      await assert.rejects(waitForRemoveFocus(frame, remove), /Timeout 100ms exceeded/);
+    } finally {
+      page.setDefaultTimeout(5000);
+    }
+    assert.equal(writes.length, 0);
+  });
+});
+
 test("confirmation uses own and unnamed wording for device and hardware passkeys", async () => {
   await fixture(async ({ page, open, writes }) => {
     for (const theme of ["light", "dark"]) {
@@ -200,7 +245,7 @@ test("confirmation uses own and unnamed wording for device and hardware passkeys
           assert.doesNotMatch(await dialog.textContent(), /for Account|that person/);
           if (state !== "own-other") await screenshot(page, `confirmation-${state}-${theme}-${width}`);
           await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
-          await frame.waitForFunction(node => node === document.activeElement, await remove.elementHandle());
+          await waitForRemoveFocus(frame, remove);
         }
       }
     }
