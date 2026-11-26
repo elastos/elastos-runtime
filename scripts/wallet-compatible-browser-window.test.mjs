@@ -1,3 +1,4 @@
+import { historicalTestSource } from './lib/historical-test-source.mjs';
 import { windowTestOptions } from './lib/walletconnect-window-resources.mjs';
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -65,7 +66,7 @@ test('V2-1 Home-only choice is a whole-row button and completes the chosen link'
 
 test('V2-2 MetaMask alone keeps the build request bytes and has no list',async()=>{
   const traces=[];
-  for(const hostSource of [execFileSync('git',['show','9b855f6ca:capsules/home/browser/home-wallet-connector-host.js'],{encoding:'utf8'}),undefined]) {
+  for(const hostSource of [historicalTestSource('9b855f6ca:capsules/home/browser/home-wallet-connector-host.js'),undefined]) {
     await windowCase({hostSource},async f=>{
       await click(f,'connect','linked');
       traces.push(await f.top.evaluate(()=>({calls:testState.calls,receipts:testState.receipts,runtime:testState.runtimeCalls})));
