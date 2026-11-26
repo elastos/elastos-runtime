@@ -26,7 +26,9 @@ function seed(state,{pictures=false}={}) {
 }
 async function shot(frame,id,width,engine,page) {
   if(!output || engine!=='chromium')return;
-  if(page){const height=await frame.locator('.settings-content-container').evaluate(node=>Math.max(1000,node.scrollHeight));await page.setViewportSize({width,height});}
+  page ||= frame.owner().page();
+  const height=await frame.locator('body').evaluate(node=>Math.max(1000,node.scrollHeight,node.querySelector('.settings-content-container')?.scrollHeight||0));
+  await page.setViewportSize({width,height});
   await mkdir(output,{recursive:true});await frame.locator('body').evaluate(async()=>{await document.fonts.ready;await new Promise(requestAnimationFrame);});
   const file=`a2-${id}-${width}.png`, bytes=await frame.locator('body').screenshot({path:join(output,file),animations:'disabled'});
   const brightPixels=await frame.locator('body').evaluate(async(_body,data)=>{
@@ -41,7 +43,7 @@ async function shot(frame,id,width,engine,page) {
   const bounds=await frame.locator('body').evaluate(()=>({width:innerWidth,scrollWidth:document.documentElement.scrollWidth,height:document.body.scrollHeight,text:document.body.innerText}));
   assert.equal(bounds.scrollWidth,width,id+' has horizontal overflow');
   captureRecords.push({file,sha256:createHash('sha256').update(bytes).digest('hex'),brightPixels,...bounds});
-  if(page)await page.setViewportSize({width,height:1000});
+  await page.setViewportSize({width,height:1000});
 }
 async function setup(engine,width,{pictures=false}={}) {
   if(output)assert.equal(execFileSync('git',['status','--porcelain'],{encoding:'utf8'}).trim(),'','pictures require committed source');
