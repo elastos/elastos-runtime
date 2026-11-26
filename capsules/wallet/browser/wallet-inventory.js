@@ -1,5 +1,5 @@
 import {pulseCopied} from './wallet-render.js';
-import {chainLabel, shortAddress, isPasskeyManagedAccount, walletDisplay, accountName} from './wallet-format.js';
+import {BALANCE_NETWORKS, chainLabel, shortAddress, isEvmChainNamespace, isPasskeyManagedAccount, walletDisplay, accountName} from './wallet-format.js';
 
 const text = (tag, value, className = '') => {
   const node = document.createElement(tag); node.textContent = value; node.className = className; return node;
@@ -19,6 +19,14 @@ const kind = entry => entry.accounts[0]?.connector_id?.replace('wallet-', '') ||
 const bitcoin = entry => entry.chain_namespace.startsWith('bip122:');
 const appsStatement = entry => bitcoin(entry) ? 'Proves you own this Bitcoin address to apps' : 'Apps and websites can ask; you approve each request.';
 
+function builtInBalanceEntries(entry) {
+  const accounts = entry.accounts.filter(isPasskeyManagedAccount);
+  const namespaces = accounts.some(account => isEvmChainNamespace(account.chain_namespace))
+    ? Object.keys(BALANCE_NETWORKS).filter(namespace => namespace.startsWith('eip155:'))
+    : [...new Set(accounts.map(account => account.chain_namespace))];
+  return namespaces.map(chain_namespace => ({...entry, chain_namespace, accounts}));
+}
+
 export function createWalletInventory({root, getApprovalMethods=()=>({}), openSystem, connectApps, removeApps, copyAddress, send, receive, manageBuiltIn, refreshInventory=async()=>{}, getBalance = () => '', openActivity, openSettings, togglePrivacy, isPrivate=()=>false, onError=()=>{}}) {
   let inventory = {entries:[]}, selected = new URLSearchParams(location.search).get('wallet_entry') || '';
   let result = '', dialog, operation = 0, busy = false, renderKey = '';
@@ -34,7 +42,7 @@ export function createWalletInventory({root, getApprovalMethods=()=>({}), openSy
     const copy = text('div', ''); const name = text('strong', inventoryWalletName(entry));
     name.dir = 'auto';
     const meta = text('div', '', 'one-meta'), address = text('code', bitcoin(entry)?`${entry.address.slice(0,8)}…${entry.address.slice(-6)}`:shortAddress(entry.address)); address.title = entry.address;
-    meta.append(address, text('span', (entry.accounts.some(isPasskeyManagedAccount) && entry.accounts.length > 1 ? 'EVM' : entry.chain_namespace === 'eip155:20' ? 'ESC' : chainLabel(entry.chain_namespace)) + (kind(entry) === 'walletconnect' ? ' · WalletConnect' : '')));
+    meta.append(address, text('span', (entry.accounts.some(isPasskeyManagedAccount) && isEvmChainNamespace(entry.chain_namespace) ? 'EVM' : entry.chain_namespace === 'eip155:20' ? 'ESC' : chainLabel(entry.chain_namespace)) + (kind(entry) === 'walletconnect' ? ' · WalletConnect' : '')));
     copy.append(name, meta); node.append(image, copy); return node;
   }
   function card(entry, detail) {
@@ -47,9 +55,9 @@ export function createWalletInventory({root, getApprovalMethods=()=>({}), openSy
     if (managed) {
       const built = text('div', '', 'one-builtin'), controls = text('div', '');
       const networks = text('div', '', 'one-network-balances');
-      for (const account of entry.accounts.filter(isPasskeyManagedAccount)) {
+      for (const balanceEntry of builtInBalanceEntries(entry)) {
         const row = text('div', '', 'one-network-balance');
-        row.append(text('span', account.chain_namespace === 'eip155:20' ? 'ESC' : chainLabel(account.chain_namespace)), text('strong', getBalance({...entry, chain_namespace:account.chain_namespace, accounts:[account]})));
+        row.append(text('span', balanceEntry.chain_namespace === 'eip155:20' ? 'ESC' : chainLabel(balanceEntry.chain_namespace)), text('strong', getBalance(balanceEntry)));
         networks.append(row);
       }
       controls.append(networks);
@@ -89,7 +97,7 @@ export function createWalletInventory({root, getApprovalMethods=()=>({}), openSy
     return article;
   }
   function render() {
-    const balances = inventory.entries.flatMap(entry => entry.accounts.filter(isPasskeyManagedAccount).map(account => getBalance({...entry,chain_namespace:account.chain_namespace,accounts:[account]})));
+    const balances = inventory.entries.flatMap(entry => builtInBalanceEntries(entry).map(getBalance));
     const key = JSON.stringify([inventory, selected, result, busy, balances]);
     if (key === renderKey) return; renderKey = key;
     const section = text('section', '', 'wallet-section one-section'), heading = text('header', '', 'one-heading'), title = text('div', '');
