@@ -175,7 +175,7 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
         }
       });
       if(state.action==='signin'){body.append(title,destination);signinOptions(body,initial.signinMethods);for(const row of body.querySelectorAll('.connection-option'))if(row.dataset.choice===initial.waitingId){row.disabled=true;row.querySelector('.connection-option-label').textContent=`Waiting for ${initial.waitingLabel}…`;}}
-      body.append(node('p',"Connects through a relay that can see this computer's internet address.",'connection-note'),shared);
+      if(state.action!=='signin'||!initial.availability?.relayNotice)body.append(node('p',"Connects through a relay that can see this computer's internet address.",'connection-note'));body.append(shared);
     } else {
       const title=node('h2',titles[state.action]||'Sign in');title.id='wallet-signin-title';body.append(title);
       if(state.stage==='options') {
