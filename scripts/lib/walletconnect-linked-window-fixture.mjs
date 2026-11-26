@@ -1,8 +1,8 @@
+import { historicalTestSource } from './historical-test-source.mjs';
 // Real connector and Wallet UI, pinned SDK, and a second protocol party.
 import assert from 'node:assert/strict';
 import {readFile, mkdir, writeFile} from 'node:fs/promises';
 import {extname} from 'node:path';
-import {execFileSync} from 'node:child_process';
 import {windowFixture, observeWindowErrors, walletWindowLifetime} from './walletconnect-phone-window-fixture.mjs';
 import {scriptedPhoneWallet} from './walletconnect-phone-wallet.mjs';
 import {importProductSmokePlaywright, productSmokeLaunchOptions} from '../product-smoke-browser.mjs';
@@ -74,7 +74,7 @@ export async function linkedWindow(t,engine,{holdWalletRead=false,sourceRef}={})
   if(sourceRef.startsWith('5cc6')||sourceRef.startsWith('b802'))assets.push('wallet-walletconnect/wallet-walletconnect.js','wallet-walletconnect/walletconnect-client.mjs','wallet-walletconnect/wallet-connection-screens.mjs');
   if(sourceRef.startsWith('40af'))assets.push('wallet-walletconnect/wallet-walletconnect.js','wallet-walletconnect/wallet-connection-screens.mjs','wallet-walletconnect/wallet-connection-view.mjs');
   if(sourceRef.startsWith('0db7'))assets.push('home/home-wallet-connector-host.js','wallet-walletconnect/wallet-walletconnect.js','wallet-walletconnect/wallet-connection-view.mjs','wallet-walletconnect/wallet-connection-screens.mjs');
-  for(const asset of assets){const [app,...parts]=asset.split('/');await page.route(`**/apps/${asset}*`,route=>route.fulfill({headers:cors,contentType:'text/javascript',body:execFileSync('git',['show',`${sourceRef}:capsules/${app}/browser/${parts.join('/')}`])}));}
+  for(const asset of assets){const [app,...parts]=asset.split('/');await page.route(`**/apps/${asset}*`,route=>route.fulfill({headers:cors,contentType:'text/javascript',body:historicalTestSource(`${sourceRef}:capsules/${app}/browser/${parts.join('/')}`)}));}
  }
  await page.goto(fixture.origin);
  frame=page.frames().find(f=>f.url().includes('/apps/wallet-walletconnect/'));
