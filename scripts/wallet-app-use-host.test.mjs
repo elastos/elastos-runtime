@@ -60,7 +60,7 @@ test('a replacement Wallet document retires the old proof in its reused frame', 
 // Removal guards keep the retired presentation protocol out of production.
 test('fix1 retired Wallet sign-in chooser has no production surface', async()=>{
   const {readFile}=await import('node:fs/promises');
-  for(const path of ['capsules/home/browser/wallet-signin-connector.mjs','capsules/home/browser/wallet-signin-view.mjs','capsules/home/browser/wallet-signin-methods.mjs','capsules/home-gui/browser/home-gui-shell.js','capsules/wallet/browser/style.css']) {
+  for(const path of ['capsules/home/browser/wallet-signin-connector.mjs','capsules/home/browser/wallet-signin-view.mjs','capsules/home/browser/wallet-signin-methods.mjs','capsules/home-gui/browser/home-gui-shell.js','capsules/wallet/browser/style.css','capsules/wallet/browser/wallet-inventory.css']) {
     assert.doesNotMatch(await readFile(path,'utf8'),/openWalletSigninChooser|openChooser|wallet-signin-state|readWalletSigninMethods|data-signin-chooser|#wallet-signers/,path);
   }
 });

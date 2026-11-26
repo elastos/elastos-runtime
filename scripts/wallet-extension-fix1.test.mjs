@@ -80,7 +80,7 @@ for (const engine of ['chromium', 'webkit']) for (const saved of [true, false]) 
     const bad=await baseFixture(browser,'unisat',{saved,mutate:source=>{
       const broken=breaks[saved?'Y11':'Y11-discovery'](source);assert.notEqual(broken,source,'Y11 applies');return observeDiscovery(broken);
     }});
-    try {await assert.rejects(()=>unisatIdentity(bad,saved));}finally{await bad.close();}
+    try {await assert.rejects(()=>unisatIdentity(bad,saved),{code:'ERR_ASSERTION'});}finally{await bad.close();}
     t.diagnostic('Y11: clean discovery passed; premature or missing discovery was caught.');
   } finally { await browser.close(); }
 });

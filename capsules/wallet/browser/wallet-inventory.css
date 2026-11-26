@@ -51,7 +51,7 @@
 .one-choices { display:grid; gap:12px; }
 .one-choices small { display:block; }
 .one-built-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:16px; }
-.wallet-one-list .wallet-hero,.wallet-one-list .wallet-accounts-section,.wallet-one-list #wallet-signers { display:none; }
+.wallet-one-list .wallet-hero,.wallet-one-list .wallet-accounts-section { display:none; }
 html[data-wallet-flow] .wallet-one-list #wallet-inventory { display:none; }
 html[data-wallet-flow] .wallet-one-list .wallet-hero.is-flipped,html[data-wallet-flow] .wallet-one-list .wallet-accounts-section.is-flipped { display:block; }
 @media(max-width:600px) {
