@@ -2522,7 +2522,8 @@ mod tests {
             ("2.0.1-rc.1", "2.0.1-rc.2"),
             ("2.0.1-rc.2", "2.0.1"),
             ("2.0.1", "2.0.2-rc.1"),
-            ("2.0.2-rc.1", "2.0.2"),
+            ("2.0.2-rc.1", "2.0.2-rc.2"),
+            ("2.0.2-rc.2", "2.0.2"),
         ] {
             assert_eq!(
                 compare_release_versions(installed, offered).unwrap(),
