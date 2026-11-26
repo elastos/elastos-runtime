@@ -82,3 +82,5 @@ html[data-wallet-flow] .wallet-one-list .wallet-hero.is-flipped,html[data-wallet
 .wallet-one-list .el-button { min-height:44px; }
 
 @media(max-width:480px) { .one-dialog { padding:20px; } }
+
+.one-network-balances{display:grid;gap:8px;min-width:180px}.one-network-balance{display:flex;justify-content:space-between;gap:20px}.one-builtin>div{flex-wrap:wrap}

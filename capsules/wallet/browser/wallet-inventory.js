@@ -34,7 +34,7 @@ export function createWalletInventory({root, getApprovalMethods=()=>({}), openSy
     const copy = text('div', ''); const name = text('strong', inventoryWalletName(entry));
     name.dir = 'auto';
     const meta = text('div', '', 'one-meta'), address = text('code', bitcoin(entry)?`${entry.address.slice(0,8)}…${entry.address.slice(-6)}`:shortAddress(entry.address)); address.title = entry.address;
-    meta.append(address, text('span', (entry.chain_namespace === 'eip155:20' ? 'ESC' : chainLabel(entry.chain_namespace)) + (kind(entry) === 'walletconnect' ? ' · WalletConnect' : '')));
+    meta.append(address, text('span', (entry.accounts.some(isPasskeyManagedAccount) && entry.accounts.length > 1 ? 'EVM' : entry.chain_namespace === 'eip155:20' ? 'ESC' : chainLabel(entry.chain_namespace)) + (kind(entry) === 'walletconnect' ? ' · WalletConnect' : '')));
     copy.append(name, meta); node.append(image, copy); return node;
   }
   function card(entry, detail) {
@@ -46,7 +46,15 @@ export function createWalletInventory({root, getApprovalMethods=()=>({}), openSy
     const managed = entry.accounts.some(isPasskeyManagedAccount);
     if (managed) {
       const built = text('div', '', 'one-builtin'), controls = text('div', '');
-      controls.append(text('strong', getBalance(entry)), button('Send', () => send(entry)), button('Receive', () => receive(entry)));
+      const networks = text('div', '', 'one-network-balances');
+      for (const account of entry.accounts.filter(isPasskeyManagedAccount)) {
+        const row = text('div', '', 'one-network-balance');
+        row.append(text('span', account.chain_namespace === 'eip155:20' ? 'ESC' : chainLabel(account.chain_namespace)), text('strong', getBalance({...entry, chain_namespace:account.chain_namespace, accounts:[account]})));
+        networks.append(row);
+      }
+      controls.append(networks);
+      if (!bitcoin(entry)) controls.append(button('Send', () => send(entry)));
+      controls.append(button('Receive', () => receive(entry)));
       built.append(text('span', 'Approved with your passkey'), controls); article.append(built);
     }
     if (!detail) {
@@ -71,7 +79,7 @@ export function createWalletInventory({root, getApprovalMethods=()=>({}), openSy
         toggle.append(document.createElement('span')); apps.append(toggle);
       }
       uses.append(apps); article.append(uses);
-      if (bitcoin(entry) && !managed) article.append(text('p', 'Sending Bitcoin from this Home is not available yet.', 'one-note'));
+      if (bitcoin(entry)) article.append(text('p', 'Sending Bitcoin from this Home is not available yet.', 'one-note'));
       if (managed) {
         const controls = text('div', '', 'one-built-actions');
         controls.append(button('Manage address', () => manageBuiltIn(entry)), button('Activity', openActivity), button('Settings', openSettings), button(isPrivate()?'Show balances':'Hide balances',togglePrivacy)); article.append(controls);
@@ -103,7 +111,7 @@ export function createWalletInventory({root, getApprovalMethods=()=>({}), openSy
     }
     root.replaceChildren(section);
   }
-  function open(id) {if (busy) return false; selected = id; result = ''; render(); return true;}
+  function open(id) {if (busy) return false; selected = inventory.entries.find(entry=>entry.inventory_ids.includes(id))?.inventory_id || id; result = ''; render(); return true;}
   function close() {const restore=Boolean(dialog);operation++;connectionController?.abort();connectionController=null;dialog?.close();dialog?.remove();dialog=null;busy=false;render();if(restore)(root.querySelector('[role=switch]')||root.querySelector('#wallet-add-apps'))?.focus({preventScroll:true});}
   function modal(title, nodes, approve, label) {
     close(); const modal = document.createElement('dialog'); dialog = modal; modal.className = 'one-dialog';
@@ -115,21 +123,21 @@ export function createWalletInventory({root, getApprovalMethods=()=>({}), openSy
   }
   function confirmOn(entry) {
     const wallet = text('div', '', 'one-proof-wallet'); wallet.append(identity(entry));
-    const message = text('div', bitcoin(entry) ? `Prove ownership of this Bitcoin address for app requests on ${inventory.account_name || 'your'}’s Home.` : 'Allow this wallet to approve requests from apps on this Home.', 'one-message');
+    const message = text('div', bitcoin(entry) ? `Prove ownership of this Bitcoin address for app requests on ${inventory.account_name || 'your'}'s Home.` : 'Allow this wallet to approve requests from apps on this Home.', 'one-message');
     const fields = text('dl', '', 'one-proof-fields');
-    for (const [label, value] of [['Home', `${inventory.account_name || 'Your'}’s Home`], ['Account', inventory.account_name || 'Your account'], ['Requested by', 'Wallet']]) {
+    for (const [label, value] of [['Home', `${inventory.account_name || 'Your'}'s Home`], ['Account', inventory.account_name || 'Your account'], ['Requested by', 'Wallet']]) {
       const row = text('div', ''); row.append(text('dt', label), text('dd', value)); fields.append(row);
     }
     modal('Connect for apps', [text('p', 'Wallet signature', 'one-step'), wallet, message, fields], async () => {
       if (busy) return; busy = true; const epoch = operation; connectionController = new AbortController(); render();
       try {await connectApps(entry, () => epoch === operation, undefined, connectionController.signal); if (epoch !== operation) return; close(); result = 'Connected for apps.'; render();}
-      catch (error) {if (epoch === operation) {busy = false; bodyError(error); render();}}
+      catch (error) {if (epoch === operation) {busy = false; bodyError(error); if(error.code === 'permission') dialog.querySelector('.el-button-primary').textContent='Try again'; render();}}
     }, 'Sign message');
   }
   function confirmOff(entry) {
     const wallet = text('div', '', 'one-proof-wallet'); wallet.append(identity(entry));
     const note = text('p', '', 'one-muted');
-    note.textContent = entry.sign_in ? `System still uses this wallet to sign in to ${inventory.account_name || 'your'}${inventory.account_name ? "'s" : ''} account.` : 'System manages sign-in use.';
+    note.textContent = entry.sign_in ? `System still uses this wallet to sign in to ${inventory.account_name || 'your'}${inventory.account_name ? "'s" : ''} account.` : 'To sign in with a wallet, use System > Accounts.';
     const scope = text('p', bitcoin(entry) ? 'This ends Bitcoin proof requests through this Home.' : '');
     if (!bitcoin(entry)) {const name=text('bdi',inventoryWalletName(entry));name.dir='auto';scope.append('This ends app and website requests for this wallet only (',name,') on this Home.');}
     modal('Turn off app use?', [wallet, scope, note, text('p', 'Passkey approval', 'one-step')], async () => {
@@ -156,7 +164,22 @@ export function createWalletInventory({root, getApprovalMethods=()=>({}), openSy
   return {
     update(next) {
       if (inventory.account_id && inventory.account_id !== next.account_id) {close(); selected = ''; result = '';}
-      inventory = next; render();
+      // Merge built-in EVM network records only for presentation. Runtime keeps
+      // each network's app link and sign-in method under its existing owner.
+      const groups = new Map(), entries = [];
+      for (const entry of next.entries) {
+        const key = entry.chain_namespace.startsWith('eip155:') && entry.accounts.some(isPasskeyManagedAccount) ? entry.address.toLowerCase() : entry.inventory_id;
+        const saved = groups.get(key);
+        if (saved) {
+          saved.accounts.push(...entry.accounts); saved.sign_in ||= entry.sign_in;
+          saved.inventory_ids.push(entry.inventory_id);
+        } else {
+          const row = {...entry, accounts:[...entry.accounts], inventory_ids:[entry.inventory_id]};
+          groups.set(key, row); entries.push(row);
+        }
+      }
+      if (selected) selected = entries.find(entry=>entry.inventory_ids.includes(selected))?.inventory_id || selected;
+      inventory = {...next, entries}; render();
     }, open, close, openAdd:choose,
   };
 }

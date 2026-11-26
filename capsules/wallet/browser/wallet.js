@@ -132,22 +132,22 @@ const inventoryView = createWalletInventory({
   openSystem: () => window.top.postMessage({type:'home:open-target', target:'system', homeToken:activeHomeToken, query:{settings:'account'}}, homeParentOrigin),
   connectApps: connectInventoryApps,
   removeApps: async (entry, current) => {
-    for (const account of entry.accounts) {
-      const stepUpToken = await requestPasskeyStepUp("wallet.account.delete", {account_id:account.account_id});
-      if (!current()) return;
-      await fetchJson(`/api/apps/wallet/wallet/accounts/${encodeURIComponent(account.account_id)}`, {
-        method: 'DELETE',
-        headers: shellHeaders({ "content-type": "application/json" }),
-        body: JSON.stringify({ step_up_token: stepUpToken }),
-      });
-    }
+    const accountIds = entry.accounts.map(account => account.account_id).sort();
+    const request = accountIds.length === 1 ? {account_id:accountIds[0]} : {account_ids:accountIds};
+    const stepUpToken = await requestPasskeyStepUp("wallet.account.delete", request);
+    if (!current()) return;
+    await fetchJson(`/api/apps/wallet/wallet/accounts/${encodeURIComponent(accountIds[0])}`, {
+      method: 'DELETE',
+      headers: shellHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify({ step_up_token: stepUpToken, ...(accountIds.length > 1 ? {account_ids:accountIds} : {}) }),
+    });
     notifyHomeSummaryChanged(); await refreshWalletState();
   },
   copyAddress: address => copyText(address),
   send: entry => {selectedAccountId=entry.accounts[0].account_id; document.documentElement.dataset.walletFlow='true'; openSendFlow();},
   receive: entry => {document.documentElement.dataset.walletFlow='true'; renderReceiveAddress(buildViewAccounts().find(account => account.account_ids.includes(entry.accounts[0].account_id)));},
   manageBuiltIn: entry => {const account=buildViewAccounts().find(account=>account.account_ids.includes(entry.accounts[0].account_id));if(account)openAccountMenu(account.account_id);},
-  getBalance: entry => {const account=viewAccountForGroup({records:entry.accounts,method:methodForAccount(entry.accounts[0]),firstIndex:0});return getPrivacyMode() ? "••••" : account.balanceAvailable ? `${account.amount.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:6})} ${account.symbol}` : "Balance unavailable";},
+  getBalance: entry => {const account=assetForNamespace(entry.accounts,entry.chain_namespace);return getPrivacyMode() ? "••••" : account?.available ? `${account.amount.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:6})} ${account.symbol}` : "Balance unavailable";},
   openActivity: () => openActivityChrome(), openSettings: () => openDrawer('settings'),
   togglePrivacy: () => togglePrivacy(), isPrivate: () => getPrivacyMode(), onError: error => showStatus(String(error.message || error),'error'),
 });
@@ -601,9 +601,8 @@ async function loadWalletState() {
   const [summary, prices, inventory] = await Promise.all([
     fetchJson("/api/apps/wallet/wallet/summary", { headers: shellHeaders() }),
     loadPrices({ requestAccess: walletShownToUser }),
-    readWalletInventory(activeHomeToken),
+    readWalletInventory(activeHomeToken).catch(() => null),
   ]);
-  currentInventory = inventory;
   const walletAccounts = summary && summary.wallet_accounts;
   const walletApprovals = summary && summary.wallet_approvals;
   const requestsUnavailable = walletApprovals?.available === false;
@@ -613,6 +612,11 @@ async function loadWalletState() {
   currentAccounts = Array.isArray(walletAccounts && walletAccounts.accounts)
     ? walletAccounts.accounts
     : [];
+  currentInventory = inventory || {entries:currentAccounts.filter(account=>!account.revoked_at).map(account=>({
+    inventory_id:`${account.chain_namespace}:${account.address}`, address:account.address,
+    chain_namespace:account.chain_namespace, accounts:[account], sign_in:null,
+  }))};
+  if (!inventory) showStatus('Home could not load wallet sign-in use. Try again.', 'error');
   currentDefaults = Array.isArray(walletAccounts && walletAccounts.default_accounts)
     ? walletAccounts.default_accounts
     : [];

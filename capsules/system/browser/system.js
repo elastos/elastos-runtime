@@ -2568,8 +2568,8 @@ async function refreshAccountList() {
     return;
   }
   try {
-    const inventory = await readWalletInventory(apiHomeToken);
-    const methods = {account_id: inventory.account_id, methods: inventory.entries.filter(entry => entry.sign_in).map(entry => ({...entry.sign_in, inventory_id:entry.inventory_id, wallet_display_name:entry.wallet_display_name || entry.accounts[0]?.wallet_display_name}))};
+    const inventory = await readWalletInventory(apiHomeToken).catch(() => null);
+    const methods = inventory ? {account_id: inventory.account_id, methods: inventory.entries.filter(entry => entry.sign_in).map(entry => ({...entry.sign_in, inventory_id:entry.inventory_id, wallet_display_name:entry.wallet_display_name || entry.accounts[0]?.wallet_display_name}))} : await fetchJson('/api/auth/wallet-methods', {headers:shellHeaders()});
     if (version !== walletSigninListVersion) return;
     if (walletSigninMethods.account_id !== methods.account_id) walletSigninNotice = "";
     walletSigninMethods = methods;

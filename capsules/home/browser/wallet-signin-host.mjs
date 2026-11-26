@@ -2,7 +2,7 @@ import {inventorySigninMethods} from './wallet-signin-methods.mjs';
 // Repeated intents follow one observed ceremony across asynchronous auth reads.
 const pendingChanges = new WeakMap();
 // The shell supplies a source/token-bound context from its launch registry.
-export function handleWalletSigninRequest(event,context,{api,manage,current,changed,authorityToken,authorityCurrent,sessionMethodId=()=>'',openConnector,selectWalletConnect,openChooser,focusCaller=()=>{}}) {
+export function handleWalletSigninRequest(event,context,{api,manage,current,changed,authorityToken,authorityCurrent,sessionMethodId=()=>'',openConnector,selectWalletConnect,focusCaller=()=>{}}) {
   const data=event.data;
   if(data?.type!=='home:wallet-signin-request')return false;
   const keys=['type','requestId','homeToken','action','methodId'];
@@ -33,7 +33,7 @@ export function handleWalletSigninRequest(event,context,{api,manage,current,chan
       const passkey=passkeys.passkeys?.find(row=>row.principal_id===wallets.account_id && !row.revoked_at);
       if(data.action==='list')return {status:'complete',...wallets,can_manage:passkey?.role==='admin'};
       if(data.action!=='add' && !method)return {status:'changed'};
-      pending.options={action:data.action,method,token,account:passkey?.display_name||'Your account',accountId:wallets.account_id,sessionMethodId:sessionMethodId(),sessionCurrent:sameAuthority,isCurrent:active,openChooser,openConnector,selectWalletConnect,loadConnected:async()=>{
+      pending.options={action:data.action,method,token,account:passkey?.display_name||'Your account',accountId:wallets.account_id,sessionMethodId:sessionMethodId(),sessionCurrent:sameAuthority,isCurrent:active,openConnector,selectWalletConnect,loadConnected:async()=>{
         const inventory=await api('/api/apps/wallet/wallet/inventory',undefined,token);
         if(!active())throw new Error('Home session changed');
         if(inventory.account_id!==wallets.account_id)throw new Error('Home account changed');

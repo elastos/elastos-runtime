@@ -17,7 +17,7 @@ export function requestWalletAppConnection(entry, {token, origin, current, signa
         || event.data.requestId !== requestId) return;
       if (!current()) {cancel(); return;}
       const result = event.data.result;
-      finish(result?.status === 'complete' ? null : new Error(result?.message || 'Home could not connect this wallet.'), result);
+      finish(result?.status === 'complete' ? null : Object.assign(new Error(result?.message || 'Home could not connect this wallet.'), {code:result?.code}), result);
     };
     signal?.addEventListener('abort', cancel, {once:true});
     window.addEventListener('message', receive);

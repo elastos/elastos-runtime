@@ -43,6 +43,7 @@ async function setup(engine,width,{pictures=false}={}) {
   context=await browser.newContext({viewport:{width,height:1000},colorScheme:'dark',reducedMotion:'reduce'});
   await context.addInitScript(installSigninProviders,{evmAddress:addresses.evm,bitcoinAddress:addresses.bitcoin,theme:'dark'});
   if(process.env.WALLET_ONE_LIST_BASELINE)await context.route('**/apps/wallet/**',async route=>{
+    if(new URL(route.request().url()).pathname.startsWith('/api/'))return route.continue();
     const path='capsules/wallet/browser/'+new URL(route.request().url()).pathname.split('/apps/wallet/')[1].split('?')[0];
     try {const body=execFileSync('git',['show',`${process.env.WALLET_ONE_LIST_BASELINE}:${path.endsWith('/')?path+'index.html':path}`]);await route.fulfill({body,contentType:path.endsWith('.js')?'text/javascript':path.endsWith('.css')?'text/css':'text/html'});}catch{await route.continue();}
   });
@@ -50,6 +51,7 @@ async function setup(engine,width,{pictures=false}={}) {
   const page=await context.newPage();page.setDefaultTimeout(8000);const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.goto(fixture.origin+'/home/');await page.waitForFunction(()=>window.fixtureReady);await page.evaluate(()=>{walletFixture.chain=8453;window.showFixtureApps();});
   const wallet=page.frameLocator('iframe[title=wallet]'),system=page.frameLocator('iframe[title=system]');
+  await wallet.locator('.one-wallet').nth(3).waitFor({state:'attached'});await system.locator('[data-wallet-method]').nth(1).waitFor({state:'attached'});
   return {fixture,browser,context,page,wallet,system,addresses,errors,close:async()=>{await context.close();await browser.close();await fixture.close();}};
   } catch(error) {await context?.close().catch(()=>{});await browser?.close().catch(()=>{});await fixture.close();throw error;}
 }
@@ -211,7 +213,7 @@ for(const engine of ['chromium','webkit']) {
   test(`fix1 relay disclosure precedes Add pairing in ${engine}`,{timeout:30000},async()=>{
     const f=await setup(engine,390);
     try {
-      f.fixture.state.methods=[];f.fixture.state.wcConnected=false;
+      f.fixture.state.methods=[];f.fixture.state.connected=[];f.fixture.state.wcConnected=false;
       await f.system.getByRole('button',{name:'Add wallet',exact:true}).click();
       const row=f.page.locator('.signin-dialog .connection-option').filter({hasText:'WalletConnect'});
       await row.waitFor();const copy=await row.locator('small').allTextContents();

@@ -419,6 +419,6 @@ addEventListener('message',async event=>{
     }
     if(ownedRequest&&signinRequest!==ownedRequest&&appUseRequest!==ownedRequest)return reply({error:true});
     reply({result});
-  } catch(error) {reply({error:true,code:error.code});}
+  } catch(error) {if(error.code==='permission'){await api('internet',{method:'POST',body:JSON.stringify({action:'request'})}).then(()=>showInternetRequest()).catch(()=>{});}reply({error:true,code:error.code});}
   finally {signinBusy=false;if(ownedRequest&&(signinRequest===ownedRequest||appUseRequest===ownedRequest)){signinRequest=undefined;appUseRequest=undefined;hostEffectInFlight=false;currentPhase='idle';}draw();}
 });

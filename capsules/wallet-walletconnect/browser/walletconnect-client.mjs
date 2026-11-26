@@ -251,7 +251,7 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
     const permission = observedGeneration !== generation && latestPermission ? latestPermission : read;
     latestPermission = permission;
     if (permission.status !== 'granted' && (provider || pairing || operation || adapter)) {
-      const clearing = reset(muted('Internet access for WalletConnect was turned off. Select Connect wallet to ask again.'));
+      const clearing = reset(Object.assign(muted('Internet access for WalletConnect was turned off. Select Connect wallet to ask again.'),{code:'permission'}));
       // Home's permission reply is a display fact; SDK retirement can take longer.
       onPhase('permission',permission);
       await clearing;

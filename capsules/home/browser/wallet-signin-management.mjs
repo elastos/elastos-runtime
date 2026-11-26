@@ -11,7 +11,7 @@ export function renderWalletSigninManagement(body, footer, state, {account, choo
       const row=button('',()=>choose(choice.providerId?`${choice.connector}:${choice.providerId}`:choice.connector));row.className='connection-option';
       const icon=document.createElement('img');icon.src=`./connection-${choice.connector}.png`;icon.alt='';
       const label=node('span',choice.label||names[choice.connector]);
-      if(choice.connector==='walletconnect')label.append(node('small','Rainbow, Trust and other phone wallets'));
+      if(choice.connector==='walletconnect')label.append(node('small','Rainbow, Trust and other phone wallets'),node('small',"Connects through a relay that can see this computer's internet address."));
       if(choice.used){label.append(node('small','Already signs in'));row.disabled=true;}
       row.append(icon,label,node('span','›'));list.append(row);
     }
@@ -33,7 +33,7 @@ export function renderWalletSigninManagement(body, footer, state, {account, choo
     if(signing) {
       body.append(node('div','Add this wallet as a way to sign in to this Home.','one-message'));
       const fields=node('dl','','one-proof-fields');
-      for(const[label,value]of [['Home',`${account}’s Home`],['Account',account],['Requested by','System']]){const row=node('div','');row.append(node('dt',label),node('dd',value));fields.append(row);}body.append(fields);
+      for(const[label,value]of [['Home',`${account}'s Home`],['Account',account],['Requested by','System']]){const row=node('div','');row.append(node('dt',label),node('dd',value));fields.append(row);}body.append(fields);
     } else if(['approval','passkey'].includes(state.stage)) body.append(node('p',`Allow this wallet to sign in to ${account}'s account.`));
     if(state.approvalNotice)body.append(node('p',state.approvalNotice,'connection-note'));
     if(state.message){const message=node('p',state.message,'connection-note');message.setAttribute('role','status');body.append(message);}

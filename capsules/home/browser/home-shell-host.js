@@ -1886,7 +1886,7 @@ window.addEventListener("message", (event) => {
       const opened = await signinConnectorWindow(entry.sign_in.connector);
       const connector = launchedAppContexts.get(opened.homeToken);
       if (!connector || !active()) {if (opened.created) await opened.close(); return;}
-      postToActiveShell({type:'home:gui-command',command:'focus-window',homeToken:context.homeToken});
+      if(entry.sign_in.connector !== 'walletconnect') postToActiveShell({type:'home:gui-command',command:'focus-window',homeToken:context.homeToken});
       let watch;
       const abort = new AbortController();
       try {

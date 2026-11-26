@@ -53,23 +53,3 @@ export async function selectConnectedWalletConnect({signal,method,opened,action=
       },close};
   }catch(error){close();throw error;}
 }
-
-
-// The admitted Wallet owns the chooser; Home owns its ceremony and proof.
-export async function openWalletSigninChooser({open,current,focus,listen=window,onAction,setStage=()=>{}}) {
-  const context=await open('wallet'),requestId=crypto.randomUUID();
-  let stopped=false,monitor,acknowledged=false,lastState;
-  const valid=()=>!stopped&&current(context);
-  const canCancel=()=>!['completing','unknown'].includes(lastState?.stage);
-  const send=state=>{lastState=state;setStage(context.homeToken,state.stage);if(valid())context.source.postMessage({type:'home:wallet-signin-chooser',homeToken:context.homeToken,requestId,state},'*');};
-  const receive=event=>{
-    const data=event.data;
-    if(!valid()||event.source!==context.source||event.origin!=='null'||data?.type!=='home:wallet-signin-chooser-action'||data.homeToken!==context.homeToken||data.requestId!==requestId||Object.keys(data).length!==4)return;
-    if(data.action==='ready'){acknowledged=true;return;}
-    if(data.action==='cancel'&&!canCancel())return;
-    if(['metamask','unisat','walletconnect','cancel','retry','approve','check','refresh'].includes(data.action)||lastState?.stage==='options'&&lastState.methods?.some(m=>m.providerId&&data.action===`${m.connector}:${m.providerId}`))onAction(data.action);
-  };
-  listen.addEventListener('message',receive);
-  monitor=setInterval(()=>{if(!stopped&&!current(context)&&canCancel()){onAction('cancel');}else if(!acknowledged&&lastState)send(lastState);},250);
-  return {isOpen:valid,render:send,focus:()=>{if(valid())focus(context.homeToken);},close(){if(stopped)return;send({stage:'closed'});stopped=true;clearInterval(monitor);listen.removeEventListener('message',receive);}};
-}

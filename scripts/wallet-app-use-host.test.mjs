@@ -56,3 +56,29 @@ test('a replacement Wallet document retires the old proof in its reused frame', 
   retireWalletAppUse(f.context);release();await tick();
   assert.deepEqual(f.calls,[]);assert.deepEqual(f.replies,[]);assert.equal(f.context.walletEffectState.appConnection,null);
 });
+
+// Removal guards keep the retired presentation protocol out of production.
+test('fix1 retired Wallet sign-in chooser has no production surface', async()=>{
+  const {readFile}=await import('node:fs/promises');
+  for(const path of ['capsules/home/browser/wallet-signin-connector.mjs','capsules/home/browser/wallet-signin-view.mjs','capsules/home/browser/wallet-signin-methods.mjs','capsules/home-gui/browser/home-gui-shell.js','capsules/wallet/browser/style.css']) {
+    assert.doesNotMatch(await readFile(path,'utf8'),/openWalletSigninChooser|openChooser|wallet-signin-state|readWalletSigninMethods|data-signin-chooser|#wallet-signers/,path);
+  }
+});
+test('fix1 refined wallet copy uses the approved direction and straight apostrophes', async()=>{
+  const {readFile}=await import('node:fs/promises');
+  for(const path of ['capsules/wallet/browser/wallet-inventory.js','capsules/home/browser/wallet-signin-management.mjs']) {
+    const source=await readFile(path,'utf8');assert.doesNotMatch(source,/System manages sign-in use\.|[’‘]/,path);
+  }
+});
+
+test('fix1 WalletConnect permission revocation during selection retains its error code', async()=>{
+  const {createWalletConnectClient}=await import('../capsules/wallet-walletconnect/browser/walletconnect-client.mjs');
+  let release;
+  const client=createWalletConnectClient({origin:'http://localhost',api:async resource=>{
+    if(resource==='wallet/config')return new Promise(resolve=>release=resolve);
+    if(resource==='internet')return {status:'required'};
+    return {};
+  }});
+  const selected=assert.rejects(client.effect({kind:'signin-select'}),error=>error.code==='permission');
+  await Promise.resolve();await client.effect({kind:'status'});await selected;release({walletconnect:{}});
+});
