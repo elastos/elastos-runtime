@@ -6,7 +6,6 @@ use subtle::ConstantTimeEq;
 const FILE: &str = "wallet-signin.json";
 pub(crate) const SCHEMA: &str = "elastos.auth.wallet.signin/v1";
 const LEGACY_SCHEMA: &str = "elastos.auth.wallet-signin/v1";
-const CANONICAL_FILE: &str = "wallet-signin-bindings.json";
 const TTL: u64 = 180;
 const CONTRACT_VERSION: u32 = 3;
 const MAX_BYTES: u64 = 4 * 1024 * 1024;
@@ -211,11 +210,12 @@ fn read_bytes(data: &Path, path: &Path) -> anyhow::Result<Option<Vec<u8>>> {
     Ok(Some(bytes))
 }
 fn read(data: &Path) -> anyhow::Result<Store> {
+    remove_stale_projection(data)?;
     let Some(bytes) = read_bytes(data, &path(data)?)? else {
         return Ok(Store::default());
     };
-    // Serde aliases keep the legacy reader strict, including duplicate fields.
-    // The rollback journal owns authority while Undo can run the rc.1 writer.
+    // Translate the single journal at the storage boundary. Serde aliases
+    // keep the reader strict, including duplicate fields.
     let mut store: Store = serde_json::from_slice(&bytes)?;
     require(store.schema == LEGACY_SCHEMA)?;
     store.schema = SCHEMA.into();
@@ -228,37 +228,52 @@ fn read(data: &Path) -> anyhow::Result<Store> {
     }
     Ok(store)
 }
-fn write_projection(data: &Path, bytes: &[u8]) -> anyhow::Result<()> {
-    require(bytes.len() as u64 <= MAX_BYTES)?;
-    let file = path(data)?.with_file_name(CANONICAL_FILE);
-    if read_bytes(data, &file)?.as_deref() != Some(bytes) {
-        write_secret_bytes_atomic(&file, bytes)?;
+// Remove only the retired regular file. Directory-relative unlink and inode
+// checks keep cleanup bound to the inspected file; links remain untouched.
+fn remove_stale_projection(data: &Path) -> anyhow::Result<()> {
+    let file = path(data)?.with_file_name("wallet-signin-bindings.json");
+    let root = std::fs::symlink_metadata(data)?;
+    require(root.is_dir() && !root.file_type().is_symlink())?;
+    let parent = file.parent().ok_or(Refused)?;
+    ensure_regular_auth_parent(data, parent)?;
+    let metadata = match std::fs::symlink_metadata(&file) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(err.into()),
+    };
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Ok(());
+    }
+    let directory = open_migration_backup_directory(parent)?;
+    let name = file.file_name().ok_or(Refused)?;
+    if let Some((held, _)) = read_migration_cleanup_file(&directory, name, MAX_BYTES)? {
+        require(
+            regular_file_identity_from_metadata(&metadata, "retired wallet state")?
+                == regular_file_identity_from_metadata(&held.metadata()?, "retired wallet state")?,
+        )?;
+        unlink_migration_cleanup_file(&directory, name, &held)?;
+        directory.sync_all()?;
     }
     Ok(())
 }
 fn write(data: &Path, store: &Store) -> anyhow::Result<()> {
-    let bytes = serde_json::to_vec(store)?;
-    require(bytes.len() as u64 <= MAX_BYTES)?;
     let path = path(data)?;
     let mut legacy = serde_json::to_value(store)?;
     legacy_store(&mut legacy)?;
     let legacy = serde_json::to_vec(&legacy)?;
     require(legacy.len() as u64 <= MAX_BYTES)?;
-    // The journal write is the commit point. If either atomic write fails, the
-    // next read uses the last committed journal, including after Undo to rc.1.
-    write_projection(data, &bytes)?;
     write_secret_bytes_atomic(&path, &legacy)?;
     Ok(())
 }
-// Connector capsule IDs are the stored and wire identities. Short names only
-// cross the rc.1 journal boundary.
+// Connector capsule IDs are wire identities. Short names cross the journal
+// boundary so the previous reader can use the same stored authority during Undo.
 fn stored_connector<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
     let value = String::deserialize(d)?;
     Ok(match value.as_str() {
-        "metamask" => "wallet-metamask".into(),
-        "unisat" => "wallet-unisat".into(),
-        "walletconnect" => "wallet-walletconnect".into(),
-        _ => value,
+        "metamask" | "wallet-metamask" => "wallet-metamask".into(),
+        "unisat" | "wallet-unisat" => "wallet-unisat".into(),
+        "walletconnect" | "wallet-walletconnect" => "wallet-walletconnect".into(),
+        _ => return Err(serde::de::Error::custom("unknown wallet sign-in connector")),
     })
 }
 fn rename_field(value: &mut Value, old: &str, new: &str) -> anyhow::Result<()> {
@@ -487,10 +502,6 @@ fn mutate<T>(
     let result = f(&auth, &mut store)?;
     if serde_json::to_vec(&store)? != before {
         write(data, &store)?;
-    } else {
-        // A read can migrate or refresh names after Undo without rewriting the
-        // authority journal or replacing an already-current projection.
-        write_projection(data, &before)?;
     }
     unlock_auth_state_file(lock)?;
     Ok(result)
@@ -1586,7 +1597,7 @@ pub(crate) mod tests {
         out["proof_binding_id"].as_str().unwrap().into()
     }
     #[test]
-    fn wallet_signin_names_rc1_migration_and_real_undo_signin() {
+    fn wallet_signin_names_rc1_journal_and_real_undo_signin() {
         use super::super::wallet_signin_rc1 as rc1;
         for (old, new) in [
             ("metamask", "wallet-metamask"),
@@ -1660,22 +1671,15 @@ pub(crate) mod tests {
             assert_eq!(listed["methods"][0]["connector"], new);
             assert!(listed.get("account_id").is_none());
             assert!(listed["methods"][0].get("method_id").is_none());
-            let canonical: Value = serde_json::from_slice(
-                &std::fs::read(
-                    path(f.data.path())
-                        .unwrap()
-                        .with_file_name("wallet-signin-bindings.json"),
-                )
-                .unwrap(),
-            )
-            .unwrap();
-            assert_eq!(canonical["schema"], "elastos.auth.wallet.signin/v1");
-            assert_eq!(
-                canonical["methods"][0]["principal_id"],
-                f.actor.principal_id
-            );
-            assert_eq!(canonical["methods"][0]["proof_binding_id"], id);
-            assert_eq!(canonical["methods"][0]["connector"], new);
+            let journal = path(f.data.path()).unwrap();
+            assert!(!journal
+                .with_file_name("wallet-signin-bindings.json")
+                .exists());
+            let stored: Value = serde_json::from_slice(&std::fs::read(&journal).unwrap()).unwrap();
+            assert_eq!(stored["schema"], LEGACY_SCHEMA);
+            assert_eq!(stored["methods"][0]["account_id"], f.actor.principal_id);
+            assert_eq!(stored["methods"][0]["method_id"], id);
+            assert_eq!(stored["methods"][0]["connector"], old);
             let current_input = serde_json::from_value(serde_json::json!({"connector":new,"address":address,"chain_id":chain,"network":network,"browser_secret":BROWSER,"allow_temporary_internet":true})).unwrap();
             let b = begin(f.data.path(), ORIGIN, "home-test", current_input, None).unwrap();
             let session = complete(
@@ -1702,7 +1706,7 @@ pub(crate) mod tests {
             .unwrap();
             assert_eq!(session["principal_id"], f.actor.principal_id);
             assert_eq!(session["proof_binding_id"], id);
-            // A removal during Undo wins over the canonical copy on re-upgrade.
+            // A removal during Undo stays removed on re-upgrade.
             let b = rc1::begin(
                 f.data.path(),
                 ORIGIN,
@@ -1759,25 +1763,67 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn wallet_signin_names_projection_never_restores_journal_authority() {
+    fn wallet_signin_names_removes_stale_projection_without_restoring_authority() {
         let f = fixture();
         let id = enabled(&f);
         let file = path(f.data.path()).unwrap();
-        let canonical = file.with_file_name(CANONICAL_FILE);
-        let saved = std::fs::read(&canonical).unwrap();
+        let retired = file.with_file_name("wallet-signin-bindings.json");
+        let saved = std::fs::read(&file).unwrap();
         change(&f, "remove", &id);
-        // Model a crash or an old binary leaving a stale projection behind.
-        write_secret_bytes_atomic(&canonical, &saved).unwrap();
+        write_secret_bytes_atomic(&retired, &saved).unwrap();
         assert!(principal(f.data.path(), &id).is_err());
+        assert!(!retired.exists());
         assert!(list(f.data.path(), &f.actor).unwrap()["methods"]
             .as_array()
             .unwrap()
             .is_empty());
-        let projected: Value = serde_json::from_slice(&std::fs::read(&canonical).unwrap()).unwrap();
-        assert!(projected["methods"].as_array().unwrap().is_empty());
         std::fs::remove_file(&file).unwrap();
-        write_secret_bytes_atomic(&canonical, &saved).unwrap();
+        write_secret_bytes_atomic(&retired, &saved).unwrap();
         assert!(principal(f.data.path(), &id).is_err());
+        assert!(!retired.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn wallet_signin_names_cleanup_preserves_links_and_directories() {
+        let f = fixture();
+        let id = enabled(&f);
+        let file = path(f.data.path()).unwrap();
+        let before = std::fs::read(&file).unwrap();
+        let retired = file.with_file_name("wallet-signin-bindings.json");
+        std::os::unix::fs::symlink(&file, &retired).unwrap();
+        assert_eq!(
+            list(f.data.path(), &f.actor).unwrap()["methods"][0]["proof_binding_id"],
+            id
+        );
+        assert!(std::fs::symlink_metadata(&retired)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(std::fs::read(&file).unwrap(), before);
+        std::fs::remove_file(&retired).unwrap();
+        std::fs::create_dir(&retired).unwrap();
+        list(f.data.path(), &f.actor).unwrap();
+        assert!(retired.is_dir());
+    }
+
+    #[test]
+    fn wallet_signin_names_rejects_unknown_stored_connectors() {
+        let f = fixture();
+        enabled(&f);
+        let file = path(f.data.path()).unwrap();
+        let saved: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+        for pending in [false, true] {
+            let mut bad = saved.clone();
+            if pending {
+                bad["pending"][0]["method"]["connector"] = "unknown-wallet".into();
+            } else {
+                bad["methods"][0]["connector"] = "unknown-wallet".into();
+            }
+            write_secret_bytes_atomic(&file, &serde_json::to_vec(&bad).unwrap()).unwrap();
+            assert!(read(f.data.path()).is_err());
+            assert!(list(f.data.path(), &f.actor).is_err());
+        }
     }
 
     #[test]
@@ -3016,13 +3062,6 @@ pub(crate) mod tests {
         )
         .unwrap();
         let file_path = path(f.data.path()).unwrap();
-        let canonical_path = file_path.with_file_name(CANONICAL_FILE);
-        let canonical_held = File::open(&canonical_path).unwrap();
-        let canonical_before = regular_file_identity_from_metadata(
-            &canonical_held.metadata().unwrap(),
-            "wallet names",
-        )
-        .unwrap();
         let held = File::open(&file_path).unwrap();
         let before =
             regular_file_identity_from_metadata(&held.metadata().unwrap(), "wallet state").unwrap();
@@ -3032,10 +3071,6 @@ pub(crate) mod tests {
             assert_eq!(
                 observe_optional_regular_file_identity(&file_path, "wallet state").unwrap(),
                 Some(before)
-            );
-            assert_eq!(
-                observe_optional_regular_file_identity(&canonical_path, "wallet names").unwrap(),
-                Some(canonical_before)
             );
         }
         let pair = begin(f.data.path(), ORIGIN, "home-test", serde_json::from_value(serde_json::json!({"connector":"wallet-walletconnect","address":"","chain_id":0,"browser_secret":BROWSER,"allow_temporary_internet":true})).unwrap(), None).unwrap();
