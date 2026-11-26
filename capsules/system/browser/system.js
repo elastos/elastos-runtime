@@ -40,6 +40,7 @@ const passkeyStatusNode = document.querySelector('[data-field="passkey-status"]'
 const accountListNode = document.querySelector("#account-list");
 let walletSigninListVersion = 0;
 let walletSigninMethods = {account_id:"", methods:[]};
+let walletSigninNotice = "";
 const walletAddButton = document.querySelector("#wallet-signin-add");
 const passkeyAddButton = document.querySelector("#passkey-add");
 const passkeyRemoveDialog = document.querySelector("#passkey-remove-dialog");
@@ -2516,16 +2517,35 @@ function joinWords(values) {
 }
 
 async function changeWalletSignin(action, methodId = "") {
+  const previousMethods = new Set(walletSigninMethods.methods.map(method => method.method_id));
+  setWalletSigninNotice("");
   const button=action==="add"?document.querySelector("#wallet-signin-add"):null;
   if(button){button.setAttribute("aria-busy","true");}
   try {
     const result = await requestWalletSigninChange({action, methodId, token:apiHomeToken, origin:homeParentOrigin});
     await refreshAccountList();
+    if (result?.status === "complete") {
+      const added = walletSigninMethods.methods.find(method => !previousMethods.has(method.method_id));
+      setWalletSigninNotice(action === "add" ? `${added?.wallet_display_name || (added ? connectorName(added.connector) : "Wallet")} added for sign-in.` : "Wallet removed from sign-in.");
+    }
     if(result?.status === "unknown") showSigninListFailure("Home has not confirmed this change.",()=>changeWalletSignin(action,methodId),"Check again");
     if(result?.status === "busy") showSigninListFailure("Finish the open wallet request before you start another change.",()=>changeWalletSignin(action,methodId));
     if (["failed", "changed"].includes(result?.status)) showSigninListFailure("Home could not change this wallet.",()=>changeWalletSignin(action,methodId));
   } catch (error) { showSigninListFailure("Home could not change this wallet.",()=>changeWalletSignin(action,methodId)); }
   finally {if(button){button.removeAttribute("aria-busy");}}
+}
+
+function walletSigninNoticeNode() {
+  const notice = document.createElement('p'); notice.dataset.walletSigninNotice = '';
+  notice.className = 'wallet-signin-result'; notice.setAttribute('role', 'status');
+  notice.textContent = walletSigninNotice; return notice;
+}
+
+function setWalletSigninNotice(message) {
+  walletSigninNotice = message;
+  const wallets = accountListNode?.querySelector('.system-signin-wallets');
+  wallets?.querySelector('[data-wallet-signin-notice]')?.remove();
+  if (message) wallets?.querySelector('h3')?.after(walletSigninNoticeNode());
 }
 
 function showSigninListFailure(message, retryAction = () => refreshAccountList().catch(error => showError(error)), retryLabel = "Try again") {
@@ -2551,6 +2571,7 @@ async function refreshAccountList() {
     const inventory = await readWalletInventory(apiHomeToken);
     const methods = {account_id: inventory.account_id, methods: inventory.entries.filter(entry => entry.sign_in).map(entry => ({...entry.sign_in, inventory_id:entry.inventory_id, wallet_display_name:entry.wallet_display_name || entry.accounts[0]?.wallet_display_name}))};
     if (version !== walletSigninListVersion) return;
+    if (walletSigninMethods.account_id !== methods.account_id) walletSigninNotice = "";
     walletSigninMethods = methods;
     renderAccounts(Array.isArray(data.passkeys) ? data.passkeys : []);
   } catch {
@@ -2628,6 +2649,7 @@ function renderAccounts(accounts) {
     if (id === walletSigninMethods.account_id) {
       const wallets = document.createElement('section'); wallets.className = 'system-signin-wallets';
       const heading = document.createElement('h3'); heading.textContent = 'Wallets for sign-in'; wallets.append(heading);
+      if (walletSigninNotice) wallets.append(walletSigninNoticeNode());
       for (const method of walletSigninMethods.methods) wallets.append(walletAccountRow(method));
       if (walletAddButton) {walletAddButton.className='el-button el-button-primary';wallets.append(walletAddButton);}
       block.append(wallets);

@@ -14,6 +14,7 @@ const fixtureAddresses={home:'0x42e8a1b23597c9d48605f162ab30cd84e9123a71',evm:'0
 function seed(state,{pictures=false}={}) {
   const addresses=pictures?fixtureAddresses:{...fixtureAddresses,evm:evmAddress,bitcoin:bitcoinAddress,phone:walletconnectAddress};
   state.theme='dark';state.walletAddresses=addresses;
+  if(pictures){state.otherAdmin=true;state.otherRole='guest';state.otherDisplayName='Sam';state.passkeyLabels=['This computer','Security key'];}
   state.connected=[
     {account_id:'home-address',address:addresses.home,chain_namespace:'eip155:20',proof_type:'managed_evm',label:'Home address'},
     {account_id:'app:metamask',address:addresses.evm,chain_namespace:'eip155:8453',proof_type:'siwe',connector_id:'wallet-metamask',wallet_display_name:'MetaMask'},
@@ -23,13 +24,15 @@ function seed(state,{pictures=false}={}) {
   state.balanceValues={[addresses.home]:{'esc-mainnet':String(125n*10n**18n)}};state.passkeyCount=2;
   return addresses;
 }
-async function shot(frame,id,width,engine) {
+async function shot(frame,id,width,engine,page) {
   if(!output || engine!=='chromium')return;
+  if(page){const height=await frame.locator('.settings-content-container').evaluate(node=>Math.max(1000,node.scrollHeight));await page.setViewportSize({width,height});}
   await mkdir(output,{recursive:true});await frame.locator('body').evaluate(async()=>{await document.fonts.ready;await new Promise(requestAnimationFrame);});
   const file=`a2-${id}-${width}.png`, bytes=await frame.locator('body').screenshot({path:join(output,file),animations:'disabled'});
   const bounds=await frame.locator('body').evaluate(()=>({width:innerWidth,scrollWidth:document.documentElement.scrollWidth,height:document.body.scrollHeight,text:document.body.innerText}));
   assert.equal(bounds.scrollWidth,width,id+' has horizontal overflow');
   captureRecords.push({file,sha256:createHash('sha256').update(bytes).digest('hex'),...bounds});
+  if(page)await page.setViewportSize({width,height:1000});
 }
 async function setup(engine,width,{pictures=false}={}) {
   if(output)assert.equal(execFileSync('git',['status','--porcelain'],{encoding:'utf8'}).trim(),'','pictures require committed source');
@@ -101,7 +104,7 @@ for(const engine of ['chromium','webkit'])for(const width of [1440,390]) {
       await f.system.locator('[data-wallet-method]').nth(1).waitFor();
       assert.equal(await f.system.getByRole('heading',{name:'Wallets for sign-in',exact:true}).count(),1);
       assert.equal(await f.system.getByRole('link',{name:'Open Wallet',exact:true}).count(),2);
-      await shot(f.system,'system-accounts',width,engine);
+      await shot(f.system,'system-accounts',width,engine,f.page);
       await f.system.locator('[data-wallet-method]').filter({hasText:'UniSat'}).getByRole('link',{name:'Open Wallet'}).click();
       await f.wallet.getByRole('heading',{name:'Used by'}).waitFor();assert.equal(await f.wallet.locator('.one-identity strong').textContent(),'UniSat');
       await f.wallet.getByRole('link',{name:'Manage in System'}).click();
@@ -113,10 +116,10 @@ for(const engine of ['chromium','webkit'])for(const width of [1440,390]) {
       await dialog.getByRole('button',{name:'Sign message',exact:true}).click();await dialog.getByRole('button',{name:'Approve with passkey',exact:true}).waitFor();
       await shot(f.page,'system-add-passkey',width,engine);assert.equal(f.fixture.state.methods.length,2);
       await dialog.getByRole('button',{name:'Approve with passkey',exact:true}).click();
-      await f.system.locator('[data-wallet-method]').nth(2).waitFor();assert.equal(f.fixture.state.methods.length,3);
+      await f.system.locator('[data-wallet-method]').nth(2).waitFor();await f.system.getByText('MetaMask added for sign-in.',{exact:true}).waitFor();assert.equal(f.fixture.state.methods.length,3);
       assert.equal(await f.page.evaluate(()=>walletFixture.calls.filter(c=>c.method==='personal_sign').length),1);
       assert.equal(f.fixture.state.calls.filter(c=>c.path==='/api/auth/passkey-step-up/complete').length,1);
-      await shot(f.system,'system-add-returned',width,engine);
+      await shot(f.system,'system-add-returned',width,engine,f.page);
       await show(f,'wallet');await f.wallet.getByRole('button',{name:'Back to wallets',exact:true}).click();await refresh(f);
       await f.wallet.locator('.one-wallet').filter({hasText:'MetaMask'}).filter({hasText:"Signs in to Alex's account"}).waitFor();
       assert.equal(await f.wallet.locator('.one-wallet').count(),4);await shot(f.wallet,'wallet-list-after-system-add',width,engine);

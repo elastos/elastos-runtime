@@ -18,7 +18,7 @@ for(const width of [1280,390])test(`round3 pointer Choose survives a focus refre
   await page.goto(f.origin+'/home/');await page.waitForFunction(()=>window.fixtureReady);await page.evaluate(()=>window.showFixtureApps());
   const system=page.frameLocator('iframe[title=system]');await system.getByRole('button',{name:'Add wallet',exact:true}).click();
   const choose=page.locator('.signin-dialog .connection-option').filter({hasText:'MetaMask'});await choose.waitFor();await choose.evaluate(node=>window.round3Choose=node);
-  const box=await choose.boundingBox();await page.mouse.move(box.x+box.width/2,box.y+box.height/2);await page.mouse.down();
+  await page.bringToFront();await page.evaluate(()=>document.fonts.ready);const box=await choose.boundingBox();await page.mouse.move(box.x+box.width/2,box.y+box.height/2);await page.mouse.down();
   await system.locator('body').evaluate(()=>window.dispatchEvent(new Event('focus')));
   assert.equal(await choose.evaluate(node=>node===window.round3Choose),true);await shot(page,`pointer-${width}`);await page.mouse.up();
   await page.getByRole('button',{name:'Sign message',exact:true}).click();await page.getByRole('button',{name:'Approve with passkey',exact:true}).click();

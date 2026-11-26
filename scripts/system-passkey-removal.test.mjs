@@ -70,8 +70,10 @@ async function fixture(run, engine = "chromium") {
       failure = options.failure || null;
       afterFailurePasskeys = options.afterFailurePasskeys || null;
       await page.goto(`${server.baseUrl}/fixture?settings=account`);
+      await page.bringToFront();
       const frame = await page.locator("#system-frame").elementHandle().then(handle => handle.contentFrame());
       await frame.waitForSelector(".account-row");
+      await frame.evaluate(() => document.fonts.ready);
       return frame;
     };
     await run({ page, open, writes, consoleErrors, listReads: () => listReads });
@@ -140,16 +142,16 @@ test("every allowed removal asks first and returns focus after Cancel or Escape"
         await page.keyboard.press("Enter");
         await dialog.waitFor({ state: "hidden" });
         assert.equal(writes.length, before, "Enter takes the default Cancel action");
-        await frame.waitForFunction(node => node === document.activeElement, await remove.elementHandle());
+        await frame.waitForFunction(id => document.activeElement?.dataset.passkeyRevoke === id, await remove.getAttribute("data-passkey-revoke"));
         await remove.click();
         await page.keyboard.press("Escape");
         await dialog.waitFor({ state: "hidden" });
         assert.equal(writes.length, before);
-        await frame.waitForFunction(node => node === document.activeElement, await remove.elementHandle());
+        await frame.waitForFunction(id => document.activeElement?.dataset.passkeyRevoke === id, await remove.getAttribute("data-passkey-revoke"));
         await remove.click();
         await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
         assert.equal(writes.length, before);
-        await frame.waitForFunction(node => node === document.activeElement, await remove.elementHandle());
+        await frame.waitForFunction(id => document.activeElement?.dataset.passkeyRevoke === id, await remove.getAttribute("data-passkey-revoke"));
         await remove.click();
         await dialog.getByRole("button", { name: "Remove passkey", exact: true }).click();
         await frame.waitForFunction(() => document.querySelectorAll(".account-row").length === 2);
@@ -196,7 +198,7 @@ test("confirmation uses own and unnamed wording for device and hardware passkeys
           assert.doesNotMatch(await dialog.textContent(), /for Account|that person/);
           if (state !== "own-other") await screenshot(page, `confirmation-${state}-${theme}-${width}`);
           await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
-          await frame.waitForFunction(node => node === document.activeElement, await remove.elementHandle());
+          await frame.waitForFunction(id => document.activeElement?.dataset.passkeyRevoke === id, await remove.getAttribute("data-passkey-revoke"));
         }
       }
     }
