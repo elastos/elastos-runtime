@@ -267,7 +267,7 @@ test("System distinguishes two passkeys and identifies this window at desktop an
       assert.equal(await rows.nth(0).locator(".passkey-name").textContent(), "Apple Passwords");
       assert.match(await rows.nth(0).locator(".account-name-wrap").getAttribute("title"), /added from Safari on Mac or iPad/);
       assert.equal(await rows.nth(1).locator(".passkey-name").textContent(), "Saved on a phone or tablet");
-      assert.equal(await rows.nth(0).locator(".passkey-current").textContent(), "Current");
+      assert.equal(await rows.nth(0).locator(".passkey-current").textContent(), "Current passkey");
       assert.notEqual(await rows.nth(0).locator(".account-used").textContent(), "Not used yet");
       assert.equal(await rows.nth(1).locator(".passkey-current").count(), 0);
       assert.equal(await frame.locator("#passkey-add-help").count(), 0);
@@ -318,8 +318,8 @@ for (const engine of ["chromium", "webkit"]) test(`Accounts groups methods benea
         assert.equal(await block.getByText("Signs in", {exact:true}).count(), 0);
         for (const action of await block.locator('.passkey-remove, .account-remove').all()) {
           const style=await action.evaluate(node=>{const s=getComputedStyle(node);return {background:s.backgroundColor,border:s.borderTopColor,height:node.getBoundingClientRect().height,padding:s.padding};});
-          assert.equal(style.background,"rgba(0, 0, 0, 0)","destructive actions have a quiet background");
-          assert.equal(style.border,"rgba(0, 0, 0, 0)","destructive actions have no visible border");
+          assert.notEqual(style.background,"rgba(0, 0, 0, 0)","passkey and account actions keep the approved button surface");
+          assert.notEqual(style.border,"rgba(0, 0, 0, 0)","passkey and account actions have a visible boundary");
           assert.ok(style.height>=44);
           assert.equal(style.padding,"8px 12px","all destructive actions use the same padding");
         }
@@ -343,7 +343,7 @@ for (const engine of ["chromium", "webkit"]) test(`Accounts groups methods benea
           const walletSize = await walletRow.getByRole("button", { name: "Remove from sign-in", exact: true }).boundingBox();
           const passkeySize = await block.locator(".passkey-remove").first().boundingBox();
           assert(walletSize.width > passkeySize.width, "Remove from sign-in retains its full action label");
-          assert(Math.abs(walletSize.height - passkeySize.height) <= 1, "wallet and passkey Remove use the same height");
+          assert(Math.abs(walletSize.height - passkeySize.height) <= 1, `wallet and passkey Remove use the same height: ${JSON.stringify({walletSize,passkeySize,theme,width})}`);
           assert.equal(await block.getByRole("button", { name: "Remove account", exact: true }).count(), 0);
           assert.equal(new Set(await block.locator(".passkey-name").allTextContents()).size, 2);
           const remove = block.locator(".passkey-remove").first();

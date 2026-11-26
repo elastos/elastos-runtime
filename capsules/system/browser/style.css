@@ -987,7 +987,8 @@ input[type="file"].visually-hidden {
   gap: 8px;
 }
 
-.account-add-actions .system-button {
+.account-add-actions .system-button,
+.account-add-actions .el-button {
   min-width: 108px;
   min-height: 44px;
 }
@@ -1090,16 +1091,15 @@ input[type="file"].visually-hidden {
   overflow-wrap: anywhere;
 }
 
-.account-block .system-button {
+.account-block .system-button,
+.account-block .el-button {
   min-height: 44px;
 }
 
 .account-block .account-remove-action {
   min-height: 44px;
   padding: 8px 12px;
-  border-color: transparent;
-  background: transparent;
-  color: var(--el-muted);
+  white-space: nowrap;
 }
 
 :root .account-block button:focus-visible:not(:disabled),

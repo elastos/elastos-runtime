@@ -102,6 +102,8 @@ for(const engine of ['chromium','webkit'])for(const width of [1440,390]) {
     const f=await setup(engine,width,{pictures:Boolean(output)});
     try {
       await f.system.locator('[data-wallet-method]').nth(1).waitFor();
+      assert.match(await f.system.locator('.account-block').first().locator('.account-role').innerText(), /Admin · You/);
+      assert.equal(await f.system.locator('.account-block').first().getByRole('button',{name:'Remove passkey',exact:true}).count(),2);
       assert.equal(await f.system.getByRole('heading',{name:'Wallets for sign-in',exact:true}).count(),1);
       assert.equal(await f.system.getByRole('link',{name:'Open Wallet',exact:true}).count(),2);
       await shot(f.system,'system-accounts',width,engine,f.page);
@@ -185,4 +187,4 @@ for(const engine of ['chromium','webkit'])test(`one wallet list: phone app use s
     assert.equal(f.fixture.state.calls.filter(c=>c.path==='/api/auth/evm/verify').length,1);assert.deepEqual(f.errors,[]);
   } finally {await f.close();}
 });
-test.after(async()=>{if(output){const sources={};for(const path of ['capsules/wallet/browser/index.html','capsules/wallet/browser/wallet.js','capsules/wallet/browser/wallet-inventory.js','capsules/wallet/browser/wallet-inventory.css','capsules/system/browser/system.js','capsules/system/browser/style.css','capsules/home/browser/wallet-signin-view.mjs','capsules/home/browser/wallet-signin-management.mjs','capsules/_shared/wallet-connection-view.mjs'])sources[path]=createHash('sha256').update(await readFile(path)).digest('hex');await writeFile(join(output,'captures.json'),JSON.stringify({sources,head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),tree:execFileSync('git',['rev-parse','HEAD^{tree}'],{encoding:'utf8'}).trim(),captures:captureRecords},null,2)+'\n');}});
+test.after(async()=>{if(output){const sources={};for(const path of ['capsules/wallet/browser/index.html','capsules/wallet/browser/wallet.js','capsules/wallet/browser/wallet-inventory.js','capsules/wallet/browser/wallet-inventory.css','capsules/system/browser/index.html','capsules/system/browser/system.js','capsules/system/browser/style.css','capsules/home/browser/wallet-signin-view.mjs','capsules/home/browser/wallet-signin-management.mjs','capsules/_shared/wallet-connection-view.mjs'])sources[path]=createHash('sha256').update(await readFile(path)).digest('hex');await writeFile(join(output,'captures.json'),JSON.stringify({sources,head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),tree:execFileSync('git',['rev-parse','HEAD^{tree}'],{encoding:'utf8'}).trim(),captures:captureRecords},null,2)+'\n');}});

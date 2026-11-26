@@ -2623,7 +2623,7 @@ function renderAccounts(accounts) {
     const role = document.createElement("span");
     role.className = "account-role";
     role.dataset.role = readText(account.role) || "guest";
-    role.textContent = passkeyRoleLabel(account.role);
+    role.textContent = passkeyRoleLabel(account.role) + (id === currentPrincipalId ? " · You" : "");
     identity.append(name, role);
     const accountActions = document.createElement("div");
     accountActions.className = "account-header-actions";
@@ -2631,7 +2631,7 @@ function renderAccounts(accounts) {
     const table = document.createElement("table");
     table.className = "account-table";
     table.setAttribute("aria-label", `${name.textContent}: sign-in methods`);
-    table.innerHTML = `<thead><tr><th scope="col">Method</th><th scope="col">Last used</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>`;
+    table.innerHTML = `<thead><tr><th scope="col">Passkey</th><th scope="col">Last used</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>`;
     const body = document.createElement("tbody");
     const labels = passkeys.map(passkey => readText(passkey.added_from).split(" (added from ")[0] || "Passkey");
     for (const [index, passkey] of passkeys.entries()) {
@@ -2663,7 +2663,7 @@ function renderAccounts(accounts) {
 function accountRow(passkey, listState = {}) {
   const row = document.createElement("tr");
   row.className = "account-row";
-  const nameCell = accountCell("Method", "account-name");
+  const nameCell = accountCell("Passkey", "account-name");
   const nameWrap = document.createElement("div");
   nameWrap.className = "account-name-wrap";
   const title = document.createElement("strong");
@@ -2678,7 +2678,7 @@ function accountRow(passkey, listState = {}) {
   if (passkey.current) {
     const current = document.createElement("small");
     current.className = "passkey-current";
-    current.textContent = "Current";
+    current.textContent = "Current passkey";
     nameWrap.append(current);
   }
   nameCell.append(nameWrap);
@@ -2693,7 +2693,7 @@ function accountRow(passkey, listState = {}) {
     && readText(passkey.principal_id) === listState.currentPrincipalId;
   if (listState.accountActions && canManagePasskeyRoles && passkeyRole === "guest") {
     const promote = document.createElement("button");
-    promote.className = "system-button system-button-secondary passkey-promote";
+    promote.className = "el-button passkey-promote";
     promote.type = "button";
     promote.textContent = "Make admin";
     promote.dataset.passkeyPromote = passkey.proof_binding_id || "";
@@ -2702,7 +2702,7 @@ function accountRow(passkey, listState = {}) {
   }
   if (listState.accountActions && canManagePasskeyRoles && passkeyRole === "admin" && !passkey.current && !ownAccount) {
     const demote = document.createElement("button");
-    demote.className = "system-button system-button-secondary passkey-demote";
+    demote.className = "el-button passkey-demote";
     demote.type = "button";
     demote.textContent = "Make guest";
     demote.dataset.passkeyDemote = passkey.proof_binding_id || "";
@@ -2711,9 +2711,9 @@ function accountRow(passkey, listState = {}) {
     listState.accountActions.append(demote);
   }
   const remove = document.createElement("button");
-  remove.className = "system-button account-remove-action passkey-remove";
+  remove.className = "el-button account-remove-action passkey-remove";
   remove.type = "button";
-  remove.textContent = "Remove";
+  remove.textContent = "Remove passkey";
   remove.dataset.passkeyRevoke = passkey.proof_binding_id || "";
   remove.dataset.current = passkey.current ? "true" : "false";
   remove.dataset.accountName = readText(passkey.display_name);
@@ -2736,7 +2736,7 @@ function accountRow(passkey, listState = {}) {
   }
   if (protectsLastPasskey && (ownAccount || canManagePasskeyRoles)) {
     const removeAccount = document.createElement("button");
-    removeAccount.className = "system-button account-remove-action account-remove";
+    removeAccount.className = "el-button account-remove-action account-remove";
     removeAccount.type = "button";
     removeAccount.textContent = "Remove account";
     Object.assign(removeAccount.dataset, remove.dataset, { passkeyAccountRemove: remove.dataset.passkeyRevoke });
