@@ -39,7 +39,9 @@ wallet-provider owns app use, defaults and approval requests.
 
 When wallet-provider is unavailable, Runtime keeps sign-in entries readable and
 sets `apps_available` to `false`. System keeps sign-in removal available. Wallet
-marks app use unavailable and offers Try again to read its saved state.
+marks app use unavailable and offers Try again to read its saved state. If the
+inventory read fails, Wallet keeps available app data visible and offers the
+same retry. System reads auth's saved sign-in methods.
 
 Wallet shows each inventory entry once. Its Used by section links System use
 to System > Accounts and gives Wallet one Apps and websites switch. One

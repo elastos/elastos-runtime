@@ -19,7 +19,7 @@ const kind = entry => entry.accounts[0]?.connector_id?.replace('wallet-', '') ||
 const bitcoin = entry => entry.chain_namespace.startsWith('bip122:');
 const appsStatement = entry => bitcoin(entry) ? 'Proves you own this Bitcoin address to apps' : 'Apps and websites can ask; you approve each request.';
 
-export function createWalletInventory({root, getApprovalMethods=()=>({}), openSystem, connectApps, removeApps, copyAddress, send, receive, manageBuiltIn, refreshApps=async()=>{}, getBalance = () => '', openActivity, openSettings, togglePrivacy, isPrivate=()=>false, onError=()=>{}}) {
+export function createWalletInventory({root, getApprovalMethods=()=>({}), openSystem, connectApps, removeApps, copyAddress, send, receive, manageBuiltIn, refreshInventory=async()=>{}, getBalance = () => '', openActivity, openSettings, togglePrivacy, isPrivate=()=>false, onError=()=>{}}) {
   let inventory = {entries:[]}, selected = new URLSearchParams(location.search).get('wallet_entry') || '';
   let result = '', dialog, operation = 0, busy = false, renderKey = '';
   let connectionController;
@@ -99,9 +99,10 @@ export function createWalletInventory({root, getApprovalMethods=()=>({}), openSy
     title.append(text('h1', entry ? 'Wallet' : 'Wallets')); heading.append(title);
     if (!entry) {const add=button('Add wallet for apps', choose, true);add.id='wallet-add-apps';add.disabled=inventory.apps_available===false;heading.append(add);}
     section.append(heading);
-    if(inventory.apps_available === false) {
-      const notice=text('div','','one-note'), message=text('p','Home could not load app use.','one-muted');message.setAttribute('role','status');
-      notice.append(message,button('Try again',async event=>{const control=event.currentTarget;control.disabled=true;try{await refreshApps();}catch(error){onError(error);}finally{control.disabled=false;}}));section.append(notice);
+    const readError=inventory.signin_available===false ? 'Home could not load wallet sign-in use.' : inventory.apps_available===false ? 'Home could not load app use.' : '';
+    if(readError) {
+      const notice=text('div','','one-note'), message=text('p',readError,'one-muted');message.setAttribute('role','status');
+      notice.append(message,button('Try again',async event=>{const control=event.currentTarget;control.disabled=true;try{await refreshInventory();}catch(error){onError(error);}finally{control.disabled=false;}}));section.append(notice);
     }
     if (result) {const status=text('p',result,'one-result');status.setAttribute('role','status');section.append(status);}
     if (!entry) {

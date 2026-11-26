@@ -131,7 +131,7 @@ const inventoryView = createWalletInventory({
   getApprovalMethods: () => currentApprovalMethods,
   openSystem: () => window.top.postMessage({type:'home:open-target', target:'system', homeToken:activeHomeToken, query:{settings:'account'}}, homeParentOrigin),
   connectApps: connectInventoryApps,
-  refreshApps: () => refreshWalletState(),
+  refreshInventory: () => refreshWalletState(),
   removeApps: async (entry, current) => {
     const accountIds = entry.accounts.map(account => account.account_id).sort();
     const request = accountIds.length === 1 ? {account_id:accountIds[0]} : {account_ids:accountIds};
@@ -613,11 +613,10 @@ async function loadWalletState() {
   currentAccounts = Array.isArray(walletAccounts && walletAccounts.accounts)
     ? walletAccounts.accounts
     : [];
-  currentInventory = inventory || {entries:currentAccounts.filter(account=>!account.revoked_at).map(account=>({
+  currentInventory = inventory || {signin_available:false, apps_available:walletAccounts?.available !== false, entries:currentAccounts.filter(account=>!account.revoked_at).map(account=>({
     inventory_id:`${account.chain_namespace}:${account.address}`, address:account.address,
     chain_namespace:account.chain_namespace, accounts:[account], sign_in:null,
   }))};
-  if (!inventory) showStatus('Home could not load wallet sign-in use. Try again.', 'error');
   currentDefaults = Array.isArray(walletAccounts && walletAccounts.default_accounts)
     ? walletAccounts.default_accounts
     : [];

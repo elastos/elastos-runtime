@@ -273,6 +273,11 @@ for(const engine of ['chromium','webkit']) {
       await f.wallet.getByRole('button',{name:'Open Home address',exact:true}).waitFor();
       await show(f,'system');await f.system.locator('[data-wallet-method]').nth(1).waitFor();
       assert.equal(await f.system.getByRole('button',{name:'Remove from sign-in',exact:true}).count(),2);
+      await show(f,'wallet');await f.wallet.getByText('Home could not load wallet sign-in use.',{exact:true}).waitFor();
+      await f.context.unroute('**/api/apps/wallet/wallet/inventory');
+      await f.wallet.getByRole('button',{name:'Try again',exact:true}).click();
+      await f.wallet.getByRole('button',{name:'Open UniSat',exact:true}).waitFor();
+      assert.equal(await f.wallet.getByText('Home could not load wallet sign-in use.',{exact:true}).count(),0);
     }finally{await f.close();}
   });
 }
