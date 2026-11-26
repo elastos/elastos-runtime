@@ -1427,7 +1427,7 @@ function pageIdFor() {
   return `page:selkies-${crypto.randomBytes(8).toString("hex")}`;
 }
 
-function normalizeWalletBridge(wallet) {
+export function normalizeWalletBridge(wallet) {
   const accounts = Array.isArray(wallet?.accounts)
     ? wallet.accounts
         .map((account) => ({
@@ -1435,6 +1435,10 @@ function normalizeWalletBridge(wallet) {
           chain_namespace: String(account?.chain_namespace || ""),
           address: String(account?.address || "").toLowerCase(),
           proof_type: String(account?.proof_type || ""),
+          connector_id:
+            safeId(account?.connector_id) && account.connector_id.trim() === account.connector_id
+              ? account.connector_id
+              : null,
           label: account?.label ? String(account.label) : null,
         }))
         .filter((account) => safeId(account.account_id) && /^eip155:\d+$/.test(account.chain_namespace) && /^0x[0-9a-f]{40}$/.test(account.address))
