@@ -43,9 +43,13 @@ for(const width of [1280,390])test(`round3 title identity status and text focus 
    const f=await extensionFixture(browser,'metamask',{stateTimeout:15000,saved:true,requests:true,pictures:false});
    try{
     await f.top.setViewportSize({width,height:560});await f.top.locator('iframe').evaluate((frame,width)=>frame.style.width=width+'px',width);await f.state('request-waiting');
+    await f.frame.waitForFunction(()=>window.__windowReadsFinished>0);
+    await f.frame.evaluate(()=>document.fonts.ready);
     if(stage!=='request-done')await f.top.evaluate(()=>testState.mode='pending');
-    await f.action('send-request').click();
-    if(stage==='request-cancelled')await f.action('stop-waiting').click();
+    // Resizing and focus refresh can move the control between pointer down and up.
+    await f.action('send-request').press('Enter');
+    await f.top.waitForFunction(()=>testState.effects.length===1);
+    if(stage==='request-cancelled'){await f.state('request-extension');await f.action('stop-waiting').press('Enter');}
     await f.state(stage);
     // Outcome text can receive programmatic focus for screen-reader status.
     // Cancelled requests can also focus the working Close control.
@@ -108,8 +112,10 @@ for(const width of [1280,390])for(const method of ['requestAccounts','signMessag
  const f=await extensionFixture(browser,'unisat',{pictures:false,stateTimeout:15000});
  try{
   await f.top.setViewportSize({width,height:560});await f.top.locator('iframe').evaluate((frame,width)=>frame.style.width=width+'px',width);await f.state('ready');await f.top.evaluate(method=>{window.sizeHints=[];addEventListener('message',e=>{if(e.data?.type==='home:wallet-content-size')sizeHints.push(e.data);});testState.requestError={method,message:'Wallet is locked'};},method);
-  await f.action('connect').click();await f.state('wallet-locked');await f.top.waitForFunction(()=>sizeHints.length>0);assert((await f.top.evaluate(()=>sizeHints)).every(h=>Number.isSafeInteger(h.width)&&h.width>=280&&h.width<=480&&h.height>=100&&h.height<=4000));assert.match(await f.frame.locator('main').innerText(),/Unlock UniSat, then select Try again/);assert.equal(await f.frame.locator('.connection-step .connection-status').count(),1);assert.equal(await f.frame.locator('.connection-step [data-action=connect]').count(),1);await shot(f.top,`unisat-locked-${method}-${width}`);
-  await f.top.evaluate(()=>testState.requestError=null);await f.action('connect').click();await f.state('linked');assert.equal(await f.top.evaluate(()=>testState.receipts.length),1);assert.equal(await f.frame.locator('.connection-step .connection-status').count(),1);await shot(f.top,`unisat-unlocked-connected-${width}`);
+  await f.frame.waitForFunction(()=>window.__windowReadsFinished>0);await f.frame.evaluate(()=>document.fonts.ready);
+  // Keyboard activation keeps this state journey independent of resize geometry.
+  await f.action('connect').press('Enter');await f.top.waitForFunction(()=>testState.effects.length===1);await f.state('wallet-locked');await f.top.waitForFunction(()=>sizeHints.length>0);assert((await f.top.evaluate(()=>sizeHints)).every(h=>Number.isSafeInteger(h.width)&&h.width>=280&&h.width<=480&&h.height>=100&&h.height<=4000));assert.match(await f.frame.locator('main').innerText(),/Unlock UniSat, then select Try again/);assert.equal(await f.frame.locator('.connection-step .connection-status').count(),1);assert.equal(await f.frame.locator('.connection-step [data-action=connect]').count(),1);await shot(f.top,`unisat-locked-${method}-${width}`);
+  await f.top.evaluate(()=>testState.requestError=null);await f.action('connect').press('Enter');await f.top.waitForFunction(()=>testState.effects.length===2);await f.state('linked');assert.equal(await f.top.evaluate(()=>testState.receipts.length),1);assert.equal(await f.frame.locator('.connection-step .connection-status').count(),1);await shot(f.top,`unisat-unlocked-connected-${width}`);
  }finally{await f.close();await browser.close();}
 });
 
