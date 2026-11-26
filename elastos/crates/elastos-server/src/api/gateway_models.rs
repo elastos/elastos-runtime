@@ -460,6 +460,8 @@ struct WalletAccountRenameRequest {
 #[serde(deny_unknown_fields)]
 struct WalletAccountDeleteRequest {
     step_up_token: String,
+    #[serde(default)]
+    account_ids: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]

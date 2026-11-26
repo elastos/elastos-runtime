@@ -17,11 +17,11 @@ pub(in crate::api::gateway) async fn system_wallet_accounts_summary(
 
 /// A projection of the two authority stores. Reading it grants neither use.
 #[derive(Serialize)]
-struct WalletInventoryEntry {
+pub(super) struct WalletInventoryEntry {
     inventory_id: String,
     address: String,
     chain_namespace: String,
-    accounts: Vec<SystemWalletAccountSummary>,
+    pub(super) accounts: Vec<SystemWalletAccountSummary>,
     wallet_display_name: Option<String>,
     sign_in: Option<serde_json::Value>,
 }
@@ -35,7 +35,7 @@ fn wallet_inventory_identity(namespace: &str, address: &str) -> (String, String)
     (namespace.to_string(), address)
 }
 
-fn wallet_inventory_entries(
+pub(super) fn wallet_inventory_entries(
     principal: &str,
     accounts: &[serde_json::Value],
     methods: &[serde_json::Value],
@@ -82,15 +82,7 @@ fn wallet_inventory_entries(
             .iter_mut()
             .find(|entry| entry.chain_namespace == namespace && entry.address == address)
         {
-            // A managed Home key is never an external sign-in method.
-            if !entry.accounts.iter().any(|account| {
-                matches!(
-                    account.proof_type.as_str(),
-                    "managed_evm" | "managed_btc_p2wpkh"
-                )
-            }) {
-                entry.sign_in = Some(method.clone());
-            }
+            entry.sign_in = Some(method.clone());
         } else {
             entries.push(WalletInventoryEntry {
                 inventory_id: format!("{namespace}:{address}"),
@@ -180,7 +172,9 @@ pub(in crate::api::gateway) async fn wallet_inventory(
                 include_revoked: true,
             },
         )
-        .await?;
+        .await;
+        let apps_available = accounts.is_ok();
+        let accounts = accounts.unwrap_or_else(|_| serde_json::json!({"accounts":[]}));
         let entries = wallet_inventory_entries(
             &actor.principal_id,
             accounts["accounts"]
@@ -194,6 +188,7 @@ pub(in crate::api::gateway) async fn wallet_inventory(
             "schema": "elastos.wallet.inventory/v1",
             "account_id": actor.principal_id,
             "account_name": methods["account_name"],
+            "apps_available": apps_available,
             "entries": entries,
         }))
     }
