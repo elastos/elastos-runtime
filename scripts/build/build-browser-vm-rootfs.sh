@@ -268,6 +268,7 @@ set -- \
   dbus \
   fontconfig \
   fonts-dejavu-core \
+  fonts-noto-cjk \
   gcc \
   gir1.2-gst-plugins-bad-1.0 \
   gir1.2-gst-plugins-base-1.0 \
