@@ -3,13 +3,12 @@
 // the request the card shows, Stop asks to confirm and needs no passkey.
 // Modelled on scripts/browser-internet-consent.test.mjs.
 import assert from "node:assert/strict";
-import { createRequire } from "node:module";
+import { requireProductSmokePlaywright } from "./product-smoke-browser.mjs";
 import { readFileSync } from "node:fs";
 import http from "node:http";
 import test from "node:test";
 import {inertSystemApiResponse} from "./system-uiux-fixture.mjs";
-const require = createRequire(new URL("../elastos/tools/browser-playwright-engine/package.json", import.meta.url));
-const { chromium } = require("playwright");
+const { chromium } = requireProductSmokePlaywright();
 const root = new URL("../", import.meta.url);
 
 const ENABLE = "public-metadata-enable";

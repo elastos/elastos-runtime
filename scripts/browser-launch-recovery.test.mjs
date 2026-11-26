@@ -38,26 +38,43 @@ function checkRawImports(source, relative) {
     }
   }
 }
-function checkLaunchCoverage(directory, prefix = "", testsOnly = false) {
+function checkLaunchCoverage(directory, prefix = "", testsOnly = false, failures) {
+  const outermost = failures === undefined;
+  failures ??= [];
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     const relative = prefix + entry.name;
     const path = new URL(entry.name, directory);
     if (entry.isDirectory() && entry.name !== "node_modules") {
-      checkLaunchCoverage(new URL(entry.name + "/", directory), relative + "/", testsOnly);
+      checkLaunchCoverage(new URL(entry.name + "/", directory), relative + "/", testsOnly, failures);
     } else if (entry.isFile() && /\.[cm]?js$/.test(entry.name) && (!testsOnly || entry.name.endsWith(".test.mjs"))) {
       const source = readFileSync(path, "utf8");
       if (launchCalls.test(source) && !exceptions.has(relative)) {
-        assert.match(source, boundaries, relative);
-        checkRawImports(source, relative);
+        try {
+          assert.match(source, boundaries, relative);
+          checkRawImports(source, relative);
+        } catch (error) {
+          failures.push(error.message.split("\n")[0]);
+        }
       }
     }
   }
+  if (outermost) assert.equal(failures.length, 0, failures.join("\n"));
 }
 
 test("native Playwright test launch imports use the shared recovery boundary", () => {
   checkLaunchCoverage(new URL("./", import.meta.url));
   checkLaunchCoverage(new URL("../capsules/", import.meta.url), "capsules/", true);
   checkLaunchCoverage(new URL("../elastos/esp/", import.meta.url), "elastos/esp/", true);
+});
+
+test("coverage guard reports every unprotected launch file in one pass", t => {
+  const root = mkdtempSync(join(tmpdir(), "browser-launch-coverage-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  for (const name of ["first", "second"]) {
+    writeFileSync(join(root, `${name}.mjs`), `import {chromium} from 'playwright'; await chromium.launch({});`);
+  }
+  assert.throws(() => checkLaunchCoverage(pathToFileURL(root + "/")), error =>
+    /first\.mjs/.test(error.message) && /second\.mjs/.test(error.message));
 });
 
 for (const [form, acquisition] of [
