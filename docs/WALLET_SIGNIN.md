@@ -339,9 +339,9 @@ that all its passkeys, wallet sign-in methods and sessions will end. The caller
 can remove his own account; an Admin can remove another account.
 It sends JSON with `Content-Type: application/json` to
 `POST /api/auth/passkeys/<target>/revoke`:
-`{"remove_account":true,"principal_id":"<exact account>"}`, with a fresh passkey token
+`{"remove_account":true,"account_id":"<exact account>"}`, with a fresh passkey token
 in `x-elastos-step-up-token`. The operation is `auth.account.remove` and its exact
-request is `{"proof_binding_id":"<target>","principal_id":"<exact account>","remove_account":true}`.
+request is `{"proof_binding_id":"<target>","account_id":"<exact account>","remove_account":true}`.
 This approval is required for both passkey and wallet sessions. Runtime requires
 another account with an active Admin passkey before removing an Admin account,
 even when the target account has several passkeys. An omitted body or `{}` means
