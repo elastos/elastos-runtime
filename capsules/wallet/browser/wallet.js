@@ -50,7 +50,7 @@ import {
 } from "./wallet-render.js?v=wallet-20260819f";
 import {
   createHomeClipboardClient,
-} from "/apps/home/home-clipboard-client.js?v=home-20260726a";
+} from "/apps/home/home-clipboard-client.js?v=home-20261111a";
 
 const statusNode = document.querySelector("#wallet-status");
 const homeParentOrigin = readHomeOrigin();
