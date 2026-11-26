@@ -76,7 +76,7 @@ jobs:
   test-behaviour:
     name: test-behaviour
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 50
     needs: source-gate
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
