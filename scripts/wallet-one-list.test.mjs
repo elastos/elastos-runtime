@@ -29,9 +29,18 @@ async function shot(frame,id,width,engine,page) {
   if(page){const height=await frame.locator('.settings-content-container').evaluate(node=>Math.max(1000,node.scrollHeight));await page.setViewportSize({width,height});}
   await mkdir(output,{recursive:true});await frame.locator('body').evaluate(async()=>{await document.fonts.ready;await new Promise(requestAnimationFrame);});
   const file=`a2-${id}-${width}.png`, bytes=await frame.locator('body').screenshot({path:join(output,file),animations:'disabled'});
+  const brightPixels=await frame.locator('body').evaluate(async(_body,data)=>{
+    const image=new Image();image.src=data;await image.decode();
+    const canvas=document.createElement('canvas');canvas.width=image.width;canvas.height=image.height;
+    const context=canvas.getContext('2d');context.drawImage(image,0,0);
+    const pixels=context.getImageData(0,0,canvas.width,canvas.height).data;let count=0;
+    for(let i=0;i<pixels.length;i+=4)if(pixels[i]+pixels[i+1]+pixels[i+2]>360)count++;
+    return count;
+  },'data:image/png;base64,'+bytes.toString('base64'));
+  assert(brightPixels>100,id+' screenshot contains visible content');
   const bounds=await frame.locator('body').evaluate(()=>({width:innerWidth,scrollWidth:document.documentElement.scrollWidth,height:document.body.scrollHeight,text:document.body.innerText}));
   assert.equal(bounds.scrollWidth,width,id+' has horizontal overflow');
-  captureRecords.push({file,sha256:createHash('sha256').update(bytes).digest('hex'),...bounds});
+  captureRecords.push({file,sha256:createHash('sha256').update(bytes).digest('hex'),brightPixels,...bounds});
   if(page)await page.setViewportSize({width,height:1000});
 }
 async function setup(engine,width,{pictures=false}={}) {
