@@ -26,7 +26,7 @@ function seed(state,{pictures=false}={}) {
 }
 async function shot(frame,id,width,engine,page) {
   if(!output || engine!=='chromium')return;
-  page ||= frame.owner().page();
+  page ||= typeof frame.owner==='function' ? frame.owner().page() : frame;
   const height=await frame.locator('body').evaluate(node=>Math.max(1000,node.scrollHeight,node.querySelector('.settings-content-container')?.scrollHeight||0));
   await page.setViewportSize({width,height});
   await mkdir(output,{recursive:true});await frame.locator('body').evaluate(async()=>{await document.fonts.ready;await new Promise(requestAnimationFrame);});
