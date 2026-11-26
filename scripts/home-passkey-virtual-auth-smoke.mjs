@@ -25,7 +25,7 @@ import { recoveredInputClickRect } from "./lib/browser-journey-recovered-input.m
 import { censusBrowserViewerReload, diagnoseBrowserViewerReload, readBrowserViewerReloadDocument, browserViewerSignalMetadata } from "./lib/browser-journey-viewer-reload.mjs";
 import { runBrowserOperatorJourney } from "./lib/browser-journey-operator.mjs";
 import { qualificationOptions, createQualificationHarness, createQualificationCancellation, qualificationInteraction } from "./lib/browser-qualification-observer.mjs";
-import { readSystemUpdateState } from "./lib/system-update-observer.mjs";
+import { readSystemUpdateState, readInboxUpdateNotice } from "./lib/system-update-observer.mjs";
 import { productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 
 import { cleanupVirtualPasskey, shouldRetainVirtualAuthProfile, retainedFirstOwnerProfileMessage,
@@ -4494,6 +4494,26 @@ async function checkSystemUpdate(page, passkey) {
   "System did not show the install command on the current version in the same window", 300);
   const nextOffer = await reach("next-offer", offered("next", SYSTEM_UPDATE_NEW, SYSTEM_UPDATE_NEXT),
     "System did not offer the next signed version");
+  // This source is installed after the first hop. Check its Inbox notice for the
+  // next offer, including the person's path back to System before approval.
+  const summary = await browserApi(page, await sameAccount("Home lost the account before the Inbox notice"),
+    "/api/apps/home/summary");
+  const notice = summary.body?.notifications?.entries?.find(entry => entry.kind === "home_update_available");
+  assert(summary.ok && notice?.source_app === "system"
+    && notice.title === "Update available" && notice.body === `ElastOS ${SYSTEM_UPDATE_NEXT} is available.`,
+  "Home did not report the next release's Inbox update notice");
+  const inbox = await openDesktopAppWindow(page, "inbox");
+  const noticeRow = inbox.locator(".entry-row").filter({ hasText: notice.body });
+  await noticeRow.click();
+  const renderedNotice = await inbox.evaluate(readInboxUpdateNotice);
+  assert(renderedNotice.shown && renderedNotice.open_system
+    && renderedNotice.title === notice.title && renderedNotice.body === notice.body,
+  "Inbox did not show the update notice and Open System action", renderedNotice);
+  await page.screenshot({ path: join(SYSTEM_UPDATE_DIR, "inbox-update-notice.png") });
+  await inbox.getByRole("button", { name: "Open System", exact: true }).click();
+  const system = await waitForCapsuleFrame(page, "system");
+  await system.locator("#runtime-update").waitFor({ state: "visible" });
+  record("inbox-update-notice", { id: notice.id, kind: notice.kind, source_app: notice.source_app, ...renderedNotice });
   await approve();
   const nextUpdated = await reach("next-updated", updatedTo(SYSTEM_UPDATE_NEXT), "System did not reconnect on the next version");
   // Home reconnected by itself: no navigation, and the same account is signed in.
