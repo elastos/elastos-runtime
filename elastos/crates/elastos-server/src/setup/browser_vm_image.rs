@@ -1157,6 +1157,46 @@ mod tests {
     }
 
     #[test]
+    fn browser_image_cold_install_admits_first_launch_without_rehash() {
+        for platform in ["darwin-arm64", "linux-arm64", "linux-amd64"] {
+            let temp = tempfile::tempdir().unwrap();
+            let data = temp.path();
+            let mut files = fixture(b"first-image");
+            let mut receipt: Value = serde_json::from_slice(&files[0].1).unwrap();
+            receipt["target_platform"] = json!(guest_platform(platform).unwrap());
+            files[0].1 = serde_json::to_vec(&receipt).unwrap();
+            let (bytes, info) = archive(&files);
+            let rootfs = data.join(aliases(platform)[0].0);
+            assert!(verified_seed_identity(&rootfs, platform).is_err());
+
+            install_archive(data, &bytes, &info, platform).unwrap();
+            // The gateway requests this identity on the same open, before any
+            // later verify_installed call can populate the process cache.
+            let seed = verified_seed_identity(&rootfs, platform)
+                .expect("cold acquisition must admit the seed for the first Browser open");
+            seed.check(&rootfs).unwrap();
+            let paths = FILES.map(|name| data.join(INSTALL_PATH).join(name));
+            verify_cached_payload(
+                &paths,
+                platform,
+                &serde_json::to_string(&info).unwrap(),
+                None,
+                || panic!("installed bytes already verified in staging must reuse their hashes"),
+            )
+            .unwrap();
+            verify_installed(data, &info, platform).unwrap();
+
+            for path in &paths {
+                // Even identical bytes rewritten after admission change the
+                // file identity; receipt and sibling mutations also revoke it.
+                fs::write(path, fs::read(path).unwrap()).unwrap();
+                assert!(verified_seed_identity(&rootfs, platform).is_err());
+                verify_installed(data, &info, platform).unwrap();
+            }
+        }
+    }
+
+    #[test]
     fn browser_image_install_update_and_repair_keep_one_complete_set() {
         let temp = tempfile::tempdir().unwrap();
         let data = temp.path();
