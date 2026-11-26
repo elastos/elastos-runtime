@@ -191,8 +191,7 @@ fn secret(value: &str) -> anyhow::Result<[u8; 32]> {
 fn path(data: &Path) -> anyhow::Result<PathBuf> {
     Ok(auth_state_path(data)?.with_file_name(FILE))
 }
-fn read(data: &Path) -> anyhow::Result<Store> {
-    let path = path(data)?;
+fn read_bytes(data: &Path, path: &Path) -> anyhow::Result<Option<Vec<u8>>> {
     if let Some(parent) = path.parent() {
         ensure_regular_auth_parent(data, parent)?;
     }
@@ -202,13 +201,19 @@ fn read(data: &Path) -> anyhow::Result<Store> {
     options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
     let file = match options.open(&path) {
         Ok(file) => file,
-        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(Store::default()),
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(None),
         Err(err) => return Err(err.into()),
     };
     require(file.metadata()?.is_file() && file.metadata()?.len() <= MAX_BYTES)?;
     let mut bytes = vec![];
     file.take(MAX_BYTES + 1).read_to_end(&mut bytes)?;
     require(bytes.len() as u64 <= MAX_BYTES)?;
+    Ok(Some(bytes))
+}
+fn read(data: &Path) -> anyhow::Result<Store> {
+    let Some(bytes) = read_bytes(data, &path(data)?)? else {
+        return Ok(Store::default());
+    };
     // Serde aliases keep the legacy reader strict, including duplicate fields.
     // The rollback journal owns authority while Undo can run the rc.1 writer.
     let mut store: Store = serde_json::from_slice(&bytes)?;
@@ -223,6 +228,13 @@ fn read(data: &Path) -> anyhow::Result<Store> {
     }
     Ok(store)
 }
+fn write_projection(data: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    let file = path(data)?.with_file_name(CANONICAL_FILE);
+    if read_bytes(data, &file)?.as_deref() != Some(bytes) {
+        write_secret_bytes_atomic(&file, bytes)?;
+    }
+    Ok(())
+}
 fn write(data: &Path, store: &Store) -> anyhow::Result<()> {
     let bytes = serde_json::to_vec(store)?;
     require(bytes.len() as u64 <= MAX_BYTES)?;
@@ -233,7 +245,7 @@ fn write(data: &Path, store: &Store) -> anyhow::Result<()> {
     require(legacy.len() as u64 <= MAX_BYTES)?;
     // The journal write is the commit point. If either atomic write fails, the
     // next read uses the last committed journal, including after Undo to rc.1.
-    write_secret_bytes_atomic(&path.with_file_name(CANONICAL_FILE), &bytes)?;
+    write_projection(data, &bytes)?;
     write_secret_bytes_atomic(&path, &legacy)?;
     Ok(())
 }
@@ -465,13 +477,20 @@ fn mutate<T>(
     let lock = lock_auth_state_file(open_auth_state_lock(data)?)?;
     let auth = load_auth_state_with_identity(data)?.0;
     let mut store = read(data)?;
+    let before = serde_json::to_vec(&store)?;
     reconcile(&mut store, &auth);
     let now = now_ts();
     store.pending.retain(|p| p.retained(now));
     store.passkey_add.retain(|p| p.expires_at > now);
     store.sessions.retain(|s| s.grant.expires_at > now);
     let result = f(&auth, &mut store)?;
-    write(data, &store)?;
+    if serde_json::to_vec(&store)? != before {
+        write(data, &store)?;
+    } else {
+        // A read can migrate or refresh names after Undo without rewriting the
+        // authority journal or replacing an already-current projection.
+        write_projection(data, &before)?;
+    }
     unlock_auth_state_file(lock)?;
     Ok(result)
 }
@@ -2996,6 +3015,13 @@ pub(crate) mod tests {
         )
         .unwrap();
         let file_path = path(f.data.path()).unwrap();
+        let canonical_path = file_path.with_file_name(CANONICAL_FILE);
+        let canonical_held = File::open(&canonical_path).unwrap();
+        let canonical_before = regular_file_identity_from_metadata(
+            &canonical_held.metadata().unwrap(),
+            "wallet names",
+        )
+        .unwrap();
         let held = File::open(&file_path).unwrap();
         let before =
             regular_file_identity_from_metadata(&held.metadata().unwrap(), "wallet state").unwrap();
@@ -3005,6 +3031,10 @@ pub(crate) mod tests {
             assert_eq!(
                 observe_optional_regular_file_identity(&file_path, "wallet state").unwrap(),
                 Some(before)
+            );
+            assert_eq!(
+                observe_optional_regular_file_identity(&canonical_path, "wallet names").unwrap(),
+                Some(canonical_before)
             );
         }
         let pair = begin(f.data.path(), ORIGIN, "home-test", serde_json::from_value(serde_json::json!({"connector":"wallet-walletconnect","address":"","chain_id":0,"browser_secret":BROWSER,"allow_temporary_internet":true})).unwrap(), None).unwrap();
