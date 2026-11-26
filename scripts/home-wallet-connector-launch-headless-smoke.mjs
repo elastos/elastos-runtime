@@ -1,3 +1,4 @@
+import { historicalTestSource } from './lib/historical-test-source.mjs';
 #!/usr/bin/env node
 
 import {windowTestOptions} from './lib/walletconnect-window-resources.mjs';
@@ -6,7 +7,6 @@ import { createServer } from "node:http";
 import { accessSync, constants, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { execFileSync } from "node:child_process";
 import { importProductSmokePlaywright, productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 
 const engine = process.env.HOME_WALLET_CONNECTOR_ENGINE || "chromium";
@@ -385,12 +385,12 @@ const server = createServer(async (req, res) => {
     const beforePath = relative(repoRoot, path);
     const body = process.env.MARKETPLACE_CONNECT_BEFORE === "1"
       && ["capsules/marketplace/browser/marketplace.js", "capsules/home/browser/home-shell-host.js", "capsules/wallet/browser/wallet.js"].includes(beforePath)
-      ? execFileSync("git", ["show", `73394822a053272452f561ec0344344598ecc16c:${beforePath}`])
+      ? Buffer.from(historicalTestSource(`73394822a053272452f561ec0344344598ecc16c:${beforePath}`))
       : process.env.MARKETPLACE_OPEN_BEFORE === "1"
       && ["capsules/marketplace/browser/marketplace.js", "capsules/home/browser/home-shell-host.js"].includes(beforePath)
-      ? execFileSync("git", ["show", `5cc6f5b8cd55c0ae3d37bd3a56e57c04315e44a1:${beforePath}`])
+      ? Buffer.from(historicalTestSource(`5cc6f5b8cd55c0ae3d37bd3a56e57c04315e44a1:${beforePath}`))
       : process.env.HOME_WALLET_REFRESH_BEFORE === "1" && path === join(repoRoot, "capsules/home/browser/home-shell-host.js")
-      ? execFileSync("git", ["show", "0db7eb247c8d89f367d5458acb03339605cc216e:capsules/home/browser/home-shell-host.js"])
+      ? Buffer.from(historicalTestSource("0db7eb247c8d89f367d5458acb03339605cc216e:capsules/home/browser/home-shell-host.js"))
       : readFileSync(path);
     res.writeHead(200, {
       "access-control-allow-origin": "*",

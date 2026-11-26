@@ -1,3 +1,4 @@
+import { historicalTestSource } from './lib/historical-test-source.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
@@ -15,7 +16,7 @@ for(const engine of ['chromium','webkit'])for(const width of [1280,390])for(cons
   const context=await browser.newContext({viewport:{width,height:900},locale:'en-US'});
   await context.addInitScript(installSigninProviders,{evmAddress,bitcoinAddress,theme:'light'});
   const page=await context.newPage();page.setDefaultTimeout(15000);
-  if(process.env.WALLET_ROUND8_BASELINE)await page.route('**/wallet.js*',route=>route.fulfill({contentType:'text/javascript',body:execFileSync('git',['show','296461e65:capsules/wallet/browser/wallet.js'],{encoding:'utf8'})}));
+  if(process.env.WALLET_ROUND8_BASELINE)await page.route('**/wallet.js*',route=>route.fulfill({contentType:'text/javascript',body:historicalTestSource('296461e65:capsules/wallet/browser/wallet.js')}));
   try{
     await page.goto(f.origin+'/home/');await page.waitForFunction(()=>window.fixtureReady);
     await page.evaluate(()=>{window.showFixtureApps();walletFixture.passkeyMode='pending';});

@@ -1,8 +1,8 @@
+import { historicalTestSource } from './lib/historical-test-source.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {readFile} from 'node:fs/promises';
-import {execFileSync} from 'node:child_process';
 import {resolve,extname} from 'node:path';
 import {requireProductSmokePlaywright} from './product-smoke-browser.mjs';
 import {walletConnectRelayFixture} from './lib/walletconnect-relay-fixture.mjs';
@@ -28,7 +28,7 @@ test('the sign-in opaque frame imports the real SDK, pairs, signs and keeps prot
   assert.ok(path.startsWith('/apps/wallet-walletconnect/'));
   const rel=path.slice('/apps/wallet-walletconnect/'.length),file=resolve(root,'capsules/wallet-walletconnect',rel.startsWith('vendor/')?rel:'browser/'+rel);
   assert.ok(file.startsWith(resolve(root,'capsules/wallet-walletconnect')+'/'));
-  const bytes=rel==='signin-transport.mjs'&&process.env.SIGNIN_SDK_BEFORE?execFileSync('git',['show',`${process.env.SIGNIN_SDK_BEFORE==='expiry'?'79fa3ffa2':'a9ecb6bc0'}:capsules/wallet-walletconnect/browser/signin-transport.mjs`],{cwd:root}):await readFile(file);
+  const bytes=rel==='signin-transport.mjs'&&process.env.SIGNIN_SDK_BEFORE?historicalTestSource(`${process.env.SIGNIN_SDK_BEFORE==='expiry'?'79fa3ffa2':'a9ecb6bc0'}:capsules/wallet-walletconnect/browser/signin-transport.mjs`):await readFile(file);
   res.writeHead(200,{...headers,'content-type':extname(file)==='.html'?'text/html':'text/javascript'}).end(bytes);
  }catch(error){res.writeHead(500).end('Fixture refused request');}});
  const relay=walletConnectRelayFixture(server);await new Promise(r=>server.listen(0,'127.0.0.1',r));const browser=await requireProductSmokePlaywright().chromium.launch({headless:true});const phone=await scriptedPhoneWallet({projectId:'fixture-project-id',relayUrl:`ws://127.0.0.1:${server.address().port}`,chains:['eip155:8453']});let requestExpiry;phone.client.on('session_request',event=>{requestExpiry=event.params.request.expiryTimestamp;});

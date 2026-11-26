@@ -1,6 +1,6 @@
+import { historicalTestSource } from './lib/historical-test-source.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {execFileSync} from 'node:child_process';
 import {mkdir} from 'node:fs/promises';
 import {join} from 'node:path';
 import {signinFixture,installSigninProviders,evmAddress,bitcoinAddress} from './lib/wallet-signin-fixture.mjs';
@@ -20,7 +20,7 @@ for(const engine of ['chromium','webkit'])for(const name of ['Rabby Wallet','Bra
  const context=await browser.newContext({viewport:{width:1280,height:900}});
  await context.addInitScript(installSigninProviders,{evmAddress,bitcoinAddress,theme:'light'});await context.addInitScript(()=>{walletFixture.multiple=true;walletFixture.passkeyMode='pending';});
  const page=await context.newPage();page.setDefaultTimeout(5000);
- if(process.env.WALLET_ROUND6_BASELINE)for(const path of ['home/browser/wallet-signin-view.mjs','home/browser/wallet-signin-connector.mjs','wallet/browser/wallet-preferences.js'])await page.route('**/'+path.split('/').at(-1)+'*',r=>r.fulfill({contentType:'text/javascript',body:execFileSync('git',['show','72af9c4ff:capsules/'+path],{encoding:'utf8'})}));
+ if(process.env.WALLET_ROUND6_BASELINE)for(const path of ['home/browser/wallet-signin-view.mjs','home/browser/wallet-signin-connector.mjs','wallet/browser/wallet-preferences.js'])await page.route('**/'+path.split('/').at(-1)+'*',r=>r.fulfill({contentType:'text/javascript',body:historicalTestSource('72af9c4ff:capsules/'+path)}));
  try{
   await page.goto(f.origin+'/home/');await page.waitForFunction(()=>window.fixtureReady);await page.evaluate(()=>window.showFixtureApps());
   await page.frameLocator('iframe[title=system]').getByRole('button',{name:'Add wallet',exact:true}).click();
@@ -43,7 +43,7 @@ for(const engine of ['chromium','webkit'])for(const name of ['Rabby Wallet','Bra
 });
 for(const engine of ['chromium','webkit'])for(const width of [1280,390])test(`round6 app outcomes and sent-payment recovery in ${engine} at ${width}`,windowTestOptions(engine,30000),async()=>{
  const f=await browserFixture(engine,{width,height:900});
- if(process.env.WALLET_ROUND6_BASELINE)for(const asset of ['wallet-connection-view.mjs','wallet-connection-screens.mjs'])await f.context.route('**/capsules/_shared/'+asset+'*',r=>r.fulfill({contentType:'text/javascript',body:execFileSync('git',['show','72af9c4ff:capsules/_shared/'+asset],{encoding:'utf8'})}));
+ if(process.env.WALLET_ROUND6_BASELINE)for(const asset of ['wallet-connection-view.mjs','wallet-connection-screens.mjs'])await f.context.route('**/capsules/_shared/'+asset+'*',r=>r.fulfill({contentType:'text/javascript',body:historicalTestSource('72af9c4ff:capsules/_shared/'+asset)}));
  try{
   for(const window of ['metamask','unisat','walletconnect'])for(const stage of window==='walletconnect'?['request-phone','request-done','request-declined','transaction-phone','transaction-done','transaction-declined']:['request-extension','request-done','request-declined']){
    const args=fixtureArguments(states.find(r=>r.window===window&&r.stage===stage));
@@ -76,7 +76,7 @@ for(const engine of ['chromium','webkit'])for(const kind of ['metamask','unisat'
 
 for(const engine of ['chromium','webkit'])test(`round6 MetaMask adds then selects a network before one zero-value payment in ${engine}`,windowTestOptions(engine,20000),async()=>{
  const browser=await playwright[engine].launch({headless:true});
- const hostSource=process.env.WALLET_ROUND6_BASELINE?execFileSync('git',['show','72af9c4ff:capsules/home/browser/home-wallet-connector-host.js'],{encoding:'utf8'}):undefined;
+ const hostSource=process.env.WALLET_ROUND6_BASELINE?historicalTestSource('72af9c4ff:capsules/home/browser/home-wallet-connector-host.js'):undefined;
  const f=await extensionFixture(browser,'metamask',{saved:true,requests:'transaction',hostSource});
  try{await f.state('transaction-waiting');await f.top.evaluate(()=>{testState.addSelectsChain=false;testState.transactionValue='0x0';});await f.action('send-request').click();await f.state('transaction-done');
   const calls=await f.top.evaluate(()=>testState.calls);assert.deepEqual(calls.filter(c=>['wallet_switchEthereumChain','wallet_addEthereumChain','eth_sendTransaction'].includes(c.method)).map(c=>c.method),['wallet_switchEthereumChain','wallet_addEthereumChain','wallet_switchEthereumChain','eth_sendTransaction']);assert.equal(await f.top.evaluate(()=>testState.receipts.length),1);

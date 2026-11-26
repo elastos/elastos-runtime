@@ -1,3 +1,4 @@
+import { historicalTestSource } from './lib/historical-test-source.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdir,readFile,writeFile} from 'node:fs/promises';
@@ -19,7 +20,7 @@ for(const width of [1280,390])test(`round3 pointer Choose survives a focus refre
   const source=await readFile('capsules/wallet/browser/wallet.js','utf8'),marker='renderMethods(buildViewAccounts(),currentApprovalMethods);';
   assert(source.includes(marker));await route.fulfill({contentType:'text/javascript',body:source.replace(marker,marker+" window.dispatchEvent(new Event('round3-wallet-refreshed'));")});
  });
- if(process.env.WALLET_ROUND3_BASELINE)await page.route('**/wallet-preferences.js*',r=>r.fulfill({contentType:'text/javascript',body:execFileSync('git',['show','61ed90494:capsules/wallet/browser/wallet-preferences.js'],{encoding:'utf8'})}));
+ if(process.env.WALLET_ROUND3_BASELINE)await page.route('**/wallet-preferences.js*',r=>r.fulfill({contentType:'text/javascript',body:historicalTestSource('61ed90494:capsules/wallet/browser/wallet-preferences.js')}));
  try {
   await page.goto(f.origin+'/home/');await page.waitForFunction(()=>window.fixtureReady);await page.evaluate(()=>window.showFixtureApps());
   const system=page.frameLocator('iframe[title=system]'),wallet=page.frameLocator('iframe[title=wallet]');
@@ -96,7 +97,7 @@ for(const engine of ['chromium','webkit'])test(`round3 locked UniSat request kee
 });
 for(const engine of ['chromium','webkit'])for(const width of [1280,390])for(const kind of ['metamask','unisat'])test(`round3 ${kind} refusal names the wallet decision at ${width} in ${engine}`,windowTestOptions(engine,30000),async()=>{
  const browser=await requireProductSmokePlaywright()[engine].launch({headless:true,...(engine==='chromium'?productSmokeLaunchOptions():{})});
- const f=await extensionFixture(browser,kind,{stateTimeout:15000,saved:true,requests:true,pictures:false,...(process.env.WALLET_ROUND3_BASELINE?{hostSource:execFileSync('git',['show','61ed90494:capsules/home/browser/home-wallet-connector-host.js'],{encoding:'utf8'})}:{})});
+ const f=await extensionFixture(browser,kind,{stateTimeout:15000,saved:true,requests:true,pictures:false,...(process.env.WALLET_ROUND3_BASELINE?{hostSource:historicalTestSource('61ed90494:capsules/home/browser/home-wallet-connector-host.js')}:{})});
  try{await f.top.setViewportSize({width,height:560});await f.top.locator('iframe').evaluate((frame,width)=>frame.style.width=width+'px',width);await f.state('request-waiting');
   await f.frame.waitForFunction(()=>window.__windowReadsFinished>0);
   await f.frame.evaluate(()=>document.fonts.ready);

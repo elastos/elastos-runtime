@@ -1,8 +1,8 @@
+import { historicalTestSource } from './lib/historical-test-source.mjs';
 import test from "node:test";
 import assert from "node:assert/strict";
 import {createServer} from "node:http";
 import {readFile} from "node:fs/promises";
-import {execFileSync} from "node:child_process";
 import {extname,resolve} from "node:path";
 import {requireProductSmokePlaywright} from "./product-smoke-browser.mjs";
 const root=resolve(import.meta.dirname,"..");
@@ -54,7 +54,7 @@ test("Inbox wallet sessions approve each positive permission with its exact acti
   const relative=path.replace(/^\/apps\/inbox\//,"")||"index.html",file=resolve(root,"capsules/inbox/browser",relative);
   if(!file.startsWith(resolve(root,"capsules/inbox/browser")+"/")){res.writeHead(404).end();return;}
   const bytes=relative==="inbox.js"&&process.env.INBOX_WALLET_APPROVAL_BEFORE
-   ? execFileSync("git",["show","1fef8c0f9:capsules/inbox/browser/inbox.js"],{cwd:root}) : await readFile(file);
+   ? historicalTestSource('1fef8c0f9:capsules/inbox/browser/inbox.js') : await readFile(file);
   res.writeHead(200,{"content-type":({".html":"text/html",".js":"text/javascript",".css":"text/css",".svg":"image/svg+xml"})[extname(file)]||"application/octet-stream"}).end(bytes);
  }catch{res.writeHead(404).end();}});
  await new Promise(r=>server.listen(0,"127.0.0.1",r));const browser=await requireProductSmokePlaywright().chromium.launch({headless:true});

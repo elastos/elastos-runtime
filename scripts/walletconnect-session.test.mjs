@@ -1,3 +1,4 @@
+import { historicalTestSource } from './lib/historical-test-source.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import http from 'node:http';
@@ -5,7 +6,6 @@ import {readFileSync} from 'node:fs';
 import {importProductSmokePlaywright,productSmokeLaunchOptions} from './product-smoke-browser.mjs';
 import {walletConnectRelayFixture,walletConnectFixtureRequire} from './lib/walletconnect-relay-fixture.mjs';
 const {SignClient} = walletConnectFixtureRequire('@walletconnect/sign-client');
-import {execFileSync} from 'node:child_process';
 import {windowTestOptions} from './lib/walletconnect-window-resources.mjs';
 const engine=process.env.WALLETCONNECT_TEST_ENGINE || 'chromium';
 import {walletConnectMessages as messages} from '../capsules/wallet-walletconnect/browser/walletconnect-client.mjs';
@@ -21,7 +21,7 @@ for (const [name,approved,rejection] of [['Base only',['eip155:8453']],['unsuppo
       ['/vendor/reown-appkit.js','capsules/wallet-walletconnect/vendor/reown-appkit.js'],
     ]);
     const server = http.createServer((req,res) => {
-      if (files.has(req.url)) {res.setHeader('content-type','text/javascript');res.end(process.env.WALLETCONNECT_BASELINE && req.url !== '/fixture.mjs' ? execFileSync('git',['show',`4cd5a7302:${files.get(req.url)}`],{maxBuffer:4*1024*1024}) : readFileSync(files.get(req.url)));}
+      if (files.has(req.url)) {res.setHeader('content-type','text/javascript');res.end(process.env.WALLETCONNECT_BASELINE && req.url !== '/fixture.mjs' ? historicalTestSource(`4cd5a7302:${files.get(req.url)}`) : readFileSync(files.get(req.url)));}
       else {res.setHeader('content-type','text/html');res.end('<!doctype html><script type="module" src="/fixture.mjs"></script>');}
     });
     const {relay,methods} = walletConnectRelayFixture(server);

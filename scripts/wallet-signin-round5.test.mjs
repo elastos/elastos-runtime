@@ -1,6 +1,6 @@
+import { historicalTestSource } from './lib/historical-test-source.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {execFileSync} from 'node:child_process';
 import {mkdir} from 'node:fs/promises';
 import {join} from 'node:path';
 import {signinFixture,installSigninProviders,evmAddress,bitcoinAddress} from './lib/wallet-signin-fixture.mjs';
@@ -13,7 +13,7 @@ for(const engine of ['chromium','webkit'])for(const width of [1280,390])for(cons
  f.state.methods=[];f.state.connected=[];f.state.wcConnected=false;
  const context=await browser.newContext({viewport:{width,height:900},locale:'en-US'});await context.addInitScript(installSigninProviders,{evmAddress,bitcoinAddress,theme:'light'});
  const page=await context.newPage();page.setDefaultTimeout(5000);let baselineLoads=0;
- if(process.env.WALLET_ROUND5_BASELINE)await page.route('**/wallet-signin-view.mjs*',r=>{baselineLoads++;return r.fulfill({contentType:'text/javascript',body:execFileSync('git',['show','42866a34e:capsules/home/browser/wallet-signin-view.mjs'],{encoding:'utf8'})});});
+ if(process.env.WALLET_ROUND5_BASELINE)await page.route('**/wallet-signin-view.mjs*',r=>{baselineLoads++;return r.fulfill({contentType:'text/javascript',body:historicalTestSource('42866a34e:capsules/home/browser/wallet-signin-view.mjs')});});
  const system=page.frameLocator('iframe[title=system]'),wallet=page.frameLocator('iframe[title=wallet]');
  const name=`${engine}-${width}-${kind.toLowerCase()}`;
  const signatures=async()=>f.state.calls.filter(c=>c.path==='/api/fixture-sdk'&&c.body.method==='personal_sign').length+await page.evaluate(()=>window.walletFixture.calls.filter(c=>['personal_sign','signMessage'].includes(c.method)).length);
