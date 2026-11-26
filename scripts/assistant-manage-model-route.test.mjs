@@ -8,6 +8,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { importProductSmokePlaywright, productSmokeLaunchOptions } from './product-smoke-browser.mjs';
 import { inertSystemApiResponse, makeAppearanceRecord, makeSystemSummary } from './system-uiux-fixture.mjs';
+import { windowTestOptions } from './lib/walletconnect-window-resources.mjs';
 
 // Full Home admission/relay, GUI window manager, Assistant click handler and
 // System navigation handshake. Only Runtime APIs are fixtures. No installed Home.
@@ -127,7 +128,7 @@ async function fixture() {
 for (const engine of ['chromium', 'webkit']) {
   for (const width of [1440, 390]) {
     for (const state of ['closed', 'windowed', 'maximized', 'minimized', 'other-desktop', 'minimized-other-desktop']) {
-      test(`${engine} ${width}: Manage models with System ${state}`, { timeout: 45000 }, async t => {
+      test(`${engine} ${width}: Manage models with System ${state}`, windowTestOptions(engine, 45000), async t => {
         await diskGuard();
         const f = await fixture();
         t.after(() => f.close());
