@@ -30,7 +30,7 @@ async function fixture(run, engine = "chromium") {
         return true;
       }
       if (url.pathname === "/api/apps/wallet/wallet/inventory") {
-        jsonResponse(response, {schema:'elastos.wallet.inventory/v1',account_id:passkeys.find(key=>key.current)?.principal_id||owner.principal_id,entries:methods.map(method=>({inventory_id:`eip155:${method.chain_id}:${method.address}`,address:method.address,chain_namespace:`eip155:${method.chain_id}`,accounts:[],sign_in:method}))});return true;
+        jsonResponse(response, {schema:'elastos.wallet.inventory/v1',principal_id:passkeys.find(key=>key.current)?.principal_id||owner.principal_id,entries:methods.map(method=>({inventory_id:`eip155:${method.chain_id}:${method.address}`,address:method.address,chain_namespace:`eip155:${method.chain_id}`,accounts:[],sign_in:method}))});return true;
       }
       if (url.pathname === "/api/auth/passkeys") {
         listReads++;
@@ -341,6 +341,25 @@ test("System distinguishes two passkeys and identifies this window at desktop an
 });
 
 
+for (const engine of ["chromium", "webkit"]) test(`Accounts renders canonical wallet connectors with their local images and network labels in ${engine}`, windowTestOptions(engine, 30000), async () => {
+  await fixture(async ({ open }) => {
+    for (const [kind, name, chain, network, address, label] of [
+      ['metamask', 'MetaMask', 20, '', '0x1234567890123456789012345678901234567890', 'ESC'],
+      ['unisat', 'UniSat', 0, 'bitcoin', 'bc1q1234567890123456789012345678901234567890', 'Bitcoin'],
+      ['walletconnect', 'WalletConnect', 8453, '', '0x1234567890123456789012345678901234567890', 'Base · WalletConnect'],
+    ]) {
+      const method = {proof_binding_id:`wallet:${kind}`, connector:`wallet-${kind}`, address, chain_id:chain, network, sign_in_enabled:true};
+      const frame = await open([owner], {methods:[method]});
+      const row = frame.locator('.system-signin-wallet');
+      assert.equal(await row.locator('strong').textContent(), name);
+      assert.equal(await row.locator('.system-wallet-meta span').textContent(), label);
+      assert.equal(await row.locator('code').textContent(), kind === 'unisat' ? `${address.slice(0,8)}…${address.slice(-6)}` : `${address.slice(0,6)}…${address.slice(-4)}`);
+      assert.equal(await row.locator('img').getAttribute('src'), `/apps/home/connection-${kind}.png`);
+      await row.locator('img').evaluate(image => image.decode());
+    }
+  }, engine);
+});
+
 for (const engine of ["chromium", "webkit"]) test(`Accounts groups methods beneath their owner with equal add controls in both themes and widths in ${engine}`, windowTestOptions(engine, 30000), async () => {
   const tabKey = engine === "webkit" && process.platform === "darwin" ? "Alt+Tab" : "Tab";
   const previousKey = engine === "webkit" && process.platform === "darwin" ? "Alt+Shift+Tab" : "Shift+Tab";
@@ -348,7 +367,7 @@ for (const engine of ["chromium", "webkit"]) test(`Accounts groups methods benea
     const created = Date.UTC(2026, 10, 23, 13, 3) / 1000;
     const key = { ...owner, created_at: created, last_used_at: created + 240, added_from: "Device passkey (added from Chrome on Mac or iPad)" };
     const backup = { ...key, current: false, proof_binding_id: "proof:passkey:backup" };
-    const wallet = { method_id: "wallet:metamask", connector: "metamask", address: "0x1234567890123456789012345678901234567890", chain_id: 20, network: "", sign_in_enabled: true, last_used_at: created };
+    const wallet = { proof_binding_id: "wallet:metamask", connector: "wallet-metamask", address: "0x1234567890123456789012345678901234567890", chain_id: 20, network: "", sign_in_enabled: true, last_used_at: created };
     for (const theme of ["light", "dark"]) for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: 900 });
       for (const [state, keys, options] of [

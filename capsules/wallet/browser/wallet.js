@@ -1,6 +1,6 @@
 import {requestWalletAppConnection} from "./wallet-app-connect.js";
 import {createWalletInventory} from "./wallet-inventory.js";
-import {readWalletInventory} from "/apps/home/wallet-signin-methods.mjs";
+import {readWalletInventory} from "/apps/home/wallet-signin-methods.mjs?v=wallet-signin-2";
 import { createWalletActivity } from "./wallet-activity.js?v=wallet-20261115a";
 import {
   createWalletApi,
@@ -154,7 +154,7 @@ const inventoryView = createWalletInventory({
 });
 
 async function connectInventoryApps(entry, current, method, signal) {
-  const connector = method || entry.accounts[0]?.connector_id?.replace('wallet-', '') || entry.sign_in?.connector;
+  const connector = method || entry.accounts[0]?.connector_id?.replace('wallet-', '') || entry.sign_in?.connector?.replace('wallet-', '');
   if (connector === 'walletconnect' && currentApprovalMethods.walletconnect?.available !== true) throw new Error('WalletConnect connection is unavailable.');
   if (entry) {
     await requestWalletAppConnection(entry, {token:activeHomeToken, origin:homeParentOrigin, current, signal});

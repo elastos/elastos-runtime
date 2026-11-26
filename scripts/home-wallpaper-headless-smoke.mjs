@@ -263,7 +263,7 @@ try {
     await waitFor(() => !admin.page.frames().some((f) => f.url().includes("/apps/system/")));
     const expiringHomeToken = [...tokens].reverse().find(([_, value]) => value.actor === "admin" && value.target === "home")[0];
     now = 11 * hour;
-    await admin.page.evaluate(async () => (await import("/apps/home/shell-auth.js?v=home-wallpaper-20261030b")).refreshHomeSession());
+    await admin.page.evaluate(async () => (await import("/apps/home/shell-auth.js?v=wallet-signin-2")).refreshHomeSession());
     now = 12 * hour + 1;
     assert.equal(await admin.page.evaluate(async (homeToken) => (await fetch("/api/apps/home/appearance/background-image", {
       headers: { "x-elastos-home-token": homeToken },

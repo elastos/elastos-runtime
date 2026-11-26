@@ -1,4 +1,5 @@
-import {inventorySigninMethods} from './wallet-signin-methods.mjs';
+import {walletConnectorKind} from './wallet-signin-options.mjs?v=wallet-signin-2';
+import {inventorySigninMethods} from './wallet-signin-methods.mjs?v=wallet-signin-2';
 // Repeated intents follow one observed ceremony across asynchronous auth reads.
 const pendingChanges = new WeakMap();
 // The shell supplies a source/token-bound context from its launch registry.
@@ -29,14 +30,14 @@ export function handleWalletSigninRequest(event,context,{api,manage,current,chan
   pending.result=Promise.all([api('/api/auth/wallet-methods',undefined,token),api('/api/auth/passkeys',undefined,token)])
     .then(async([wallets,passkeys])=>{
       if(!active())return;
-      const method=data.action==='add'?null:wallets.methods?.find(row=>row.method_id===data.methodId);
-      const passkey=passkeys.passkeys?.find(row=>row.principal_id===wallets.account_id && !row.revoked_at);
+      const method=data.action==='add'?null:wallets.methods?.find(row=>row.proof_binding_id===data.methodId);
+      const passkey=passkeys.passkeys?.find(row=>row.principal_id===wallets.principal_id && !row.revoked_at);
       if(data.action==='list')return {status:'complete',...wallets,can_manage:passkey?.role==='admin'};
       if(data.action!=='add' && !method)return {status:'changed'};
-      pending.options={action:data.action,method,token,account:passkey?.display_name||'Your account',accountId:wallets.account_id,sessionMethodId:sessionMethodId(),sessionCurrent:sameAuthority,isCurrent:active,openConnector,selectWalletConnect,loadConnected:async()=>{
+      pending.options={action:data.action,method:method?{...method,connector:walletConnectorKind(method.connector)}:null,token,account:passkey?.display_name||'Your account',accountId:wallets.principal_id,sessionMethodId:sessionMethodId(),sessionCurrent:sameAuthority,isCurrent:active,openConnector,selectWalletConnect,loadConnected:async()=>{
         const inventory=await api('/api/apps/wallet/wallet/inventory',undefined,token);
         if(!active())throw new Error('Home session changed');
-        if(inventory.account_id!==wallets.account_id)throw new Error('Home account changed');
+        if(inventory.principal_id!==wallets.principal_id)throw new Error('Home account changed');
         return inventorySigninMethods(inventory);
       }};
       const result=await manage(pending.options);

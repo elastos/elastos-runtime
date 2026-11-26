@@ -52,7 +52,7 @@ live; it returns the same result. A committed sign-in returns its saved result o
 `GET /api/auth/wallet-methods` returns the caller's account only:
 
 ```json
-{"account_id":"person:local:…","methods":[{"method_id":"proof:signin-wallet:…","connector":"metamask","address":"0x…","chain_id":20,"network":"","sign_in_enabled":true,"created_at":1800000000,"last_used_at":null}]}
+{"principal_id":"person:local:…","methods":[{"proof_binding_id":"proof:signin-wallet:…","connector":"wallet-metamask","address":"0x…","chain_id":20,"network":"","sign_in_enabled":true,"created_at":1800000000,"last_used_at":null}]}
 ```
 
 Passkeys remain available from the existing passkey list API, with existing
@@ -63,7 +63,7 @@ Bitcoin ownership is network and address.
 `POST /api/auth/wallet-methods/begin`:
 
 ```json
-{"action":"add","connector":"metamask","address":"0x…","chain_id":20,"network":"","browser_secret":"<64 hex characters>"}
+{"action":"add","connector":"wallet-metamask","address":"0x…","chain_id":20,"network":"","browser_secret":"<64 hex characters>"}
 ```
 
 Runtime supports two method actions: `add` and `remove`. An added wallet can
@@ -73,7 +73,7 @@ and completion. The wallet signs "Add this wallet as a way to sign in to this Ho
 witnesses in one transaction after wallet verification and exact passkey approval.
 
 For WalletConnect enrollment, use this authenticated management route with
-`action: "add"`, `connector: "walletconnect"`, an empty address, chain_id 20,
+`action: "add"`, `connector: "wallet-walletconnect"`, an empty address, chain_id 20,
 network `""`, browser_secret and `allow_temporary_internet: true`. Show Runtime's
 relay disclosure before approval. Begin returns temporary pairing transport.
 After pairing, call `/api/auth/wallet/signin/select` with the same ceremony_id,
@@ -83,7 +83,7 @@ supported chain. Keep the management launch header on these calls.
 Authenticated enrollment can create the first method; anonymous pairing requires
 an existing compatible method.
 
-For `remove`, send the owned `method_id` instead of the wallet identity fields.
+For `remove`, send the owned `proof_binding_id` instead of the wallet identity fields.
 A Guest, including an account demoted from Admin, can remove its own method.
 Removal requires a fresh same-account passkey approval, revokes that method's
 sessions and pending proofs, and ends anonymous WalletConnect pairing when the
@@ -93,7 +93,7 @@ connections and their Inbox permissions keep their separate lifecycle.
 Begin returns:
 
 ```json
-{"ceremony_id":"ceremony:…","message":"Home-built message, empty for remove","expires_at":1800000180,"approval":{"operation":"auth.wallet.method","request":{"ceremony_id":"ceremony:…","account_id":"person:local:…","action":"add","method_id":"proof:signin-wallet:…","connector":"metamask","address":"0x…","chain_id":20,"network":"","authorizes_short_public_walletconnect":false},"notice":""},"instance_id":"…","storage_revision":0}
+{"ceremony_id":"ceremony:…","message":"Home-built message, empty for remove","expires_at":1800000180,"approval":{"operation":"auth.wallet.method.change","request":{"ceremony_id":"ceremony:…","principal_id":"person:local:…","action":"add","proof_binding_id":"proof:signin-wallet:…","connector":"wallet-metamask","address":"0x…","chain_id":20,"network":"","authorizes_short_public_walletconnect":false},"notice":""},"instance_id":"…","storage_revision":0}
 ```
 
 The selected wallet shows the exact message and its fields before it signs. Home shows each control once. Home owns the
@@ -116,10 +116,10 @@ Bitcoin uses `bip322_simple` or `bitcoin_signed_message`; public_key is supplied
 where that proof mode needs it. The `add` response is:
 
 ```json
-{"status":"complete","method_id":"proof:signin-wallet:…","sign_in_enabled":true}
+{"status":"complete","proof_binding_id":"proof:signin-wallet:…","sign_in_enabled":true}
 ```
 
-Removal returns `{"status":"removed","method_id":"proof:signin-wallet:…","sign_in_enabled":false}`.
+Removal returns `{"status":"removed","proof_binding_id":"proof:signin-wallet:…","sign_in_enabled":false}`.
 The list and completion retain the `sign_in_enabled` field for callers; every
 listed method has the value `true`. Each new method change needs new approval.
 An identical completion retry returns its saved result while the ceremony and
@@ -294,7 +294,7 @@ returned approval intent through the existing approval bridge. Public signed-out
 sign-in keeps the same-origin Home boundary; other capsules receive a refusal.
 
 `GET /api/auth/passkey/status` returns `wallet_signin_available`,
-`walletconnect_signin_available`, `wallet_signin_connectors` (connector kinds only),
+`walletconnect_signin_available`, `wallet_signin_connectors` (connector capsule IDs only),
 and `wallet_signin_relay_notice`. Runtime derives these from the current methods.
 Account names, addresses, networks and method IDs stay in the authenticated list.
 
@@ -417,3 +417,28 @@ address and network, and retires a cancelled request before proof completion.
 System reads the same inventory and shows its `sign_in` entries under the
 current account. Sign-in enrollment, removal, sessions and passkey gates remain
 owned by auth. Removing either use leaves the other use visible.
+
+## Stored names and Undo
+
+Runtime stores wallet sign-in authority in one file, `wallet-signin.json`.
+The journal keeps schema `elastos.auth.wallet-signin/v1`, `account_id`,
+`method_id`, and short connector values (`metamask`, `unisat`, `walletconnect`).
+The bounded, strict reader translates these names to `principal_id`,
+`proof_binding_id`, and connector capsule IDs (`wallet-metamask`, `wallet-unisat`,
+`wallet-walletconnect`) in memory and rejects unknown connectors. Each changed
+transaction commits the journal with one atomic write. Unchanged reads preserve
+its file identity. Runtime removes a retired `wallet-signin-bindings.json` only
+when it is a verified regular file; links and directories remain untouched.
+
+The previous Runtime reads and writes this same journal during Undo. A wallet
+enrolled before Undo can sign in there, and a wallet removed during Undo stays
+removed after an upgrade.
+
+A change to these wire names ends pending ceremonies from the previous contract.
+Existing wallet bindings and sessions keep their identifiers. A new ceremony uses
+`auth.wallet.method.change` for exact passkey approval. Routes keep their existing
+names. The browser stores its remembered connector in the single
+`elastos.signin.choice.v1` key using short connector values. Both browsers read
+and write that key, so a choice changed or cleared during Undo takes effect on
+the next read. Short connector names also remain local view keys for icons and
+provider adapters.

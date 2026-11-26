@@ -1,3 +1,4 @@
+import {walletConnectorKind} from './wallet-signin-options.mjs?v=wallet-signin-2';
 // Home ends management before the requesting capsule stops waiting.
 export const walletSigninRequestTimeoutMs=420000;
 export function requestWalletSigninChange({action,methodId='',token,origin}) {
@@ -17,7 +18,7 @@ export function requestWalletSigninChange({action,methodId='',token,origin}) {
 function text(tag,value,className) {const el=document.createElement(tag);el.textContent=value;if(className)el.className=className;return el;}
 export function walletSigninControls(method,{onAction,buttonClass=''}) {
   const controls=text('div','','signin-method-controls');
-  const remove=text('button','Remove from sign-in',buttonClass);remove.type='button';remove.onclick=()=>onAction('remove',method.method_id);controls.append(remove);
+  const remove=text('button','Remove from sign-in',buttonClass);remove.type='button';remove.onclick=()=>onAction('remove',method.proof_binding_id);controls.append(remove);
   return controls;
 }
 
@@ -38,7 +39,7 @@ export async function readWalletInventory(token) {
     });
     if (!response.ok) throw new Error('Home could not load your wallets.');
     const inventory = await response.json();
-    if (inventory.schema !== 'elastos.wallet.inventory/v1' || typeof inventory.account_id !== 'string'
+    if (inventory.schema !== 'elastos.wallet.inventory/v1' || typeof inventory.principal_id !== 'string'
       || !Array.isArray(inventory.entries) || inventory.entries.length > 512) throw new Error('Home could not load your wallets.');
     return inventory;
   } finally {clearTimeout(timer);}
@@ -49,15 +50,15 @@ export function inventorySigninMethods(inventory) {
     const account = entry.accounts.find(account => account.connector_id
       && !['managed_evm', 'managed_btc_p2wpkh'].includes(account.proof_type));
     if (!entry.sign_in && !account) return [];
-    const connector = entry.sign_in?.connector || account.connector_id.replace('wallet-', '');
+    const connector = walletConnectorKind(entry.sign_in?.connector || account.connector_id);
     const method = entry.sign_in || {
-      method_id: `payment:${account.account_id}`, connector,
+      proof_binding_id: `payment:${account.account_id}`, connector,
       address: entry.address,
       chain_id: connector === 'unisat' ? 0 : Number(entry.chain_namespace.split(':')[1]),
       network: connector === 'unisat' ? 'bitcoin' : '', sign_in_enabled: false,
       paymentOnly: true, last_used_at: null,
     };
-    return [{...method, inventory_id: entry.inventory_id,
+    return [{...method, connector, inventory_id: entry.inventory_id,
       paymentConnected: Boolean(account),
       ...(account?.wallet_display_name ? {displayName: account.wallet_display_name} : {}),
       ...(account?.provider_id ? {providerId: account.provider_id} : {}),

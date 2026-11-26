@@ -268,7 +268,7 @@ function fixtureHtml(baseUrl, mode) {
       if (data.type === "home:wallet-signin-request" && data.action === "list"
           && event.source === document.getElementById("wallet-frame").contentWindow) {
         event.source.postMessage({type:"home:wallet-signin-result",requestId:data.requestId,
-          result:{status:"complete",account_id:"principal:wallet-fixture",methods:[],can_manage:false}}, "${baseUrl}");
+          result:{status:"complete",principal_id:"principal:wallet-fixture",methods:[],can_manage:false}}, "${baseUrl}");
         return;
       }
       if (data.type === "elastos.home.passkey-step-up.request/v1") {
@@ -344,7 +344,7 @@ async function startServer() {
         return;
       }
       if (url.pathname === "/api/apps/wallet/wallet/inventory" && request.method === "GET") {
-        json(response,200,{schema:'elastos.wallet.inventory/v1',account_id:'fixture',account_name:'Alex',entries:state.accounts.map(account=>({inventory_id:`${account.chain_namespace}:${account.address.toLowerCase()}`,address:account.address,chain_namespace:account.chain_namespace,accounts:[account],sign_in:null}))});return;
+        json(response,200,{schema:'elastos.wallet.inventory/v1',principal_id:'fixture',account_name:'Alex',entries:state.accounts.map(account=>({inventory_id:`${account.chain_namespace}:${account.address.toLowerCase()}`,address:account.address,chain_namespace:account.chain_namespace,accounts:[account],sign_in:null}))});return;
       }
       if (url.pathname === "/api/apps/wallet/wallet/summary" && request.method === "GET") {
         state.summaryCalls += 1;

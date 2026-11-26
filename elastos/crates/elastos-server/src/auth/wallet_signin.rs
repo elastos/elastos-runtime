@@ -4,21 +4,25 @@ use elastos_runtime::auth::{bitcoin, wallet_signin::*};
 use subtle::ConstantTimeEq;
 
 const FILE: &str = "wallet-signin.json";
-const SCHEMA: &str = "elastos.auth.wallet-signin/v1";
+pub(crate) const SCHEMA: &str = "elastos.auth.wallet.signin/v1";
+const LEGACY_SCHEMA: &str = "elastos.auth.wallet-signin/v1";
 const TTL: u64 = 180;
-const CONTRACT_VERSION: u32 = 2;
+const CONTRACT_VERSION: u32 = 3;
 const MAX_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_PENDING: usize = 64;
 const MAX_METHODS: usize = 128;
-pub(crate) const OPERATION: &str = "auth.wallet.method";
+pub(crate) const OPERATION: &str = "auth.wallet.method.change";
 pub(crate) const RELAY_NOTICE: &str =
     "Your wallet connects through a relay that can see this computer's internet address.";
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Method {
-    pub method_id: String,
-    pub account_id: String,
+    #[serde(alias = "method_id")]
+    pub proof_binding_id: String,
+    #[serde(alias = "account_id")]
+    pub principal_id: String,
+    #[serde(deserialize_with = "stored_connector")]
     pub connector: String,
     pub address: String,
     pub chain_id: u64,
@@ -186,8 +190,7 @@ fn secret(value: &str) -> anyhow::Result<[u8; 32]> {
 fn path(data: &Path) -> anyhow::Result<PathBuf> {
     Ok(auth_state_path(data)?.with_file_name(FILE))
 }
-fn read(data: &Path) -> anyhow::Result<Store> {
-    let path = path(data)?;
+fn read_bytes(data: &Path, path: &Path) -> anyhow::Result<Option<Vec<u8>>> {
     if let Some(parent) = path.parent() {
         ensure_regular_auth_parent(data, parent)?;
     }
@@ -195,25 +198,156 @@ fn read(data: &Path) -> anyhow::Result<Store> {
     options.read(true);
     #[cfg(unix)]
     options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-    let file = match options.open(&path) {
+    let file = match options.open(path) {
         Ok(file) => file,
-        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(Store::default()),
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(None),
         Err(err) => return Err(err.into()),
     };
     require(file.metadata()?.is_file() && file.metadata()?.len() <= MAX_BYTES)?;
     let mut bytes = vec![];
     file.take(MAX_BYTES + 1).read_to_end(&mut bytes)?;
     require(bytes.len() as u64 <= MAX_BYTES)?;
-    let store: Store = serde_json::from_slice(&bytes)?;
-    require(store.schema == SCHEMA)?;
+    Ok(Some(bytes))
+}
+fn read(data: &Path) -> anyhow::Result<Store> {
+    cleanup_stale_projection(data);
+    let Some(bytes) = read_bytes(data, &path(data)?)? else {
+        return Ok(Store::default());
+    };
+    // Translate the single journal at the storage boundary. Serde aliases
+    // keep the reader strict, including duplicate fields.
+    let mut store: Store = serde_json::from_slice(&bytes)?;
+    require(store.schema == LEGACY_SCHEMA)?;
+    store.schema = SCHEMA.into();
+    for pending in &mut store.pending {
+        if pending.action != "signin" {
+            if let Terminal::Committed { result, .. } = &mut pending.terminal {
+                rename_field(result, "method_id", "proof_binding_id")?;
+            }
+        }
+    }
     Ok(store)
 }
-fn write(data: &Path, store: &Store) -> anyhow::Result<()> {
-    let bytes = serde_json::to_vec(store)?;
-    require(bytes.len() as u64 <= MAX_BYTES)?;
-    write_secret_bytes_atomic(&path(data)?, &bytes)?;
+// Retired projections grant no authority. Cleanup must leave wallet reads available.
+fn cleanup_stale_projection(data: &Path) {
+    static LOG_FAILURE: std::sync::Once = std::sync::Once::new();
+    if let Err(error) = remove_stale_projection(data) {
+        if error
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|error| error.kind() == ErrorKind::NotFound)
+        {
+            return;
+        }
+        LOG_FAILURE.call_once(|| {
+            tracing::warn!(%error, "Retired wallet projection retained; wallet sign-in remains available");
+        });
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static PROJECTION_UNLINK_TEST_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+// Remove only the retired regular file. Directory-relative unlink and inode
+// checks keep cleanup bound to the inspected file; links remain untouched.
+fn remove_stale_projection(data: &Path) -> anyhow::Result<()> {
+    let file = path(data)?.with_file_name("wallet-signin-bindings.json");
+    let root = std::fs::symlink_metadata(data)?;
+    require(root.is_dir() && !root.file_type().is_symlink())?;
+    let parent = file.parent().ok_or(Refused)?;
+    ensure_regular_auth_parent(data, parent)?;
+    let metadata = match std::fs::symlink_metadata(&file) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(err.into()),
+    };
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Ok(());
+    }
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    options.custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    let directory = options.open(parent)?;
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);
+    let held = match options.open(&file) {
+        Ok(held) => held,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(err.into()),
+    };
+    require(
+        regular_file_identity_from_metadata(&metadata, "retired wallet state")?
+            == regular_file_identity_from_metadata(&held.metadata()?, "retired wallet state")?,
+    )?;
+    #[cfg(test)]
+    if let Some(hook) = PROJECTION_UNLINK_TEST_HOOK.with(|hook| hook.borrow_mut().take()) {
+        hook();
+    }
+    unlink_migration_cleanup_file(&directory, file.file_name().ok_or(Refused)?, &held)?;
+    directory.sync_all()?;
     Ok(())
 }
+fn write(data: &Path, store: &Store) -> anyhow::Result<()> {
+    let path = path(data)?;
+    let mut legacy = serde_json::to_value(store)?;
+    legacy_store(&mut legacy)?;
+    let legacy = serde_json::to_vec(&legacy)?;
+    require(legacy.len() as u64 <= MAX_BYTES)?;
+    write_secret_bytes_atomic(&path, &legacy)?;
+    Ok(())
+}
+// Connector capsule IDs are wire identities. Short names cross the journal
+// boundary so the previous reader can use the same stored authority during Undo.
+fn stored_connector<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    let value = String::deserialize(d)?;
+    Ok(match value.as_str() {
+        "metamask" | "wallet-metamask" => "wallet-metamask".into(),
+        "unisat" | "wallet-unisat" => "wallet-unisat".into(),
+        "walletconnect" | "wallet-walletconnect" => "wallet-walletconnect".into(),
+        _ => return Err(serde::de::Error::custom("unknown wallet sign-in connector")),
+    })
+}
+fn rename_field(value: &mut Value, old: &str, new: &str) -> anyhow::Result<()> {
+    if let Some(fields) = value.as_object_mut() {
+        if let Some(v) = fields.remove(old) {
+            require(!fields.contains_key(new))?;
+            fields.insert(new.into(), v);
+        }
+    }
+    Ok(())
+}
+fn legacy_method(value: &mut Value) -> anyhow::Result<()> {
+    rename_field(value, "proof_binding_id", "method_id")?;
+    rename_field(value, "principal_id", "account_id")?;
+    value["connector"] = match value["connector"].as_str() {
+        Some("wallet-metamask") => Value::from("metamask"),
+        Some("wallet-unisat") => Value::from("unisat"),
+        Some("wallet-walletconnect") => Value::from("walletconnect"),
+        _ => return Err(Refused.into()),
+    };
+    Ok(())
+}
+fn legacy_store(value: &mut Value) -> anyhow::Result<()> {
+    value["schema"] = LEGACY_SCHEMA.into();
+    for method in value["methods"].as_array_mut().ok_or(Refused)? {
+        legacy_method(method)?;
+    }
+    for pending in value["pending"].as_array_mut().ok_or(Refused)? {
+        legacy_method(&mut pending["method"])?;
+        if pending["action"] != "signin" {
+            if let Some(result) = pending.pointer_mut("/terminal/Committed/result") {
+                rename_field(result, "proof_binding_id", "method_id")?;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn witnesses(auth: &AuthState, account: &str) -> Vec<String> {
     let mut result: Vec<_> = auth
         .principals
@@ -243,21 +377,21 @@ fn root_key(auth: &AuthState, account: &str) -> Option<String> {
         .map(|p| p.data_key_id.clone())
 }
 fn eligible(auth: &AuthState, method: &Method) -> bool {
-    let current = witnesses(auth, &method.account_id);
+    let current = witnesses(auth, &method.principal_id);
     method.witnesses.iter().any(|id| current.contains(id))
-        && (method.root_key.is_none() || root_key(auth, &method.account_id) == method.root_key)
+        && (method.root_key.is_none() || root_key(auth, &method.principal_id) == method.root_key)
 }
 fn live_method<'a>(store: &'a Store, auth: &AuthState, id: &str) -> Option<&'a Method> {
     store
         .methods
         .iter()
-        .find(|m| m.method_id == id && eligible(auth, m))
+        .find(|m| m.proof_binding_id == id && eligible(auth, m))
 }
 fn session_active(store: &Store, auth: &AuthState, session: &StoredAuthSession, now: u64) -> bool {
     session.revoked_at.is_none()
         && session.grant.expires_at > now
         && live_method(store, auth, &session.grant.proof_binding_id)
-            .is_some_and(|m| m.account_id == session.grant.principal_id)
+            .is_some_and(|m| m.principal_id == session.grant.principal_id)
 }
 fn reconcile(store: &mut Store, auth: &AuthState) {
     reconcile_through(store, auth, u64::MAX);
@@ -306,9 +440,9 @@ fn reconcile_through(store: &mut Store, auth: &AuthState, revocations_through: u
         .collect();
     store
         .methods
-        .retain(|m| !reset_accounts.contains(&&m.account_id));
+        .retain(|m| !reset_accounts.contains(&&m.principal_id));
     for pending in &mut store.pending {
-        if reset_accounts.contains(&&pending.method.account_id)
+        if reset_accounts.contains(&&pending.method.principal_id)
             || pending
                 .actor
                 .as_ref()
@@ -340,25 +474,25 @@ fn reconcile_through(store: &mut Store, auth: &AuthState, revocations_through: u
         .collect();
     store.methods.retain(|m| {
         eligible(auth, m)
-            || ((m.root_key.is_none() || root_key(auth, &m.account_id) == m.root_key)
+            || ((m.root_key.is_none() || root_key(auth, &m.principal_id) == m.root_key)
                 && auth.principals.iter().any(|p| {
-                    p.principal_id == m.account_id
+                    p.principal_id == m.principal_id
                         && active_passkey(p)
                         && added.contains(&(p.principal_id.as_str(), p.proof_binding_id.as_str()))
                 }))
     });
     for method in &mut store.methods {
-        method.witnesses = witnesses(auth, &method.account_id);
-        method.root_key = root_key(auth, &method.account_id);
+        method.witnesses = witnesses(auth, &method.principal_id);
+        method.root_key = root_key(auth, &method.principal_id);
     }
     let live: Vec<_> = store
         .methods
         .iter()
-        .map(|m| (m.method_id.clone(), m.generation.clone()))
+        .map(|m| (m.proof_binding_id.clone(), m.generation.clone()))
         .collect();
     let relay_enabled = has_relay_method(store);
     for p in &mut store.pending {
-        if p.action == "signin" && p.method.connector == "walletconnect" && !relay_enabled {
+        if p.action == "signin" && p.method.connector == "wallet-walletconnect" && !relay_enabled {
             p.terminal = Terminal::Cancelled;
         }
         if p.open()
@@ -366,16 +500,16 @@ fn reconcile_through(store: &mut Store, auth: &AuthState, revocations_through: u
             && p.action != "signin"
             && !live
                 .iter()
-                .any(|(id, g)| *id == p.method.method_id && *g == p.method.generation)
+                .any(|(id, g)| *id == p.method.proof_binding_id && *g == p.method.generation)
         {
             p.terminal = Terminal::Cancelled;
         }
         if p.action == "signin"
-            && !p.method.account_id.is_empty()
+            && !p.method.principal_id.is_empty()
             && !p.method.address.is_empty()
             && !live
                 .iter()
-                .any(|(id, g)| *id == p.method.method_id && *g == p.method.generation)
+                .any(|(id, g)| *id == p.method.proof_binding_id && *g == p.method.generation)
         {
             p.terminal = Terminal::Cancelled;
         }
@@ -446,11 +580,11 @@ pub(crate) fn principal(data: &Path, id: &str) -> anyhow::Result<PrincipalRecord
     let mut p = auth
         .principals
         .iter()
-        .find(|p| p.principal_id == m.account_id && active_passkey(p))
+        .find(|p| p.principal_id == m.principal_id && active_passkey(p))
         .cloned()
         .ok_or(Refused)?;
-    p.proof_binding_id = m.method_id.clone();
-    p.proof_binding = if m.connector == "unisat" {
+    p.proof_binding_id = m.proof_binding_id.clone();
+    p.proof_binding = if m.connector == "wallet-unisat" {
         ProofBinding {
             kind: elastos_runtime::auth::ProofBindingKind::BtcAddress,
             subject: m.address.clone(),
@@ -472,12 +606,12 @@ pub(crate) fn list(data: &Path, actor: &AuthSessionGrantV1) -> anyhow::Result<Va
             .pending
             .iter()
             .filter(|p| {
-                p.open() && p.action != "signin" && p.method.account_id == actor.principal_id
+                p.open() && p.action != "signin" && p.method.principal_id == actor.principal_id
             })
             .map(|p| &p.id)
             .collect();
         Ok(
-            serde_json::json!({"account_id":actor.principal_id,"account_name":auth.principals.iter().find(|p| p.principal_id == actor.principal_id && active_passkey(p)).map(|p| &p.display_name),"open_changes":open_changes,"methods":store.methods.iter().filter(|m| m.account_id == actor.principal_id).map(|m| serde_json::json!({"method_id":m.method_id,"connector":m.connector,"address":m.address,"chain_id":m.chain_id,"network":m.network,"sign_in_enabled":true,"created_at":m.created_at,"last_used_at":m.last_used_at})).collect::<Vec<_>>()}),
+            serde_json::json!({"principal_id":actor.principal_id,"account_name":auth.principals.iter().find(|p| p.principal_id == actor.principal_id && active_passkey(p)).map(|p| &p.display_name),"open_changes":open_changes,"methods":store.methods.iter().filter(|m| m.principal_id == actor.principal_id).map(|m| serde_json::json!({"proof_binding_id":m.proof_binding_id,"connector":m.connector,"address":m.address,"chain_id":m.chain_id,"network":m.network,"sign_in_enabled":true,"created_at":m.created_at,"last_used_at":m.last_used_at})).collect::<Vec<_>>()}),
         )
     })
 }
@@ -507,7 +641,7 @@ pub(crate) struct Begin {
     #[serde(default)]
     pub action: String,
     #[serde(default)]
-    pub method_id: String,
+    pub proof_binding_id: String,
     #[serde(default)]
     pub connector: String,
     #[serde(default)]
@@ -535,10 +669,10 @@ pub(crate) struct BeginResult {
 fn normalize(input: &Begin) -> anyhow::Result<(String, String)> {
     require(matches!(
         input.connector.as_str(),
-        "walletconnect" | "metamask" | "unisat"
+        "wallet-walletconnect" | "wallet-metamask" | "wallet-unisat"
     ))?;
     require(input.address.len() <= 128 && input.network.len() <= 32)?;
-    if input.connector == "unisat" {
+    if input.connector == "wallet-unisat" {
         require(input.chain_id == 0)?;
         bitcoin::bitcoin_proof_type_for_address(&input.network, &input.address)
             .map_err(|_| Refused)?;
@@ -553,7 +687,8 @@ fn normalize(input: &Begin) -> anyhow::Result<(String, String)> {
     } else {
         require(
             input.chain_id > 0
-                && (input.connector != "walletconnect" || matches!(input.chain_id, 20 | 8453)),
+                && (input.connector != "wallet-walletconnect"
+                    || matches!(input.chain_id, 20 | 8453)),
         )?;
         elastos_runtime::auth::validate_evm_address(&input.address).map_err(|_| Refused)?;
         Ok((
@@ -563,7 +698,7 @@ fn normalize(input: &Begin) -> anyhow::Result<(String, String)> {
     }
 }
 fn compatible_relay_method(m: &Method) -> bool {
-    m.connector == "walletconnect" && matches!(m.chain_id, 20 | 8453)
+    m.connector == "wallet-walletconnect" && matches!(m.chain_id, 20 | 8453)
 }
 fn has_relay_method(store: &Store) -> bool {
     store.methods.iter().any(compatible_relay_method)
@@ -572,16 +707,16 @@ fn same_wallet(a: &Method, b: &Method) -> bool {
     a.address == b.address && a.chain_id == b.chain_id && a.network == b.network
 }
 fn approval(p: &Pending) -> Value {
-    serde_json::json!({"ceremony_id":p.id,"account_id":p.method.account_id,"action":p.action,"method_id":p.method.method_id,"connector":p.method.connector,"address":p.method.address,"chain_id":p.method.chain_id,"network":p.method.network,"authorizes_short_public_walletconnect":p.action == "add" && compatible_relay_method(&p.method)})
+    serde_json::json!({"ceremony_id":p.id,"principal_id":p.method.principal_id,"action":p.action,"proof_binding_id":p.method.proof_binding_id,"connector":p.method.connector,"address":p.method.address,"chain_id":p.method.chain_id,"network":p.method.network,"authorizes_short_public_walletconnect":p.action == "add" && compatible_relay_method(&p.method)})
 }
 fn purpose(p: &Pending) -> WalletProofPurpose {
     if p.action == "signin" {
         WalletProofPurpose::SignIn
     } else {
-        let account_id = p.method.account_id.clone();
+        let account_id = p.method.principal_id.clone();
         let method_digest = digest(&format!(
             "{}:{}:{}:{}",
-            p.id, p.action, p.method.method_id, p.method.generation
+            p.id, p.action, p.method.proof_binding_id, p.method.generation
         ));
         WalletProofPurpose::AddSignInMethod {
             account_id,
@@ -610,7 +745,7 @@ fn message(p: &Pending) -> anyhow::Result<String> {
     if p.action == "remove" || p.method.address.is_empty() {
         return Ok(String::new());
     }
-    if p.method.connector != "unisat" {
+    if p.method.connector != "wallet-unisat" {
         return Ok(challenge(p)?.message().into());
     }
     let purpose = purpose(p);
@@ -724,15 +859,15 @@ pub(crate) fn begin_for_peer(
                 .methods
                 .iter()
                 .find(|m| {
-                    m.method_id == input.method_id
-                        && Some(m.account_id.as_str())
+                    m.proof_binding_id == input.proof_binding_id
+                        && Some(m.principal_id.as_str())
                             == actor.as_ref().map(|a| a.principal_id.as_str())
                 })
                 .cloned()
                 .ok_or(Refused)?
         } else {
             let (address, network) = if (actor.is_none() || input.action == "add")
-                && input.connector == "walletconnect"
+                && input.connector == "wallet-walletconnect"
                 && input.address.is_empty()
             {
                 (String::new(), String::new())
@@ -740,8 +875,8 @@ pub(crate) fn begin_for_peer(
                 normalize(&input)?
             };
             Method {
-                method_id: format!("proof:signin-wallet:{}", random_secret_hex()),
-                account_id: actor
+                proof_binding_id: format!("proof:signin-wallet:{}", random_secret_hex()),
+                principal_id: actor
                     .as_ref()
                     .map(|a| a.principal_id.clone())
                     .unwrap_or_default(),
@@ -768,10 +903,11 @@ pub(crate) fn begin_for_peer(
             if store.methods.len() >= MAX_METHODS {
                 return Err(Capacity.into());
             }
-            method.witnesses = witnesses(auth, &method.account_id);
-            method.root_key = root_key(auth, &method.account_id);
+            method.witnesses = witnesses(auth, &method.principal_id);
+            method.root_key = root_key(auth, &method.principal_id);
         }
-        if method.connector == "walletconnect" && matches!(input.action.as_str(), "signin" | "add")
+        if method.connector == "wallet-walletconnect"
+            && matches!(input.action.as_str(), "signin" | "add")
         {
             require(input.allow_temporary_internet)?;
             if actor.is_none() {
@@ -810,7 +946,7 @@ pub(crate) fn begin_for_peer(
         }
         let result = begin_result(
             &pending,
-            (pending.method.connector == "walletconnect"
+            (pending.method.connector == "wallet-walletconnect"
                 && matches!(pending.action.as_str(), "signin" | "add"))
             .then_some(token),
         )?;
@@ -882,7 +1018,7 @@ impl WalletProofStore for Store {
 }
 fn verify(store: &mut Store, p: &Pending, input: &Complete) -> anyhow::Result<()> {
     require(input.signature.len() <= 16384 && input.public_key.len() <= 132)?;
-    if p.method.connector == "unisat" {
+    if p.method.connector == "wallet-unisat" {
         let proof_type =
             bitcoin::bitcoin_proof_type_for_address(&p.method.network, &p.method.address)
                 .map_err(|_| Refused)?;
@@ -960,7 +1096,7 @@ pub(crate) fn complete(
                 .methods
                 .iter()
                 .position(|m| {
-                    m.method_id == p.method.method_id
+                    m.proof_binding_id == p.method.proof_binding_id
                         && m.generation == p.method.generation
                         && eligible(auth, m)
                         && same_wallet(m, &p.method)
@@ -976,8 +1112,8 @@ pub(crate) fn complete(
                 schema: AuthSessionGrantV1::SCHEMA.into(),
                 session_id: format!("auth:wallet:{}", random_secret_hex()),
                 grant_id: format!("grant:{}", random_secret_hex()),
-                principal_id: m.account_id.clone(),
-                proof_binding_id: m.method_id.clone(),
+                principal_id: m.principal_id.clone(),
+                proof_binding_id: m.proof_binding_id.clone(),
                 issued_at: now,
                 expires_at: now + AUTH_SESSION_TTL_SECS,
                 apps: vec!["home".into(), "system".into()],
@@ -1000,28 +1136,30 @@ pub(crate) fn complete(
                 }
             } else {
                 require(store.methods.iter().any(|m| {
-                    m.method_id == p.method.method_id
+                    m.proof_binding_id == p.method.proof_binding_id
                         && m.generation == p.method.generation
-                        && m.account_id == p.method.account_id
+                        && m.principal_id == p.method.principal_id
                 }))?;
             }
             approve(&approval(&p))?;
             if creates_method {
                 let mut method = p.method.clone();
-                method.witnesses = witnesses(auth, &method.account_id);
-                method.root_key = root_key(auth, &method.account_id);
+                method.witnesses = witnesses(auth, &method.principal_id);
+                method.root_key = root_key(auth, &method.principal_id);
                 store.methods.push(method);
             } else if p.action == "remove" {
-                store.methods.retain(|m| m.method_id != p.method.method_id);
+                store
+                    .methods
+                    .retain(|m| m.proof_binding_id != p.method.proof_binding_id);
             }
             if p.action == "remove" {
                 for s in &mut store.sessions {
-                    if s.grant.proof_binding_id == p.method.method_id {
+                    if s.grant.proof_binding_id == p.method.proof_binding_id {
                         s.revoked_at = Some(now_ts());
                     }
                 }
                 for other in &mut store.pending {
-                    if (other.method.method_id == p.method.method_id
+                    if (other.method.proof_binding_id == p.method.proof_binding_id
                         || same_wallet(&other.method, &p.method))
                         && other.id != p.id
                     {
@@ -1029,7 +1167,7 @@ pub(crate) fn complete(
                     }
                 }
             }
-            serde_json::json!({"status":if p.action == "remove" {"removed"} else {"complete"},"method_id":p.method.method_id,"sign_in_enabled":p.action == "add"})
+            serde_json::json!({"status":if p.action == "remove" {"removed"} else {"complete"},"proof_binding_id":p.method.proof_binding_id,"sign_in_enabled":p.action == "add"})
         };
         let saved = store
             .pending
@@ -1121,14 +1259,14 @@ pub(crate) fn select(
         let mut p = pending(store, id, browser, origin)?.clone();
         require(
             matches!(p.action.as_str(), "signin" | "add")
-                && p.method.connector == "walletconnect"
+                && p.method.connector == "wallet-walletconnect"
                 && p.method.address.is_empty()
                 && p.open(),
         )?;
         let input = Begin {
             action: String::new(),
-            method_id: String::new(),
-            connector: "walletconnect".into(),
+            proof_binding_id: String::new(),
+            connector: "wallet-walletconnect".into(),
             address,
             chain_id,
             network: String::new(),
@@ -1144,7 +1282,7 @@ pub(crate) fn select(
             .find(|m| p.action == "signin" && same_wallet(m, &p.method))
         {
             p.method = m.clone();
-            p.method.connector = "walletconnect".into();
+            p.method.connector = "wallet-walletconnect".into();
         }
         let result = begin_result(&p, None)?;
         *store
@@ -1238,7 +1376,7 @@ pub(crate) fn attempt_context(
         .find(|p| {
             bool::from(p.transport_digest.ct_eq(&digest(token)))
                 && p.instance_id == instance
-                && p.method.connector == "walletconnect"
+                && p.method.connector == "wallet-walletconnect"
                 && matches!(p.action.as_str(), "signin" | "add")
                 && !p.cancelled()
                 && p.open()
@@ -1351,14 +1489,14 @@ pub(crate) fn passkey_add_approver(
 pub(crate) fn availability(data: &Path) -> anyhow::Result<(bool, bool, Vec<&'static str>)> {
     let (_, store) = loaded(data)?;
     let mut connectors = Vec::new();
-    if store.methods.iter().any(|m| m.connector != "unisat") {
-        connectors.push("metamask");
+    if store.methods.iter().any(|m| m.connector != "wallet-unisat") {
+        connectors.push("wallet-metamask");
     }
-    if store.methods.iter().any(|m| m.connector == "unisat") {
-        connectors.push("unisat");
+    if store.methods.iter().any(|m| m.connector == "wallet-unisat") {
+        connectors.push("wallet-unisat");
     }
     if has_relay_method(&store) {
-        connectors.push("walletconnect");
+        connectors.push("wallet-walletconnect");
     }
     Ok((!connectors.is_empty(), has_relay_method(&store), connectors))
 }
@@ -1427,7 +1565,7 @@ pub(crate) mod tests {
         actor
     }
     fn input(action: &str, method: &str, address: &str) -> Begin {
-        serde_json::from_value(serde_json::json!({"action":action,"method_id":method,"connector":"metamask","address":address,"chain_id":20,"browser_secret":BROWSER})).unwrap()
+        serde_json::from_value(serde_json::json!({"action":action,"proof_binding_id":method,"connector":"wallet-metamask","address":address,"chain_id":20,"browser_secret":BROWSER})).unwrap()
     }
     fn signed(key: &SigningKey, message: &str) -> String {
         let hash = elastos_runtime::auth::ethereum_signed_message_hash(message.as_bytes());
@@ -1467,14 +1605,14 @@ pub(crate) mod tests {
             |_| Ok(()),
         )
         .unwrap();
-        out["method_id"].as_str().unwrap().into()
+        out["proof_binding_id"].as_str().unwrap().into()
     }
     pub(crate) fn enabled(f: &Fixture) -> String {
         change(f, "add", "")
     }
     pub(crate) fn enabled_relay(f: &Fixture) -> String {
         let mut req = input("add", "", &f.address);
-        req.connector = "walletconnect".into();
+        req.connector = "wallet-walletconnect".into();
         req.allow_temporary_internet = true;
         let b = begin(
             f.data.path(),
@@ -1492,8 +1630,315 @@ pub(crate) mod tests {
             |_| Ok(()),
         )
         .unwrap();
-        out["method_id"].as_str().unwrap().into()
+        out["proof_binding_id"].as_str().unwrap().into()
     }
+    #[test]
+    fn wallet_signin_names_rc1_journal_and_real_undo_signin() {
+        use super::super::wallet_signin_rc1 as rc1;
+        for (old, new) in [
+            ("metamask", "wallet-metamask"),
+            ("walletconnect", "wallet-walletconnect"),
+            ("unisat", "wallet-unisat"),
+        ] {
+            let f = fixture();
+            let mut btc_key = [0u8; 32];
+            btc_key[31] = 1;
+            let btc_key = SigningKey::from_bytes((&btc_key).into()).unwrap();
+            let address = if old == "unisat" {
+                "1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH"
+            } else {
+                &f.address
+            };
+            let chain = if old == "unisat" { 0 } else { 20 };
+            let network = if old == "unisat" { "bitcoin" } else { "" };
+            let proof = |id: &str, message: &str| {
+                let (signature, signature_type, public_key) = if message.is_empty() {
+                    (String::new(), "", String::new())
+                } else if old == "unisat" {
+                    let (sig, recovery) = btc_key
+                        .sign_prehash_recoverable(&bitcoin::bitcoin_signed_message_hash(
+                            message.as_bytes(),
+                        ))
+                        .unwrap();
+                    let mut raw = vec![31 + recovery.to_byte()];
+                    raw.extend_from_slice(&sig.to_bytes());
+                    (
+                        base64::engine::general_purpose::STANDARD.encode(raw),
+                        "bitcoin_signed_message",
+                        hex::encode(btc_key.verifying_key().to_encoded_point(true).as_bytes()),
+                    )
+                } else {
+                    (signed(&f.key, message), "personal_sign", String::new())
+                };
+                serde_json::json!({"ceremony_id":id,"browser_secret":BROWSER,"signature":signature,"signature_type":signature_type,"public_key":public_key})
+            };
+            let legacy_input = |action: &str, id: &str| {
+                serde_json::from_value(serde_json::json!({
+                    "action":action,"method_id":id,"connector":old,"address":address,
+                    "chain_id":chain,"network":network,"browser_secret":BROWSER,"allow_temporary_internet":true
+                }))
+                .unwrap()
+            };
+            let legacy_complete = |b: &rc1::BeginResult| {
+                serde_json::from_value(proof(&b.ceremony_id, &b.message)).unwrap()
+            };
+            let b = rc1::begin(
+                f.data.path(),
+                ORIGIN,
+                "home-test",
+                legacy_input("add", ""),
+                Some(f.actor.clone()),
+            )
+            .unwrap();
+            let id = rc1::complete(
+                f.data.path(),
+                ORIGIN,
+                &legacy_complete(&b),
+                Some(&f.actor),
+                |_| Ok(()),
+            )
+            .unwrap()["method_id"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            let listed = list(f.data.path(), &f.actor).unwrap();
+            assert_eq!(listed["principal_id"], f.actor.principal_id);
+            assert_eq!(listed["methods"][0]["proof_binding_id"], id);
+            assert_eq!(listed["methods"][0]["connector"], new);
+            assert!(listed.get("account_id").is_none());
+            assert!(listed["methods"][0].get("method_id").is_none());
+            let journal = path(f.data.path()).unwrap();
+            assert!(!journal
+                .with_file_name("wallet-signin-bindings.json")
+                .exists());
+            let stored: Value = serde_json::from_slice(&std::fs::read(&journal).unwrap()).unwrap();
+            assert_eq!(stored["schema"], LEGACY_SCHEMA);
+            assert_eq!(stored["methods"][0]["account_id"], f.actor.principal_id);
+            assert_eq!(stored["methods"][0]["method_id"], id);
+            assert_eq!(stored["methods"][0]["connector"], old);
+            let current_input = serde_json::from_value(serde_json::json!({"connector":new,"address":address,"chain_id":chain,"network":network,"browser_secret":BROWSER,"allow_temporary_internet":true})).unwrap();
+            let b = begin(f.data.path(), ORIGIN, "home-test", current_input, None).unwrap();
+            let session = complete(
+                f.data.path(),
+                ORIGIN,
+                &serde_json::from_value(proof(&b.ceremony_id, &b.message)).unwrap(),
+                None,
+                |_| panic!("sign-in approval"),
+            )
+            .unwrap();
+            assert_eq!(session["proof_binding_id"], id);
+            // Undo executes the frozen rc.1 reader, message builder and verifier.
+            let b = rc1::begin(
+                f.data.path(),
+                ORIGIN,
+                "home-test",
+                legacy_input("signin", ""),
+                None,
+            )
+            .unwrap();
+            let session = rc1::complete(f.data.path(), ORIGIN, &legacy_complete(&b), None, |_| {
+                panic!("sign-in approval")
+            })
+            .unwrap();
+            assert_eq!(session["principal_id"], f.actor.principal_id);
+            assert_eq!(session["proof_binding_id"], id);
+            // A removal during Undo stays removed on re-upgrade.
+            let b = rc1::begin(
+                f.data.path(),
+                ORIGIN,
+                "home-test",
+                legacy_input("remove", &id),
+                Some(f.actor.clone()),
+            )
+            .unwrap();
+            rc1::complete(
+                f.data.path(),
+                ORIGIN,
+                &legacy_complete(&b),
+                Some(&f.actor),
+                |_| Ok(()),
+            )
+            .unwrap();
+            assert!(list(f.data.path(), &f.actor).unwrap()["methods"]
+                .as_array()
+                .unwrap()
+                .is_empty());
+            assert!(principal(f.data.path(), &id).is_err());
+            // A binding first enrolled with the new names also survives Undo.
+            let request = serde_json::from_value(serde_json::json!({"action":"add","connector":new,"address":address,"chain_id":chain,"network":network,"browser_secret":BROWSER,"allow_temporary_internet":true})).unwrap();
+            let b = begin(
+                f.data.path(),
+                ORIGIN,
+                "home-test",
+                request,
+                Some(f.actor.clone()),
+            )
+            .unwrap();
+            let added = complete(
+                f.data.path(),
+                ORIGIN,
+                &serde_json::from_value(proof(&b.ceremony_id, &b.message)).unwrap(),
+                Some(&f.actor),
+                |_| Ok(()),
+            )
+            .unwrap();
+            let b = rc1::begin(
+                f.data.path(),
+                ORIGIN,
+                "home-test",
+                legacy_input("signin", ""),
+                None,
+            )
+            .unwrap();
+            let session = rc1::complete(f.data.path(), ORIGIN, &legacy_complete(&b), None, |_| {
+                panic!("sign-in approval")
+            })
+            .unwrap();
+            assert_eq!(session["proof_binding_id"], added["proof_binding_id"]);
+        }
+    }
+
+    #[test]
+    fn wallet_signin_names_removes_stale_projection_without_restoring_authority() {
+        let f = fixture();
+        let id = enabled(&f);
+        let file = path(f.data.path()).unwrap();
+        let retired = file.with_file_name("wallet-signin-bindings.json");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(
+                file.parent().unwrap(),
+                std::fs::Permissions::from_mode(0o755),
+            )
+            .unwrap();
+        }
+        let saved = std::fs::read(&file).unwrap();
+        change(&f, "remove", &id);
+        write_secret_bytes_atomic(&retired, &saved).unwrap();
+        assert!(principal(f.data.path(), &id).is_err());
+        assert!(!retired.exists());
+        assert!(list(f.data.path(), &f.actor).unwrap()["methods"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        std::fs::remove_file(&file).unwrap();
+        write_secret_bytes_atomic(&retired, &saved).unwrap();
+        assert!(principal(f.data.path(), &id).is_err());
+        assert!(!retired.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn wallet_signin_names_cleanup_racing_removal_keeps_reads_available() {
+        for before_stat in [true, false] {
+            let f = fixture();
+            let id = enabled(&f);
+            let retired = path(f.data.path())
+                .unwrap()
+                .with_file_name("wallet-signin-bindings.json");
+            write_secret_bytes_atomic(&retired, b"retired projection").unwrap();
+            let removed = retired.clone();
+            let hook: Box<dyn FnOnce()> = Box::new(move || {
+                std::fs::remove_file(removed).unwrap();
+            });
+            if before_stat {
+                PROJECTION_UNLINK_TEST_HOOK.with(|slot| *slot.borrow_mut() = Some(hook));
+            } else {
+                MIGRATION_UNLINK_TEST_HOOK.with(|slot| *slot.borrow_mut() = Some(hook));
+            }
+            assert_eq!(read(f.data.path()).unwrap().methods[0].proof_binding_id, id);
+            assert!(!retired.exists());
+            assert_eq!(signin(&f).proof_binding_id, id);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn wallet_signin_names_cleanup_unremovable_file_keeps_reads_available() {
+        let f = fixture();
+        let id = enabled(&f);
+        let retired = path(f.data.path())
+            .unwrap()
+            .with_file_name("wallet-signin-bindings.json");
+        let protected = f.data.path().join("protected-projection");
+        write_secret_bytes_atomic(&protected, b"retired projection").unwrap();
+        std::fs::hard_link(&protected, &retired).unwrap();
+        assert!(remove_stale_projection(f.data.path()).is_err());
+        for _ in 0..2 {
+            assert_eq!(read(f.data.path()).unwrap().methods[0].proof_binding_id, id);
+            assert_eq!(
+                list(f.data.path(), &f.actor).unwrap()["methods"][0]["proof_binding_id"],
+                id
+            );
+            assert_eq!(signin(&f).proof_binding_id, id);
+            let (auth, _) = loaded(f.data.path()).unwrap();
+            assert!(!sessions(f.data.path(), &auth).unwrap().is_empty());
+        }
+        assert_eq!(std::fs::read(&protected).unwrap(), b"retired projection");
+        assert_eq!(std::fs::read(&retired).unwrap(), b"retired projection");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn wallet_signin_names_cleanup_preserves_links_and_directories() {
+        let f = fixture();
+        let id = enabled(&f);
+        let file = path(f.data.path()).unwrap();
+        let before = std::fs::read(&file).unwrap();
+        let retired = file.with_file_name("wallet-signin-bindings.json");
+        std::os::unix::fs::symlink(&file, &retired).unwrap();
+        assert_eq!(
+            list(f.data.path(), &f.actor).unwrap()["methods"][0]["proof_binding_id"],
+            id
+        );
+        assert!(std::fs::symlink_metadata(&retired)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(std::fs::read(&file).unwrap(), before);
+        std::fs::remove_file(&retired).unwrap();
+        std::fs::create_dir(&retired).unwrap();
+        list(f.data.path(), &f.actor).unwrap();
+        assert!(retired.is_dir());
+    }
+
+    #[test]
+    fn wallet_signin_names_rejects_unknown_stored_connectors() {
+        let f = fixture();
+        enabled(&f);
+        let file = path(f.data.path()).unwrap();
+        let saved: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+        for pending in [false, true] {
+            let mut bad = saved.clone();
+            if pending {
+                bad["pending"][0]["method"]["connector"] = "unknown-wallet".into();
+            } else {
+                bad["methods"][0]["connector"] = "unknown-wallet".into();
+            }
+            write_secret_bytes_atomic(&file, &serde_json::to_vec(&bad).unwrap()).unwrap();
+            assert!(read(f.data.path()).is_err());
+            assert!(list(f.data.path(), &f.actor).is_err());
+        }
+    }
+
+    #[test]
+    fn wallet_signin_names_aliases_reject_duplicate_identity_fields() {
+        let f = fixture();
+        enabled(&f);
+        let file = path(f.data.path()).unwrap();
+        let saved: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+        for (old, new) in [
+            ("account_id", "principal_id"),
+            ("method_id", "proof_binding_id"),
+        ] {
+            let mut duplicate = saved.clone();
+            duplicate["methods"][0][new] = duplicate["methods"][0][old].clone();
+            write_secret_bytes_atomic(&file, &serde_json::to_vec(&duplicate).unwrap()).unwrap();
+            assert!(read(f.data.path()).is_err());
+        }
+    }
+
     #[test]
     fn wallet_inventory_signin_snapshot_is_account_scoped_after_removal() {
         let f = fixture();
@@ -1504,7 +1949,7 @@ pub(crate) mod tests {
             .unwrap()
             .is_empty());
         assert_eq!(
-            list(f.data.path(), &f.actor).unwrap()["methods"][0]["method_id"],
+            list(f.data.path(), &f.actor).unwrap()["methods"][0]["proof_binding_id"],
             id
         );
         change(&f, "remove", &id);
@@ -1525,9 +1970,9 @@ pub(crate) mod tests {
         let (available, relay, connectors) = availability(f.data.path()).unwrap();
         assert!(available);
         assert!(!relay);
-        assert_eq!(connectors, vec!["metamask"]);
+        assert_eq!(connectors, vec!["wallet-metamask"]);
         let mut req = input("signin", "", "");
-        req.connector = "walletconnect".into();
+        req.connector = "wallet-walletconnect".into();
         req.chain_id = 0;
         req.allow_temporary_internet = true;
         assert!(begin(f.data.path(), ORIGIN, "home-test", req, None).is_err());
@@ -1649,9 +2094,9 @@ pub(crate) mod tests {
             .unwrap();
             let mut p = read(f.data.path()).unwrap().pending[0].clone();
             let evm = message(&p).unwrap();
-            p.method.connector = "walletconnect".into();
+            p.method.connector = "wallet-walletconnect".into();
             assert_eq!(message(&p).unwrap(), evm);
-            p.method.connector = "unisat".into();
+            p.method.connector = "wallet-unisat".into();
             p.method.chain_id = 0;
             p.method.address = "1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH".into();
             p.method.network = "bitcoin".into();
@@ -1757,7 +2202,7 @@ pub(crate) mod tests {
         let id = enabled_relay(&f);
         let mut second = input("add", "", &f.address);
         second.chain_id = 8453;
-        second.connector = "walletconnect".into();
+        second.connector = "wallet-walletconnect".into();
         second.allow_temporary_internet = true;
         let b = begin(
             f.data.path(),
@@ -1776,7 +2221,7 @@ pub(crate) mod tests {
         )
         .unwrap();
         let mut req = input("signin", "", "");
-        req.connector = "walletconnect".into();
+        req.connector = "wallet-walletconnect".into();
         req.chain_id = 0;
         req.allow_temporary_internet = true;
         let pair = begin(f.data.path(), ORIGIN, "home-test", req, None).unwrap();
@@ -1791,7 +2236,7 @@ pub(crate) mod tests {
             .is_ok(),
             "the remaining compatible method keeps pairing live"
         );
-        change(&f, "remove", second["method_id"].as_str().unwrap());
+        change(&f, "remove", second["proof_binding_id"].as_str().unwrap());
         assert!(attempt_context(
             f.data.path(),
             pair.attempt_token.as_deref().unwrap(),
@@ -1996,7 +2441,7 @@ pub(crate) mod tests {
         let f = fixture();
         let request = |consent| {
             let mut req = input("add", "", "");
-            req.connector = "walletconnect".into();
+            req.connector = "wallet-walletconnect".into();
             req.chain_id = 0;
             req.allow_temporary_internet = consent;
             req
@@ -2110,12 +2555,12 @@ pub(crate) mod tests {
             if action == "signin" {
                 return serde_json::from_value(out).unwrap();
             }
-            id = out["method_id"].as_str().unwrap().into();
+            id = out["proof_binding_id"].as_str().unwrap().into();
         }
         unreachable!()
     }
     #[test]
-    fn wallet_remove_requires_an_owned_method_id() {
+    fn wallet_remove_requires_an_owned_proof_binding_id() {
         let f = fixture();
         enabled(&f);
         for id in ["", "proof:signin-wallet:unknown"] {
@@ -2129,7 +2574,7 @@ pub(crate) mod tests {
             .is_err());
         }
         let bob = add_account(f.data.path(), "bob", "bob-key");
-        let id = list(f.data.path(), &f.actor).unwrap()["methods"][0]["method_id"]
+        let id = list(f.data.path(), &f.actor).unwrap()["methods"][0]["proof_binding_id"]
             .as_str()
             .unwrap()
             .to_owned();
@@ -2174,7 +2619,7 @@ pub(crate) mod tests {
         let f = fixture();
         enabled_relay(&f);
         let mut req = input("signin", "", &f.address);
-        req.connector = "walletconnect".into();
+        req.connector = "wallet-walletconnect".into();
         req.allow_temporary_internet = true;
         let b = begin(f.data.path(), ORIGIN, "home-test", req, None).unwrap();
         let proof = completion(&f, &b);
@@ -2340,7 +2785,7 @@ pub(crate) mod tests {
             |_| Ok(()),
         )
         .unwrap();
-        let method = principal(f.data.path(), out["method_id"].as_str().unwrap()).unwrap();
+        let method = principal(f.data.path(), out["proof_binding_id"].as_str().unwrap()).unwrap();
         assert_eq!(method.principal_id, actor.principal_id);
     }
     #[test]
@@ -2551,7 +2996,7 @@ pub(crate) mod tests {
         let f = fixture();
         enabled_relay(&f);
         let mut request = input("signin", "", "");
-        request.connector = "walletconnect".into();
+        request.connector = "wallet-walletconnect".into();
         request.allow_temporary_internet = true;
         request.chain_id = 0;
         let b = begin(f.data.path(), ORIGIN, "home-test", request, None).unwrap();
@@ -2598,7 +3043,7 @@ pub(crate) mod tests {
             let unknown_key = SigningKey::from_bytes((&[8u8; 32]).into()).unwrap();
             let unknown = address_for(&unknown_key);
             write(f.data.path(), &store).unwrap();
-            for connector in ["metamask", "walletconnect"] {
+            for connector in ["wallet-metamask", "wallet-walletconnect"] {
                 for (address, signing_key) in [
                     (f.address.as_str(), &f.key),
                     (unknown.as_str(), &unknown_key),
@@ -2609,7 +3054,7 @@ pub(crate) mod tests {
                         "home-test",
                         serde_json::from_value(serde_json::json!({
                             "connector":connector,
-                            "address":if connector == "walletconnect" { "" } else { address },
+                            "address":if connector == "wallet-walletconnect" { "" } else { address },
                             "chain_id":chain,"browser_secret":BROWSER,
                             "allow_temporary_internet":true
                         }))
@@ -2617,7 +3062,7 @@ pub(crate) mod tests {
                         None,
                     )
                     .unwrap();
-                    let challenge = if connector == "walletconnect" {
+                    let challenge = if connector == "wallet-walletconnect" {
                         let selected = select(
                             f.data.path(),
                             &b.ceremony_id,
@@ -2680,7 +3125,7 @@ pub(crate) mod tests {
         let f = fixture();
         enabled(&f);
         let mut store = read(f.data.path()).unwrap();
-        store.methods[0].connector = "unisat".into();
+        store.methods[0].connector = "wallet-unisat".into();
         store.methods[0].network = "bitcoin".into();
         store.methods[0].chain_id = 0;
         store.methods[0].address = "1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH".into();
@@ -2689,7 +3134,7 @@ pub(crate) mod tests {
             "1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH",
             "1cMh228HTCiwS8ZsaakH8A8wze1JR5ZsP",
         ] {
-            let b = begin(f.data.path(), ORIGIN, "home-test", serde_json::from_value(serde_json::json!({"connector":"unisat","address":address,"network":"bitcoin","browser_secret":BROWSER})).unwrap(), None).unwrap();
+            let b = begin(f.data.path(), ORIGIN, "home-test", serde_json::from_value(serde_json::json!({"connector":"wallet-unisat","address":address,"network":"bitcoin","browser_secret":BROWSER})).unwrap(), None).unwrap();
             let (_, store) = loaded(f.data.path()).unwrap();
             assert!(!store
                 .pending
@@ -2724,7 +3169,7 @@ pub(crate) mod tests {
                 Some(before)
             );
         }
-        let pair = begin(f.data.path(), ORIGIN, "home-test", serde_json::from_value(serde_json::json!({"connector":"walletconnect","address":"","chain_id":0,"browser_secret":BROWSER,"allow_temporary_internet":true})).unwrap(), None).unwrap();
+        let pair = begin(f.data.path(), ORIGIN, "home-test", serde_json::from_value(serde_json::json!({"connector":"wallet-walletconnect","address":"","chain_id":0,"browser_secret":BROWSER,"allow_temporary_internet":true})).unwrap(), None).unwrap();
         select(
             f.data.path(),
             &pair.ceremony_id,
@@ -2784,16 +3229,16 @@ pub(crate) mod tests {
             let other = add_account(f.data.path(), "bob", "bob-key");
             let mut store = read(f.data.path()).unwrap();
             let mut other_method = store.methods[0].clone();
-            other_method.method_id = format!("proof:signin-wallet:{}", random_secret_hex());
+            other_method.proof_binding_id = format!("proof:signin-wallet:{}", random_secret_hex());
             other_method.address = "0x000000000000000000000000000000000000beef".into();
-            other_method.account_id = other.principal_id.clone();
+            other_method.principal_id = other.principal_id.clone();
             let auth = load_auth_state_with_identity(f.data.path()).unwrap().0;
             other_method.witnesses = witnesses(&auth, &other.principal_id);
             other_method.root_key = root_key(&auth, &other.principal_id);
             let mut other_session = old.clone();
             other_session.session_id = format!("auth:wallet:{}", random_secret_hex());
             other_session.principal_id = other.principal_id.clone();
-            other_session.proof_binding_id = other_method.method_id.clone();
+            other_session.proof_binding_id = other_method.proof_binding_id.clone();
             store.methods.push(other_method);
             store.sessions.push(StoredAuthSession {
                 grant: other_session.clone(),
@@ -3205,7 +3650,7 @@ pub(crate) mod tests {
             ORIGIN,
             "home-test",
             serde_json::from_value(serde_json::json!({
-                "action":"add", "connector":"unisat",
+                "action":"add", "connector":"wallet-unisat",
                 "address":"1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH",
                 "network":"bitcoin", "browser_secret":BROWSER
             }))
@@ -3272,7 +3717,7 @@ pub(crate) mod tests {
         proof.signature = sign(&b.message);
         let out = complete(f.data.path(), ORIGIN, &proof, Some(&f.actor), |_| Ok(())).unwrap();
         assert_eq!(out["sign_in_enabled"], true);
-        assert!(principal(f.data.path(), out["method_id"].as_str().unwrap()).is_ok());
+        assert!(principal(f.data.path(), out["proof_binding_id"].as_str().unwrap()).is_ok());
     }
     #[test]
     fn wallet_unisat_fresh_bitcoin_proof_add_and_signin() {
@@ -3282,7 +3727,7 @@ pub(crate) mod tests {
         let key = SigningKey::from_bytes((&bytes).into()).unwrap();
         let address = "1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH";
         for network in ["testnet", "signet", "regtest"] {
-            let unsupported: Begin = serde_json::from_value(serde_json::json!({"action":"add","connector":"unisat","address":address,"network":network,"browser_secret":BROWSER})).unwrap();
+            let unsupported: Begin = serde_json::from_value(serde_json::json!({"action":"add","connector":"wallet-unisat","address":address,"network":network,"browser_secret":BROWSER})).unwrap();
             assert!(begin(
                 f.data.path(),
                 ORIGIN,
@@ -3309,7 +3754,7 @@ pub(crate) mod tests {
                 step_up_token: String::new(),
             }
         };
-        let input: Begin=serde_json::from_value(serde_json::json!({"action":"add","connector":"unisat","address":address,"network":"bitcoin","browser_secret":BROWSER})).unwrap();
+        let input: Begin=serde_json::from_value(serde_json::json!({"action":"add","connector":"wallet-unisat","address":address,"network":"bitcoin","browser_secret":BROWSER})).unwrap();
         let added = begin(
             f.data.path(),
             ORIGIN,
@@ -3323,7 +3768,7 @@ pub(crate) mod tests {
         })
         .unwrap();
         assert_eq!(result["sign_in_enabled"], true);
-        let signin=begin(f.data.path(),ORIGIN,"home-test",serde_json::from_value(serde_json::json!({"connector":"unisat","address":address,"network":"bitcoin","browser_secret":BROWSER})).unwrap(),None).unwrap();
+        let signin=begin(f.data.path(),ORIGIN,"home-test",serde_json::from_value(serde_json::json!({"connector":"wallet-unisat","address":address,"network":"bitcoin","browser_secret":BROWSER})).unwrap(),None).unwrap();
         for sentence in [
             ADD_SIGNIN_STATEMENT,
             "Connect this wallet to Wallet on this Home.",
@@ -3360,7 +3805,7 @@ pub(crate) mod tests {
     fn walletconnect_add_pairs_before_address_selection() {
         let f = fixture();
         let mut request = input("add", "", "");
-        request.connector = "walletconnect".into();
+        request.connector = "wallet-walletconnect".into();
         request.allow_temporary_internet = true;
         request.chain_id = 0;
         let pair = begin(
@@ -3396,7 +3841,7 @@ pub(crate) mod tests {
             f.data.path(),
             ORIGIN,
             "home-test",
-            input("remove", result["method_id"].as_str().unwrap(), ""),
+            input("remove", result["proof_binding_id"].as_str().unwrap(), ""),
             Some(f.actor.clone()),
         )
         .unwrap();
@@ -3409,17 +3854,17 @@ pub(crate) mod tests {
     fn walletconnect_requires_explicit_short_consent_and_enabled_method() {
         let f = fixture();
         let mut req = input("signin", "", "");
-        req.connector = "walletconnect".into();
+        req.connector = "wallet-walletconnect".into();
         req.chain_id = 0;
         req.allow_temporary_internet = true;
         assert!(begin(f.data.path(), ORIGIN, "home-test", req, None).is_err());
         let id = enabled_relay(&f);
         let mut req = input("signin", "", "");
-        req.connector = "walletconnect".into();
+        req.connector = "wallet-walletconnect".into();
         req.chain_id = 0;
         assert!(begin(f.data.path(), ORIGIN, "home-test", req, None).is_err());
         let mut req = input("signin", "", "");
-        req.connector = "walletconnect".into();
+        req.connector = "wallet-walletconnect".into();
         req.chain_id = 0;
         req.allow_temporary_internet = true;
         let attempt = begin(f.data.path(), ORIGIN, "home-test", req, None).unwrap();
@@ -3446,7 +3891,7 @@ pub(crate) mod tests {
     fn wallet_add_approval_discloses_short_public_relay_authority() {
         let f = fixture();
         let mut input = input("add", "", &f.address);
-        input.connector = "walletconnect".into();
+        input.connector = "wallet-walletconnect".into();
         input.allow_temporary_internet = true;
         let request = begin(
             f.data.path(),
@@ -3502,7 +3947,7 @@ mod review_probe {
             f.data.path(),
             ORIGIN,
             "home-test",
-            serde_json::from_value(serde_json::json!({"connector":"walletconnect","address":"","chain_id":0,"browser_secret":BROWSER,"allow_temporary_internet":true})).unwrap(),
+            serde_json::from_value(serde_json::json!({"connector":"wallet-walletconnect","address":"","chain_id":0,"browser_secret":BROWSER,"allow_temporary_internet":true})).unwrap(),
             None,
         )
         .unwrap();
@@ -3528,7 +3973,7 @@ mod review_probe {
             f.data.path(),
             ORIGIN,
             "home-test",
-            serde_json::from_value(serde_json::json!({"connector":"metamask","address":address,"chain_id":20,"browser_secret":BROWSER})).unwrap(),
+            serde_json::from_value(serde_json::json!({"connector":"wallet-metamask","address":address,"chain_id":20,"browser_secret":BROWSER})).unwrap(),
             None,
         )
         .unwrap();

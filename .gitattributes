@@ -12,3 +12,5 @@ capsules/wallet-walletconnect/vendor/reown-appkit.js -whitespace linguist-genera
 # This file keeps upstream licence bytes verbatim.
 capsules/wallet-walletconnect/vendor/LICENSES.txt -whitespace conflict-marker-size=32
 capsules/elacity-reader/browser/vendor/** -whitespace
+# The frozen rc.1 production witness retains its original final blank line.
+elastos/crates/elastos-server/tests/fixtures/wallet_signin_rc1.rs whitespace=-blank-at-eof

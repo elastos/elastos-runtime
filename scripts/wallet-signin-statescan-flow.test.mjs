@@ -8,8 +8,8 @@ function harness({action='add',completeFails=1,statusThrows=false}={}) {
   const api=async(path,body)=>{
     calls.push(path);
     if(path==='/api/auth/passkey/status'){if(statusThrows)throw Object.assign(new Error('net'),{});return {walletconnect_signin_available:true};}
-    if(path.endsWith('/begin'))return {ceremony_id:'wallet:1',expires_at:clock+180,message:'Sign',approval:{operation:'auth.wallet.method',notice:'',request:{ceremony_id:'wallet:1',action,account_id:'acct',method_id:'m1'}}};
-    if(path.endsWith('/complete')){completes++;committed=true;if(completes<=completeFails)throw Object.assign(new Error('lost'),{status:502});return action==='signin'?{app_token:'t',session_id:'s',principal_id:'p',proof_binding_id:'b'}:{status:'complete',method_id:'m1',sign_in_enabled:true};}
+    if(path.endsWith('/begin'))return {ceremony_id:'wallet:1',expires_at:clock+180,message:'Sign',approval:{operation:'auth.wallet.method.change',notice:'',request:{ceremony_id:'wallet:1',action,principal_id:'acct',proof_binding_id:'m1'}}};
+    if(path.endsWith('/complete')){completes++;committed=true;if(completes<=completeFails)throw Object.assign(new Error('lost'),{status:502});return action==='signin'?{app_token:'t',session_id:'s',principal_id:'p',proof_binding_id:'b'}:{status:'complete',proof_binding_id:'m1',sign_in_enabled:true};}
     if(path.endsWith('/cancel'))return {status:'cancelled'};
     throw new Error('unexpected '+path);
   };
@@ -52,9 +52,9 @@ test('TRACE D: cancel while the add completion is in flight',async()=>{
   const wallet={address:'0x'+'11'.repeat(20),chain_id:20,network:'',check:async()=>{},sign:async()=>({signature:'0xsig',signature_type:'personal_sign',public_key:''}),close(){}};
   const completed=[];
   const flow=createWalletSigninFlow({now:()=>clock,render(){},select:async()=>wallet,approve:async()=>'step',onComplete:r=>completed.push(r),api:async(path)=>{calls.push(path);
-    if(path.endsWith('/begin'))return {ceremony_id:'wallet:1',expires_at:clock+180,message:'Sign',approval:{operation:'auth.wallet.method',request:{ceremony_id:'wallet:1',action:'add',account_id:'acct',method_id:'m1'}}};
-    if(path==='/api/auth/wallet-methods')return {account_id:'acct',methods:[{method_id:'m1',sign_in_enabled:true}]};
-    if(path.endsWith('/complete')){await gate;return {status:'complete',method_id:'m1',sign_in_enabled:true};}
+    if(path.endsWith('/begin'))return {ceremony_id:'wallet:1',expires_at:clock+180,message:'Sign',approval:{operation:'auth.wallet.method.change',request:{ceremony_id:'wallet:1',action:'add',principal_id:'acct',proof_binding_id:'m1'}}};
+    if(path==='/api/auth/wallet-methods')return {principal_id:'acct',methods:[{proof_binding_id:'m1',sign_in_enabled:true}]};
+    if(path.endsWith('/complete')){await gate;return {status:'complete',proof_binding_id:'m1',sign_in_enabled:true};}
     return {};}});
   await flow.start({action:'add',accountId:'acct',automatic:true});
   const running=flow.choose('metamask');await new Promise(r=>setImmediate(r));
@@ -67,14 +67,14 @@ test('TRACE D: cancel while the add completion is in flight',async()=>{
 for(const action of ['add','remove']) {
   for(const applied of [true,false])test(`${action}: a lost reply settles only from the bound method list (${applied?'Done':'NotApplied'})`,async()=>{
     let clock=1000,readsFail=true,appliedOnHome=false;const calls=[],completed=[];
-    const method={method_id:'m1',connector:'metamask',address:'0x'+'11'.repeat(20),chain_id:20,network:'',sign_in_enabled:true};
+    const method={proof_binding_id:'m1',connector:'metamask',address:'0x'+'11'.repeat(20),chain_id:20,network:'',sign_in_enabled:true};
     const flow=createWalletSigninFlow({now:()=>clock,render(){},select:async()=>({...method,check:async()=>{},sign:async()=>({signature:'proof'}),close(){}}),approve:async()=>'step',onComplete:result=>completed.push(result),api:async(path)=>{
       calls.push(path);
-      if(path.endsWith('/begin'))return {ceremony_id:'one',expires_at:1180,message:action==='add'?'Add':'',approval:{operation:'auth.wallet.method',request:{ceremony_id:'one',action,account_id:'acct',method_id:'m1'}}};
+      if(path.endsWith('/begin'))return {ceremony_id:'one',expires_at:1180,message:action==='add'?'Add':'',approval:{operation:'auth.wallet.method.change',request:{ceremony_id:'one',action,principal_id:'acct',proof_binding_id:'m1'}}};
       if(path.endsWith('/complete')){appliedOnHome=applied;throw new TypeError('reply lost');}
       if(path==='/api/auth/wallet-methods'){
         if(readsFail)throw new TypeError('status unavailable');
-        return {account_id:'acct',open_changes:clock<1180?['one']:[],methods:(action==='add'?appliedOnHome:!appliedOnHome)?[method]:[]};
+        return {principal_id:'acct',open_changes:clock<1180?['one']:[],methods:(action==='add'?appliedOnHome:!appliedOnHome)?[method]:[]};
       }
       return {};
     }});
@@ -95,9 +95,9 @@ test('a method list for another account leaves the saved change unknown',async t
   t.mock.timers.enable({apis:['setTimeout']});
   let clock=1000;
   const h=createWalletSigninFlow({now:()=>clock,render(){},approve:async()=>'step',select:async()=>({address:'0x'+'11'.repeat(20),chain_id:20,network:'',check:async()=>{},sign:async()=>({signature:'proof'}),close(){}}),api:async path=>{
-    if(path.endsWith('/begin'))return {ceremony_id:'one',expires_at:1180,message:'Add',approval:{operation:'auth.wallet.method',request:{ceremony_id:'one',action:'add',account_id:'acct',method_id:'m1'}}};
-    if(path==='/api/auth/wallet-methods')return {account_id:'another-account',methods:[{method_id:'m1',sign_in_enabled:true}]};
-    return {status:'complete',method_id:'m1',sign_in_enabled:true};
+    if(path.endsWith('/begin'))return {ceremony_id:'one',expires_at:1180,message:'Add',approval:{operation:'auth.wallet.method.change',request:{ceremony_id:'one',action:'add',principal_id:'acct',proof_binding_id:'m1'}}};
+    if(path==='/api/auth/wallet-methods')return {principal_id:'another-account',methods:[{proof_binding_id:'m1',sign_in_enabled:true}]};
+    return {status:'complete',proof_binding_id:'m1',sign_in_enabled:true};
   }});
   await h.start({action:'add',automatic:true,accountId:'acct'});await h.choose('metamask');
   assert.equal(h.state.stage,'unknown');clock=1181;await h.retry();assert.equal(h.state.stage,'unknown');
@@ -106,8 +106,8 @@ test('a method list for another account leaves the saved change unknown',async t
 test('a changed browser clock cannot retire a change that Runtime still has open',async()=>{
   let browserClock=1000,runtimeOpen=true;
   const flow=createWalletSigninFlow({now:()=>browserClock,render(){},approve:async()=>'step',select:async()=>({address:'0x'+'11'.repeat(20),chain_id:20,network:'',check:async()=>{},sign:async()=>({signature:'proof'}),close(){}}),api:async path=>{
-    if(path.endsWith('/begin'))return {ceremony_id:'one',expires_at:1180,message:'Add',approval:{operation:'auth.wallet.method',request:{ceremony_id:'one',action:'add',account_id:'acct',method_id:'m1'}}};
-    if(path==='/api/auth/wallet-methods')return {account_id:'acct',open_changes:runtimeOpen?['one']:[],methods:[]};
+    if(path.endsWith('/begin'))return {ceremony_id:'one',expires_at:1180,message:'Add',approval:{operation:'auth.wallet.method.change',request:{ceremony_id:'one',action:'add',principal_id:'acct',proof_binding_id:'m1'}}};
+    if(path==='/api/auth/wallet-methods')return {principal_id:'acct',open_changes:runtimeOpen?['one']:[],methods:[]};
     throw new TypeError('lost reply');
   }});
   await flow.start({action:'add',automatic:true,accountId:'acct'});await flow.choose('metamask');browserClock=2000;

@@ -1,16 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createWalletSigninFlow,walletSigninError} from '../capsules/home/browser/wallet-signin-flow.mjs';
-const method={method_id:'m',connector:'metamask',address:'0x'+'12'.repeat(20),chain_id:20,network:'',sign_in_enabled:true};
+const method={proof_binding_id:'m',connector:'metamask',address:'0x'+'12'.repeat(20),chain_id:20,network:'',sign_in_enabled:true};
 function fixture(t,{action='add',refused=0,applied=false}={}) {
   t.mock.timers.enable({apis:['setTimeout']});
   let open=true,reads=0,complete=0;const calls=[],states=[];
   const flow=createWalletSigninFlow({now:()=>1000,randomSecret:()=> 'a'.repeat(64),render:s=>states.push(s),approve:async()=> 'step',select:async()=>({...method,check:async()=>{},sign:async()=>({signature:'proof'}),close(){}}),api:async(path,body)=>{
     calls.push(path);
-    if(path.endsWith('/begin'))return {ceremony_id:'c',message:'Runtime message',expires_at:1180,approval:{operation:'auth.wallet.method',request:{ceremony_id:'c',action,account_id:'a',method_id:'m'}}};
+    if(path.endsWith('/begin'))return {ceremony_id:'c',message:'Runtime message',expires_at:1180,approval:{operation:'auth.wallet.method.change',request:{ceremony_id:'c',action,principal_id:'a',proof_binding_id:'m'}}};
     if(path.endsWith('/complete')){complete++;if(refused)throw {status:refused};throw new TypeError('reply lost');}
     if(path.endsWith('/cancel')){open=false;return {};}
-    if(path==='/api/auth/wallet-methods'){reads++;return {account_id:'a',methods:applied?[method]:[],open_changes:open?['c']:[]};}
+    if(path==='/api/auth/wallet-methods'){reads++;return {principal_id:'a',methods:applied?[method]:[],open_changes:open?['c']:[]};}
     return {};
   }});
   return {flow,calls,states,get reads(){return reads;},get complete(){return complete;},apply(){applied=true;open=false;},keepMethod(){applied=true;},retire(){open=false;},async start(options={}){await flow.start({action,method,automatic:true,accountId:'a',sessionMethodId:'m',...options});}};
@@ -55,7 +55,7 @@ import {handleWalletSigninRequest} from '../capsules/home/browser/wallet-signin-
 test('round3 closing a caller is distinct from ending its Home session',async()=>{
  let caller=true,session=true,options;const source={postMessage(){}};
  const data={type:'home:wallet-signin-request',requestId:'r',homeToken:'system',action:'remove',methodId:'m'};
- handleWalletSigninRequest({source,data},{source,kind:'app-frame',targetId:'system',homeToken:'system'},{api:async path=>path.endsWith('/wallet-methods')?{account_id:'a',methods:[method]}:{passkeys:[]},manage:async input=>{options=input;return {status:'cancelled'};},authorityToken:()=> 'owner',authorityCurrent:()=>()=>session,sessionMethodId:()=> 'm',current:()=>caller,changed(){}});
+ handleWalletSigninRequest({source,data},{source,kind:'app-frame',targetId:'system',homeToken:'system'},{api:async path=>path.endsWith('/wallet-methods')?{principal_id:'a',methods:[method]}:{passkeys:[]},manage:async input=>{options=input;return {status:'cancelled'};},authorityToken:()=> 'owner',authorityCurrent:()=>()=>session,sessionMethodId:()=> 'm',current:()=>caller,changed(){}});
  await new Promise(setImmediate);assert.equal(options.sessionMethodId,'m');caller=false;assert.equal(options.isCurrent(),false);assert.equal(options.sessionCurrent(),true);session=false;assert.equal(options.sessionCurrent(),false);
 });
 
