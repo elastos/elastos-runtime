@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-const moduleVersion = "home-wallpaper-20261030b";
+const moduleVersion = "wallet-signin-2";
 const requests = [];
 const windowListeners = new Map();
 const documentListeners = new Map();

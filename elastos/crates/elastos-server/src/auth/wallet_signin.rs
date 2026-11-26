@@ -210,7 +210,7 @@ fn read_bytes(data: &Path, path: &Path) -> anyhow::Result<Option<Vec<u8>>> {
     Ok(Some(bytes))
 }
 fn read(data: &Path) -> anyhow::Result<Store> {
-    remove_stale_projection(data)?;
+    cleanup_stale_projection(data);
     let Some(bytes) = read_bytes(data, &path(data)?)? else {
         return Ok(Store::default());
     };
@@ -228,6 +228,28 @@ fn read(data: &Path) -> anyhow::Result<Store> {
     }
     Ok(store)
 }
+// Retired projections grant no authority. Cleanup must leave wallet reads available.
+fn cleanup_stale_projection(data: &Path) {
+    static LOG_FAILURE: std::sync::Once = std::sync::Once::new();
+    if let Err(error) = remove_stale_projection(data) {
+        if error
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|error| error.kind() == ErrorKind::NotFound)
+        {
+            return;
+        }
+        LOG_FAILURE.call_once(|| {
+            tracing::warn!(%error, "Retired wallet projection retained; wallet sign-in remains available");
+        });
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static PROJECTION_UNLINK_TEST_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 // Remove only the retired regular file. Directory-relative unlink and inode
 // checks keep cleanup bound to the inspected file; links remain untouched.
 fn remove_stale_projection(data: &Path) -> anyhow::Result<()> {
@@ -262,6 +284,10 @@ fn remove_stale_projection(data: &Path) -> anyhow::Result<()> {
         regular_file_identity_from_metadata(&metadata, "retired wallet state")?
             == regular_file_identity_from_metadata(&held.metadata()?, "retired wallet state")?,
     )?;
+    #[cfg(test)]
+    if let Some(hook) = PROJECTION_UNLINK_TEST_HOOK.with(|hook| hook.borrow_mut().take()) {
+        hook();
+    }
     unlink_migration_cleanup_file(&directory, file.file_name().ok_or(Refused)?, &held)?;
     directory.sync_all()?;
     Ok(())
@@ -1800,6 +1826,57 @@ pub(crate) mod tests {
         write_secret_bytes_atomic(&retired, &saved).unwrap();
         assert!(principal(f.data.path(), &id).is_err());
         assert!(!retired.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn wallet_signin_names_cleanup_racing_removal_keeps_reads_available() {
+        for before_stat in [true, false] {
+            let f = fixture();
+            let id = enabled(&f);
+            let retired = path(f.data.path())
+                .unwrap()
+                .with_file_name("wallet-signin-bindings.json");
+            write_secret_bytes_atomic(&retired, b"retired projection").unwrap();
+            let removed = retired.clone();
+            let hook: Box<dyn FnOnce()> = Box::new(move || {
+                std::fs::remove_file(removed).unwrap();
+            });
+            if before_stat {
+                PROJECTION_UNLINK_TEST_HOOK.with(|slot| *slot.borrow_mut() = Some(hook));
+            } else {
+                MIGRATION_UNLINK_TEST_HOOK.with(|slot| *slot.borrow_mut() = Some(hook));
+            }
+            assert_eq!(read(f.data.path()).unwrap().methods[0].proof_binding_id, id);
+            assert!(!retired.exists());
+            assert_eq!(signin(&f).proof_binding_id, id);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn wallet_signin_names_cleanup_unremovable_file_keeps_reads_available() {
+        let f = fixture();
+        let id = enabled(&f);
+        let retired = path(f.data.path())
+            .unwrap()
+            .with_file_name("wallet-signin-bindings.json");
+        let protected = f.data.path().join("protected-projection");
+        write_secret_bytes_atomic(&protected, b"retired projection").unwrap();
+        std::fs::hard_link(&protected, &retired).unwrap();
+        assert!(remove_stale_projection(f.data.path()).is_err());
+        for _ in 0..2 {
+            assert_eq!(read(f.data.path()).unwrap().methods[0].proof_binding_id, id);
+            assert_eq!(
+                list(f.data.path(), &f.actor).unwrap()["methods"][0]["proof_binding_id"],
+                id
+            );
+            assert_eq!(signin(&f).proof_binding_id, id);
+            let (auth, _) = loaded(f.data.path()).unwrap();
+            assert!(!sessions(f.data.path(), &auth).unwrap().is_empty());
+        }
+        assert_eq!(std::fs::read(&protected).unwrap(), b"retired projection");
+        assert_eq!(std::fs::read(&retired).unwrap(), b"retired projection");
     }
 
     #[cfg(unix)]
