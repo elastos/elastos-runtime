@@ -19,3 +19,17 @@ export function readSystemUpdateState() {
     same_window: window.__elastosUpdateWindowMarker === true,
   };
 }
+
+// Read the selected notice in the real Inbox after the published Home updates.
+export function readInboxUpdateNotice() {
+  const title = document.querySelector("#entry-detail .entry-title");
+  const body = document.querySelector("#entry-detail .entry-body");
+  const action = [...document.querySelectorAll("#entry-detail button")]
+    .find(button => button.textContent.trim() === "Open System");
+  return {
+    title: title?.textContent?.trim() || "",
+    body: body?.textContent?.trim() || "",
+    shown: [title, body].every(node => Boolean(node?.getClientRects().length)),
+    open_system: Boolean(action && !action.disabled && action.getClientRects().length),
+  };
+}
