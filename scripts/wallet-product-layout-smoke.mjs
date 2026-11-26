@@ -567,7 +567,7 @@ async function run(engine) {
     const locked=await pageWithErrors({width:1280,height:900});await locked.goto(server.baseUrl+'/fixture-host.html?mode=locked');const lockedFrame=await walletFrame(locked);
     await lockedFrame.getByText('Open Wallet from Home.',{exact:true}).waitFor();assert(server.state.summaryCalls===0&&server.state.priceCalls===0&&server.state.balanceCalls.length===0,'a locked Wallet keeps its APIs closed');await locked.close();
     const page=await pageWithErrors({width:1280,height:900});await page.goto(server.baseUrl+'/fixture-host.html?mode=window',{waitUntil:'networkidle'});const frame=await walletFrame(page);
-    await frame.locator('.one-wallet').nth(1).waitFor();assert(await frame.locator('.one-wallet').count()===2,'the list identifies each address and network once');
+    await frame.locator('.one-wallet').first().waitFor();assert(await frame.locator('.one-wallet').count()===1,'the list groups one Home address with both networks');
     assert((await fixtureState(page)).appReadyCount===1,'Wallet announces its admitted launch once');assert(server.state.balanceCalls.length===2,'balances read each supported network once');
     assert((await fixtureState(page)).pendingMessages.at(-1)?.count===1,'Wallet reports the current pending count to Home');
     assert(server.state.priceCalls>=1,'Wallet loads display prices');

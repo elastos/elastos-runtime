@@ -1892,7 +1892,7 @@ window.addEventListener("message", (event) => {
       try {
         if (entry.sign_in.connector === 'walletconnect') {
           watch = setInterval(() => {if (!active()) abort.abort();}, 100);
-          await selectConnectedWalletConnect({signal:abort.signal,method:entry.sign_in,appUse:true}, {
+          await selectConnectedWalletConnect({signal:abort.signal,method:entry.sign_in,appUse:true,ready:()=>postToActiveShell({type:'home:gui-command',command:'focus-window',homeToken:context.homeToken})}, {
             open:async()=>opened,current:currentSigninConnector,
           });
         } else await connectInventoryWallet(entry, {...connector, homeToken:opened.homeToken}, () => active() && currentSigninConnector(opened));

@@ -205,6 +205,8 @@ for(const engine of ['chromium','webkit']) {
       const bitcoin=f.wallet.locator('.one-wallet').filter({hasText:'Bitcoin address'});
       assert.equal(await bitcoin.getByRole('button',{name:'Send',exact:true}).count(),0);
       await shot(f.wallet,'home-address-networks',390,engine);
+      await f.page.setViewportSize({width:1440,height:1000});await shot(f.wallet,'home-address-networks',1440,engine);
+      await f.page.setViewportSize({width:390,height:1000});
       f.fixture.state.balanceValues={};await refresh(f);
       await card.getByText('0.00 ETH',{exact:true}).waitFor();assert.equal(await card.getByText('0.00 ELA',{exact:true}).count(),1);
       await f.page.setViewportSize({width:1440,height:1000});await shot(f.wallet,'home-address-networks-zero',1440,engine);
