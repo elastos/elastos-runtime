@@ -39,7 +39,7 @@ const uiSoundsInput = document.querySelector("#ui-sounds");
 const passkeyStatusNode = document.querySelector('[data-field="passkey-status"]');
 const accountListNode = document.querySelector("#account-list");
 let walletSigninListVersion = 0;
-let walletSigninMethods = {account_id:"", methods:[]};
+let walletSigninMethods = {principal_id:"", methods:[]};
 let walletSigninNotice = "";
 const walletAddButton = document.querySelector("#wallet-signin-add");
 const passkeyAddButton = document.querySelector("#passkey-add");
@@ -2517,7 +2517,7 @@ function joinWords(values) {
 }
 
 async function changeWalletSignin(action, methodId = "") {
-  const previousMethods = new Set(walletSigninMethods.methods.map(method => method.method_id));
+  const previousMethods = new Set(walletSigninMethods.methods.map(method => method.proof_binding_id));
   setWalletSigninNotice("");
   const button=action==="add"?document.querySelector("#wallet-signin-add"):null;
   if(button){button.setAttribute("aria-busy","true");}
@@ -2525,7 +2525,7 @@ async function changeWalletSignin(action, methodId = "") {
     const result = await requestWalletSigninChange({action, methodId, token:apiHomeToken, origin:homeParentOrigin});
     await refreshAccountList();
     if (result?.status === "complete") {
-      const added = walletSigninMethods.methods.find(method => !previousMethods.has(method.method_id));
+      const added = walletSigninMethods.methods.find(method => !previousMethods.has(method.proof_binding_id));
       setWalletSigninNotice(action === "add" ? `${added?.wallet_display_name || (added ? connectorName(added.connector) : "Wallet")} added for sign-in.` : "Wallet removed from sign-in.");
     }
     if(result?.status === "unknown") showSigninListFailure("Home has not confirmed this change.",()=>changeWalletSignin(action,methodId),"Check again");
@@ -2569,14 +2569,14 @@ async function refreshAccountList() {
   }
   try {
     const inventory = await readWalletInventory(apiHomeToken).catch(() => null);
-    const methods = inventory ? {account_id: inventory.account_id, methods: inventory.entries.filter(entry => entry.sign_in).map(entry => ({...entry.sign_in, inventory_id:entry.inventory_id, wallet_display_name:entry.wallet_display_name || entry.accounts[0]?.wallet_display_name}))} : await fetchJson('/api/auth/wallet-methods', {headers:shellHeaders()});
+    const methods = inventory ? {principal_id: inventory.principal_id, methods: inventory.entries.filter(entry => entry.sign_in).map(entry => ({...entry.sign_in, inventory_id:entry.inventory_id, wallet_display_name:entry.wallet_display_name || entry.accounts[0]?.wallet_display_name}))} : await fetchJson('/api/auth/wallet-methods', {headers:shellHeaders()});
     if (version !== walletSigninListVersion) return;
-    if (walletSigninMethods.account_id !== methods.account_id) walletSigninNotice = "";
+    if (walletSigninMethods.principal_id !== methods.principal_id) walletSigninNotice = "";
     walletSigninMethods = methods;
     renderAccounts(Array.isArray(data.passkeys) ? data.passkeys : []);
   } catch {
     if (version !== walletSigninListVersion) return;
-    walletSigninMethods = {account_id:"", methods:[]};
+    walletSigninMethods = {principal_id:"", methods:[]};
     renderAccounts(Array.isArray(data.passkeys) ? data.passkeys : []);
     showSigninListFailure("Home could not load wallet sign-in methods.");
   }
@@ -2602,7 +2602,7 @@ function renderAccounts(accounts) {
   const adminAccountCount = new Set(activeAccounts
     .filter((account) => readText(account.role) === "admin")
     .map((account) => readText(account.principal_id))).size;
-  const currentPrincipalId = walletSigninMethods.account_id || readText(activeAccounts.find((account) => account.current)?.principal_id);
+  const currentPrincipalId = walletSigninMethods.principal_id || readText(activeAccounts.find((account) => account.current)?.principal_id);
   const groups = new Map();
   for (const passkey of activeAccounts) {
     const id = readText(passkey.principal_id);
@@ -2646,7 +2646,7 @@ function renderAccounts(accounts) {
     }
     table.append(body);
     block.append(header, table);
-    if (id === walletSigninMethods.account_id) {
+    if (id === walletSigninMethods.principal_id) {
       const wallets = document.createElement('section'); wallets.className = 'system-signin-wallets';
       const heading = document.createElement('h3'); heading.textContent = 'Wallets for sign-in'; wallets.append(heading);
       if (walletSigninNotice) wallets.append(walletSigninNoticeNode());
@@ -2763,7 +2763,7 @@ function accountRow(passkey, listState = {}) {
 }
 
 function walletAccountRow(method) {
-  const row = document.createElement('div'); row.className = 'system-signin-wallet'; row.dataset.walletMethod = method.method_id;
+  const row = document.createElement('div'); row.className = 'system-signin-wallet'; row.dataset.walletMethod = method.proof_binding_id;
   const identity = document.createElement('div'); identity.className = 'system-wallet-identity';
   const icon = document.createElement('img'); icon.alt = ''; icon.src = `/apps/home/connection-${method.connector}.png`;
   const copy = document.createElement('div'), title = document.createElement('strong'), address = document.createElement('div');

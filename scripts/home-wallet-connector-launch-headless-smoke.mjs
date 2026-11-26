@@ -314,7 +314,7 @@ async function handleApi(req, res, url) {
   }
   if (url.pathname === "/api/apps/wallet/wallet/inventory" && req.method === "GET") {
     if (!requireToken(req,walletToken,res)) return true;
-    json(res,200,{schema:'elastos.wallet.inventory/v1',account_id:'fixture',account_name:'Alex',entries:state.walletAccounts.map(account=>({inventory_id:`${account.chain_namespace}:${account.address.toLowerCase()}`,address:account.address,chain_namespace:account.chain_namespace,accounts:[account],sign_in:null}))});return true;
+    json(res,200,{schema:'elastos.wallet.inventory/v1',principal_id:'fixture',account_name:'Alex',entries:state.walletAccounts.map(account=>({inventory_id:`${account.chain_namespace}:${account.address.toLowerCase()}`,address:account.address,chain_namespace:account.chain_namespace,accounts:[account],sign_in:null}))});return true;
   }
   if (url.pathname === "/api/apps/wallet/wallet/summary" && req.method === "GET") {
     if (!requireToken(req, walletToken, res)) {

@@ -13,9 +13,9 @@ export function inventoryWalletName(entry) {
   if (account && isPasskeyManagedAccount(account)) return accountName(account);
   const reported=account?.wallet_display_name || entry.wallet_display_name;
   if(reported)return walletDisplay({wallet_display_name:reported}).name;
-  return ({metamask:'MetaMask', unisat:'UniSat', walletconnect:'Your wallet'}[account?.connector_id?.replace('wallet-', '') || entry.sign_in?.connector]) || 'Your wallet';
+  return ({metamask:'MetaMask', unisat:'UniSat', walletconnect:'Your wallet'}[account?.connector_id?.replace('wallet-', '') || entry.sign_in?.connector?.replace('wallet-', '')]) || 'Your wallet';
 }
-const kind = entry => entry.accounts[0]?.connector_id?.replace('wallet-', '') || entry.sign_in?.connector || 'passkey';
+const kind = entry => entry.accounts[0]?.connector_id?.replace('wallet-', '') || entry.sign_in?.connector?.replace('wallet-', '') || 'passkey';
 const bitcoin = entry => entry.chain_namespace.startsWith('bip122:');
 const appsStatement = entry => bitcoin(entry) ? 'Proves you own this Bitcoin address to apps' : 'Apps and websites can ask; you approve each request.';
 
@@ -178,7 +178,7 @@ export function createWalletInventory({root, getApprovalMethods=()=>({}), openSy
   }
   return {
     update(next) {
-      if (inventory.account_id && inventory.account_id !== next.account_id) {close(); selected = ''; result = '';}
+      if (inventory.principal_id && inventory.principal_id !== next.principal_id) {close(); selected = ''; result = '';}
       // Merge built-in EVM network records only for presentation. Runtime keeps
       // each network's app link and sign-in method under its existing owner.
       const groups = new Map(), entries = [];

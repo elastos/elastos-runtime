@@ -1883,14 +1883,14 @@ window.addEventListener("message", (event) => {
     current: () => context.authorityCurrent?.() === true && launchedAppContexts.get(context.homeToken)?.expiresAt > Date.now() && homeMessageContext(event, data)?.homeToken === context.homeToken,
     inventory: () => fetchJson('/api/apps/wallet/wallet/inventory', {headers:{'x-elastos-home-token':getHomeAuthorityToken()}}),
     connect: async (entry, active) => {
-      const opened = await signinConnectorWindow(entry.sign_in.connector);
+      const opened = await signinConnectorWindow(entry.sign_in.connector.replace('wallet-', ''));
       const connector = launchedAppContexts.get(opened.homeToken);
       if (!connector || !active()) {if (opened.created) await opened.close(); return;}
-      if(entry.sign_in.connector !== 'walletconnect') postToActiveShell({type:'home:gui-command',command:'focus-window',homeToken:context.homeToken});
+      if(entry.sign_in.connector !== 'wallet-walletconnect') postToActiveShell({type:'home:gui-command',command:'focus-window',homeToken:context.homeToken});
       let watch;
       const abort = new AbortController();
       try {
-        if (entry.sign_in.connector === 'walletconnect') {
+        if (entry.sign_in.connector === 'wallet-walletconnect') {
           watch = setInterval(() => {if (!active()) abort.abort();}, 100);
           await selectConnectedWalletConnect({signal:abort.signal,method:entry.sign_in,appUse:true,ready:()=>postToActiveShell({type:'home:gui-command',command:'focus-window',homeToken:context.homeToken})}, {
             open:async()=>opened,current:currentSigninConnector,

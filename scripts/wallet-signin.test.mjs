@@ -5,16 +5,16 @@ const activeFlows=new Set();
 const createWalletSigninFlow=options=>{const flow=createProductFlow(options);activeFlows.add(flow);return flow;};
 afterEach(async()=>{await Promise.all([...activeFlows].map(flow=>flow.cancel()));activeFlows.clear();});
 
-const method = {method_id:'wallet:one',connector:'metamask',address:'0x'+'12'.repeat(20),chain_id:20,network:'',sign_in_enabled:true};
+const method = {proof_binding_id:'wallet:one',connector:'metamask',address:'0x'+'12'.repeat(20),chain_id:20,network:'',sign_in_enabled:true};
 function fixture({lost=false,passkeyRetry=false}={}) {
   const calls=[], states=[]; let completeCalls=0,approvalCalls=0,lastAction,notifyChange,committed=false,reads=0;
   const flow=createWalletSigninFlow({
     randomSecret:()=> 'a'.repeat(64),
     api:async(path,body)=>{
       calls.push({path,body:structuredClone(body)});
-      if(path.endsWith('/begin')) {lastAction=body.action;return {ceremony_id:'ceremony',message:'exact Home message',expires_at:Date.now()/1000+120,approval:{operation:'auth.wallet.method',request:{ceremony_id:'ceremony',action:body.action,account_id:'principal:alex',method_id:method.method_id}}};}
-      if(path==='/api/auth/wallet-methods') {reads++;if(lost&&reads===1)throw new TypeError('lost status');return {account_id:'principal:alex',methods:committed&&lastAction!=='remove'?[method]:[]};}
-      if(path.endsWith('/complete')) { committed=true;if(lost && completeCalls++===0) throw new TypeError('lost reply'); return {status:lastAction==='remove'?'removed':'complete',method_id:method.method_id,sign_in_enabled:lastAction==='add'}; }
+      if(path.endsWith('/begin')) {lastAction=body.action;return {ceremony_id:'ceremony',message:'exact Home message',expires_at:Date.now()/1000+120,approval:{operation:'auth.wallet.method.change',request:{ceremony_id:'ceremony',action:body.action,principal_id:'principal:alex',proof_binding_id:method.proof_binding_id}}};}
+      if(path==='/api/auth/wallet-methods') {reads++;if(lost&&reads===1)throw new TypeError('lost status');return {principal_id:'principal:alex',methods:committed&&lastAction!=='remove'?[method]:[]};}
+      if(path.endsWith('/complete')) { committed=true;if(lost && completeCalls++===0) throw new TypeError('lost reply'); return {status:lastAction==='remove'?'removed':'complete',proof_binding_id:method.proof_binding_id,sign_in_enabled:lastAction==='add'}; }
       return {};
     },
     select:async(_connector,options)=>{notifyChange=options.changed;return {...method,check:async()=>{},sign:async message=>{calls.push({sign:message});return {signature:'proof',signature_type:'personal_sign',public_key:''};},close(){}};},
@@ -29,7 +29,7 @@ test('add reviews before signature, then requests exact passkey approval',async(
   await f.flow.confirm();assert.equal(f.states.at(-1).stage,'approval');assert.equal(f.calls.filter(c=>c.approve).length,0);
   await f.flow.approve();assert.equal(f.states.at(-1).stage,'done');
   assert.equal(f.calls.find(c=>c.sign).sign,'exact Home message');
-  assert.deepEqual(f.calls.find(c=>c.approve).approve,{operation:'auth.wallet.method',request:{ceremony_id:'ceremony',action:'add',account_id:'principal:alex',method_id:method.method_id}});
+  assert.deepEqual(f.calls.find(c=>c.approve).approve,{operation:'auth.wallet.method.change',request:{ceremony_id:'ceremony',action:'add',principal_id:'principal:alex',proof_binding_id:method.proof_binding_id}});
   assert.equal(f.calls.find(c=>c.path?.endsWith('/complete')).body.step_up_token,'step-up');
   assert(!f.calls.some(c=>c.path?.endsWith('/cancel')),'confirmed completion preserves its result');
   await f.flow.cancel();assert(!f.calls.some(c=>c.path?.endsWith('/cancel')),'closing a confirmed result preserves it');
@@ -94,15 +94,15 @@ test('the chooser selects Runtime inventory uses without a client identity join'
   const account={account_id:'payment',connector_id:'wallet-metamask',address:method.address,chain_namespace:'eip155:20'};
   const entry={inventory_id:'one',address:method.address,chain_namespace:'eip155:20',accounts:[account],sign_in:method};
   const both=inventorySigninMethods({entries:[entry]});
-  assert.equal(both.length,1);assert.equal(both[0].paymentConnected,true);assert.equal(both[0].method_id,method.method_id);
+  assert.equal(both.length,1);assert.equal(both[0].paymentConnected,true);assert.equal(both[0].proof_binding_id,method.proof_binding_id);
   const signin=inventorySigninMethods({entries:[{...entry,accounts:[]}]});assert.equal(signin[0].paymentConnected,false);
   const apps=inventorySigninMethods({entries:[{...entry,sign_in:null}]});assert.equal(apps[0].sign_in_enabled,false);assert.equal(apps[0].paymentOnly,true);
 });
 test('Home accepts method intents only from the bound System frame',async()=>{
   const source={postMessage(){}},context={kind:'app-frame',targetId:'system',source,homeToken:'launch'};
-  const data={type:'home:wallet-signin-request',requestId:'one',homeToken:'launch',action:'remove',methodId:method.method_id};
+  const data={type:'home:wallet-signin-request',requestId:'one',homeToken:'launch',action:'remove',methodId:method.proof_binding_id};
   let reads=0,managed=0;
-  const options={authorityToken:()=> 'home-authority',api:async (path,_body,token)=>{assert.equal(token,'home-authority');reads++;return path.endsWith('/passkeys')?{passkeys:[{principal_id:'principal:one',display_name:'Alex'}]}:{account_id:'principal:one',methods:[method]};},manage:async input=>{managed++;assert.equal(input.token,'home-authority');assert.equal(input.method,method);return {status:'complete'};},current:()=>true,changed(){}};
+  const options={authorityToken:()=> 'home-authority',api:async (path,_body,token)=>{assert.equal(token,'home-authority');reads++;return path.endsWith('/passkeys')?{passkeys:[{principal_id:'principal:one',display_name:'Alex'}]}:{principal_id:'principal:one',methods:[method]};},manage:async input=>{managed++;assert.equal(input.token,'home-authority');assert.deepEqual(input.method,method);return {status:'complete'};},current:()=>true,changed(){}};
   for(const invalid of [{...context,targetId:'browser'},{...context,source:{}},{...context,homeToken:'other'}])handleWalletSigninRequest({source,data},invalid,options);
   assert.equal(reads,0);assert.equal(managed,0);
   handleWalletSigninRequest({source,data},context,options);await new Promise(resolve=>setImmediate(resolve));
@@ -110,10 +110,10 @@ test('Home accepts method intents only from the bound System frame',async()=>{
 });
 
 test('every method action checks the approval against the reviewed ceremony and account',async()=>{
-  for(const action of ['add','remove'])for(const mismatch of ['action','account_id','ceremony_id','method_id']) {
+  for(const action of ['add','remove'])for(const mismatch of ['action','principal_id','ceremony_id','proof_binding_id']) {
     const states=[];let signs=0;
-    const request={action,account_id:'principal:alex',ceremony_id:'one',method_id:method.method_id};request[mismatch]=action==='add'&&mismatch==='method_id'?'':'different';
-    const flow=createWalletSigninFlow({api:async path=>path.endsWith('/begin')?{ceremony_id:'one',message:'exact message',expires_at:Date.now()/1000+120,approval:{operation:'auth.wallet.method',request}}:{},
+    const request={action,principal_id:'principal:alex',ceremony_id:'one',proof_binding_id:method.proof_binding_id};request[mismatch]=action==='add'&&mismatch==='proof_binding_id'?'':'different';
+    const flow=createWalletSigninFlow({api:async path=>path.endsWith('/begin')?{ceremony_id:'one',message:'exact message',expires_at:Date.now()/1000+120,approval:{operation:'auth.wallet.method.change',request}}:{},
       select:async()=>({...method,close(){},sign(){signs++;}}),approve:()=>{throw new Error('must not approve');},render:s=>states.push(s)});
     await flow.start({action,method:action==='add'?null:method,accountId:'principal:alex'});if(action==='add')await flow.choose('metamask');
     assert.equal(states.at(-1).stage,'error',`${action} refuses a different ${mismatch}`);assert.equal(signs,0);
@@ -126,7 +126,7 @@ test('WalletConnect Add pairs in the signed-in ceremony and selects its exact ap
     api:async(path,body)=>{
       calls.push({path,body});
       if(path.endsWith('/begin') || path.endsWith('/select'))return {ceremony_id:'addition',message:path.endsWith('/select')?'Add this wallet':'',expires_at:Date.now()/1000+120,
-        approval:{operation:'auth.wallet.method',request:{ceremony_id:'addition',action:'add',account_id:'principal:alex',method_id:'new',address:body.address}}};
+        approval:{operation:'auth.wallet.method.change',request:{ceremony_id:'addition',action:'add',principal_id:'principal:alex',proof_binding_id:'new',address:body.address}}};
       return {};
     },select:async(_connector,{transport})=>{assert.equal(transport.ceremony_id,'addition');return {...method,connector:'walletconnect',close(){}};},approve(){},render:s=>states.push(s)});
   await flow.start({action:'add',accountId:'principal:alex'});await flow.choose('walletconnect');
@@ -154,7 +154,7 @@ test('Bitcoin method selection keeps address case while EVM accepts checksum cas
   for(const connector of ['unisat','metamask']) {
     const wallet={...method,connector,address:connector==='unisat'?'1A'+'b'.repeat(30):'0x'+'ab'.repeat(20),chain_id:connector==='unisat'?0:20,network:connector==='unisat'?'bitcoin':''};
     const states=[];
-    const flow=createWalletSigninFlow({api:async path=>path.endsWith('/begin')?{ceremony_id:'one',message:'message',expires_at:Date.now()/1000+120,approval:{operation:'auth.wallet.method',request:{ceremony_id:'one',action:'add',account_id:'principal:alex',method_id:method.method_id}}}:{},
+    const flow=createWalletSigninFlow({api:async path=>path.endsWith('/begin')?{ceremony_id:'one',message:'message',expires_at:Date.now()/1000+120,approval:{operation:'auth.wallet.method.change',request:{ceremony_id:'one',action:'add',principal_id:'principal:alex',proof_binding_id:method.proof_binding_id}}}:{},
       select:async()=>({...wallet,address:wallet.address.toLowerCase(),close(){}}),approve(){},render:s=>states.push(s)});
     await flow.start({action:'add',method:wallet});assert.equal(states.at(-1).stage,connector==='unisat'?'error':'review');await flow.cancel();
   }
@@ -176,19 +176,19 @@ test('System reads its own method list through Home authority',async()=>{
   const replies=[],source={postMessage:message=>replies.push(message)},context={kind:'app-frame',targetId:'system',source,homeToken:'wallet-launch'};
   const data={type:'home:wallet-signin-request',requestId:'list',homeToken:'wallet-launch',action:'list',methodId:''};
   handleWalletSigninRequest({source,data},context,{authorityToken:()=> 'home-launch',api:async(path,_body,token)=>{
-    assert.equal(token,'home-launch');return path.endsWith('/passkeys')?{passkeys:[{principal_id:'other',role:'admin'},{principal_id:'principal:alex',role:'guest'}]}:{account_id:'principal:alex',methods:[method]};
+    assert.equal(token,'home-launch');return path.endsWith('/passkeys')?{passkeys:[{principal_id:'other',role:'admin'},{principal_id:'principal:alex',role:'guest'}]}:{principal_id:'principal:alex',methods:[method]};
   },manage:()=>{throw new Error('list does not change authority');},current:()=>true,changed(){}});
   await new Promise(resolve=>setImmediate(resolve));
-  assert.deepEqual(replies[0].result,{status:'complete',account_id:'principal:alex',methods:[method],can_manage:false});
+  assert.deepEqual(replies[0].result,{status:'complete',principal_id:'principal:alex',methods:[method],can_manage:false});
   assert(!Object.hasOwn(replies[0].result,'passkeys'));assert(!JSON.stringify(replies).includes('home-launch'));
 });
 
 test('a changed Home authority retires pending System method requests',async()=>{
   const replies=[],source={postMessage:message=>replies.push(message)},context={kind:'app-frame',targetId:'system',source,homeToken:'wallet-launch'};
   let authority='home-one',release;
-  const data={type:'home:wallet-signin-request',requestId:'retired',homeToken:'wallet-launch',action:'remove',methodId:method.method_id};
+  const data={type:'home:wallet-signin-request',requestId:'retired',homeToken:'wallet-launch',action:'remove',methodId:method.proof_binding_id};
   handleWalletSigninRequest({source,data},context,{authorityToken:()=>authority,api:path=>path.endsWith('/passkeys')?Promise.resolve({passkeys:[]}):new Promise(resolve=>{release=resolve;}),manage:()=>{throw new Error('retired Home cannot start approval');},current:()=>true,changed(){}});
-  authority='home-two';release({account_id:'principal:alex',methods:[method]});await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(replies,[]);
+  authority='home-two';release({principal_id:'principal:alex',methods:[method]});await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(replies,[]);
 });
 
 test('signed-out sign-in ignores method-change approval notices',async()=>{
@@ -249,7 +249,7 @@ test('fixture cancel revokes a completed sign-in session, matching Runtime',asyn
   try {
     const post=async(path,body)=>(await fetch(server.origin+path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)})).json();
     const browser_secret='a'.repeat(64),wallet=sampleMethod('metamask',true);
-    const begin=await post('/api/auth/wallet/signin/begin',{...wallet,browser_secret});
+    const begin=await post('/api/auth/wallet/signin/begin',{...wallet,connector:'wallet-metamask',browser_secret});
     await post('/api/auth/wallet/signin/complete',{ceremony_id:begin.ceremony_id,browser_secret,signature:'fixture-signature'});
     assert.equal((await fetch(server.origin+'/api/auth/sessions/refresh')).status,200);
     await post('/api/auth/wallet/cancel',{ceremony_id:begin.ceremony_id,browser_secret});
@@ -266,7 +266,7 @@ test('Every account has one Remove control for its wallet method',()=>{
       const actions=[],controls=walletSigninControls(method,{canManage,onAction:(...args)=>actions.push(args)});
       const [remove]=controls.children;
       assert.equal(controls.children.length,1);assert.equal(Boolean(remove.disabled),false);
-      remove.onclick();assert.deepEqual(actions,[['remove',method.method_id]]);
+      remove.onclick();assert.deepEqual(actions,[['remove',method.proof_binding_id]]);
     }
   } finally {globalThis.document=previous;}
 });
@@ -320,9 +320,9 @@ function ceremony({lost=false,change=false,connector='metamask'}={}) {
     randomSecret:()=> 'a'.repeat(64),
     api:async(path,body)=>{
       calls.push({path,body});
-      if(path.endsWith('/begin'))return {ceremony_id:'one',message:'Use this wallet to sign in to this Home for Alex',expires_at:Date.now()/1000+120,approval:{operation:'auth.wallet.method',request:{ceremony_id:'one',action:body.action,account_id:'alex',method_id:'new-method'}}};
-      if(path==='/api/auth/wallet-methods'){if(lost&&reads++===0)throw new TypeError('lost status');return {account_id:'alex',methods:[{method_id:'new-method',sign_in_enabled:true}]};}
-      if(path.endsWith('/complete')){if(lost&&completes++===0)throw new TypeError('lost reply');return {status:'complete',method_id:'new-method',sign_in_enabled:true};}
+      if(path.endsWith('/begin'))return {ceremony_id:'one',message:'Use this wallet to sign in to this Home for Alex',expires_at:Date.now()/1000+120,approval:{operation:'auth.wallet.method.change',request:{ceremony_id:'one',action:body.action,principal_id:'alex',proof_binding_id:'new-method'}}};
+      if(path==='/api/auth/wallet-methods'){if(lost&&reads++===0)throw new TypeError('lost status');return {principal_id:'alex',methods:[{proof_binding_id:'new-method',sign_in_enabled:true}]};}
+      if(path.endsWith('/complete')){if(lost&&completes++===0)throw new TypeError('lost reply');return {status:'complete',proof_binding_id:'new-method',sign_in_enabled:true};}
       return {};
     },
     select:async(_connector,options)=>{calls.push({select:options});return {...method,check:async()=>{if(change)throw Object.assign(new Error('changed'),{code:'changed'});},sign:async message=>{calls.push({signature:message});return {signature:'proof',signature_type:'personal_sign',public_key:''};},close(){}};},
@@ -333,7 +333,7 @@ test('a connected wallet adds sign-in with one signature and one passkey approva
   const f=ceremony();await f.flow.start({action:'add',method:f.method,automatic:true,accountId:'alex'});
   assert.equal(f.states.at(-1).stage,'done');
   assert.equal(f.calls.filter(c=>c.signature).length,1);assert.equal(f.calls.filter(c=>c.approval).length,1);
-  const begin=f.calls.find(c=>c.path?.endsWith('/begin'));assert.equal(begin.body.action,'add');assert.equal(begin.body.method_id,undefined);assert.equal(begin.body.address,wallet.address);
+  const begin=f.calls.find(c=>c.path?.endsWith('/begin'));assert.equal(begin.body.action,'add');assert.equal(begin.body.proof_binding_id,undefined);assert.equal(begin.body.address,wallet.address);
   assert.equal(f.calls.find(c=>c.approval).approval.request.action,'add');
   assert(!f.calls.some(c=>c.path?.endsWith('/cancel')));
 });
@@ -362,9 +362,9 @@ test('Home reads the account inventory directly with its own authority',async()=
   handleWalletSigninRequest({source,data},context,{authorityToken:()=> 'home-token',current:()=>true,changed(){},manage:async value=>{options=value;return {status:'cancelled'};},api:async(path,body,token)=>{
     calls.push({path,token});
     if(path.endsWith('/passkeys'))return {passkeys:[{principal_id:'alex',role:'admin'}]};
-    if(path.endsWith('/wallet/inventory'))return {account_id:'alex',entries:[{inventory_id:'one',address:wallet.address,chain_namespace:'eip155:20',accounts:[{account_id:'connected',connector_id:'wallet-metamask'}],sign_in:null}]};
+    if(path.endsWith('/wallet/inventory'))return {principal_id:'alex',entries:[{inventory_id:'one',address:wallet.address,chain_namespace:'eip155:20',accounts:[{account_id:'connected',connector_id:'wallet-metamask'}],sign_in:null}]};
     if(path.endsWith('/system/summary'))throw new Error('Home cannot read System authority');
-    return {account_id:'alex',methods:[]};
+    return {principal_id:'alex',methods:[]};
   }});
   await new Promise(resolve=>setImmediate(resolve));const connected=await options.loadConnected();assert.equal(connected[0].address,wallet.address);
   assert(!calls.some(c=>c.path.endsWith('/system/summary')));
@@ -450,8 +450,8 @@ test('MetaMask enrollment keeps phone relay admission off until a phone method e
  const server=await signinFixture();server.state.methods=[sampleMethod('metamask')];
  try {
   const status=await (await fetch(server.origin+'/api/auth/passkey/status')).json();
-  assert.deepEqual(status.wallet_signin_connectors,['metamask']);assert.equal(status.walletconnect_signin_available,false);
-  const result=await fetch(server.origin+'/api/auth/wallet/signin/begin',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({connector:'walletconnect',address:'',chain_id:20,browser_secret:'a'.repeat(64),allow_temporary_internet:true})});
+  assert.deepEqual(status.wallet_signin_connectors,['wallet-metamask']);assert.equal(status.walletconnect_signin_available,false);
+  const result=await fetch(server.origin+'/api/auth/wallet/signin/begin',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({connector:'wallet-walletconnect',address:'',chain_id:20,browser_secret:'a'.repeat(64),allow_temporary_internet:true})});
   assert.equal(result.status,403);
  }finally {await server.close();}
 });
@@ -550,7 +550,7 @@ test('a repeated System Add keeps its original result when the auth read crosses
   const delayed=new Promise(resolve=>releaseRead=resolve);
   const dependencies={current:()=>true,authorityToken:()=> 'home',changed(){},
     api:async path=>{
-      if(path.endsWith('/wallet-methods')){if(++reads===2)await delayed;return {account_id:'alex',methods:[]};}
+      if(path.endsWith('/wallet-methods')){if(++reads===2)await delayed;return {principal_id:'alex',methods:[]};}
       return {passkeys:[{principal_id:'alex',role:'admin'}]};
     },
     manage:()=>{

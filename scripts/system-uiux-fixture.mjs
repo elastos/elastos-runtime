@@ -104,8 +104,8 @@ export function makeSystemSummary(
 }
 
 export function inertSystemApiResponse(pathname) {
-  if (pathname === '/api/apps/wallet/wallet/inventory') return {schema:'elastos.wallet.inventory/v1',account_id:'principal:system-fixture',entries:[]};
-  if (pathname === "/api/auth/wallet-methods") return { account_id: "principal:system-fixture", methods: [] };
+  if (pathname === '/api/apps/wallet/wallet/inventory') return {schema:'elastos.wallet.inventory/v1',principal_id:'principal:system-fixture',entries:[]};
+  if (pathname === "/api/auth/wallet-methods") return { principal_id: "principal:system-fixture", methods: [] };
   if (pathname === "/api/apps/browser/internet") return { status: "off" };
   if (pathname === "/api/apps/home/active-shell") {
     return {

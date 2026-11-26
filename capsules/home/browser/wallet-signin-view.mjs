@@ -202,7 +202,7 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
   return {
     get active(){return Boolean(dialog||management.kind==='active');},
     async start(optionsInput={}) {
-      if(management.kind==='active' && ((optionsInput.action||'signin')!==management.action || (optionsInput.method?.method_id||'')!==management.methodId))return {status:'busy'};
+      if(management.kind==='active' && ((optionsInput.action||'signin')!==management.action || (optionsInput.method?.proof_binding_id||'')!==management.methodId))return {status:'busy'};
       if(management.kind==='active'){if(management.stage==='unknown'){render(currentState);void flow.retry();}else if(['connecting','review','signing','passkey','completing'].includes(management.stage)&&initial.focusCurrent)initial.focusCurrent();else {dialog?.showModal();dialog?.querySelector('button')?.focus();}return management.result;}
       if(dialog){dialog.showModal();return {status:'cancelled'};}
       token=optionsInput.token||'';initial={...optionsInput,automatic:optionsInput.action!=='add'};remember=Boolean(readSigninChoice());
@@ -219,7 +219,7 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
         if(saved==='passkey'&&initial.availability?.passkey!==false||method)return chooseSignin(method||null);
         return;
       }
-      let resolve;const result=new Promise(done=>{resolve=done;});management={kind:'active',action:initial.action,methodId:initial.method?.method_id||'',stage:'options',result,resolve};
+      let resolve;const result=new Promise(done=>{resolve=done;});management={kind:'active',action:initial.action,methodId:initial.method?.proof_binding_id||'',stage:'options',result,resolve};
       managementTimer=setTimeout(()=>void flow.cancel(),walletSigninRequestTimeoutMs-15000);
       watcher=setInterval(()=>{if(initial.sessionCurrent&&!initial.sessionCurrent()){void flow.sessionEnded().then(done=>{if(!done)void flow.cancel();});}else if(initial.isCurrent&&!initial.isCurrent())void flow.cancel();},500);
       if(initial.action==='add') {

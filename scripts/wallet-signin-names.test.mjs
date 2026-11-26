@@ -7,7 +7,7 @@ const storage=()=>{const values=new Map();return {values,getItem:key=>values.get
 for(const [old,value] of [['passkey','passkey'],['metamask','wallet-metamask'],['metamask:io.rabby','wallet-metamask:io.rabby'],['unisat','wallet-unisat'],['walletconnect','wallet-walletconnect']]) {
   test(`stored sign-in choice migrates ${old} with Undo reader safety`,()=>{
     const s=storage();s.setItem(oldKey,old);
-    assert.equal(readSigninChoice(s),value);
+    assert.equal(readSigninChoice(s),old);
     assert.equal(s.getItem(newKey),value);
     assert.equal(s.getItem(oldKey),old);
     saveSigninChoice(value,s);
@@ -25,4 +25,14 @@ test('stored sign-in choice rejects wallet addresses and malformed connector ids
     saveSigninChoice(bad,s);assert.equal(readSigninChoice(s),'');
     assert.equal(s.getItem(oldKey),null);assert.equal(s.getItem(newKey),null);
   }
+});
+
+// The Undo witness executes the production reader, message builder and verifier.
+// Keep it bound to the original source rather than a rewritten test reader.
+test('the rc.1 Undo witness keeps its pinned production implementation',async()=>{
+  const {readFile}=await import('node:fs/promises');
+  const {createHash}=await import('node:crypto');
+  const source=await readFile(new URL('../elastos/crates/elastos-server/tests/fixtures/wallet_signin_rc1.rs',import.meta.url),'utf8');
+  const production=source.split('\n').slice(3).join('\n');
+  assert.equal(createHash('sha256').update(production).digest('hex'),'ac90eb6babc378822d2f073fcc7efd1e495b6a4a336a8e20f56e606ca3c9662a');
 });

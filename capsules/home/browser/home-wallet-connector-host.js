@@ -287,13 +287,13 @@ async function performConnectorEffect(connectorId, connectorToken, action, conte
 
 export async function connectInventoryWallet(entry, context, current) {
   if (!current() || !entry.sign_in || entry.accounts.length
-    || context.targetId !== `wallet-${entry.sign_in.connector}` || context.walletEffectState.inFlight) {
+    || context.targetId !== entry.sign_in.connector || context.walletEffectState.inFlight) {
     throw new Error('This wallet connection changed. Try again.');
   }
   context.walletEffectState.inFlight = true;
   try {
-    if (entry.sign_in.connector === 'metamask') return await linkEvmWallet(context.homeToken, null, context, {entry, current});
-    if (entry.sign_in.connector === 'unisat') return await linkBitcoinWallet(context.homeToken, {entry, current});
+    if (entry.sign_in.connector === 'wallet-metamask') return await linkEvmWallet(context.homeToken, null, context, {entry, current});
+    if (entry.sign_in.connector === 'wallet-unisat') return await linkBitcoinWallet(context.homeToken, {entry, current});
     throw new Error('Open WalletConnect to connect this wallet for apps.');
   } finally {context.walletEffectState.inFlight = false;}
 }

@@ -30,7 +30,7 @@ async function fixture(run, engine = "chromium") {
         return true;
       }
       if (url.pathname === "/api/apps/wallet/wallet/inventory") {
-        jsonResponse(response, {schema:'elastos.wallet.inventory/v1',account_id:passkeys.find(key=>key.current)?.principal_id||owner.principal_id,entries:methods.map(method=>({inventory_id:`eip155:${method.chain_id}:${method.address}`,address:method.address,chain_namespace:`eip155:${method.chain_id}`,accounts:[],sign_in:method}))});return true;
+        jsonResponse(response, {schema:'elastos.wallet.inventory/v1',principal_id:passkeys.find(key=>key.current)?.principal_id||owner.principal_id,entries:methods.map(method=>({inventory_id:`eip155:${method.chain_id}:${method.address}`,address:method.address,chain_namespace:`eip155:${method.chain_id}`,accounts:[],sign_in:method}))});return true;
       }
       if (url.pathname === "/api/auth/passkeys") {
         listReads++;
@@ -300,7 +300,7 @@ for (const engine of ["chromium", "webkit"]) test(`Accounts groups methods benea
     const created = Date.UTC(2026, 10, 23, 13, 3) / 1000;
     const key = { ...owner, created_at: created, last_used_at: created + 240, added_from: "Device passkey (added from Chrome on Mac or iPad)" };
     const backup = { ...key, current: false, proof_binding_id: "proof:passkey:backup" };
-    const wallet = { method_id: "wallet:metamask", connector: "metamask", address: "0x1234567890123456789012345678901234567890", chain_id: 20, network: "", sign_in_enabled: true, last_used_at: created };
+    const wallet = { proof_binding_id: "wallet:metamask", connector: "wallet-metamask", address: "0x1234567890123456789012345678901234567890", chain_id: 20, network: "", sign_in_enabled: true, last_used_at: created };
     for (const theme of ["light", "dark"]) for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: 900 });
       for (const [state, keys, options] of [

@@ -36,7 +36,7 @@ export async function linkedWindow(t,engine,{holdWalletRead=false,sourceRef}={})
   const gate=apiGates.get(route.request().method()+' '+path);if(gate){apiGates.delete(route.request().method()+' '+path);gate.enter();await gate.wait;}
   const json=value=>route.fulfill({headers:cors,contentType:'application/json',body:JSON.stringify(value)});
   if(route.request().method()==='OPTIONS')return json({});
-  if(path==='/api/apps/wallet/wallet/inventory')return json({schema:'elastos.wallet.inventory/v1',account_id:'fixture',account_name:'Alex',entries:fixture.state.accounts.map(account=>({inventory_id:`${account.chain_namespace}:${account.address.toLowerCase()}`,address:account.address,chain_namespace:account.chain_namespace,accounts:[account],sign_in:null}))});
+  if(path==='/api/apps/wallet/wallet/inventory')return json({schema:'elastos.wallet.inventory/v1',principal_id:'fixture',account_name:'Alex',entries:fixture.state.accounts.map(account=>({inventory_id:`${account.chain_namespace}:${account.address.toLowerCase()}`,address:account.address,chain_namespace:account.chain_namespace,accounts:[account],sign_in:null}))});
   if(path==='/api/apps/wallet/wallet/summary'){
    walletReads.push(fixture.state.accounts.length);
    const snapshot=structuredClone({wallet_accounts:{available:true,accounts:fixture.state.accounts,default_accounts:[]},wallet_approvals:{available:true,approval_requests:[],pending_count:0},approval_methods:{walletconnect:{available:true}}});
