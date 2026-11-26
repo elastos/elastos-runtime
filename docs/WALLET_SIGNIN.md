@@ -420,23 +420,25 @@ owned by auth. Removing either use leaves the other use visible.
 
 ## Stored names and Undo
 
-Runtime writes `wallet-signin-bindings.json` with schema
-`elastos.auth.wallet.signin/v1`, `principal_id`, `proof_binding_id`, and connector
-capsule IDs (`wallet-metamask`, `wallet-unisat`, `wallet-walletconnect`).
-The bounded, strict reader migrates the previous names at the store boundary.
-Runtime keeps `wallet-signin.json` as the compatible journal for Undo. The journal
-owns authority while the previous release can write it. Each successful store
-transaction writes the canonical projection first, then commits the journal with
-its previous schema, field names and connector values. A later journal read
-always wins over the projection, so a wallet removed during Undo stays removed
-after an upgrade, including after an interrupted projection write. The projection
-alone grants zero authority. Keep the journal while Undo is available.
+Runtime stores wallet sign-in authority in one file, `wallet-signin.json`.
+The journal keeps schema `elastos.auth.wallet-signin/v1`, `account_id`,
+`method_id`, and short connector values (`metamask`, `unisat`, `walletconnect`).
+The bounded, strict reader translates these names to `principal_id`,
+`proof_binding_id`, and connector capsule IDs (`wallet-metamask`, `wallet-unisat`,
+`wallet-walletconnect`) in memory and rejects unknown connectors. Each changed
+transaction commits the journal with one atomic write. Unchanged reads preserve
+its file identity. Runtime removes a retired `wallet-signin-bindings.json` only
+when it is a verified regular file; links and directories remain untouched.
+
+The previous Runtime reads and writes this same journal during Undo. A wallet
+enrolled before Undo can sign in there, and a wallet removed during Undo stays
+removed after an upgrade.
 
 A change to these wire names ends pending ceremonies from the previous contract.
 Existing wallet bindings and sessions keep their identifiers. A new ceremony uses
 `auth.wallet.method.change` for exact passkey approval. Routes keep their existing
-names. The browser stores its remembered connector at
-`elastos.home.signin-choice` using capsule IDs and keeps a compatible
-`elastos.signin.choice.v1` value for Undo. A choice changed or cleared by the
-previous browser takes effect on the next read. Short connector names remain
-local view keys for icons and provider adapters.
+names. The browser stores its remembered connector in the single
+`elastos.signin.choice.v1` key using short connector values. Both browsers read
+and write that key, so a choice changed or cleared during Undo takes effect on
+the next read. Short connector names also remain local view keys for icons and
+provider adapters.

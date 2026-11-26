@@ -1,5 +1,5 @@
-import {walletConnectorKind} from './wallet-signin-options.mjs';
-import {inventorySigninMethods} from './wallet-signin-methods.mjs';
+import {walletConnectorKind} from './wallet-signin-options.mjs?v=wallet-signin-2';
+import {inventorySigninMethods} from './wallet-signin-methods.mjs?v=wallet-signin-2';
 // Repeated intents follow one observed ceremony across asynchronous auth reads.
 const pendingChanges = new WeakMap();
 // The shell supplies a source/token-bound context from its launch registry.

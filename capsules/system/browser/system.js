@@ -1,6 +1,6 @@
-import { readWalletInventory, requestWalletSigninChange, walletSigninControls, watchWalletSigninMethods } from "/apps/home/wallet-signin-methods.mjs?v=wallet-signin-1";
-import { connectorName, walletNetwork, shortWalletAddress } from "/apps/home/wallet-signin-flow.mjs?v=wallet-signin-1";
-import { walletConnectorKind } from "/apps/home/wallet-signin-options.mjs?v=wallet-signin-1";
+import { readWalletInventory, requestWalletSigninChange, walletSigninControls, watchWalletSigninMethods } from "/apps/home/wallet-signin-methods.mjs?v=wallet-signin-2";
+import { connectorName, walletNetwork, shortWalletAddress } from "/apps/home/wallet-signin-flow.mjs?v=wallet-signin-2";
+import { walletConnectorKind } from "/apps/home/wallet-signin-options.mjs?v=wallet-signin-2";
 import { createTransferProgress, announceTransferProgress } from "./transfer-progress.js?v=download-progress-20261112";
 import {
   gatePreviewAuditView,

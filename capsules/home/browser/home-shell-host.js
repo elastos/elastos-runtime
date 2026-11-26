@@ -1,8 +1,8 @@
 import {handleWalletAppUse,retireWalletAppUse} from "./wallet-app-use-host.mjs";
-import {openWalletSigninEntry} from './wallet-signin-window.mjs';
-import {selectConnectedWalletConnect} from './wallet-signin-connector.mjs';
-import { handleWalletSigninRequest } from "./wallet-signin-host.mjs?v=wallet-signin-1";
-import { walletSigninApi } from "./wallet-signin-view.mjs?v=wallet-signin-1";
+import {openWalletSigninEntry} from './wallet-signin-window.mjs?v=wallet-signin-2';
+import {selectConnectedWalletConnect} from './wallet-signin-connector.mjs?v=wallet-signin-2';
+import { handleWalletSigninRequest } from "./wallet-signin-host.mjs?v=wallet-signin-2";
+import { walletSigninApi } from "./wallet-signin-view.mjs?v=wallet-signin-2";
 import {
   activeShellRoot,
   activeShellFrame,
@@ -38,7 +38,7 @@ import {
   showHomeUnlock,
   manageWalletSignin,
   signOutHome,
-} from "./shell-auth.js?v=home-wallpaper-20261030b";
+} from "./shell-auth.js?v=wallet-signin-2";
 import {
   handleHomeWalletConnectorEffect,
   connectInventoryWallet,

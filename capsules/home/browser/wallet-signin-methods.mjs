@@ -1,4 +1,4 @@
-import {walletConnectorKind} from './wallet-signin-options.mjs';
+import {walletConnectorKind} from './wallet-signin-options.mjs?v=wallet-signin-2';
 // Home ends management before the requesting capsule stops waiting.
 export const walletSigninRequestTimeoutMs=420000;
 export function requestWalletSigninChange({action,methodId='',token,origin}) {

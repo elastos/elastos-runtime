@@ -1,10 +1,10 @@
-import {renderWalletSigninManagement} from './wallet-signin-management.mjs';
-import {createWalletSigninFlow,connectorName,walletNetwork,shortWalletAddress,walletSigninOriginAllowed} from './wallet-signin-flow.mjs';
+import {renderWalletSigninManagement} from './wallet-signin-management.mjs?v=wallet-signin-2';
+import {createWalletSigninFlow,connectorName,walletNetwork,shortWalletAddress,walletSigninOriginAllowed} from './wallet-signin-flow.mjs?v=wallet-signin-2';
 import {copyHomeWalletConnectionLink} from './home-clipboard-host.js?v=home-20260726a';
 import {signinBrowserWallets} from './home-wallet-connector-host.js?v=home-wallpaper-20261030b';
-import {selectSigninWallet,currentConnectedSigninMethods} from './wallet-signin-signers.mjs';
-import {readSigninChoice,saveSigninChoice,signinChoiceId,optionId,availableSigninOptions} from './wallet-signin-options.mjs';
-import {walletSigninRequestTimeoutMs} from './wallet-signin-methods.mjs';
+import {selectSigninWallet,currentConnectedSigninMethods} from './wallet-signin-signers.mjs?v=wallet-signin-2';
+import {readSigninChoice,saveSigninChoice,signinChoiceId,optionId,availableSigninOptions} from './wallet-signin-options.mjs?v=wallet-signin-2';
+import {walletSigninRequestTimeoutMs} from './wallet-signin-methods.mjs?v=wallet-signin-2';
 import {connectionView,renderConnection} from './wallet-connection-view.mjs';
 const titles={signin:'Sign in',add:'Add wallet',remove:'Remove wallet'};
 function node(tag,text,className) {const el=document.createElement(tag);if(text)el.textContent=text;if(className)el.className=className;return el;}

@@ -305,7 +305,7 @@ test("Home has one Sign in entry and offers choices in its sign-in sheet", async
   const {readFile} = await import("node:fs/promises");
   const markup = await readFile(new URL("./index.html", import.meta.url), "utf8");
   assert.doesNotMatch(markup, /Other options|data-home-signin-options/);
-  routes["/api/auth/passkey/status"] = () => ({body:{registered:true,wallet_signin_available:true,wallet_signin_connectors:["metamask"]}});
+  routes["/api/auth/passkey/status"] = () => ({body:{registered:true,wallet_signin_available:true,wallet_signin_connectors:["wallet-metamask"]}});
   await showHomeUnlock(() => {});
   assert.equal(element("#home-unlock-person").disabled, false);
   routes["/api/auth/passkey/status"] = () => ({body:{registered:true}});

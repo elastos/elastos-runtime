@@ -1,4 +1,4 @@
-import { createHomeWalletSignin } from "./wallet-signin-view.mjs?v=wallet-signin-1";
+import { createHomeWalletSignin } from "./wallet-signin-view.mjs?v=wallet-signin-2";
 import {
   clearHomeAuthorityToken,
   fetchJson,

@@ -1,4 +1,4 @@
-import {walletConnectorId,walletConnectorKind} from './wallet-signin-options.mjs';
+import {walletConnectorId,walletConnectorKind} from './wallet-signin-options.mjs?v=wallet-signin-2';
 // Home owns ceremonies. Signatures, secrets and retry bodies live in this tab only.
 export function walletBrowserSecret() {
   return [...crypto.getRandomValues(new Uint8Array(32))].map(b=>b.toString(16).padStart(2,'0')).join('');
