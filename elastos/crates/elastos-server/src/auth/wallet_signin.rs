@@ -3237,7 +3237,7 @@ pub(crate) mod tests {
             &other.proof_binding_id,
             PasskeyRemovalTarget {
                 proof_binding_id: &f.actor.proof_binding_id,
-                principal_id: &f.actor.principal_id,
+                account_id: &f.actor.principal_id,
                 remove_account: true,
             },
             now_ts(),
@@ -3335,7 +3335,7 @@ pub(crate) mod tests {
                     &a.proof_binding_id,
                     PasskeyRemovalTarget {
                         proof_binding_id: &a.proof_binding_id,
-                        principal_id: &a.principal_id,
+                        account_id: &a.principal_id,
                         remove_account: true,
                     },
                     now_ts(),
@@ -3353,7 +3353,7 @@ pub(crate) mod tests {
                     &b.proof_binding_id,
                     PasskeyRemovalTarget {
                         proof_binding_id: &b.proof_binding_id,
-                        principal_id: &b.principal_id,
+                        account_id: &b.principal_id,
                         remove_account: true,
                     },
                     now_ts(),
