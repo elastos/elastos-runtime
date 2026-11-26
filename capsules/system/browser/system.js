@@ -1,5 +1,6 @@
 import { readWalletInventory, requestWalletSigninChange, walletSigninControls, watchWalletSigninMethods } from "/apps/home/wallet-signin-methods.mjs?v=wallet-signin-1";
 import { connectorName, walletNetwork, shortWalletAddress } from "/apps/home/wallet-signin-flow.mjs?v=wallet-signin-1";
+import { walletConnectorKind } from "/apps/home/wallet-signin-options.mjs?v=wallet-signin-1";
 import { createTransferProgress, announceTransferProgress } from "./transfer-progress.js?v=download-progress-20261112";
 import {
   gatePreviewAuditView,
@@ -2763,14 +2764,15 @@ function accountRow(passkey, listState = {}) {
 }
 
 function walletAccountRow(method) {
+  const connector = walletConnectorKind(method.connector);
   const row = document.createElement('div'); row.className = 'system-signin-wallet'; row.dataset.walletMethod = method.proof_binding_id;
   const identity = document.createElement('div'); identity.className = 'system-wallet-identity';
-  const icon = document.createElement('img'); icon.alt = ''; icon.src = `/apps/home/connection-${method.connector}.png`;
+  const icon = document.createElement('img'); icon.alt = ''; icon.src = `/apps/home/connection-${connector}.png`;
   const copy = document.createElement('div'), title = document.createElement('strong'), address = document.createElement('div');
   title.textContent = method.wallet_display_name || connectorName(method.connector); title.dir = 'auto';
   address.className = 'system-wallet-meta';
-  const code = document.createElement('code'); code.textContent = method.connector === 'unisat' ? `${method.address.slice(0,8)}…${method.address.slice(-6)}` : shortWalletAddress(method.address); code.title = method.address;
-  const network = document.createElement('span'); network.textContent = (method.chain_id === 20 ? 'ESC' : walletNetwork(method)) + (method.connector === 'walletconnect' ? ' · WalletConnect' : '');
+  const code = document.createElement('code'); code.textContent = connector === 'unisat' ? `${method.address.slice(0,8)}…${method.address.slice(-6)}` : shortWalletAddress(method.address); code.title = method.address;
+  const network = document.createElement('span'); network.textContent = (method.chain_id === 20 ? 'ESC' : walletNetwork(method)) + (connector === 'walletconnect' ? ' · WalletConnect' : '');
   address.append(code, network); copy.append(title, address); identity.append(icon, copy);
   const actions = document.createElement('div'); actions.className = 'system-wallet-actions';
   const open = document.createElement('a'); open.href = '#wallet'; open.className = 'wallet-inventory-link'; open.textContent = 'Open Wallet';

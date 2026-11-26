@@ -293,6 +293,25 @@ test("System distinguishes two passkeys and identifies this window at desktop an
 });
 
 
+for (const engine of ["chromium", "webkit"]) test(`Accounts renders canonical wallet connectors with their local images and network labels in ${engine}`, windowTestOptions(engine, 30000), async () => {
+  await fixture(async ({ open }) => {
+    for (const [kind, name, chain, network, address, label] of [
+      ['metamask', 'MetaMask', 20, '', '0x1234567890123456789012345678901234567890', 'ESC'],
+      ['unisat', 'UniSat', 0, 'bitcoin', 'bc1q1234567890123456789012345678901234567890', 'Bitcoin'],
+      ['walletconnect', 'WalletConnect', 8453, '', '0x1234567890123456789012345678901234567890', 'Base · WalletConnect'],
+    ]) {
+      const method = {proof_binding_id:`wallet:${kind}`, connector:`wallet-${kind}`, address, chain_id:chain, network, sign_in_enabled:true};
+      const frame = await open([owner], {methods:[method]});
+      const row = frame.locator('.system-signin-wallet');
+      assert.equal(await row.locator('strong').textContent(), name);
+      assert.equal(await row.locator('.system-wallet-meta span').textContent(), label);
+      assert.equal(await row.locator('code').textContent(), kind === 'unisat' ? `${address.slice(0,8)}…${address.slice(-6)}` : `${address.slice(0,6)}…${address.slice(-4)}`);
+      assert.equal(await row.locator('img').getAttribute('src'), `/apps/home/connection-${kind}.png`);
+      await row.locator('img').evaluate(image => image.decode());
+    }
+  }, engine);
+});
+
 for (const engine of ["chromium", "webkit"]) test(`Accounts groups methods beneath their owner with equal add controls in both themes and widths in ${engine}`, windowTestOptions(engine, 30000), async () => {
   const tabKey = engine === "webkit" && process.platform === "darwin" ? "Alt+Tab" : "Tab";
   const previousKey = engine === "webkit" && process.platform === "darwin" ? "Alt+Shift+Tab" : "Shift+Tab";
