@@ -89,6 +89,13 @@ export async function linkedWindow(t,engine,{holdWalletRead=false,sourceRef}={})
  async function reopen(){await settle(frame);const loaded=page.waitForEvent('framenavigated',f=>f.parentFrame()===page.mainFrame()&&f.url().includes('/apps/wallet-walletconnect/'));await page.locator('#wallet').evaluate((node,src)=>node.src=src,nodeURL());frame=await loaded;await frame.locator('main[data-state]').waitFor();}
  function nodeURL(){return fixture.origin+'/apps/wallet-walletconnect/?home_origin='+encodeURIComponent(fixture.origin)+'#home_token=fixture-wallet';}
  async function openFromWallet(){await settle(frame);const loaded=page.waitForEvent('framenavigated',f=>f.parentFrame()===page.mainFrame()&&f.url().includes('/apps/wallet-walletconnect/'));await wallet.getByRole('button',{name:'Add wallet for apps',exact:true}).click();await wallet.locator('[data-wallet-open-method="wallet-walletconnect"]').click();frame=await loaded;await state('linked');}
+ async function expectWalletAccounts(count){
+  const ids=[...new Set(fixture.state.accounts.map(account=>`${account.chain_namespace}:${account.address.toLowerCase()}`))].sort();
+  assert.equal(ids.length,count,'the provider keeps the expected network/address records');
+  if(!count)await wallet.getByText('Add a wallet for apps, or create a Home address in Settings.',{exact:true}).waitFor();
+  for(const id of ids)await wallet.locator(`#wallet-inventory .one-wallet[data-wallet="${id}"]`).waitFor();
+  assert.deepEqual(await wallet.locator('#wallet-inventory .one-wallet').evaluateAll(nodes=>nodes.map(node=>node.dataset.wallet).sort()),ids,'the visible Wallet list shows each saved network/address record');
+ }
  const records=captures.get(engine)||[];captures.set(engine,records);
  async function capture(name){
   const output=process.env.WALLETCONNECT_LINKED_SCREENS;if(!output)return;
@@ -112,5 +119,5 @@ export async function linkedWindow(t,engine,{holdWalletRead=false,sourceRef}={})
  async function reopenWallet(){const navigated=page.waitForEvent('framenavigated',f=>f.url().includes('/apps/wallet/'));await page.getByRole('button',{name:'Reload Wallet',exact:true}).click();await navigated;await wallet.getByRole('button',{name:'Add wallet for apps',exact:true}).waitFor();}
  if(sourceRef?.startsWith('0db7'))await page.evaluate(()=>{const button=document.createElement('button');button.textContent='Reload Wallet';button.style='position:absolute;top:0;right:0';button.onclick=()=>{const wallet=document.querySelector('#accounts');wallet.src=wallet.src;};document.body.append(button);});
  await state('internet-ready');
- return {fixture,peer,page,wallet,holdApi,waitWalletRead,releaseWalletRead,get frame(){return frame;},state,click,link,pair,refresh,reopen,reopenWallet,openFromWallet,capture,idle,settle:()=>settle(frame)};
+ return {fixture,peer,page,wallet,expectWalletAccounts,holdApi,waitWalletRead,releaseWalletRead,get frame(){return frame;},state,click,link,pair,refresh,reopen,reopenWallet,openFromWallet,capture,idle,settle:()=>settle(frame)};
 }

@@ -7,6 +7,7 @@ import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {signinFixture,installSigninProviders,sampleMethod,evmAddress,bitcoinAddress,walletconnectAddress} from './lib/wallet-signin-fixture.mjs';
 import {requireProductSmokePlaywright,productSmokeLaunchOptions} from './product-smoke-browser.mjs';
+import {windowTestOptions} from './lib/walletconnect-window-resources.mjs';
 
 const output=process.env.WALLET_ONE_LIST_SCREENS;
 const captureRecords=[];
@@ -70,7 +71,7 @@ async function setup(engine,width,{pictures=false}={}) {
 async function show(f,target) {await f.page.evaluate(target=>document.querySelector('#show-'+target).click(),target);}
 async function refresh(f) {await f.page.evaluate(()=>document.querySelector('iframe[title=wallet]').contentWindow.postMessage({type:'home:wallet-signin-changed'},'*'));}
 for(const engine of ['chromium','webkit'])for(const width of [1440,390]) {
-  test(`one wallet list: real Wallet list and entries in ${engine} at ${width}`,{timeout:90000},async()=>{
+  test(`one wallet list: real Wallet list and entries in ${engine} at ${width}`,windowTestOptions(engine,90000),async()=>{
     const f=await setup(engine,width,{pictures:Boolean(output)});
     try {
       await show(f,'wallet');await f.wallet.locator('.one-wallet').nth(3).waitFor();
@@ -80,7 +81,7 @@ for(const engine of ['chromium','webkit'])for(const width of [1440,390]) {
       assert.equal(await f.wallet.locator('#wallet-methods').count(),0);
       await shot(f.wallet,'wallet-list',width,engine);
       await f.wallet.getByRole('button',{name:'Add wallet for apps',exact:true}).click();
-      assert.equal(await f.wallet.locator('[data-wallet-open-method]').count(),3);await f.wallet.getByRole('button',{name:'Cancel',exact:true}).click();
+      await f.wallet.locator('[data-wallet-open-method]').nth(2).waitFor();assert.equal(await f.wallet.locator('[data-wallet-open-method]').count(),3);await f.wallet.getByRole('button',{name:'Cancel',exact:true}).click();
       await f.wallet.getByRole('button',{name:'Open UniSat',exact:true}).click();
       await f.wallet.getByRole('heading',{name:'Used by',exact:true}).waitFor();
       const toggle=f.wallet.getByRole('switch',{name:'Apps and websites',exact:true});
@@ -112,7 +113,7 @@ for(const engine of ['chromium','webkit'])for(const width of [1440,390]) {
       assert.deepEqual(f.errors,[]);
     } finally {await f.close();}
   });
-  test(`one wallet list: real System Accounts, Add, Remove and exact-entry link in ${engine} at ${width}`,{timeout:90000},async()=>{
+  test(`one wallet list: real System Accounts, Add, Remove and exact-entry link in ${engine} at ${width}`,windowTestOptions(engine,90000),async()=>{
     const f=await setup(engine,width,{pictures:Boolean(output)});
     try {
       await f.system.locator('[data-wallet-method]').nth(1).waitFor();
@@ -145,7 +146,7 @@ for(const engine of ['chromium','webkit'])for(const width of [1440,390]) {
       assert.deepEqual(f.errors,[]);
     } finally {await f.close();}
   });
-  test(`one wallet list: connector names once in real ${engine} renderer at ${width}`,{timeout:30000},async()=>{
+  test(`one wallet list: connector names once in real ${engine} renderer at ${width}`,windowTestOptions(engine,30000),async()=>{
     const f=await setup(engine,width);
     try {
       for(const [kind,connectedName] of [['metamask','MetaMask'],['unisat','UniSat'],['walletconnect','Rainbow'],['metamask','Rabby Wallet']]) {
@@ -167,7 +168,7 @@ for(const engine of ['chromium','webkit'])for(const width of [1440,390]) {
     } finally {await f.close();}
   });
 }
-for(const engine of ['chromium','webkit'])test(`one wallet list keeps saved identities while unavailable methods leave Add in ${engine}`,{timeout:30000},async()=>{
+for(const engine of ['chromium','webkit'])test(`one wallet list keeps saved identities while unavailable methods leave Add in ${engine}`,windowTestOptions(engine,30000),async()=>{
   const f=await setup(engine,390);
   try {
     await show(f,'wallet');await f.wallet.locator('.one-wallet').nth(3).waitFor();f.fixture.state.walletconnectAvailable=false;
@@ -180,7 +181,7 @@ for(const engine of ['chromium','webkit'])test(`one wallet list keeps saved iden
     await f.wallet.getByRole('button',{name:'Cancel',exact:true}).click();assert.equal(await f.wallet.getByRole('button',{name:'Open Rainbow',exact:true}).count(),1);
   } finally {await f.close();}
 });
-for(const engine of ['chromium','webkit'])test(`one wallet list: phone app use signs once and Cancel preserves sign-in in ${engine}`,{timeout:45000},async()=>{
+for(const engine of ['chromium','webkit'])test(`one wallet list: phone app use signs once and Cancel preserves sign-in in ${engine}`,windowTestOptions(engine,45000),async()=>{
   const f=await setup(engine,390);
   try {
     const phone=f.fixture.state.connected.find(a=>a.connector_id==='wallet-walletconnect');
@@ -203,7 +204,7 @@ for(const engine of ['chromium','webkit'])test(`one wallet list: phone app use s
 });
 // Fix-round regressions run the real capsule modules against controlled Runtime replies.
 for(const engine of ['chromium','webkit'])for(const width of [1440,390]) {
-  test(`fix2 single saved ESC record shows every EVM balance in ${engine} at ${width}`,{timeout:45000},async()=>{
+  test(`fix2 single saved ESC record shows every EVM balance in ${engine} at ${width}`,windowTestOptions(engine,45000),async()=>{
     const f=await setup(engine,width);
     try {
       const home=f.fixture.state.connected[0];
@@ -230,7 +231,7 @@ for(const engine of ['chromium','webkit'])for(const width of [1440,390]) {
   });
 }
 for(const engine of ['chromium','webkit']) {
-  test(`fix1 built-in networks keep their own balances and one EVM card in ${engine}`,{timeout:45000},async()=>{
+  test(`fix1 built-in networks keep their own balances and one EVM card in ${engine}`,windowTestOptions(engine,45000),async()=>{
     const f=await setup(engine,390);
     try {
       const home=f.fixture.state.connected[0];
@@ -254,7 +255,7 @@ for(const engine of ['chromium','webkit']) {
       await f.page.setViewportSize({width:1440,height:1000});await shot(f.wallet,'home-address-networks-zero',1440,engine);
     }finally{await f.close();}
   });
-  test(`fix1 relay disclosure precedes Add pairing in ${engine}`,{timeout:30000},async()=>{
+  test(`fix1 relay disclosure precedes Add pairing in ${engine}`,windowTestOptions(engine,30000),async()=>{
     const f=await setup(engine,390);
     try {
       f.fixture.state.methods=[];f.fixture.state.connected=[];f.fixture.state.wcConnected=false;
@@ -268,7 +269,7 @@ for(const engine of ['chromium','webkit']) {
       assert.match(await f.page.locator('.signin-dialog').innerText(),/relay.*internet address/);
     }finally{await f.close();}
   });
-  test(`fix1 phone app use requests saved internet access and keeps pairing visible in ${engine}`,{timeout:45000},async()=>{
+  test(`fix1 phone app use requests saved internet access and keeps pairing visible in ${engine}`,windowTestOptions(engine,45000),async()=>{
     const f=await setup(engine,390);
     try {
       const phone=f.fixture.state.connected.find(a=>a.connector_id==='wallet-walletconnect');
@@ -294,7 +295,7 @@ for(const engine of ['chromium','webkit']) {
       await f.wallet.getByText('Connected for apps.',{exact:true}).waitFor();
     }finally{await f.close();}
   });
-  test(`fix1 app off uses one approval for all links and Cancel preserves every link in ${engine}`,{timeout:45000},async()=>{
+  test(`fix1 app off uses one approval for all links and Cancel preserves every link in ${engine}`,windowTestOptions(engine,45000),async()=>{
     const f=await setup(engine,390);
     try {
       const account=f.fixture.state.connected.find(a=>a.connector_id==='wallet-metamask');
@@ -309,7 +310,7 @@ for(const engine of ['chromium','webkit']) {
       assert.equal(f.fixture.state.connected.filter(a=>a.address===account.address).length,0);
     }finally{await f.close();}
   });
-  test(`fix1 inventory failure keeps Wallet usable and System sign-in removable in ${engine}`,{timeout:30000},async()=>{
+  test(`fix1 inventory failure keeps Wallet usable and System sign-in removable in ${engine}`,windowTestOptions(engine,30000),async()=>{
     const f=await setup(engine,390);
     try {
       await f.context.route('**/api/apps/wallet/wallet/inventory',route=>route.fulfill({status:503,body:'{}'}));
@@ -327,7 +328,7 @@ for(const engine of ['chromium','webkit']) {
     }finally{await f.close();}
   });
 }
-for(const engine of ['chromium','webkit'])test(`fix1 provider outage keeps sign-in visible and app use unknown in ${engine}`,{timeout:30000},async()=>{
+for(const engine of ['chromium','webkit'])test(`fix1 provider outage keeps sign-in visible and app use unknown in ${engine}`,windowTestOptions(engine,30000),async()=>{
   const f=await setup(engine,390);let partial=true;
   try {
     await f.context.route('**/api/apps/wallet/wallet/inventory',async route=>{

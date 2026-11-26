@@ -17,7 +17,7 @@
 //     the document renderer's choice stays measured rather than remembered.
 
 import { createServer } from "node:http";
-import { createRequire } from "node:module";
+import { requireProductSmokePlaywright, productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 import { deflateSync } from "node:zlib";
 import { readFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
@@ -26,12 +26,7 @@ import { fileURLToPath } from "node:url";
 const repoRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
 const browserRoot = join(repoRoot, "capsules/elacity-reader/browser");
 const homeNavigationClientPath = join(repoRoot, "capsules/home/browser/home-navigation-client.js");
-const brave =
-  process.env.BRAVE_BIN || "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser";
-const require = createRequire(
-  new URL("../elastos/tools/browser-playwright-engine/package.json", import.meta.url),
-);
-const { chromium } = require("playwright");
+const { chromium } = requireProductSmokePlaywright();
 
 const { buildStoredZip } = await import(
   new URL("../capsules/elacity-reader/browser/zip-fixture.test-helper.mjs", import.meta.url)
@@ -559,7 +554,7 @@ async function run() {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", () => resolvePort(server.address().port));
   });
-  const browser = await chromium.launch({ executablePath: brave, headless: true });
+  const browser = await chromium.launch({ ...productSmokeLaunchOptions(), headless: true });
   const page = await browser.newPage();
   const pageErrors = [];
   const consoleErrors = [];

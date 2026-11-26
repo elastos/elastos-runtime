@@ -113,11 +113,18 @@ test("update admission handles a missing candidate with an error", async () => {
   assert.doesNotMatch(source, /next_admission\.take\(\)\.unwrap\(\)/);
 });
 
-test("changed capsule entry points use the download progress asset version", async () => {
+test("changed capsule entry points retain download progress and current cache versions", async () => {
   const { readFile } = await import("node:fs/promises");
-  for (const name of ["system", "library", "archive-manager", "browser"]) {
+  for (const [name, entry, version, progressModule] of [
+    ["system", "system.js", "wallet-signin-2", "transfer-progress.js"],
+    ["library", "src/app.js", "download-progress-20261112", "model.js"],
+    ["archive-manager", "archive-manager.js", "download-progress-20261112", "byte-format.js"],
+    ["browser", "browser.js", "download-progress-20261112", "browser-status.js"],
+  ]) {
     const html = await readFile(new URL(`../capsules/${name}/browser/index.html`, import.meta.url), "utf8");
-    assert.match(html, /(?:system|app|archive-manager|browser)\.js\?v=download-progress-20261112/);
+    assert.ok(html.includes(`${entry}?v=${version}\"`), `${name} loads its current entry point`);
+    const source = await readFile(new URL(`../capsules/${name}/browser/${entry}`, import.meta.url), "utf8");
+    assert.ok(source.includes(`./${progressModule}?v=download-progress-20261112\"`), `${name} retains the current progress module`);
     if (name === "system") assert.match(html, /^<link rel="stylesheet" href="\.\/elastos-ui\.css">$/m);
   }
 });

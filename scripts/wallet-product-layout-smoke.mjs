@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { createServer } from "node:http";
+import { windowTestOptions } from "./lib/walletconnect-window-resources.mjs";
 import { observeCopiedFeedback } from "./lib/wallet-copy-feedback.mjs";
 import { productSmokeLaunchOptions, requireProductSmokePlaywright } from "./product-smoke-browser.mjs";
 import { mkdtemp, readFile, rm, mkdir, writeFile } from "node:fs/promises";
@@ -643,4 +644,9 @@ async function run(engine) {
     await assertNoErrors(rail,server,'rail');await rail.close();console.log(`wallet-product-layout-smoke: PASS ${engine} (one list, Send, Receive, preferences, clipboard, connector, default, recovery, rename, delete, create/import Cancel, late result and peer names)`);
   } finally {await browser.close().catch(()=>{});await server.close().catch(()=>{});if(process.env.KEEP_WALLET_UIUX_SMOKE_TMP!=='1')await rm(tempDir,{recursive:true,force:true});}
 }
-for(const engine of ['chromium','webkit'])await run(engine);
+const selectedEngine=process.env.WALLET_LAYOUT_ENGINE;
+for(const engine of selectedEngine?[selectedEngine]:['chromium','webkit']) {
+  const {skip}=windowTestOptions(engine,60000);
+  if(skip){console.log(`wallet-product-layout-smoke: ${engine} # SKIP ${skip}`);continue;}
+  await run(engine);
+}

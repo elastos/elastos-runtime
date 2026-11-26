@@ -33,7 +33,7 @@ test('Desktop focuses the exact admitted connector window without opening anothe
     await page.goto(fixture.origin+'/apps/home-gui/');
     const result=await page.evaluate(async()=>{
       const {shellState}=await import('/apps/home-gui/shell-core.js?v=home-20261101d');
-      const {focusHomeGuiWindowForToken}=await import('/apps/home-gui/home-gui.js?v=home-20261101d');
+      const {focusHomeGuiWindowForToken}=await import('/apps/home-gui/home-gui.js?v=home-20261110a');
       for(const [id,token] of [['other','other-token'],['connector','connector-token']]){
         const node=document.createElement('section');node.className='window';node.innerHTML='<button data-action="close">Close</button><iframe class="window-frame"></iframe>';
         node.querySelector('iframe').dataset.route='/apps/wallet-metamask/#home_token='+token;document.body.append(node);

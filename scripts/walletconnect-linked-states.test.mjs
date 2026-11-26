@@ -19,7 +19,7 @@ for(const engine of ['chromium','webkit']) {
   assert.deepEqual(await r.frame.locator('button').evaluateAll(nodes=>nodes.map(node=>node.dataset.action).sort()),['add-account','close-window','copy-address','disconnect']);
   await r.click('add-account');await r.state('add-account');await r.click('back-to-connection');await r.state('linked');
   await r.click('disconnect');await r.state('disconnected');await r.capture('all-linked-actions-walked');
-  assert.equal(await r.wallet.locator('#wallet-account-state').innerText(),'1 address','walking every linked-window action retains the account in Wallet');
+  await r.expectWalletAccounts(1);
  });
  test(`linked window cannot loop to a highlighted reconnect in ${engine}`,windowTestOptions(engine,60000),async t=>{
   const r=await linkedWindow(t,engine);await r.link();
@@ -39,23 +39,23 @@ for(const engine of ['chromium','webkit']) {
   assert.doesNotMatch(await r.frame.locator('main').innerText(),/now shows|different account|different network/,'returning to the linked selection clears the old change notice');
   await r.peer.changeChain('eip155:8453');await r.state('saved-unlinked');await r.click('finish');await r.state('linked');
   assert.equal(r.fixture.state.accounts.length,2,'both network proofs are stored');
-  await r.wallet.locator('#wallet-account-state').filter({hasText:'1 address'}).waitFor();assert.equal(await r.wallet.locator('#wallet-accounts .wallet-account').count(),1);await r.capture('same-address-on-both-networks');
+  await r.expectWalletAccounts(2);await r.capture('same-address-on-both-networks');
  });
  test(`open Wallet receives the new connected account in ${engine}`,windowTestOptions(engine,60000),async t=>{
-  const r=await linkedWindow(t,engine);await r.wallet.locator('#wallet-account-state').filter({hasText:'0 addresses'}).waitFor();await r.link();
-  await r.wallet.locator('#wallet-account-state').filter({hasText:'1 address'}).waitFor({timeout:4000});
+  const r=await linkedWindow(t,engine);await r.expectWalletAccounts(0);await r.link();
+  await r.expectWalletAccounts(1);
   await r.capture('wallet-live-account');
  });
  test(`Wallet refresh after linking follows an older in-flight read in ${engine}`,windowTestOptions(engine,60000),async t=>{
   const r=await linkedWindow(t,engine,{holdWalletRead:true});await r.waitWalletRead();await r.link();
   await r.page.waitForFunction(()=>window.events.some(e=>e.type==='home:refresh-summary'));
   r.releaseWalletRead();
-  await r.wallet.locator('#wallet-account-state').filter({hasText:'1 address'}).waitFor({timeout:4000});await r.capture('wallet-refresh-after-older-read');
+  await r.expectWalletAccounts(1);await r.capture('wallet-refresh-after-older-read');
  });
  test(`Wallet add control explains and adds another phone account in ${engine}`,windowTestOptions(engine,60000),async t=>{
   const r=await linkedWindow(t,engine);await r.link();
   if(process.env.WALLETCONNECT_LINKED_BEFORE==='original')await r.reopenWallet();
-  await r.wallet.locator('#wallet-account-state').filter({hasText:'1 address'}).waitFor();
+  await r.expectWalletAccounts(1);
   await r.openFromWallet();const connector=r.frame;
   if(await connector.locator('[data-action=add-account]').count())await connector.locator('[data-action=add-account]').click();
   await r.capture('same-phone-add-instructions');
@@ -67,15 +67,14 @@ for(const engine of ['chromium','webkit']) {
   const challenge=r.holdApi('/api/auth/evm/challenge'),verify=r.holdApi('/api/auth/evm/verify'),prompt=once(r.peer.events,'request');r.peer.choose({request:'silent'});
   await connector.locator('[data-action=send-message]').click();await challenge.entered;await r.state('preparing-connection');await r.capture('preparing-connection');challenge.release();
   await r.state('link-wait');await r.capture('link-wait');await prompt;await r.peer.answer('sign');await verify.entered;await r.state('checking-response');await r.capture('checking-response');verify.release();await r.state('linked');
-  await r.wallet.locator('#wallet-account-state').filter({hasText:'2 addresses'}).waitFor({timeout:4000});
+  await r.expectWalletAccounts(2);
   assert.equal(new Set(r.fixture.state.accounts.map(a=>a.address.toLowerCase())).size,2);
-  assert.equal(await r.wallet.locator('#wallet-accounts .wallet-account').count(),2,'Wallet displays both account cards');
   await r.capture('two-phone-accounts');
  });
  test(`Wallet adds a second wallet after an explicit disconnect in ${engine}`,windowTestOptions(engine,60000),async t=>{
   const r=await linkedWindow(t,engine);await r.link();
   if(process.env.WALLETCONNECT_LINKED_BEFORE==='original')await r.reopenWallet();
-  await r.wallet.locator('#wallet-account-state').filter({hasText:'1 address'}).waitFor();
+  await r.expectWalletAccounts(1);
   await r.openFromWallet();
   await r.click('add-account');await r.state('add-account');await r.capture('add-account');
   assert.doesNotMatch(await r.frame.locator('main').innerText(),/Home['’]s window controls/,'the visible return action is enough on the add instructions');
@@ -88,9 +87,8 @@ for(const engine of ['chromium','webkit']) {
   const second=await scriptedPhoneWallet({projectId:'fixture-project',relayUrl:r.fixture.origin.replace('http','ws'),chains:['eip155:1','eip155:8453'],name:'Second wallet',emitApprovalEvents:true});t.after(()=>second.stop());
   await r.click('connect');await r.state('qr-shown');await r.capture('second-wallet-qr');await r.click('copy-link');
   await second.pair(await r.page.evaluate(()=>window.copied));await r.state('linked');
-  await r.wallet.locator('#wallet-account-state').filter({hasText:'2 addresses'}).waitFor({timeout:4000});await r.capture('two-wallets');
+  await r.expectWalletAccounts(2);await r.capture('two-wallets');
   assert.equal(new Set(r.fixture.state.accounts.map(a=>a.address.toLowerCase())).size,2);
-  assert.equal(await r.wallet.locator('#wallet-accounts .wallet-account').count(),2,'Wallet displays both account cards');
  });
 
 }
@@ -106,9 +104,9 @@ for(const engine of ['chromium','webkit'])test(`add-account reconnect adds a pho
  assert.equal(r.fixture.state.accounts.length,1);r.peer.choose({request:'silent'});
  const prompt=once(r.peer.events,'request');await r.pair();await r.state('link-wait');await prompt;await r.capture('add-new-account-signature');
  const verify=r.holdApi('/api/auth/evm/verify');await r.peer.answer('sign');await verify.entered;await r.state('checking-response');await r.capture('add-checking-signature');verify.release();await r.state('linked');
- await r.wallet.locator('#wallet-account-state').filter({hasText:'2 addresses'}).waitFor();
+ await r.expectWalletAccounts(2);
  assert.deepEqual(new Set(r.fixture.state.accounts.map(a=>a.address.toLowerCase())),new Set([first,r.peer.address].map(a=>a.toLowerCase())));
- assert.equal(await r.wallet.locator('#wallet-accounts .wallet-account').count(),2);await r.capture('add-both-accounts');
+ await r.capture('add-both-accounts');
  assert.equal(r.peer.trace.filter(e=>e.kind==='proposal').length,2,'a fresh proposal offers the selected phone account');
  assert.equal(r.fixture.state.verified,2);
 });
@@ -120,7 +118,7 @@ for(const engine of ['chromium','webkit']){
   assert.equal(r.fixture.state.verified,1);assert.equal(r.peer.trace.filter(e=>e.kind==='request').length,1,'duplicate offers never request ownership again');
   assert.match(await r.frame.locator('main').innerText(),/This address is already in Wallet/);
   r.peer.selectAccount();await r.click('start-over');await r.state('qr-shown');await r.pair();await r.state('linked');
-  await r.wallet.locator('#wallet-account-state').filter({hasText:'2 addresses'}).waitFor();
+  await r.expectWalletAccounts(2);
   assert.ok(r.fixture.state.accounts.some(a=>a.address.toLowerCase()===first.toLowerCase()));
  });
  test(`add-account Back preserves the old connection in ${engine}`,windowTestOptions(engine,60000),async t=>{
@@ -163,7 +161,7 @@ for(const engine of ['chromium','webkit']){
   if(ending==='link-error')await r.page.unroute('**/api/auth/evm/verify');
   r.peer.choose({proposal:'approve',request:'sign'});await r.click('start-over');await r.state('qr-shown');
   await r.capture('add-retry-'+ending);await r.pair();await r.state('linked');
-  await r.wallet.locator('#wallet-account-state').filter({hasText:'2 addresses'}).waitFor();
+  await r.expectWalletAccounts(2);
  });
 }
 
@@ -198,8 +196,7 @@ for(const engine of ['chromium','webkit']){
   assert.equal(r.fixture.state.accounts.length,sameNetwork?2:3,'the provider keeps one record per network and address');
   if(sameNetwork)assert.equal(r.fixture.state.accounts.find(a=>a.address===other.address).connector_id,'wallet-walletconnect','the existing network record now uses WalletConnect');
   else assert.ok(r.fixture.state.accounts.some(a=>a.connector_id===connector),'the other network keeps MetaMask');
-  await r.wallet.locator('#wallet-account-state').filter({hasText:sameNetwork?'2 addresses':'3 addresses'}).waitFor();
-  assert.equal(await r.wallet.locator('#wallet-accounts .wallet-account').count(),sameNetwork?2:3);
+  await r.expectWalletAccounts(sameNetwork?2:3);
   await r.capture('add-method-result-'+(connector||'legacy-metamask')+'-'+(sameNetwork?'same':'other'));
  });
 }

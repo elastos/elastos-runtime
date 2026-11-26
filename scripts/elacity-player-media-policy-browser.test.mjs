@@ -13,8 +13,7 @@
 // only `blob:` added to `media-src`, so nothing else on the client path
 // (open parse, MediaSource, append, play) is left unproven.
 //
-// Needs ffmpeg (libx264 + aac) and an installed Google Chrome: the
-// open-source Chromium build has no H.264/AAC decoder.
+// Needs ffmpeg (libx264 + aac) and the product smoke browser with H.264/AAC.
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -25,7 +24,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { importProductSmokePlaywright } from "./product-smoke-browser.mjs";
+import { importProductSmokePlaywright, productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 
 const repoRoot = fileURLToPath(new URL("../", import.meta.url));
 const playerRoot = join(repoRoot, "capsules/elacity-player/browser");
@@ -231,7 +230,7 @@ async function playUnder(policyFor, { waitForFinality = false } = {}) {
   try {
     home = await startPlayerHome(makeDashItem(dir), policyFor, waitForFinality);
     const { chromium } = await importProductSmokePlaywright();
-    browser = await chromium.launch({ channel: "chrome", headless: true });
+    browser = await chromium.launch({ ...productSmokeLaunchOptions(), headless: true });
     const page = await browser.newPage();
     page.on("console", (message) => consoleLines.push(`${message.type()}: ${message.text()}`));
     await page.goto(`${home.origin}/apps/elacity-player/?mint_id=${MINT}#home_token=demo-home-token`);
