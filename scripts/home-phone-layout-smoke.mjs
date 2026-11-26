@@ -2879,7 +2879,7 @@ function phoneTouchMenuFailures(run) {
 const CLOSED_STREAM_REFRESH_TIMEOUT_MS = 10_000;
 const CLOSED_STREAM_PROFILE = PROFILES.find((profile) => profile.id === "phone-portrait");
 
-async function runClosedStream(browser, engineId, origin) {
+async function runClosedStream(browser, engineId, origin, { platform = process.platform } = {}) {
   const dir = join(outputRoot, engineId, "phone-portrait-closed-stream");
   mkdirSync(dir, { recursive: true });
   const context = await browser.newContext({
@@ -2891,7 +2891,31 @@ async function runClosedStream(browser, engineId, origin) {
   });
   fixture.closeEventStream = true;
   try {
+    // Linux WebKit can commit the blank reset after a fast fixture launch reply,
+    // discard the later GUI navigation, and leave src pointing at an unloaded URL.
+    // Let that reset load before releasing the mock root launch. This only paces
+    // fixture bootstrap; the closed stream and redraw-under-hold checks stay live.
+    if (platform === "linux" && engineId === "webkit") {
+      await context.addInitScript(() => {
+        document.addEventListener("load", (event) => {
+          const frame = event.target;
+          if (frame instanceof HTMLIFrameElement && frame.id === "active-shell-frame" && frame.getAttribute("src") === "about:blank") {
+            window.__phoneSmokeShellReset = { loadedAt: performance.now() };
+          }
+        }, true);
+      });
+      await context.route("**/api/apps/home/launch", async (route) => {
+        const input = route.request().postDataJSON();
+        if (input?.target === "home-gui" && input.query?.shell_mode === "root") {
+          const page = route.request().frame().page();
+          await page.waitForFunction(() => Boolean(window.__phoneSmokeShellReset), null, { timeout: BOOT_TIMEOUT_MS });
+          await page.evaluate(() => { window.__phoneSmokeShellReset.launchReleasedAt = performance.now(); });
+        }
+        await route.continue();
+      });
+    }
     const { page, frame } = await bootHome(context, origin);
+    const bootstrapReset = await page.evaluate(() => window.__phoneSmokeShellReset || null);
     const windowsBefore = await frame.locator(".window").count();
     const repliesAtBoot = fixture.summaryReplies;
     await waitFor(() => fixture.summaryReplies > repliesAtBoot, CLOSED_STREAM_REFRESH_TIMEOUT_MS,
@@ -2919,7 +2943,7 @@ async function runClosedStream(browser, engineId, origin) {
     await screenshot(page, dir, "closed-stream-dock-hold");
     const windowsAfter = await frame.locator(".window").count();
     await pressEscape(frame);
-    return { engine: engineId, target, expectedTitle, tileRemovedAfterMs, menu, windowsBefore, windowsAfter };
+    return { engine: engineId, target, expectedTitle, tileRemovedAfterMs, menu, windowsBefore, windowsAfter, bootstrapReset };
   } finally {
     fixture.closeEventStream = false;
     releaseHeldSummaries();
