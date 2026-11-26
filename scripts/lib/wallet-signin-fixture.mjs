@@ -189,10 +189,10 @@ export async function signinFixture() {
       if(path==='/fixture-host.mjs') {
         res.setHeader('content-type','text/javascript');res.end(`
 import {bindHomeUnlock,showHomeUnlock,hideHomeUnlock,manageWalletSignin,requestPasskeyStepUp} from '/apps/home/shell-auth.js?v=wallet-signin-fixture';
-import {handleWalletSigninRequest} from '/apps/home/wallet-signin-host.mjs';
-import {walletSigninApi} from '/apps/home/wallet-signin-view.mjs';
-import {selectConnectedWalletConnect} from '/apps/home/wallet-signin-connector.mjs';
-import {openWalletSigninEntry} from '/apps/home/wallet-signin-window.mjs';
+import {handleWalletSigninRequest} from '/apps/home/wallet-signin-host.mjs?v=wallet-signin-2';
+import {walletSigninApi} from '/apps/home/wallet-signin-view.mjs?v=wallet-signin-2';
+import {selectConnectedWalletConnect} from '/apps/home/wallet-signin-connector.mjs?v=wallet-signin-2';
+import {openWalletSigninEntry} from '/apps/home/wallet-signin-window.mjs?v=wallet-signin-2';
 import {homeGuiReply} from '/apps/home-gui/home-gui-authority.js';
 import {handleHomeWalletConnectorEffect,connectInventoryWallet} from '/apps/home/home-wallet-connector-host.js?v=home-wallpaper-20261030b';
 import {handleWalletAppUse,retireWalletAppUse} from '/apps/home/wallet-app-use-host.mjs';
@@ -284,7 +284,7 @@ export async function disconnectWalletConnectEvm(){}
         if(!file.startsWith(resolve(root,'capsules')+'/'))return json({},404);
       }
       let content=await readFile(file);
-      if(path==='/home/')content=Buffer.from(content.toString().replace('./home-shell-host.js?v=download-progress-20261112','/fixture-host.mjs'));
+      if(path==='/home/')content=Buffer.from(content.toString().replace(/\.\/home-shell-host\.js(?:\?[^"']*)?/, '/fixture-host.mjs'));
       res.setHeader('content-type',({'.js':'text/javascript','.mjs':'text/javascript','.html':'text/html','.css':'text/css','.svg':'image/svg+xml','.woff2':'font/woff2','.png':'image/png','.webp':'image/webp'})[extname(file)]||'application/octet-stream');res.end(content);
     }catch(error){res.writeHead(500).end('Fixture failed: '+error.code);}
   });

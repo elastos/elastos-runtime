@@ -51,7 +51,9 @@ test('Home and System load the current sign-in module graph after an update',asy
   const modules=(await readdir(home)).filter(name=>/^wallet-signin.*\.mjs$/.test(name));
   const sources=await Promise.all([...modules.map(name=>new URL(name,home)),
     new URL('shell-auth.js',home),new URL('home-shell-host.js',home),
-    new URL('../capsules/system/browser/system.js',import.meta.url)
+    new URL('../capsules/system/browser/system.js',import.meta.url),
+    new URL('lib/wallet-signin-fixture.mjs',import.meta.url),
+    new URL('../capsules/wallet/browser/wallet.js',import.meta.url)
   ].map(path=>readFile(path,'utf8')));
   let imports=0;
   for(const source of sources)for(const match of source.matchAll(/from\s+['"]([^'"]*wallet-signin[^'"]*\.mjs[^'"]*)['"]/g)){
@@ -64,4 +66,14 @@ test('Home and System load the current sign-in module graph after an update',asy
   assert.match(homePage,/home-shell-host\.js\?v=wallet-signin-2/);
   assert.match(host,/shell-auth\.js\?v=wallet-signin-2/);
   assert.match(systemPage,/system\.js\?v=wallet-signin-2/);
+});
+
+test('the browser fixture replaces the current Home entry module',async()=>{
+  const {signinFixture}=await import('./lib/wallet-signin-fixture.mjs');
+  const fixture=await signinFixture();
+  try{
+    const page=await (await fetch(fixture.origin+'/home/')).text();
+    assert.match(page,/src="\/fixture-host\.mjs"/);
+    assert.doesNotMatch(page,/src="\.\/home-shell-host\.js/);
+  }finally{await fixture.close();}
 });

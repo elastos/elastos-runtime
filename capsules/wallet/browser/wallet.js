@@ -1,6 +1,6 @@
 import {requestWalletAppConnection} from "./wallet-app-connect.js";
 import {createWalletInventory} from "./wallet-inventory.js";
-import {readWalletInventory} from "/apps/home/wallet-signin-methods.mjs";
+import {readWalletInventory} from "/apps/home/wallet-signin-methods.mjs?v=wallet-signin-2";
 import { createWalletActivity } from "./wallet-activity.js?v=wallet-20261115a";
 import {
   createWalletApi,
