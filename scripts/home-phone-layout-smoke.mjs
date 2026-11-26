@@ -1061,11 +1061,16 @@ async function probeExternalLink(page, dir, target) {
     // press held past the guard, an early held Space and an early Enter with
     // key repeat open nothing; a fresh tap on the same sheet then opens once.
     const earlyPresses = [];
+    // Keep trusted browser input: synthetic page events would be rejected for
+    // isTrusted alone and would not prove the time guard. Pause the page clock
+    // before showing each sheet so runner round trips cannot consume its guard.
+    await page.clock.install();
     for (const kind of ["pointer", "space", "enter-repeat"]) {
       const url = `${LINK_DESTINATION_ORIGIN}/early-${kind}`;
-      await page.evaluate(() => {
+      await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1_000));
+      await page.evaluate((kind) => {
         const root = document.querySelector("#home-link-prompt");
-        const timing = { shownAt: null, pressAt: null };
+        const timing = { shownAt: null, pressAt: null, releaseAt: null, trusted: false };
         window.__earlyPress = timing;
         const observer = new MutationObserver(() => {
           if (!root.hidden) {
@@ -1074,37 +1079,48 @@ async function probeExternalLink(page, dir, target) {
           }
         });
         observer.observe(root, { attributes: true, attributeFilter: ["hidden"] });
-        const pressed = () => { timing.pressAt ??= performance.now(); };
+        const pressed = (event) => {
+          timing.pressAt = performance.now();
+          timing.trusted = event.isTrusted;
+        };
         const open = document.querySelector("#home-link-open");
-        open.addEventListener("pointerdown", pressed, { capture: true, once: true });
-        open.addEventListener("keydown", pressed, { capture: true, once: true });
-      });
+        open.addEventListener(kind === "pointer" ? "pointerdown" : "keydown", pressed, { capture: true, once: true });
+        open.addEventListener(kind === "pointer" ? "pointerup" : "keyup", () => {
+          timing.releaseAt = performance.now();
+        }, { capture: true, once: true });
+      }, kind);
       await ask(url);
       await page.locator("#home-link-prompt").waitFor({ state: "visible", timeout: BOOT_TIMEOUT_MS });
       const before = { pages: context.pages().length, requests: destinationRequests.length };
       if (kind === "pointer") {
-        // hover waits until Open link is visible, stable and hit by the pointer.
-        await page.locator("#home-link-open").hover();
+        // Native input at the button's centre, without hover's animation-frame
+        // stability wait while the page clock is paused.
+        const box = await page.locator("#home-link-open").boundingBox();
+        assert(box, "Open link has a box for the early pointer press");
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
         await page.mouse.down();
-        await sleep(EARLY_PRESS_HOLD_MS);
+        await page.clock.runFor(EARLY_PRESS_HOLD_MS);
         await page.mouse.up();
       } else {
         const key = kind === "space" ? "Space" : "Enter";
         await page.locator("#home-link-open").focus();
         await page.keyboard.down(key);
-        await sleep(EARLY_PRESS_HOLD_MS);
+        await page.clock.runFor(EARLY_PRESS_HOLD_MS);
         if (kind === "enter-repeat") {
           // A second down without an up is sent with repeat set.
           await page.keyboard.down(key);
         }
         await page.keyboard.up(key);
       }
+      await page.clock.resume();
       await sleep(SURFACE_SETTLE_MS);
       const timing = await page.evaluate(() => window.__earlyPress);
       const press = {
         kind,
         url,
         pressedAfterMs: timing.shownAt === null || timing.pressAt === null ? null : Math.round(timing.pressAt - timing.shownAt),
+        releasedAfterMs: timing.shownAt === null || timing.releaseAt === null ? null : Math.round(timing.releaseAt - timing.shownAt),
+        trusted: timing.trusted,
         pages: context.pages().length - before.pages,
         requests: destinationRequests.length - before.requests,
         sheetShown: !(await sheet()).hidden,
@@ -1195,8 +1211,10 @@ function externalLinkFailures(run) {
     failures.push(`${label}: Open link must open exactly the address with no opener and no referrer. Got ${JSON.stringify(probe.opened)}`);
   }
   for (const press of probe.earlyPresses) {
-    if (press.pressedAfterMs === null || press.pressedAfterMs >= EXTERNAL_LINK_OPEN_GUARD_MS) {
+    if (!press.trusted || press.pressedAfterMs === null || press.pressedAfterMs < 0 || press.pressedAfterMs >= EXTERNAL_LINK_OPEN_GUARD_MS) {
       failures.push(`${label}: the early ${press.kind} press must begin inside the ${EXTERNAL_LINK_OPEN_GUARD_MS} ms guard to test it. Got ${JSON.stringify(press)}`);
+    } else if (press.releasedAfterMs === null || press.releasedAfterMs < EARLY_PRESS_HOLD_MS) {
+      failures.push(`${label}: the early ${press.kind} press must be released after the guard to test it. Got ${JSON.stringify(press)}`);
     } else if (press.pages !== 0 || press.requests !== 0 || !press.sheetShown) {
       failures.push(`${label}: an early ${press.kind} press held past the guard must open nothing and keep the sheet. Got ${JSON.stringify(press)}`);
     } else if (press.retryUrl !== press.url || !press.retryOpenerIsNull) {
