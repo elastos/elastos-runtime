@@ -141,15 +141,17 @@ export function createReadSlots(limit) {
  * `read(key)` resolves to a `listingReadOutcome`, or `{kind: "pending"}`
  * (not final yet; the finality watch owns it). `onChange(key)` asks the page
  * to repaint. `listing(key)` is the listing a settled state was read from.
- * `waitsForFinality(key)` says whether the finality watch still holds a
- * `pending` key; once it does not, the key is read again. `forget(key)`
+ * `waitsForFinality(key)` says whether the finality watch holds the key:
+ * while it does, its re-check is the item's next read and its answer is
+ * noted here, so the key is never read here, whatever its state. Once it
+ * does not, the usual rules apply (`pending` is read again). `forget(key)`
  * drops one card's state -- every card's, with no key -- so a shown card is
  * read again at once: the page's Refresh, and a failed card's Try again
  * (D5, STAB-29).
  */
 export function createAccessWatch({
   read,
-  waitsForFinality = () => true,
+  waitsForFinality = () => false,
   onChange,
   slots,
   now,
@@ -216,12 +218,35 @@ export function createAccessWatch({
       // It stands for the account the chain answers for now.
       subject = subjects.get(chain).subject;
     }
-    entries.set(key, { state: cardAccessState(listing), listing, at: now(), chain, subject, failures: 0, dueAt: null });
+    const entry = { state: cardAccessState(listing), listing, at: now(), chain, subject, failures: 0, dueAt: null };
+    entries.set(key, entry);
+    if (retryTimers.has(key)) {
+      clearTimer(retryTimers.get(key));
+      retryTimers.delete(key);
+    }
+    // A held answer no reachable Home serves leaves its card disabled; a
+    // card nobody scrolls is never shown again, so its TTL reread is woken here,
+    // once per answer. It runs only for this answer, still shown, and still
+    // due, so the visibility, pause and account rules stand.
+    if (listing.noReachableHolder === true) {
+      retryTimers.set(key, setTimer(() => {
+        retryTimers.delete(key);
+        if (entries.get(key) !== entry) {
+          return;
+        }
+        // The firing timer is the due signal; the wall clock may read a hair early.
+        entry.at = Math.min(entry.at, now() - ACCESS_SETTLED_TTL_MS);
+        if (shown.has(key) && needsRead(key)) {
+          queue.push(key);
+          pump();
+        }
+      }, ACCESS_SETTLED_TTL_MS));
+    }
     onChange(key);
   }
 
   function needsRead(key) {
-    if (inFlight.has(key) || queue.includes(key)) {
+    if (inFlight.has(key) || queue.includes(key) || waitsForFinality(key)) {
       return false;
     }
     const entry = entries.get(key);
@@ -232,7 +257,7 @@ export function createAccessWatch({
       return entry.dueAt !== null && now() >= entry.dueAt;
     }
     if (entry.state === "pending") {
-      return !waitsForFinality(key);
+      return true;
     }
     if (entry.state === "unavailable") {
       return false;
@@ -262,7 +287,7 @@ export function createAccessWatch({
     paused = false;
     const first = [...shown].find((key) => {
       const entry = entries.get(key);
-      return entry && !inFlight.has(key) && entry.listing !== null;
+      return entry && !inFlight.has(key) && entry.listing !== null && !waitsForFinality(key);
     });
     if (first !== undefined) {
       entries.get(first).at = -Infinity;
@@ -273,7 +298,9 @@ export function createAccessWatch({
   function pump() {
     while (!paused && queue.length) {
       const key = queue[0];
-      if (!shown.has(key) || inFlight.has(key)) {
+      // A key the finality watch took while it waited for a slot is left to
+      // that watch; it is queued again when shown after the watch lets go.
+      if (!shown.has(key) || inFlight.has(key) || waitsForFinality(key)) {
         queue.shift();
         continue;
       }

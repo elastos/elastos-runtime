@@ -41,6 +41,17 @@ test("card access accepts only an account-bound positive answer without offers",
   }
 });
 
+test("a card answer may say no reachable Home serves the item, and only as true", () => {
+  const { item, asset } = listingFixture();
+  const card = { schema: MARKET_CARD_ACCESS_SCHEMA_V1, item, asset,
+    access_state: "purchased", access_subject: "ab".repeat(16) };
+  assert.equal(parseMarketCardAccess(card).listing?.noReachableHolder, undefined);
+  assert.equal(parseMarketCardAccess({ ...card, no_reachable_holder: true }).listing?.noReachableHolder, true);
+  for (const invalid of [false, "true", 1, null]) {
+    assert.equal(parseMarketCardAccess({ ...card, no_reachable_holder: invalid }).ok, false, String(invalid));
+  }
+});
+
 // Built inline from the written contract (the listing object and the
 // buy_offer answers). The producer-written fixtures are exercised by the
 // *.fixture.test.mjs files beside this one; this file does not depend on them.

@@ -1638,19 +1638,29 @@ async fn setup_server_infrastructure_impl(
                 "Skipping custody-provider due to verification failure: {}",
                 e
             );
-        } else if let Err(e) = elastos_server::protected_content_runtime::register_custody_provider(
-            &provider_registry,
-            &path,
-            &data_dir,
-        )
-        .await
-        {
-            tracing::warn!(
-                "Failed to register inactive Runtime-only custody provider: {}",
-                e
-            );
         } else {
-            tracing::info!("custody-provider registered on the Runtime-only custody target");
+            match elastos_server::protected_content_runtime::start_custody_provider_at_boot(
+                &provider_registry,
+                &path,
+                &data_dir,
+            )
+            .await
+            {
+                Ok(elastos_server::protected_content_runtime::CustodyProviderStartup::Registered) => {
+                    tracing::info!("custody-provider registered on the Runtime-only custody target");
+                }
+                Ok(elastos_server::protected_content_runtime::CustodyProviderStartup::NotProvisioned) => {
+                    tracing::info!(
+                        "custody-provider not started: this Home holds no custody root yet; it starts when a pool creates one"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to register inactive Runtime-only custody provider: {}",
+                        e
+                    );
+                }
+            }
         }
     } else {
         tracing::warn!(

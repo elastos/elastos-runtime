@@ -2633,6 +2633,100 @@ async fn custody_registration_rejects_missing_or_unsafe_root_before_provider_use
     assert!(!pid_file.exists());
 }
 
+/// B1 (#624 update hop): a Home that never provisioned custody does not
+/// start the provider at boot, so its log carries no "failed to register"
+/// warning for a normal state. A present root still starts the provider.
+#[cfg(unix)]
+#[tokio::test]
+async fn custody_boot_start_skips_only_a_home_that_never_provisioned_custody() {
+    let temp = tempfile::tempdir().unwrap();
+    let data_dir = temp.path().join("fresh");
+    owner_only_dir(&data_dir);
+    let (binary, pid_file, request_log) = write_mock_custody_provider(temp.path());
+    let registry = Arc::new(ProviderRegistry::new());
+
+    assert_eq!(
+        start_custody_provider_at_boot(&registry, &binary, &data_dir)
+            .await
+            .unwrap(),
+        CustodyProviderStartup::NotProvisioned
+    );
+    assert!(!pid_file.exists());
+    assert!(!request_log.exists());
+
+    owner_only_dir(&inactive_custody_state_root(&data_dir));
+    crate::host_trust::seed_for_test(&data_dir, true);
+    assert_eq!(
+        start_custody_provider_at_boot(&registry, &binary, &data_dir)
+            .await
+            .unwrap(),
+        CustodyProviderStartup::Registered
+    );
+    assert!(process_is_running(read_pid(&pid_file)));
+    registry
+        .unregister_runtime_provider_target(CUSTODY_PROVIDER_ID)
+        .await
+        .unwrap();
+}
+
+/// Only genuine absence is skipped: a root that is present but malformed,
+/// or a custody folder that cannot be read, still fails boot registration
+/// (and so still warns), before any provider process starts.
+#[cfg(unix)]
+#[tokio::test]
+async fn custody_boot_start_still_refuses_a_malformed_or_unreadable_root() {
+    let temp = tempfile::tempdir().unwrap();
+    let (binary, pid_file, request_log) = write_mock_custody_provider(temp.path());
+    let registry = Arc::new(ProviderRegistry::new());
+
+    // The inactive root's name is taken by a file.
+    let malformed = temp.path().join("malformed");
+    owner_only_dir(&malformed);
+    let base = custody_provider_base(&malformed);
+    fs::create_dir_all(base.parent().unwrap()).unwrap();
+    owner_only_dir(&base);
+    fs::write(inactive_custody_state_root(&malformed), b"not a root").unwrap();
+    let error = start_custody_provider_at_boot(&registry, &binary, &malformed)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("missing or unsafe"), "{error}");
+
+    // The custody folder itself is a file, so nothing under it can be read.
+    let unreadable = temp.path().join("unreadable");
+    owner_only_dir(&unreadable);
+    let base = custody_provider_base(&unreadable);
+    fs::create_dir_all(base.parent().unwrap()).unwrap();
+    fs::write(&base, b"not a folder").unwrap();
+    let error = start_custody_provider_at_boot(&registry, &binary, &unreadable)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("missing or unsafe"), "{error}");
+
+    // The custody folder is a link: dangling, or to an empty folder. Both
+    // children read as missing through it, which is not absence.
+    for (name, target) in [("dangling", "nowhere"), ("linked-empty", "empty")] {
+        let home = temp.path().join(name);
+        owner_only_dir(&home);
+        let base = custody_provider_base(&home);
+        fs::create_dir_all(base.parent().unwrap()).unwrap();
+        let target = temp.path().join(target);
+        if name == "linked-empty" {
+            owner_only_dir(&target);
+        }
+        std::os::unix::fs::symlink(&target, &base).unwrap();
+        let error = start_custody_provider_at_boot(&registry, &binary, &home)
+            .await
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("missing or unsafe"),
+            "{name}: {error}"
+        );
+    }
+
+    assert!(!pid_file.exists());
+    assert!(!request_log.exists());
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn inactive_custody_registry_unregisters_shutdowns_and_restarts_bridge() {

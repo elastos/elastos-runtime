@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { catalogCardControl } from "./market-card.js";
-import { CUSTODY_ELSEWHERE_COPY } from "./market-listing.js";
+import { catalogCardControl, formatBadge } from "./market-card.js";
+import { CUSTODY_ELSEWHERE_COPY, NO_REACHABLE_HOLDER_COPY } from "./market-listing.js";
 
 const LEDGER = `0x${"e".repeat(40)}`;
 const KEY = `${LEDGER}|0x3e`;
@@ -71,6 +71,21 @@ test("access the chain grants is Open, which builds the copy and opens it", () =
   assert.deepEqual([foreign.tag, foreign.text], ["span", "Opens on ela.city"]);
 });
 
+// PR5 point 1: a granted item that no reachable Home serves, with no copy
+// here, would only fail to open from its pool.
+test("granted but served by no reachable Home is a disabled Unavailable that stays watched", () => {
+  const control = only(render(item(), { access: "held", noHolder: true }));
+  assert.deepEqual([control.text, control.action, control.disabled], ["Unavailable", null, true]);
+  assert.equal(control.title, NO_REACHABLE_HOLDER_COPY);
+  assert.equal(control.accessKey, KEY, "the watch rereads it on its TTL");
+  // This Home's own copy of the exact item still opens: it needs no holder.
+  const local = only(render(item(), { access: "held", noHolder: true, mint: "mint-1" }));
+  assert.deepEqual([local.text, local.action, local.disabled], ["Open", "open-media", false]);
+  // Without the hint the answer is unchanged.
+  const served = only(render(item(), { access: "held", noHolder: false }));
+  assert.deepEqual([served.text, served.action], ["Open", "open-market-item"]);
+});
+
 test("a settled unknown is an enabled View that opens the sheet, never Buy", () => {
   const control = only(render(item(), { access: "unknown" }));
   assert.deepEqual([control.text, control.action, control.disabled], ["View", "view-listing", false]);
@@ -107,4 +122,17 @@ test("an item Base has not finalized keeps its control disabled with no action",
     const control = only(render(item(), { finalityPending: true, access }));
     assert.deepEqual([control.text, control.disabled, control.action], [text, true, null], access);
   }
+});
+
+// PR5 point 2: a catalog item is told only its kind (`video/*`).
+test("the format badge names a wildcard MIME's kind, and keeps concrete badges", () => {
+  const badge = (mimeType) => formatBadge({ mimeType });
+  assert.deepEqual(
+    ["video/*", "image/*", "audio/*", "application/*", "*/*"].map(badge),
+    ["VIDEO", "IMAGE", "AUDIO", "FILE", "FILE"],
+  );
+  assert.deepEqual(
+    ["video/mp4", "video/quicktime", "audio/mpeg", "image/jpeg", "application/epub+zip", ""].map(badge),
+    ["MP4", "MOV", "MP3", "JPG", "EPUB", "FILE"],
+  );
 });

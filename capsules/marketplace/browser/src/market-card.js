@@ -7,9 +7,40 @@
 import {
   CUSTODY_ELSEWHERE_COPY,
   CUSTODY_UNRESOLVED_LABEL,
+  NO_REACHABLE_HOLDER_COPY,
   NO_WALLET_ACCOUNT_LABEL,
   downloadControl,
 } from "./market-listing.js";
+
+// The format badge: what this item IS, in the shortest true word.
+//
+// Taken from the MIME's subtype rather than from a table of names, so an
+// item of a kind nobody anticipated still gets a badge instead of nothing.
+// Deliberately no resolution beside it: the design shows "MP4 · 720p", and
+// this Home is told the codec but never the frame size, so it says the part
+// it knows rather than a number it guessed.
+export function formatBadge(listing) {
+  const mime = String(listing.mimeType || "").toLowerCase();
+  const subtype = mime.slice(mime.indexOf("/") + 1);
+  // A catalog item is told only its kind (`video/*`): the badge names the
+  // kind, not the wildcard.
+  if (subtype === "*") {
+    const kind = mime.slice(0, mime.indexOf("/"));
+    return ["video", "image", "audio"].includes(kind) ? kind.toUpperCase() : "FILE";
+  }
+  const named = {
+    "quicktime": "MOV",
+    "x-matroska": "MKV",
+    "mpeg": mime.startsWith("audio/") ? "MP3" : "MPEG",
+    "svg+xml": "SVG",
+    "epub+zip": "EPUB",
+    "vnd.openxmlformats-officedocument.wordprocessingml.document": "DOCX",
+    "plain": "TXT",
+    "jpeg": "JPG",
+  }[subtype];
+  const badge = named || subtype.replace(/^x-/, "").toUpperCase();
+  return badge.length > 0 && badge.length <= 6 ? badge : "FILE";
+}
 
 /**
  * `listing` is the catalog item (`ledger`, `tokenId`, `accessState`). `ctx`:
@@ -21,6 +52,8 @@ import {
  * - `downloading`: a copy of it is being built now;
  * - `listingLoading`: its listing is being read for a sheet;
  * - `mint`: this Home's own listing of it, when it holds one;
+ * - `noHolder`: the access answer said no reachable Home serves its
+ *   document, so opening it from its pool cannot succeed now;
  * - `size`: the button size class.
  */
 export function catalogCardControl(listing, ctx) {
@@ -88,6 +121,12 @@ export function catalogCardControl(listing, ctx) {
     case "held": {
       if (mint) {
         return `<button class="btn btn-primary ${size}" type="button" data-action="open-media" ${mint} ${watch}>Open</button>`;
+      }
+      if (ctx.noHolder) {
+        // Granted, but no reachable Home serves it, and it has no copy here:
+        // nothing to press. The card keeps its watch key, so the access read
+        // on its TTL brings Open back once a holder serves it again.
+        return `<button class="btn btn-ghost ${size}" type="button" disabled aria-disabled="true" title="${escapeAttr(NO_REACHABLE_HOLDER_COPY)}" ${watch}>Unavailable</button>`;
       }
       if (ctx.readability === "foreign") {
         return `<span class="store-row-state" ${watch}>Opens on ela.city</span>`;

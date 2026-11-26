@@ -487,7 +487,7 @@ assert(
 // every surface says to add the pool in Custody instead of offering Buy,
 // Open or Download.
 assert(
-  marketListingJs.includes('const TOP_OPTIONAL_KEYS = ["offers_truncated", "access_unknown", "custody_route", "access_subject"];')
+  marketListingJs.includes('const TOP_OPTIONAL_KEYS = ["offers_truncated", "access_unknown", "custody_route", "access_subject", "no_reachable_holder"];')
     && marketListingJs.includes('export const MARKET_CUSTODY_ROUTES = ["pool", "unresolved"];')
     && marketListingJs.includes('"This item’s pool cannot be reached from this Home yet. Add the pool in Custody."')
     && js.includes('const elsewhere = listing.custodyRoute === "unresolved";')

@@ -1327,6 +1327,11 @@ async fn an_entitled_market_card_uses_item_rights_when_metadata_holders_refuse()
     assert_eq!(answer["item"]["kid"], Value::Null);
     assert_eq!(answer["asset"]["readability"], "unknown");
     assert!(answer.get("offers").is_none());
+    assert_eq!(
+        answer["no_reachable_holder"],
+        Value::Bool(true),
+        "the card is told no reachable Home serves the item: {answer}"
+    );
     assert_eq!(env.content_paths(), vec!["metadata.json"]);
 
     env.chain.lock().unwrap().has_access = false;
