@@ -1805,28 +1805,41 @@ async fn wallet_inventory_http_rejects_inbox_and_browser_and_survives_provider_d
     let f = wallet_fixture::fixture();
     wallet_fixture::enabled(&f);
     let app = gateway_router(test_state(f.data.path()));
-    for capsule in [INBOX_CAPSULE_ID, BROWSER_CAPSULE_ID] {
-        let token =
-            issue_home_launch_token_for_auth_grant(f.data.path(), capsule, &f.actor).unwrap();
-        let (status, _) = call(
-            &app,
-            "/api/apps/wallet/wallet/inventory",
-            Some(&token),
-            None,
-        )
-        .await;
-        assert_eq!(status, StatusCode::FORBIDDEN, "{capsule}");
-    }
-    for capsule in [HOME_CAPSULE_ID, SYSTEM_CAPSULE_ID, WALLET_CAPSULE_ID] {
-        let token =
-            issue_home_launch_token_for_auth_grant(f.data.path(), capsule, &f.actor).unwrap();
-        let (status, out) = call(
-            &app,
-            "/api/apps/wallet/wallet/inventory",
-            Some(&token),
-            None,
-        )
-        .await;
+    for capsule in [
+        INBOX_CAPSULE_ID,
+        BROWSER_CAPSULE_ID,
+        HOME_CAPSULE_ID,
+        SYSTEM_CAPSULE_ID,
+        WALLET_CAPSULE_ID,
+    ] {
+        let (token, origin) = if capsule == HOME_CAPSULE_ID {
+            (
+                issue_home_launch_token_for_auth_grant(f.data.path(), capsule, &f.actor).unwrap(),
+                ORIGIN,
+            )
+        } else {
+            (wallet_app_token(f.data.path(), capsule, &f.actor), "null")
+        };
+        let response = app
+            .clone()
+            .oneshot(
+                test_browser_request("localhost:61180", origin)
+                    .uri("/api/apps/wallet/wallet/inventory")
+                    .header("x-elastos-home-token", token)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        if [INBOX_CAPSULE_ID, BROWSER_CAPSULE_ID].contains(&capsule) {
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{capsule}");
+            continue;
+        }
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let out: Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(status, StatusCode::OK, "{capsule}: {out}");
         assert_eq!(
             out["entries"][0]["sign_in"]["method_id"],
