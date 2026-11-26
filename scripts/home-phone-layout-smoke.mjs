@@ -3735,6 +3735,11 @@ async function launchEngine(playwright, engineId) {
   return engine.launch({ ...(engineId === "chromium" ? { executablePath: executable } : {}), headless: true, args });
 }
 
+// Run the reconnect/Dock probe without the unrelated layout and stage probes.
+const requestedCase = process.env.HOME_PHONE_SMOKE_CASE;
+assert(!requestedCase || requestedCase === "closed-stream", `unsupported phone smoke case ${requestedCase}`);
+const closedStreamOnly = requestedCase === "closed-stream";
+
 const requestedEngines = (process.env.HOME_PHONE_SMOKE_ENGINES || "chromium,webkit")
   .split(",")
   .map((value) => value.trim())
@@ -3761,7 +3766,7 @@ try {
     }
     try {
       for (const profile of PROFILES) {
-        if (!requestedProfiles.includes(profile.id)) {
+        if (closedStreamOnly || !requestedProfiles.includes(profile.id)) {
           continue;
         }
         const run = await runProfile(browser, engineId, profile, origin);
@@ -3773,20 +3778,23 @@ try {
       report.closedStreamRuns.push(closedStream);
       failures.push(...closedStreamFailures(closedStream));
       console.log(`[home-phone-layout] ${engineId}/phone-portrait/closed-stream tile_redrawn_after_ms=${closedStream.tileRemovedAfterMs} menu=${closedStream.menu.open ? closedStream.menu.title : "shut"} windows=${closedStream.windowsBefore}->${closedStream.windowsAfter}`);
-      const stageReset = await runStageReset(browser, engineId, origin);
-      report.stageResetRuns.push(stageReset);
-      failures.push(...stageResetFailures(stageReset));
-      console.log(`[home-phone-layout] ${engineId}/stage-reset boot=${stageReset.bootFactor} fullscreen_to_phone=${stageReset.fullscreenToPhone.reset.runs}x/${stageReset.fullscreenToPhone.reset.durationMs}ms back=${stageReset.fullscreenToPhone.afterBack ? "history" : "skipped"} library_across_stages=${stageReset.libraryAcrossStages ? "probed" : "skipped (buttons)"}`);
+      if (!closedStreamOnly) {
+        const stageReset = await runStageReset(browser, engineId, origin);
+        report.stageResetRuns.push(stageReset);
+        failures.push(...stageResetFailures(stageReset));
+        console.log(`[home-phone-layout] ${engineId}/stage-reset boot=${stageReset.bootFactor} fullscreen_to_phone=${stageReset.fullscreenToPhone.reset.runs}x/${stageReset.fullscreenToPhone.reset.durationMs}ms back=${stageReset.fullscreenToPhone.afterBack ? "history" : "skipped"} library_across_stages=${stageReset.libraryAcrossStages ? "probed" : "skipped (buttons)"}`);
+      }
     } finally {
       await browser.close().catch(() => {});
     }
   }
+  const completedRuns = closedStreamOnly ? report.closedStreamRuns : report.runs;
   assert(
-    report.runs.length > 0,
+    completedRuns.length > 0,
     `home-phone-layout-smoke ran no engine; requested ${requestedEngines.join(",")} but Playwright Chromium is not installed`,
   );
   assert(
-    !requestedEngines.includes("chromium") || report.runs.some((run) => run.engine === "chromium"),
+    !requestedEngines.includes("chromium") || completedRuns.some((run) => run.engine === "chromium"),
     "home-phone-layout-smoke needs Playwright Chromium",
   );
   report.capsuleErrors = capsuleErrors;
@@ -3797,7 +3805,7 @@ try {
   assert(failures.length === 0, "phone layout regressed past its baseline", failures);
   const source = report.source;
   console.log(
-    `home-phone-layout-smoke: PASS engines=${report.runs.map((run) => run.engine).filter((value, index, all) => all.indexOf(value) === index).join("+")} ` +
+    `home-phone-layout-smoke: PASS engines=${completedRuns.map((run) => run.engine).filter((value, index, all) => all.indexOf(value) === index).join("+")} ` +
       `viewport_meta=${Object.values(source.baseViewportMeta).every(Boolean) ? "base" : "changed"} ` +
       `bare_100vh=${source.bareViewportHeightUnits} backdrop_filters=${source.backdropFilters} ` +
       `boot_retries=${report.runs.reduce((sum, run) => sum + run.bootRetries, 0)} ` +

@@ -5,8 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-for (const engine of ["chromium", "webkit"]) {
-  test(`phone smoke leaves ${engine}'s executable selection with its owner`, () => {
+for (const [engine, smokeCase] of [
+  ["chromium", ""], ["webkit", ""],
+  ["chromium", "closed-stream"], ["webkit", "closed-stream"],
+]) {
+  test(`phone smoke ${smokeCase || "all"} leaves ${engine}'s executable selection with its owner`, () => {
     const directory = mkdtempSync(join(tmpdir(), "phone-layout-launch-"));
     try {
       const module = join(directory, "playwright.mjs");
@@ -30,7 +33,7 @@ for (const engine of ["chromium", "webkit"]) {
         cwd: new URL("../", import.meta.url),
         env: { ...process.env, ELASTOS_PLAYWRIGHT_MODULE: module,
           ELASTOS_BROWSER_EXECUTABLE: module, HOME_PHONE_SMOKE_ENGINES: engine,
-          HOME_PHONE_SMOKE_OUT: join(directory, "output") },
+          HOME_PHONE_SMOKE_OUT: join(directory, "output"), HOME_PHONE_SMOKE_CASE: smokeCase || "" },
         encoding: "utf8", timeout: 10_000,
       });
       assert.equal(result.error, undefined);
@@ -41,3 +44,15 @@ for (const engine of ["chromium", "webkit"]) {
     }
   });
 }
+
+test("phone smoke rejects an unknown case before starting a browser", () => {
+  const result = spawnSync(process.execPath, ["scripts/home-phone-layout-smoke.mjs"], {
+    cwd: new URL("../", import.meta.url),
+    env: { ...process.env, HOME_PHONE_SMOKE_CASE: "unknown",
+      ELASTOS_PLAYWRIGHT_MODULE: "/phone-case-validation/absent-playwright.mjs" },
+    encoding: "utf8", timeout: 10_000,
+  });
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /unsupported phone smoke case unknown/);
+});
