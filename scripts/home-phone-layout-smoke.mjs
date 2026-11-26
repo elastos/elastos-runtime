@@ -1947,6 +1947,7 @@ async function screenshot(page, dir, name) {
 }
 
 async function bootHome(context, origin) {
+  const bootConsoleErrors = [];
   if (process.env.HOME_PHONE_FRAME_TRACE) {
     await context.addInitScript(() => {
       const writes = window.__phoneFrameWrites = [];
@@ -1987,8 +1988,10 @@ async function bootHome(context, origin) {
     // Console errors are recorded, not asserted: capsule API 404s are expected
     // under the fixture and WebKit logs the caught cross-frame probe in
     // installFrameAutoFit as a console error. Uncaught shell errors still fail.
-    if (message.type() === "error" && consoleErrors.length < 40) {
-      consoleErrors.push(message.text().slice(0, 400));
+    if (message.type() === "error") {
+      const text = message.text().slice(0, 400);
+      if (consoleErrors.length < 40) consoleErrors.push(text);
+      if (bootConsoleErrors.length < 40) bootConsoleErrors.push(text);
     }
   });
   await page.goto(`${origin}/apps/home/`, { waitUntil: "domcontentloaded" });
@@ -2018,7 +2021,7 @@ async function bootHome(context, origin) {
         sleep(1_000).then(() => ({ error: "frame document unavailable" })),
       ]),
     })));
-    throw new Error(`${error.message}\nhost state: ${JSON.stringify(hostState, null, 2)}\nobserved frames: ${JSON.stringify(observedFrames, null, 2)}\nconsole: ${JSON.stringify(consoleErrors.slice(-5), null, 2)}`);
+    throw new Error(`${error.message}\nhost state: ${JSON.stringify(hostState, null, 2)}\nobserved frames: ${JSON.stringify(observedFrames, null, 2)}\nconsole: ${JSON.stringify(bootConsoleErrors.slice(-5), null, 2)}`);
   }
   const frame = homeGuiFrame(page);
   await waitFor(() => frame.locator(".taskbar").isVisible(), BOOT_TIMEOUT_MS, "Home GUI dock");
@@ -2099,13 +2102,14 @@ async function recordPointerEvents(frame) {
 async function runProfile(browser, engineId, profile, origin) {
   const dir = join(outputRoot, engineId, profile.id);
   mkdirSync(dir, { recursive: true });
-  const context = await browser.newContext({
+  const contextOptions = {
     viewport: profile.viewport,
     deviceScaleFactor: profile.deviceScaleFactor,
     isMobile: profile.isMobile,
     hasTouch: profile.hasTouch,
     reducedMotion: "reduce",
-  });
+  };
+  let context = await browser.newContext(contextOptions);
   const surfaces = [];
   let dockProbe = null;
   let stageProbe = null;
@@ -2128,16 +2132,16 @@ async function runProfile(browser, engineId, profile, origin) {
     try {
       booted = await bootHome(context, origin);
     } catch (error) {
-      // WebKit occasionally never attaches the GUI frame on the first page of
-      // a fresh engine (the host reports ready, the frame never lands). This
-      // smoke measures layout, not boot reliability; one retry is recorded in
-      // the report so a real regression still shows as repeated retries.
+      // A lost WebKit blank-reset navigation can survive page replacement in
+      // the same context. Retire that context before the single recorded retry;
+      // a second boot failure keeps its frame state and fails the smoke.
       if (!/Home GUI frame/.test(error.message)) {
         throw error;
       }
       bootRetries += 1;
       console.warn(`[home-phone-layout] ${engineId}/${profile.id} boot retry: ${error.message}`);
-      await Promise.all(context.pages().map((page) => page.close()));
+      await context.close();
+      context = await browser.newContext(contextOptions);
       booted = await bootHome(context, origin);
     }
     const { page, frame } = booted;
