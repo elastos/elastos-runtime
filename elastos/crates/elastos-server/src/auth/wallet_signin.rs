@@ -1495,6 +1495,47 @@ pub(crate) mod tests {
         out["method_id"].as_str().unwrap().into()
     }
     #[test]
+    fn wallet_signin_names_rc1_migration_and_real_undo_signin() {
+        use super::super::wallet_signin_rc1 as rc1;
+        for (old, new) in [("metamask", "wallet-metamask"), ("walletconnect", "wallet-walletconnect")] {
+            let f = fixture();
+            let legacy_input = |action: &str, id: &str| serde_json::from_value(serde_json::json!({
+                "action":action,"method_id":id,"connector":old,"address":f.address,
+                "chain_id":20,"browser_secret":BROWSER,"allow_temporary_internet":true
+            })).unwrap();
+            let legacy_complete = |b: &rc1::BeginResult| serde_json::from_value(serde_json::json!({
+                "ceremony_id":b.ceremony_id,"browser_secret":BROWSER,
+                "signature":if b.message.is_empty() {String::new()} else {signed(&f.key, &b.message)},
+                "signature_type":"personal_sign"
+            })).unwrap();
+            let b = rc1::begin(f.data.path(), ORIGIN, "home-test", legacy_input("add", ""), Some(f.actor.clone())).unwrap();
+            let id = rc1::complete(f.data.path(), ORIGIN, &legacy_complete(&b), Some(&f.actor), |_| Ok(())).unwrap()["method_id"].as_str().unwrap().to_string();
+            let listed = list(f.data.path(), &f.actor).unwrap();
+            assert_eq!(listed["principal_id"], f.actor.principal_id);
+            assert_eq!(listed["methods"][0]["proof_binding_id"], id);
+            assert_eq!(listed["methods"][0]["connector"], new);
+            assert!(listed.get("account_id").is_none());
+            assert!(listed["methods"][0].get("method_id").is_none());
+            let canonical: Value = serde_json::from_slice(&std::fs::read(path(f.data.path()).unwrap().with_file_name("wallet-signin-bindings.json")).unwrap()).unwrap();
+            assert_eq!(canonical["schema"], "elastos.auth.wallet.signin/v1");
+            assert_eq!(canonical["methods"][0]["principal_id"], f.actor.principal_id);
+            assert_eq!(canonical["methods"][0]["proof_binding_id"], id);
+            assert_eq!(canonical["methods"][0]["connector"], new);
+            assert_eq!(signin(&f).proof_binding_id, id);
+            // Undo executes the frozen rc.1 reader, message builder and verifier.
+            let b = rc1::begin(f.data.path(), ORIGIN, "home-test", legacy_input("signin", ""), None).unwrap();
+            let session = rc1::complete(f.data.path(), ORIGIN, &legacy_complete(&b), None, |_| panic!("sign-in approval")).unwrap();
+            assert_eq!(session["principal_id"], f.actor.principal_id);
+            assert_eq!(session["proof_binding_id"], id);
+            // A removal during Undo wins over the canonical copy on re-upgrade.
+            let b = rc1::begin(f.data.path(), ORIGIN, "home-test", legacy_input("remove", &id), Some(f.actor.clone())).unwrap();
+            rc1::complete(f.data.path(), ORIGIN, &legacy_complete(&b), Some(&f.actor), |_| Ok(())).unwrap();
+            assert!(list(f.data.path(), &f.actor).unwrap()["methods"].as_array().unwrap().is_empty());
+            assert!(principal(f.data.path(), &id).is_err());
+        }
+    }
+
+    #[test]
     fn wallet_inventory_signin_snapshot_is_account_scoped_after_removal() {
         let f = fixture();
         let id = enabled(&f);

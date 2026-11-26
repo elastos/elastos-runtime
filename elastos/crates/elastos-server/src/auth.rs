@@ -32,6 +32,10 @@ use sha2::{Digest, Sha256};
 use crate::host_lock::FileLock;
 
 pub(crate) mod wallet_signin;
+#[cfg(test)]
+#[allow(dead_code, unused_imports)]
+#[path = "../tests/fixtures/wallet_signin_rc1.rs"]
+mod wallet_signin_rc1;
 
 const AUTH_STATE_SCHEMA: &str = "elastos.auth.state/v1";
 pub(crate) const AUTH_SESSION_TTL_SECS: u64 = 12 * 60 * 60;
