@@ -241,11 +241,15 @@ for(const engine of ['chromium','webkit']) {
       await f.wallet.getByText('Allow WalletConnect internet access in Inbox, then select Try again.',{exact:true}).waitFor();
       assert.equal(f.fixture.state.calls.filter(c=>c.path==='/api/apps/wallet-walletconnect/internet'&&c.body).length,1);
       assert.equal(f.fixture.state.calls.filter(c=>c.path.endsWith('/relay-admission')).length,0);
+      await shot(f.wallet,'apps-internet-permission',390,engine);
+      await f.page.setViewportSize({width:1440,height:1000});await shot(f.wallet,'apps-internet-permission',1440,engine);await f.page.setViewportSize({width:390,height:1000});
       f.fixture.state.internetStatus='granted';
       await f.wallet.getByRole('button',{name:'Try again',exact:true}).click();
       const connector=f.page.frameLocator('iframe[data-target=wallet-walletconnect]');
       await connector.locator('[data-state=qr-shown]').waitFor();
       assert.equal(await f.page.locator('iframe[data-target=wallet-walletconnect]').isVisible(),true);
+      await shot(connector,'app-walletconnect-pairing',390,engine);
+      await f.page.setViewportSize({width:1440,height:1000});await shot(connector,'app-walletconnect-pairing',1440,engine);await f.page.setViewportSize({width:390,height:1000});
       await f.page.locator('iframe[data-target=wallet-walletconnect]').evaluate(frame=>frame.contentWindow.postMessage('fixture-pair','*'));
       await f.wallet.getByText('Connected for apps.',{exact:true}).waitFor();
     }finally{await f.close();}
@@ -274,6 +278,8 @@ for(const engine of ['chromium','webkit']) {
       await show(f,'system');await f.system.locator('[data-wallet-method]').nth(1).waitFor();
       assert.equal(await f.system.getByRole('button',{name:'Remove from sign-in',exact:true}).count(),2);
       await show(f,'wallet');await f.wallet.getByText('Home could not load wallet sign-in use.',{exact:true}).waitFor();
+      await shot(f.wallet,'inventory-read-unavailable',390,engine);
+      await f.page.setViewportSize({width:1440,height:1000});await shot(f.wallet,'inventory-read-unavailable',1440,engine);
       await f.context.unroute('**/api/apps/wallet/wallet/inventory');
       await f.wallet.getByRole('button',{name:'Try again',exact:true}).click();
       await f.wallet.getByRole('button',{name:'Open UniSat',exact:true}).waitFor();
