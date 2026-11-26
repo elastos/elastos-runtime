@@ -207,6 +207,8 @@ for(const engine of ['chromium','webkit']) {
       await shot(f.wallet,'home-address-networks',390,engine);
       await f.page.setViewportSize({width:1440,height:1000});await shot(f.wallet,'home-address-networks',1440,engine);
       await f.page.setViewportSize({width:390,height:1000});
+      f.fixture.state.balanceValues[home.address]['base-mainnet']=String(75n*10n**16n);await refresh(f);
+      await card.getByText('0.75 ETH',{exact:true}).waitFor();
       f.fixture.state.balanceValues={};await refresh(f);
       await card.getByText('0.00 ETH',{exact:true}).waitFor();assert.equal(await card.getByText('0.00 ELA',{exact:true}).count(),1);
       await f.page.setViewportSize({width:1440,height:1000});await shot(f.wallet,'home-address-networks-zero',1440,engine);
