@@ -1,4 +1,4 @@
-import { createHomeClipboardClient } from "/apps/home/home-clipboard-client.js?v=home-20260726a";
+import { createHomeClipboardClient } from "/apps/home/home-clipboard-client.js?v=home-20261111a";
 import { startExtensionWindow } from './extension-window.mjs';
 
 const CONNECTOR_ID = 'wallet-unisat';

@@ -2,7 +2,7 @@ import {installWalletConnectStorage} from './walletconnect-storage.mjs';
 import {createWalletConnectClient} from './walletconnect-client.mjs';
 import {connectionView,reduceSummary,mountConnection, captureConnectionPresentation, connectionKey} from './wallet-connection-view.mjs';
 import {windowPresentation, walletConnectView, errorStage, baseActions, signableRequest, connectorId, sameAccount} from './walletconnect-window-state.mjs';
-import {createHomeClipboardClient} from "/apps/home/home-clipboard-client.js?v=home-20260726a";
+import {createHomeClipboardClient} from "/apps/home/home-clipboard-client.js?v=home-20261111a";
 
 const CONNECTOR_ID = connectorId;
 const root = document.querySelector('#wallet-window');
