@@ -169,52 +169,29 @@ test("n4_metadata_bounds_and_text_rendering: real Wallet", async t => {
   const account = { account_id: "account:fixture-1", chain_namespace: "eip155:20", address: requestFixture().address,
     connector_id: "wallet-walletconnect", proof_type: "siwe", wallet_display_name: name, wallet_mark: "wallet" };
   const r = await runtimeView(t, "wallet", { accounts: [account] });
-  const label = r.frame.locator(".wallet-account .wallet-card-name");
-  await label.filter({ hasText: name }).waitFor();
-  assert.equal(await label.textContent(), name);
-  assert((await r.frame.locator("#wallet-account-card").getAttribute("aria-label")).includes(name));
-  assert((await r.frame.locator(".wallet-account [data-wallet-account-menu]").getAttribute("aria-label")).includes(name));
-  assert.equal(await label.evaluate(el => el.dir), "auto");
-  assert.equal(await label.evaluate(el => getComputedStyle(el).unicodeBidi), "isolate");
-  const mark = r.frame.locator(".wallet-account .wallet-method-mark img");
-  assert.match(await mark.getAttribute("src"), /icons\/icon-64.png$/);
-  assert.equal(await mark.getAttribute("alt"), "");
-  assert.equal(await r.frame.locator(".wallet-account svg[onload]").count(), 0);
-  const linked = r.frame.locator(".wallet-method-account");
-  assert.equal(await linked.locator("strong").textContent(), name);
-  assert.equal(await linked.locator("strong").evaluate(el => el.dir), "auto");
-  assert.match(await linked.locator("img").getAttribute("src"), /icons\/icon-64.png$/);
-  await linked.getByRole("button", { name:"Remove", exact:true }).click();
-  const confirmation = r.frame.getByRole("heading", { name:`Remove ${name}?`, exact:true });
-  await confirmation.waitFor();
-  assert.match(await r.frame.locator("#wallet-modal .wallet-modal-body").textContent(), /fed1/);
-  assert.match(await r.frame.locator(".wallet-modal-header").textContent(), /Your funds stay unchanged/);
-  assert.doesNotMatch(await r.frame.locator(".wallet-modal-header").textContent(), /recovery key/);
-  assert.equal(await confirmation.textContent(), `Remove ${name}?`, "the confirmation names the same isolated display identity as its row");
-  assert.equal(await confirmation.locator("bdi").textContent(), name);
-  assert.equal(await confirmation.locator("bdi").evaluate(el=>el.dir), "auto");
-  assert.equal(await confirmation.locator("bdi").evaluate(el=>getComputedStyle(el).unicodeBidi), "isolate");
-  assert.equal(await r.frame.locator(".wallet-modal-header svg[onload]").count(), 0);
-  await r.capture("wallet-account-remove-confirm-light-window.png");
-  await r.frame.locator("#wallet-modal").getByRole("button", { name:"Cancel", exact:true }).click();
-  await confirmation.waitFor({ state:"hidden" });
-  await r.capture("wallet-linked-light-window.png");
-  assert.deepEqual(r.errors, []);
-  const builtin = await runtimeView(t, "wallet", { accounts:[{ ...account, account_id:"account:managed-fixture", proof_type:"managed_evm",
-    connector_id:null, wallet_display_name:null, wallet_mark:null }] });
-  await builtin.frame.locator(".wallet-method-account").getByRole("button", { name:"Remove", exact:true }).click();
-  assert.match(await builtin.frame.locator(".wallet-modal-header").textContent(), /Built-in addresses require their Wallet recovery key/);
-  assert.deepEqual(builtin.errors, []);
+  const label = r.frame.locator('.one-identity strong');await label.filter({hasText:name}).waitFor();
+  assert.equal(await label.textContent(),name);assert.equal(await label.evaluate(el=>el.dir),'auto');
+  assert.equal(await r.frame.locator('.one-wallet svg[onload]').count(),0);
+  await r.frame.getByRole('button',{name:`Open ${name}`,exact:true}).click();await r.frame.getByRole('switch',{name:'Apps and websites'}).click();
+  const confirmation=r.frame.getByRole('dialog',{name:'Turn off app use?'});await confirmation.waitFor();
+  assert.match(await confirmation.innerText(),/This ends app and website requests for this wallet only/);
+  assert.equal(await confirmation.locator('p bdi').textContent(),name);assert.equal(await confirmation.locator('p bdi').evaluate(el=>el.dir),'auto');
+  assert.equal(await confirmation.locator('svg[onload]').count(),0);
+  await r.capture('wallet-account-remove-confirm-light-window.png');await confirmation.getByRole('button',{name:'Cancel',exact:true}).click();
+  assert.equal(await r.frame.getByRole('switch').getAttribute('aria-checked'),'true');assert.deepEqual(r.errors,[]);
+  const builtin=await runtimeView(t,'wallet',{accounts:[{...account,account_id:'managed',proof_type:'managed_evm',connector_id:null,wallet_display_name:null,wallet_mark:null,label:'Home address'}]});
+  await builtin.frame.getByRole('button',{name:'Open Home address',exact:true}).click();await builtin.frame.getByRole('button',{name:'Manage address',exact:true}).click();
+  assert.equal(await builtin.frame.getByRole('button',{name:/recovery key/i}).count(),1);assert.deepEqual(builtin.errors,[]);
 });
 
 test("n4_old_record_and_reopened_window: legacy Wallet fallback", async t => {
   const account = { account_id: "account:fixture-1", chain_namespace: "eip155:20", address: requestFixture().address,
     connector_id: "wallet-metamask", proof_type: "siwe" };
   const r = await runtimeView(t, "wallet", { accounts: [account] });
-  await r.frame.locator(".wallet-account .wallet-card-name").filter({ hasText: "Your wallet" }).waitFor();
+  await r.frame.locator(".one-identity strong").filter({ hasText: "MetaMask" }).waitFor();
   await r.page.reload();
-  await r.frame.locator(".wallet-account .wallet-card-name").filter({ hasText: "Your wallet" }).waitFor();
-  assert.match(await r.frame.locator(".wallet-method-account img").getAttribute("src"), /icons\/icon-64.png$/);
+  await r.frame.locator(".one-identity strong").filter({ hasText: "MetaMask" }).waitFor();
+  assert.match(await r.frame.locator(".one-identity img").getAttribute("src"), /connection-metamask.png$/);
   await r.capture("wallet-linked-unknown-light-window.png");
   assert.deepEqual(r.errors, []);
 });

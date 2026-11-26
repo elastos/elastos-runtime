@@ -312,6 +312,10 @@ async function handleApi(req, res, url) {
     json(res, 200, { saved: true });
     return true;
   }
+  if (url.pathname === "/api/apps/wallet/wallet/inventory" && req.method === "GET") {
+    if (!requireToken(req,walletToken,res)) return true;
+    json(res,200,{schema:'elastos.wallet.inventory/v1',account_id:'fixture',account_name:'Alex',entries:state.walletAccounts.map(account=>({inventory_id:`${account.chain_namespace}:${account.address.toLowerCase()}`,address:account.address,chain_namespace:account.chain_namespace,accounts:[account],sign_in:null}))});return true;
+  }
   if (url.pathname === "/api/apps/wallet/wallet/summary" && req.method === "GET") {
     if (!requireToken(req, walletToken, res)) {
       return true;
@@ -551,6 +555,7 @@ async function checkWalletPhoneOpen(page, homeGui) {
   await waitFor(() => frameFor(page, "wallet"), 15000, "phone Wallet frame");
   const wallet = frameFor(page, "wallet");
   for (const [target, title] of Object.entries(connectorTitles)) {
+    await wallet.getByRole("button",{name:"Add wallet for apps",exact:true}).tap();
     const button = wallet.locator(`[data-wallet-open-method="${target}"]`).first();
     await button.waitFor({state:"visible",timeout:15000});
     await button.tap();
@@ -610,7 +615,7 @@ async function checkMarketplaceOpen(page, homeGui, pageErrors) {
         preloadWalletRail();
       });
       await waitFor(() => frameFor(page, "wallet"), 5000, "Home preloads Wallet rail");
-      await frameFor(page, "wallet").locator('[data-wallet-open-method="wallet-metamask"]')
+      await frameFor(page, "wallet").locator('#wallet-add-apps')
         .waitFor({state:"attached",timeout:5000});
     } else {
       assert(!frameFor(page, "wallet"), "phone starts without a preloaded Wallet rail");
@@ -727,7 +732,7 @@ async function checkMarketplaceOpen(page, homeGui, pageErrors) {
     await marketplace.locator('.store-row[data-app="wallet"] [data-action="open"]').first().click();
     await homeGui.locator('.window[data-target="wallet"] iframe').waitFor({state:"visible",timeout:5000});
     await homeGui.frameLocator('.window[data-target="wallet"] iframe')
-      .locator('[data-wallet-open-method="wallet-metamask"]').waitFor({state:"attached",timeout:5000});
+      .locator('#wallet-add-apps').waitFor({state:"attached",timeout:5000});
     assert(state.launches.wallet === walletsBeforePlainOpen + 1, "ordinary Wallet Open uses its normal launch path");
     await page.waitForTimeout(2700);
     await homeGui.locator('.window[data-target="wallet"] [data-action="close"]').click();
@@ -894,7 +899,7 @@ try {
   const wallet = await (await walletFrame.elementHandle()).contentFrame();
   // The static Settings button can exist before Wallet's module binds handlers.
   await wallet.waitForLoadState("domcontentloaded", { timeout: 15_000 });
-  await wallet.waitForSelector("#wallet-settings-open", { timeout: 15_000 });
+  await wallet.waitForSelector("#wallet-add-apps", { timeout: 15_000 });
   const connectorLabels = Object.freeze({
     "wallet-metamask": "Connect wallet",
     "wallet-unisat": "Connect wallet",
@@ -913,16 +918,13 @@ try {
 
   let walletRecoveryLaunches=0;
   for (const [target, connectLabel] of Object.entries(connectorLabels)) {
-    // Connector controls arrive with the summary, after the static Wallet HTML.
+    await wallet.getByRole("button",{name:"Add wallet for apps",exact:true}).click();
+    // Connector controls belong to the app-use chooser.
     await wallet.locator(`[data-wallet-open-method="${target}"]`).waitFor({
       state: "attached", timeout: 15_000,
     });
-    // Keep Settings open for the continuity proof while activating the handler.
+    // The approved Add control returns to the same Wallet list.
     await wallet.evaluate(({ connectorTarget }) => {
-      const drawer = document.querySelector("#wallet-settings-drawer");
-      if (drawer?.hidden !== false) {
-        document.querySelector("#wallet-settings-open").click();
-      }
       document
         .querySelector(`[data-wallet-open-method="${connectorTarget}"]`)
         .click();
@@ -980,7 +982,7 @@ try {
     );
     assert(
       walletUiDuringConnector.route === walletUiBeforeConnectors.route &&
-        walletUiDuringConnector.settingsOpen === true &&
+        walletUiDuringConnector.settingsOpen === false &&
         walletUiDuringConnector.statePreserved === true,
       `${target} replaced or reset the Wallet frame state`,
       { walletUiBeforeConnectors, walletUiDuringConnector },
@@ -1019,21 +1021,19 @@ try {
       // Wallet's real request card opens the second request while the first connector stays open.
       await homeGui.evaluate(() => document.querySelector('.window[data-target="wallet"] iframe').contentWindow.postMessage({type:'elastos:wallet-refresh'},'*'));
       await homeGui.locator('.window[data-target="wallet"] .window-head').click({position:{x:80,y:14}});
-      await wallet.getByRole('button',{name:'Close settings',exact:true}).click();
-      await wallet.getByRole('button',{name:'Open MetaMask',exact:true}).click();
+      await wallet.getByRole('button',{name:'Add wallet for apps',exact:true}).click();await wallet.locator('.one-dialog [data-wallet-open-method="wallet-metamask"]').click();
       await waitFor(() => page.frames().filter(frame=>frame.url().includes('/apps/wallet-metamask/')).length === 2,5000,'fresh MetaMask request window');
       const fresh = page.frames().filter(frame=>frame.url().includes('/apps/wallet-metamask/')).find(frame=>frame!==connector);
       await fresh.getByText('Second MetaMask request',{exact:true}).waitFor();
       assert(await connector.getByText('Second MetaMask request',{exact:true}).count() === 0,'original MetaMask frame retains its load-time list');
       await homeGui.locator('.window[data-target="wallet-metamask"] [data-action="close"]').last().click();
       state.approvalRequests = [];
-      await wallet.locator('#wallet-settings-open').click();
       await homeGui.locator('.window[data-target="wallet-metamask"] .window-head').click({position:{x:80,y:14}});
     }
     if (target === "wallet-walletconnect") {
       state.approvalRequests = [{request_id:"wc-return",connector_id:target,proof_type:"siwe",intent:"browser_personal_sign",status:"pending",reason:"New request on Home return",address:"0x"+"12".repeat(20),expires_at:Math.floor(Date.now()/1000)+600,chain_namespace:"eip155:20"}];
       await homeGui.locator('.window[data-target="wallet-walletconnect"] [data-action="minimize"]').click();
-      await wallet.evaluate(() => document.querySelector('[data-wallet-open-method="wallet-walletconnect"]').click());
+      await wallet.evaluate(() => {document.querySelector('#wallet-add-apps').click();document.querySelector('[data-wallet-open-method="wallet-walletconnect"]').click();});
       await waitFor(() => state.launches["wallet-walletconnect"] === 2, 5000, "WalletConnect return launch");
       await page.waitForTimeout(300);
       assert(await homeGui.locator('.window[data-target="wallet-walletconnect"]').count() === 1,
@@ -1044,7 +1044,7 @@ try {
       await connector.getByText('New request on Home return',{exact:true}).waitFor();
       // Returning to an already visible frame also refreshes, without a click inside it.
       state.approvalRequests[0].reason = 'Another request on Home return';
-      await wallet.evaluate(() => document.querySelector('[data-wallet-open-method="wallet-walletconnect"]').click());
+      await wallet.evaluate(() => {document.querySelector('#wallet-add-apps').click();document.querySelector('[data-wallet-open-method="wallet-walletconnect"]').click();});
       await connector.getByText('Another request on Home return',{exact:true}).waitFor();
       assert(await homeGui.locator('.window[data-target="wallet-walletconnect"]').count() === 1,'visible return keeps one WalletConnect frame');
       state.approvalRequests = [];
@@ -1131,7 +1131,7 @@ try {
         walletWindowAfterClose.walletContentWindowPreserved === true &&
         rectsEqual(walletWindowAfterClose.rect, walletWindowBeforeConnectors.rect) &&
         walletUiAfterClose.route === walletUiBeforeConnectors.route &&
-        walletUiAfterClose.settingsOpen === true &&
+        walletUiAfterClose.settingsOpen === false &&
         walletUiAfterClose.statePreserved === true,
       `${target} close did not return focus to the unchanged Wallet`,
       {

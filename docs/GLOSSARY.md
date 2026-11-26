@@ -64,9 +64,11 @@ sign-in access independently of Wallet payment connections.
 
 ## Wallet
 
-The app that manages payment accounts and wallet connections. Connect a wallet
-here to use it for payments. Accounts manages wallet sign-in separately; adding
-a sign-in method leaves Wallet payment records unchanged.
+The app that shows each wallet and its uses from Runtime's account-scoped
+inventory. Wallet owns app and website use. System > Accounts owns sign-in
+methods. An ownership signature enables app use; a passkey approval turns it
+off. Each app request still needs approval. Adding sign-in use leaves app-use
+records unchanged. Built-in Home addresses keep their payment controls.
 
 ## WalletConnect
 

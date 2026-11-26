@@ -4,6 +4,7 @@ import test from "node:test";
 import { registerHooks } from "node:module";
 import { createHomeClipboardClient } from "../capsules/home/browser/home-clipboard-client.js";
 import { createHomeClipboardHost, createHomeClipboardFrameState } from "../capsules/home/browser/home-clipboard-host.js";
+import { handleWalletAppUse, retireWalletAppUse } from "../capsules/home/browser/wallet-app-use-host.mjs";
 import { createHomeNavigationClient } from "../capsules/home/browser/home-navigation-client.js";
 
 const homeOrigin = "https://home.fixture";
@@ -43,7 +44,7 @@ async function fixture(target = "chat-room", enabled = true) {
     createHomeClipboardPrompt: () => ({}), createHomeClipboardHost: () => clipboardHost,
     createHomeExternalLinkPrompt: () => ({ retire() {}, transfer() {} }),
     createHomeLinkStatus: () => ({ replay() {} }), bindKeyboardInsetRelay() {}, bindHomeUnlock() {},
-    handleHomeWalletConnectorEffect: () => false, isHomeAuthError: () => false,
+    handleHomeWalletConnectorEffect: () => false, handleWalletAppUse, retireWalletAppUse, isHomeAuthError: () => false,
     refreshHomeSession: () => {
       // Leave startup pending. Each test drives session refresh itself.
       if (booting) { booting = false; return new Promise(() => {}); }

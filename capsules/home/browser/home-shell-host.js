@@ -1,5 +1,6 @@
+import {handleWalletAppUse,retireWalletAppUse} from "./wallet-app-use-host.mjs";
 import {openWalletSigninEntry} from './wallet-signin-window.mjs';
-import {selectConnectedWalletConnect,openWalletSigninChooser} from './wallet-signin-connector.mjs';
+import {selectConnectedWalletConnect} from './wallet-signin-connector.mjs';
 import { handleWalletSigninRequest } from "./wallet-signin-host.mjs?v=wallet-signin-1";
 import { walletSigninApi } from "./wallet-signin-view.mjs?v=wallet-signin-1";
 import {
@@ -40,6 +41,7 @@ import {
 } from "./shell-auth.js?v=home-wallpaper-20261030b";
 import {
   handleHomeWalletConnectorEffect,
+  connectInventoryWallet,
   notifyOpenWallets,
   WALLET_CONNECTOR_EFFECT_TYPE,
 } from "./home-wallet-connector-host.js?v=home-wallpaper-20261030b";
@@ -117,7 +119,7 @@ const SHELL_MESSAGE_OPEN_TARGET_SOURCES = Object.freeze({
   marketplace: "runtime-target",
   people: new Set(["chat-room", "inbox", "system"]),
   system: "visible-target",
-  "wallet": new Set(["wallet-metamask", "wallet-unisat", "wallet-walletconnect"]),
+  "wallet": new Set(["wallet-metamask", "wallet-unisat", "wallet-walletconnect", "system"]),
 });
 const SHELL_MESSAGE_DELIVER_TARGET_SOURCES = Object.freeze({
   "chat-room": new Set(["documents"]),
@@ -266,7 +268,7 @@ async function signinConnectorWindow(connector='walletconnect') {
   const opened=!prior?await openSigninConnector(target):null;
   const deadline=Date.now()+15000;
   while(!existing()) {if(opened?.isOpen()===false)throw new Error('Wallet window closed');if(Date.now()>deadline)throw new Error('Wallet window did not open');await new Promise(resolve=>setTimeout(resolve,50));}
-  const [homeToken,context]=existing();return {homeToken,source:context.source,focus:()=>postToActiveShell({type:'home:gui-command',command:'focus-window',homeToken})};
+  const [homeToken,context]=existing();return {homeToken,source:context.source,created:!prior,close:()=>opened?.close(),focus:()=>postToActiveShell({type:'home:gui-command',command:'focus-window',homeToken})};
 }
 function currentSigninConnector(context) {
   const active=launchedAppContexts.get(context.homeToken);return active?.source===context.source&&active.expiresAt>Date.now()&&!context.source.closed;
@@ -602,6 +604,7 @@ async function showHostAuthGate(options = {}) {
 }
 
 async function launchHomeTarget(target, query = {}, { renewHomeToken = "" } = {}) {
+  const authorityCurrent = createHomeAuthorityCheck();
   const pickerOwner = target === "library" && query.pickerRequestId
     ? [...launchedAppContexts.values()].map((context) => context.pickerRequest)
       .find((record) => record?.id === query.pickerRequestId && currentLibraryPicker(record))
@@ -624,7 +627,7 @@ async function launchHomeTarget(target, query = {}, { renewHomeToken = "" } = {}
     body: JSON.stringify(body),
   });
   if (launched?.attach_kind === "iframe") {
-    rememberLaunchedAppContext(launched, readBackgroundImage);
+    rememberLaunchedAppContext(launched, readBackgroundImage, authorityCurrent);
     if (pickerOwner) {
       const token = homeLaunchTokenFromRoute(launched.route);
       if (!currentLibraryPicker(pickerOwner) || pickerOwner.pickerToken) {
@@ -1020,7 +1023,7 @@ function replyToShellRequest(event, requestId, result, error = null) {
   }, OPAQUE_FRAME_TARGET);
 }
 
-function rememberLaunchedAppContext(launched, readBackgroundImage) {
+function rememberLaunchedAppContext(launched, readBackgroundImage, authorityCurrent) {
   const token = homeLaunchTokenFromRoute(launched?.route || "");
   if (!token || !launched?.target) {
     throw new Error("Runtime returned an incomplete isolated launch");
@@ -1030,6 +1033,7 @@ function rememberLaunchedAppContext(launched, readBackgroundImage) {
   }
   launchedAppContexts.set(token, {
     targetId: launched.target,
+    authorityCurrent,
     expiresAt: Number(launched.expires_at) * 1000,
     readBackgroundImage,
     browserInstance:
@@ -1760,11 +1764,10 @@ window.addEventListener("message", (event) => {
     authorityToken: getHomeAuthorityToken,
     authorityCurrent: createHomeAuthorityCheck,
     sessionMethodId:()=>shellState.currentSummary?.authority?.proof_binding_id||'',
-    api: (path, body, token) => path === "/api/auth/passkeys"
+    api: (path, body, token) => ["/api/auth/passkeys", "/api/apps/wallet/wallet/inventory"].includes(path)
       ? fetchJson(path, {headers:{"x-elastos-home-token":token}}) : walletSigninApi(path, body, token),
     manage: manageWalletSignin,
     openConnector: openSigninConnector,
-    openChooser: onAction=>openWalletSigninChooser({open:openSigninConnector,current:currentSigninConnector,focus:homeToken=>postToActiveShell({type:"home:gui-command",command:"focus-window",homeToken}),setStage:(homeToken,stage)=>postToActiveShell({type:"home:gui-command",command:"wallet-signin-state",homeToken,stage}),onAction}),
     focusCaller: ()=>postToActiveShell({type:"home:gui-command",command:"focus-window",homeToken:context.homeToken}),
     selectWalletConnect: options=>selectConnectedWalletConnect(options,{open:()=>signinConnectorWindow(),current:currentSigninConnector}),
     current: () => homeMessageContext(event, data)?.homeToken === context.homeToken,
@@ -1845,6 +1848,7 @@ window.addEventListener("message", (event) => {
     return;
   }
   if (data.type === "home:app-ready") {
+    retireWalletAppUse(context);
     if (context.kind === "app-frame" && ["documents", "library", "archive-manager", "gba-emulator", "chat-room"].includes(context.targetId) &&
         hasExactMessageKeys(data, ["type", "homeToken"])) {
       postToActiveShell({ type: "home:gui-command", command: "navigation-hint",
@@ -1875,6 +1879,28 @@ window.addEventListener("message", (event) => {
   if (homeClipboardHost.handle(event, context, data)) {
     return;
   }
+  if (handleWalletAppUse(event, context, {
+    current: () => context.authorityCurrent?.() === true && launchedAppContexts.get(context.homeToken)?.expiresAt > Date.now() && homeMessageContext(event, data)?.homeToken === context.homeToken,
+    inventory: () => fetchJson('/api/apps/wallet/wallet/inventory', {headers:{'x-elastos-home-token':getHomeAuthorityToken()}}),
+    connect: async (entry, active) => {
+      const opened = await signinConnectorWindow(entry.sign_in.connector);
+      const connector = launchedAppContexts.get(opened.homeToken);
+      if (!connector || !active()) {if (opened.created) await opened.close(); return;}
+      if(entry.sign_in.connector !== 'walletconnect') postToActiveShell({type:'home:gui-command',command:'focus-window',homeToken:context.homeToken});
+      let watch;
+      const abort = new AbortController();
+      try {
+        if (entry.sign_in.connector === 'walletconnect') {
+          watch = setInterval(() => {if (!active()) abort.abort();}, 100);
+          await selectConnectedWalletConnect({signal:abort.signal,method:entry.sign_in,appUse:true,ready:()=>postToActiveShell({type:'home:gui-command',command:'focus-window',homeToken:context.homeToken})}, {
+            open:async()=>opened,current:currentSigninConnector,
+          });
+        } else await connectInventoryWallet(entry, {...connector, homeToken:opened.homeToken}, () => active() && currentSigninConnector(opened));
+      } finally {clearInterval(watch);abort.abort();if (opened.created) await opened.close();}
+    },
+    changed: () => {void refreshSignedHomeSession();},
+    focus: () => postToActiveShell({type:'home:gui-command',command:'focus-window',homeToken:context.homeToken}),
+  })) return;
   if (handleHomeWalletConnectorEffect(event, context, data)) {
     return;
   }
@@ -2265,6 +2291,16 @@ window.addEventListener("message", (event) => {
   if (!target) {
     return;
   }
+  if (context.kind === "app-frame" && context.targetId === "system" && target === "wallet") {
+    if (!hasExactMessageKeys(data, ["type", "target", "query", "homeToken"])
+      || !data.query || !hasExactMessageKeys(data.query, ["wallet_entry"])
+      || typeof data.query.wallet_entry !== "string" || data.query.wallet_entry.length > 256
+      || !/^(eip155:[1-9][0-9]*:0x[0-9a-f]{40}|bip122:[a-zA-Z0-9]+:[a-zA-Z0-9]+)$/.test(data.query.wallet_entry)) return;
+  }
+  if (context.kind === "app-frame" && context.targetId === "wallet" && target === "system") {
+    if (!hasExactMessageKeys(data, ["type", "target", "query", "homeToken"])
+      || !data.query || !hasExactMessageKeys(data.query, ["settings"]) || data.query.settings !== "account") return;
+  }
   // Marketplace selects a connection window; Wallet remains its launch owner.
   // Home constructs the payload, so app queries cannot become Wallet commands.
   if (context.kind === "app-frame" && context.targetId === "marketplace" && target === "wallet"
@@ -2475,6 +2511,7 @@ function homeMessageContext(event, data) {
     source: launched.source,
     clipboardState: launched.clipboardState,
     walletEffectState: launched.walletEffectState,
+    authorityCurrent: launched.authorityCurrent,
     browserInstance: launched.browserInstance,
   };
 }

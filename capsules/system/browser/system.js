@@ -1,4 +1,4 @@
-import { readWalletSigninMethods, requestWalletSigninChange, walletSigninControls, watchWalletSigninMethods } from "/apps/home/wallet-signin-methods.mjs?v=wallet-signin-1";
+import { readWalletInventory, requestWalletSigninChange, walletSigninControls, watchWalletSigninMethods } from "/apps/home/wallet-signin-methods.mjs?v=wallet-signin-1";
 import { connectorName, walletNetwork, shortWalletAddress } from "/apps/home/wallet-signin-flow.mjs?v=wallet-signin-1";
 import { createTransferProgress, announceTransferProgress } from "./transfer-progress.js?v=download-progress-20261112";
 import {
@@ -40,6 +40,7 @@ const passkeyStatusNode = document.querySelector('[data-field="passkey-status"]'
 const accountListNode = document.querySelector("#account-list");
 let walletSigninListVersion = 0;
 let walletSigninMethods = {account_id:"", methods:[]};
+let walletSigninNotice = "";
 const walletAddButton = document.querySelector("#wallet-signin-add");
 const passkeyAddButton = document.querySelector("#passkey-add");
 const passkeyRemoveDialog = document.querySelector("#passkey-remove-dialog");
@@ -2516,20 +2517,35 @@ function joinWords(values) {
 }
 
 async function changeWalletSignin(action, methodId = "") {
+  const previousMethods = new Set(walletSigninMethods.methods.map(method => method.method_id));
+  setWalletSigninNotice("");
   const button=action==="add"?document.querySelector("#wallet-signin-add"):null;
   if(button){button.setAttribute("aria-busy","true");}
   try {
-    const result = await requestWalletSigninChange({action, methodId, token:apiHomeToken, origin:homeParentOrigin,loadConnected:async()=>{
-      const summary=await fetchJson('/api/apps/system/summary',{headers:shellHeaders()});
-      if(!Array.isArray(summary.wallet_accounts?.accounts))throw new Error('Wallet accounts unavailable');
-      return summary.wallet_accounts.accounts;
-    }});
+    const result = await requestWalletSigninChange({action, methodId, token:apiHomeToken, origin:homeParentOrigin});
     await refreshAccountList();
+    if (result?.status === "complete") {
+      const added = walletSigninMethods.methods.find(method => !previousMethods.has(method.method_id));
+      setWalletSigninNotice(action === "add" ? `${added?.wallet_display_name || (added ? connectorName(added.connector) : "Wallet")} added for sign-in.` : "Wallet removed from sign-in.");
+    }
     if(result?.status === "unknown") showSigninListFailure("Home has not confirmed this change.",()=>changeWalletSignin(action,methodId),"Check again");
     if(result?.status === "busy") showSigninListFailure("Finish the open wallet request before you start another change.",()=>changeWalletSignin(action,methodId));
     if (["failed", "changed"].includes(result?.status)) showSigninListFailure("Home could not change this wallet.",()=>changeWalletSignin(action,methodId));
   } catch (error) { showSigninListFailure("Home could not change this wallet.",()=>changeWalletSignin(action,methodId)); }
   finally {if(button){button.removeAttribute("aria-busy");}}
+}
+
+function walletSigninNoticeNode() {
+  const notice = document.createElement('p'); notice.dataset.walletSigninNotice = '';
+  notice.className = 'wallet-signin-result'; notice.setAttribute('role', 'status');
+  notice.textContent = walletSigninNotice; return notice;
+}
+
+function setWalletSigninNotice(message) {
+  walletSigninNotice = message;
+  const wallets = accountListNode?.querySelector('.system-signin-wallets');
+  wallets?.querySelector('[data-wallet-signin-notice]')?.remove();
+  if (message) wallets?.querySelector('h3')?.after(walletSigninNoticeNode());
 }
 
 function showSigninListFailure(message, retryAction = () => refreshAccountList().catch(error => showError(error)), retryLabel = "Try again") {
@@ -2552,8 +2568,10 @@ async function refreshAccountList() {
     return;
   }
   try {
-    const methods = await readWalletSigninMethods(apiHomeToken);
+    const inventory = await readWalletInventory(apiHomeToken).catch(() => null);
+    const methods = inventory ? {account_id: inventory.account_id, methods: inventory.entries.filter(entry => entry.sign_in).map(entry => ({...entry.sign_in, inventory_id:entry.inventory_id, wallet_display_name:entry.wallet_display_name || entry.accounts[0]?.wallet_display_name}))} : await fetchJson('/api/auth/wallet-methods', {headers:shellHeaders()});
     if (version !== walletSigninListVersion) return;
+    if (walletSigninMethods.account_id !== methods.account_id) walletSigninNotice = "";
     walletSigninMethods = methods;
     renderAccounts(Array.isArray(data.passkeys) ? data.passkeys : []);
   } catch {
@@ -2605,7 +2623,7 @@ function renderAccounts(accounts) {
     const role = document.createElement("span");
     role.className = "account-role";
     role.dataset.role = readText(account.role) || "guest";
-    role.textContent = passkeyRoleLabel(account.role);
+    role.textContent = passkeyRoleLabel(account.role) + (id === currentPrincipalId ? " · You" : "");
     identity.append(name, role);
     const accountActions = document.createElement("div");
     accountActions.className = "account-header-actions";
@@ -2613,7 +2631,7 @@ function renderAccounts(accounts) {
     const table = document.createElement("table");
     table.className = "account-table";
     table.setAttribute("aria-label", `${name.textContent}: sign-in methods`);
-    table.innerHTML = `<thead><tr><th scope="col">Method</th><th scope="col">Last used</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>`;
+    table.innerHTML = `<thead><tr><th scope="col">Passkey</th><th scope="col">Last used</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>`;
     const body = document.createElement("tbody");
     const labels = passkeys.map(passkey => readText(passkey.added_from).split(" (added from ")[0] || "Passkey");
     for (const [index, passkey] of passkeys.entries()) {
@@ -2626,11 +2644,16 @@ function renderAccounts(accounts) {
         methodName: repeated ? `${label} ${labels.slice(0, index + 1).filter(value => value === label).length}` : label,
       }));
     }
-    if (id === walletSigninMethods.account_id) {
-      for (const method of walletSigninMethods.methods) body.append(walletAccountRow(method));
-    }
     table.append(body);
     block.append(header, table);
+    if (id === walletSigninMethods.account_id) {
+      const wallets = document.createElement('section'); wallets.className = 'system-signin-wallets';
+      const heading = document.createElement('h3'); heading.textContent = 'Wallets for sign-in'; wallets.append(heading);
+      if (walletSigninNotice) wallets.append(walletSigninNoticeNode());
+      for (const method of walletSigninMethods.methods) wallets.append(walletAccountRow(method));
+      if (walletAddButton) {walletAddButton.className='el-button el-button-primary';wallets.append(walletAddButton);}
+      block.append(wallets);
+    }
     accountListNode.append(block);
   }
   if (focusedPasskey) [...accountListNode.querySelectorAll('[data-passkey-revoke]')]
@@ -2640,7 +2663,7 @@ function renderAccounts(accounts) {
 function accountRow(passkey, listState = {}) {
   const row = document.createElement("tr");
   row.className = "account-row";
-  const nameCell = accountCell("Method", "account-name");
+  const nameCell = accountCell("Passkey", "account-name");
   const nameWrap = document.createElement("div");
   nameWrap.className = "account-name-wrap";
   const title = document.createElement("strong");
@@ -2655,7 +2678,7 @@ function accountRow(passkey, listState = {}) {
   if (passkey.current) {
     const current = document.createElement("small");
     current.className = "passkey-current";
-    current.textContent = "Current";
+    current.textContent = "Current passkey";
     nameWrap.append(current);
   }
   nameCell.append(nameWrap);
@@ -2670,7 +2693,7 @@ function accountRow(passkey, listState = {}) {
     && readText(passkey.principal_id) === listState.currentPrincipalId;
   if (listState.accountActions && canManagePasskeyRoles && passkeyRole === "guest") {
     const promote = document.createElement("button");
-    promote.className = "system-button system-button-secondary passkey-promote";
+    promote.className = "el-button passkey-promote";
     promote.type = "button";
     promote.textContent = "Make admin";
     promote.dataset.passkeyPromote = passkey.proof_binding_id || "";
@@ -2679,7 +2702,7 @@ function accountRow(passkey, listState = {}) {
   }
   if (listState.accountActions && canManagePasskeyRoles && passkeyRole === "admin" && !passkey.current && !ownAccount) {
     const demote = document.createElement("button");
-    demote.className = "system-button system-button-secondary passkey-demote";
+    demote.className = "el-button passkey-demote";
     demote.type = "button";
     demote.textContent = "Make guest";
     demote.dataset.passkeyDemote = passkey.proof_binding_id || "";
@@ -2688,9 +2711,9 @@ function accountRow(passkey, listState = {}) {
     listState.accountActions.append(demote);
   }
   const remove = document.createElement("button");
-  remove.className = "system-button account-remove-action passkey-remove";
+  remove.className = "el-button account-remove-action passkey-remove";
   remove.type = "button";
-  remove.textContent = "Remove";
+  remove.textContent = "Remove passkey";
   remove.dataset.passkeyRevoke = passkey.proof_binding_id || "";
   remove.dataset.current = passkey.current ? "true" : "false";
   remove.dataset.accountName = readText(passkey.display_name);
@@ -2713,7 +2736,7 @@ function accountRow(passkey, listState = {}) {
   }
   if (protectsLastPasskey && (ownAccount || canManagePasskeyRoles)) {
     const removeAccount = document.createElement("button");
-    removeAccount.className = "system-button account-remove-action account-remove";
+    removeAccount.className = "el-button account-remove-action account-remove";
     removeAccount.type = "button";
     removeAccount.textContent = "Remove account";
     Object.assign(removeAccount.dataset, remove.dataset, { passkeyAccountRemove: remove.dataset.passkeyRevoke });
@@ -2740,27 +2763,23 @@ function accountRow(passkey, listState = {}) {
 }
 
 function walletAccountRow(method) {
-  const row = document.createElement("tr");
-  row.className = "account-row";
-  row.dataset.walletMethod = method.method_id;
-  const identity = accountCell("Method", "account-name");
-  const name = document.createElement("div");
-  name.className = "account-name-wrap";
-  const title = document.createElement("strong");
-  title.textContent = connectorName(method.connector);
-  const address = document.createElement("small");
-  address.textContent = `${shortWalletAddress(method.address)} · ${walletNetwork(method)}`;
-  name.title = method.address;
-  name.append(title, address);
-  identity.append(name);
-  const used = accountCell("Last used", "account-used");
-  used.textContent = method.last_used_at ? formatAccountDate(method.last_used_at) : "Not used yet";
-  const actions = accountCell("Actions", "account-actions-cell");
-  const controls = walletSigninControls(method, { canManage: currentAccess.role === "admin", onAction: changeWalletSignin,
-    buttonClass: "system-button account-remove-action" });
-  actions.append(controls);
-  row.append(identity, used, actions);
-  return row;
+  const row = document.createElement('div'); row.className = 'system-signin-wallet'; row.dataset.walletMethod = method.method_id;
+  const identity = document.createElement('div'); identity.className = 'system-wallet-identity';
+  const icon = document.createElement('img'); icon.alt = ''; icon.src = `/apps/home/connection-${method.connector}.png`;
+  const copy = document.createElement('div'), title = document.createElement('strong'), address = document.createElement('div');
+  title.textContent = method.wallet_display_name || connectorName(method.connector); title.dir = 'auto';
+  address.className = 'system-wallet-meta';
+  const code = document.createElement('code'); code.textContent = method.connector === 'unisat' ? `${method.address.slice(0,8)}…${method.address.slice(-6)}` : shortWalletAddress(method.address); code.title = method.address;
+  const network = document.createElement('span'); network.textContent = (method.chain_id === 20 ? 'ESC' : walletNetwork(method)) + (method.connector === 'walletconnect' ? ' · WalletConnect' : '');
+  address.append(code, network); copy.append(title, address); identity.append(icon, copy);
+  const actions = document.createElement('div'); actions.className = 'system-wallet-actions';
+  const open = document.createElement('a'); open.href = '#wallet'; open.className = 'wallet-inventory-link'; open.textContent = 'Open Wallet';
+  open.onclick = event => {
+    event.preventDefault(); window.top.postMessage({type:'home:open-target', target:'wallet', homeToken:apiHomeToken,
+      query:{wallet_entry:method.inventory_id}}, homeParentOrigin);
+  };
+  actions.append(open, walletSigninControls(method, {onAction:changeWalletSignin, buttonClass:'el-button'}));
+  row.append(identity, actions); return row;
 }
 
 function accountCell(label, className) {

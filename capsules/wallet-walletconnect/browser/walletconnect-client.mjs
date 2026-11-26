@@ -251,7 +251,7 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
     const permission = observedGeneration !== generation && latestPermission ? latestPermission : read;
     latestPermission = permission;
     if (permission.status !== 'granted' && (provider || pairing || operation || adapter)) {
-      const clearing = reset(muted('Internet access for WalletConnect was turned off. Select Connect wallet to ask again.'));
+      const clearing = reset(Object.assign(muted('Internet access for WalletConnect was turned off. Select Connect wallet to ask again.'),{code:'permission'}));
       // Home's permission reply is a display fact; SDK retirement can take longer.
       onPhase('permission',permission);
       await clearing;
@@ -282,14 +282,14 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
     return {...connectionFacts(),permission,permissionFresh};
   };
   return { async effect(action) {
-    if (action.kind === 'stop-signin') {if(['signin','signin-select'].includes(operationContext))operation?.abort(muted('Sign-in request ended.'));return;}
+    if (action.kind === 'stop-signin') {if(['signin','signin-select','wallet-apps'].includes(operationContext))operation?.abort(muted('Sign-in request ended.'));return;}
     if (action.kind === 'disconnect' || action.kind === 'cancel') return reset();
     if (action.kind === 'status') return status();
     if (operation && !operation.signal.aborted) throw new Error('A wallet request is already active.');
     const attempt = new AbortController();
     generation++;
     operation = attempt;
-    operationContext = action.kind;
+    operationContext = action.kind === 'link' && action.expectedAddress ? 'wallet-apps' : action.kind;
     operationDispatched = false;
     const signal = attempt.signal;
     try {
@@ -300,7 +300,7 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
     if (action.kind === 'link' && action.fresh) await reset(muted(stopped),attempt);
     signal.throwIfAborted();
     if(['signin','signin-select'].includes(action.kind))await prepare(signal);
-    if(!['signin','signin-select'].includes(action.kind)||!provider?.session||provider.session.expiry<=Date.now()/1000)await connect(attempt);
+    if(!(['signin','signin-select'].includes(action.kind) || action.kind === 'link' && action.expectedAddress)||!provider?.session||provider.session.expiry<=Date.now()/1000)await connect(attempt);
     signal.throwIfAborted();
     const revision = generation;
     const signer = await address(signal), namespace = await chain(signal);
@@ -314,6 +314,7 @@ export function createWalletConnectClient({ api, origin, copyLink, pairingView, 
       return {signature,signature_type:'personal_sign',public_key:''};
     }
     if (action.kind === 'link') {
+      if (action.expectedAddress && (!same(action.expectedAddress,signer) || action.expectedChain !== namespace)) throw Object.assign(new Error('Select this wallet address and network, then try again.'), {code:'changed'});
       if (action.addAccount) {
         const saved=await waitFor(api('wallet/accounts'),signal);
         signal.throwIfAborted();

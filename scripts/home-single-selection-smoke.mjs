@@ -97,7 +97,7 @@ test("People ordinary single reuse leaves the current profile draft alone", asyn
   await f.c.launchBrowserTargetWindow("people"); await f.c.launchBrowserTargetWindow("people");
   assert.equal(f.launches(), 0); assert.equal(f.messages.length, 0); assert.equal(f.entry.draft, "intentional draft");
   const people = read("capsules/people/browser/people.js");
-  assert.deepEqual([...people.matchAll(/launchParams\.get\("([^"]+)"\)/g)].map(m => m[1]), ["home_origin"]);
+  assert.deepEqual([...people.matchAll(/launchParams\.get\("([^"]+)"\)/g)].map(m => m[1]), ["home_origin", "did"]);
   const input = { value: "edited name", placeholder: "" };
   const c = vm.createContext({ objectValue: value => value || {}, readText: value => String(value || ""),
     profileDraftDirty: true, profileDraftValue: "edited name", document: { activeElement: null }, profileInput: input,
@@ -123,7 +123,7 @@ function receiver(target) {
     wallet_approvals: { approval_requests: [{ request_id: "wallet-request-two" }] } };
   const pending = new Promise((resolve, reject) => { release = () => resolve(summary); fail = reject; });
   const parent = { postMessage(data) { messages.push(data); } };
-  const state = { homeToken: "token", refreshInFlight: null, entries: [], selectedId: "notification-one", requestedSelectionId: "" };
+  const state = { homeToken: "token", refreshInFlight: null, entries: [], selectedId: "notification-one", requestedSelectionId: "", walletDecisions: new Map() };
   const modal = { hidden: true, value: "intentional draft" };
   const refresh = { disabled: false };
   const c = vm.createContext({
@@ -235,16 +235,10 @@ test("Wallet selection cannot repaint a real approval started during its summary
       requestPasskeyStepUp: () => passkey, shellHeaders: () => ({}), showStatus() {},
       refreshWalletState: () => assert.fail("cancelled approval cannot refresh"), notifyHomeSummaryChanged() {}, openApprovalMethod() {},
     });
-    const source = read("capsules/wallet/browser/wallet.js");
-    const initial = { wallet_accounts: { accounts: [], default_accounts: [] }, wallet_approvals: {
-      approval_requests: [{ request_id: "wallet-request-one", status: "pending", proof_type: "managed_evm", method: "personal_sign" }] } };
-    Object.assign(r.c, { currentRequests: [], renderRequests: requests.renderRequests, pendingWalletRequests: requests.pendingWalletRequests,
-      readText: value => String(value || ""), buildViewAccounts: () => [], loadPrices: async () => ({}), loadBalanceRows: async () => [],
-      renderHero() {}, renderHeroAccount() {}, renderAccounts() {}, renderMethods() {}, renderActivity() {}, renderApprovalsBadge() {}, updateFlowButtons() {} });
-    vm.runInContext(["loadWalletState", "renderAll", "renderWalletReviewRequests"].map(name => fn(source, name)).join("\n"), r.c);
-    const heldFetch = r.c.fetchJson; r.c.fetchJson = async () => initial;
-    await r.c.loadWalletState(); // Real startup load/render creates the original approval button.
-    r.c.fetchJson = heldFetch;
+    const initialRequests=[{request_id:'wallet-request-one',status:'pending',proof_type:'managed_evm',method:'personal_sign'}];
+    requests.renderRequests(initialRequests,'wallet-request-one');
+    r.c.currentRequests=initialRequests;
+    r.c.renderWalletReviewRequests=()=>assert.fail('busy selection cannot repaint the active review');
     r.c.document.querySelector = () => tree(requestsNode).find(node => node.disabled) || null;
     const card = requestsNode.children[0];
     const button = tree(card).find(node => node.dataset.walletRequestManagedApprove);

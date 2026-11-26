@@ -256,8 +256,8 @@ export function createWalletAccountActions({
     );
     const key = textNode("code", recoveryKeyText, "wallet-secret");
     const details = [
-      flowStaticRow("Address", account.name),
-      flowStaticRow("Network", account.network),
+      flowStaticRow("Wallet", readText(account.name) || accountName(account)),
+      flowStaticRow("Network", readText(account.network) || chainLabel(readText(account.chain_namespace))),
       flowStaticRow("Address", shortAddress(account.address)),
     ];
     const copy = modalButton("Copy key", async (button) => {

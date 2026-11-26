@@ -248,7 +248,7 @@ function finishSystemWindowRequest(record, ok) {
 }
 
 async function requestSelectionWindow(entry, query) {
-  const field = entry.targetId === "inbox" ? "notification_id" : "wallet_request";
+  const field = entry.targetId === "inbox" ? "notification_id" : Object.hasOwn(query, "wallet_entry") ? "wallet_entry" : "wallet_request";
   if (!hasExactKeys(query, [field]) || typeof query[field] !== "string"
     || !/^[a-zA-Z0-9:._-]{1,256}$/.test(query[field])) return false;
   while (entry.selectionRequest) {
@@ -313,7 +313,7 @@ function handleSelectionWindowMessage(record, event) {
     record.sent = true;
     record.documentNonce = data.documentNonce;
     record.source.postMessage({ type: `elastos:${record.target}-chrome-command`,
-      cmd: record.target === "inbox" ? "select-notification" : "review-request",
+      cmd: record.target === "inbox" ? "select-notification" : Object.hasOwn(record.query, "wallet_entry") ? "open-entry" : "review-request",
       homeToken: record.homeToken, requestId: record.requestId, documentNonce: record.documentNonce,
       sequence: record.sequence, expiresAt: record.expiresAt, query: record.query }, "*");
   } else if (record.sent && data.type === `elastos.${record.target}.window.result/v1`
@@ -2308,7 +2308,6 @@ export function closeWindow(id) {
   if (!entry) {
     return false;
   }
-  if (entry.targetId === "wallet" && ["completing", "unknown"].includes(entry.walletSigninStage)) return false;
   if (entry.targetId === "browser") {
     return requestBrowserWindowClose(entry);
   }

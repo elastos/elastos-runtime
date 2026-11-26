@@ -26,6 +26,42 @@ pub(in crate::api::gateway) async fn wallet_app_default_update(
     update_default_wallet_account(&state, &context, &authority, input, WALLET_CAPSULE_ID).await
 }
 
+fn validate_wallet_app_removal(
+    principal: &str,
+    first: &str,
+    ids: &[String],
+    accounts: &serde_json::Value,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        (2..=32).contains(&ids.len())
+            && ids.first().map(String::as_str) == Some(first)
+            && ids.windows(2).all(|pair| pair[0] < pair[1]),
+        "Invalid wallet app-use selection"
+    );
+    let accounts = accounts["accounts"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("Wallet accounts unavailable"))?;
+    let entries =
+        super::gateway_wallet_accounts::wallet_inventory_entries(principal, accounts, &[]);
+    anyhow::ensure!(
+        entries
+            .iter()
+            .any(|entry| ids
+                .iter()
+                .all(|id| entry
+                    .accounts
+                    .iter()
+                    .any(|account| account.account_id == *id
+                        && account.connector_id.is_some()
+                        && !matches!(
+                            account.proof_type.as_str(),
+                            "managed_evm" | "managed_btc_p2wpkh"
+                        )))),
+        "Wallet app-use selection changed"
+    );
+    Ok(())
+}
+
 pub(in crate::api::gateway) async fn wallet_app_account_delete(
     State(state): State<GatewayState>,
     Path(account_id): Path<String>,
@@ -42,40 +78,67 @@ pub(in crate::api::gateway) async fn wallet_app_account_delete(
         Err(err) => return system_error_response(err),
     };
     let context = launch.context.clone();
+    let (account_ids, request) = if let Some(ids) = input.account_ids {
+        let accounts = match runtime_wallet_data(
+            &state,
+            &authority,
+            elastos_wallet_contract::WalletProviderOperationV2::ListAccounts {
+                include_revoked: false,
+            },
+        )
+        .await
+        {
+            Ok(data) => data,
+            Err(err) => return system_error_response(err),
+        };
+        if let Err(err) =
+            validate_wallet_app_removal(&context.principal_id, &account_id, &ids, &accounts)
+        {
+            return system_error_response(err);
+        }
+        let request = serde_json::json!({"account_ids":ids});
+        (ids, request)
+    } else {
+        (
+            vec![account_id.clone()],
+            serde_json::json!({"account_id":account_id}),
+        )
+    };
     if let Err(err) = consume_passkey_step_up_token(
         &state.data_dir,
         &input.step_up_token,
         &launch,
         180,
         "wallet.account.delete",
-        &serde_json::json!({ "account_id": account_id }),
+        &request,
     ) {
         return system_error_response(err);
     }
-    match runtime_wallet_data(
-        &state,
-        &authority,
-        elastos_wallet_contract::WalletProviderOperationV2::RevokeAccount { account_id },
-    )
-    .await
-    {
-        Ok(_) => {
-            let _ = append_wallet_approval_audit(
-                &state.data_dir,
-                WalletApprovalAuditInput {
-                    capsule_id: WALLET_CAPSULE_ID,
-                    event_type: "wallet.account.deleted",
-                    principal_id: &context.principal_id,
-                    session_id: &context.session_id,
-                    request_id: "wallet-account-delete",
-                    result: "ok",
-                    reason:
-                        "Wallet account deleted through Wallet after fresh passkey verification",
-                },
-            );
-            Json(system_wallet_accounts_summary(&state, &authority).await).into_response()
+    for account_id in account_ids {
+        if let Err(err) = runtime_wallet_data(
+            &state,
+            &authority,
+            elastos_wallet_contract::WalletProviderOperationV2::RevokeAccount { account_id },
+        )
+        .await
+        {
+            return system_error_response(err);
         }
-        Err(err) => system_error_response(err),
+    }
+    {
+        let _ = append_wallet_approval_audit(
+            &state.data_dir,
+            WalletApprovalAuditInput {
+                capsule_id: WALLET_CAPSULE_ID,
+                event_type: "wallet.account.deleted",
+                principal_id: &context.principal_id,
+                session_id: &context.session_id,
+                request_id: "wallet-account-delete",
+                result: "ok",
+                reason: "Wallet account deleted through Wallet after fresh passkey verification",
+            },
+        );
+        Json(system_wallet_accounts_summary(&state, &authority).await).into_response()
     }
 }
 
@@ -349,5 +412,55 @@ pub(in crate::api::gateway) fn managed_wallet_label(chain_namespace: &str) -> St
         "eip155:8453" => "Spending".to_string(),
         "bip122:000000000019d6689c085ae165831e93" => "Savings".to_string(),
         value => value.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod wallet_app_removal_tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn wallet_app_group_removal_requires_one_owned_external_identity() {
+        let account = |id: &str, owner: &str, chain: &str, address: &str, proof: &str| {
+            json!({
+                "account_id":id, "principal_id":owner, "chain_namespace":chain, "address":address,
+                "proof_type":proof, "connector_id":"wallet-metamask", "linked_at":1,
+            })
+        };
+        let ids = vec!["a".into(), "b".into()];
+        let first = account("a", "owner", "eip155:20", "0x1234", "siwe");
+        let second = account("b", "owner", "eip155:20", "0x1234", "siwe");
+        assert!(validate_wallet_app_removal(
+            "owner",
+            "a",
+            &ids,
+            &json!({"accounts":[first,second]})
+        )
+        .is_ok());
+        for other in [
+            account("b", "other", "eip155:20", "0x1234", "siwe"),
+            account("b", "owner", "eip155:8453", "0x1234", "siwe"),
+            account("b", "owner", "eip155:20", "0x9876", "siwe"),
+            account("b", "owner", "eip155:20", "0x1234", "managed_evm"),
+        ] {
+            assert!(validate_wallet_app_removal(
+                "owner",
+                "a",
+                &ids,
+                &json!({"accounts":[first,other]})
+            )
+            .is_err());
+        }
+        for bad in [
+            vec![],
+            vec!["a".into()],
+            vec!["a".into(), "a".into()],
+            vec!["b".into(), "a".into()],
+        ] {
+            assert!(
+                validate_wallet_app_removal("owner", "a", &bad, &json!({"accounts":[first]}))
+                    .is_err()
+            );
+        }
     }
 }

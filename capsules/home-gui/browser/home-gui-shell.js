@@ -4,7 +4,6 @@ import {
   attachAuthorizedHomeGuiTarget,
   closeHomeGuiWindowForToken,
   focusHomeGuiWindowForToken,
-  setHomeGuiWalletSigninStage,
   fitHomeGuiWalletWindow,
   openHomeGuiTarget,
   relaunchHomeGuiWindowForToken,
@@ -194,10 +193,6 @@ function handleGuiCommand(message) {
   if(command==="focus-window"){
     if(!hasExactKeys(message,["type","command","homeToken"])||typeof message.homeToken!=="string"||!message.homeToken||message.homeToken.length>4096)return false;
     return focusHomeGuiWindowForToken(message.homeToken);
-  }
-  if (command === "wallet-signin-state") {
-    if (!hasExactKeys(message, ["type", "command", "homeToken", "stage"]) || typeof message.homeToken !== "string" || message.homeToken.length > 4096 || typeof message.stage !== "string" || message.stage.length > 64) return false;
-    return setHomeGuiWalletSigninStage(message.homeToken, message.stage);
   }
   if(command === "fit-wallet-window") {
     if(!hasExactKeys(message,["type","command","homeToken","width","height"])||typeof message.homeToken!=="string"||message.homeToken.length>4096)return false;

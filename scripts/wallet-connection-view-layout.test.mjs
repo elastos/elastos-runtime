@@ -219,7 +219,7 @@ for(const engine of ['chromium','webkit'])test(`isolated names share text baseli
     return {baselines,mark:mark&&{width:mark.width,height:mark.height},gapBeforeClose:note&&button?button.getBoundingClientRect().top-note.getBoundingClientRect().bottom:null,computed:[...document.querySelectorAll('.connection-computed-detail')].map(e=>({text:e.textContent,hasAppLabel:!!e.querySelector('.connection-detail-label')})),app:[...document.querySelectorAll('.connection-context')].map(e=>e.textContent)};
    });
    if(name.includes('/request-')||name==='walletconnect/link-wait'){assert(measured.baselines.length,name+': baseline samples');assert(measured.baselines.every(b=>b.delta<=.5),name+': '+JSON.stringify(measured.baselines));}
-   if(name.endsWith('/linked')){if(name==='metamask/linked')assert.equal(measured.mark,undefined);else assert.deepEqual(measured.mark,{width:24,height:24});if(name==='metamask/linked')assert(measured.gapBeforeClose>=8,'the single stop-sharing notice has space before Close window');}
+   if(name.endsWith('/linked')){assert.equal(measured.mark,undefined);if(name==='metamask/linked')assert(measured.gapBeforeClose>=8,'the single stop-sharing notice has space before Close window');}
    if(name==='walletconnect/transaction-declined'){assert.equal(measured.computed.length,1);assert.equal(measured.computed[0].hasAppLabel,false);assert(!measured.computed[0].text.includes('From app:'));}
    assert(measured.app.every(text=>!text.includes('BrowserSite in Browser:')&&!text.includes('Browser  Site reported')),'Browser shown once');
    checks.push({name,...measured});

@@ -36,3 +36,26 @@
 .signin-dialog[data-state="pairing"] .connection-window:not(.connection-panel):not(.connection-compact) { height:auto; min-height:0; padding:0; }
 
 .signin-dialog[data-purpose="signin"][data-state="pairing"] .connection-qr { width: 160px; }
+
+.signin-dialog.one-dialog .connection-actions { display:flex; justify-content:flex-end; gap:8px; }
+.signin-dialog.one-dialog .connection-option small { display:block; margin-top:4px; color:var(--el-muted); font-size:12px; font-weight:400; line-height:1.5; }
+.one-step { color:var(--el-muted); font-size:12px; }
+.one-completed { color:var(--el-ok); font-size:13px; }
+.one-identity { display:flex; gap:12px; align-items:center; min-width:0; }
+.one-logo { width:32px; height:32px; object-fit:contain; }
+.one-identity strong { font-size:15px; font-weight:600; }
+.one-meta { display:flex; gap:12px; align-items:center; color:var(--el-muted); margin-top:5px; font-size:12px; flex-wrap:wrap; }
+.one-meta code { font-family:var(--el-font-mono); }
+.one-proof-wallet { padding:16px; background:var(--el-inset); border:1px solid var(--el-hairline); border-radius:var(--el-radius-lg); }
+.one-message { padding:16px; border-left:2px solid var(--el-accent); background:var(--el-inset); font-size:15px; line-height:1.6; }
+.one-proof-fields { font-size:12px; }
+.one-proof-fields>div { display:flex; justify-content:space-between; gap:16px; margin-top:8px; }
+.one-proof-fields dt { color:var(--el-muted); }
+.one-proof-fields dd { margin:0; }
+@media(max-width:600px) {
+ .signin-dialog.one-dialog .connection-actions { flex-direction:column-reverse; }
+ .signin-dialog.one-dialog .connection-actions>.el-button { width:100%; flex:auto; }
+ .one-identity { gap:10px; }
+ .one-logo { width:28px; height:28px; }
+ .one-meta { gap:5px 10px; font-size:11px; }
+}

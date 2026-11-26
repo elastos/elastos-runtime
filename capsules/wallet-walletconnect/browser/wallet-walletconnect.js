@@ -27,7 +27,7 @@ let showPicker = false, addingAccount = false;
 let copying=false;
 let clipboardFeedback = '';
 let clipboardFeedbackKey;
-let signinSelection,signinBusy=false,signinRequest,signinResult;
+let signinSelection,signinBusy=false,signinRequest,signinResult,appUseRequest;
 
 const homeClipboard = createHomeClipboardClient({targetId: CONNECTOR_ID,homeOrigin,homeToken:frameHomeToken});
 homeClipboard.start();
@@ -83,7 +83,7 @@ root.addEventListener('click', async event => {
   if(unresolvedPayment()&&['connect','start-over','finish','send-message','send-request','add-account','back-to-connection','view-requests','select-request'].includes(action)){draw();return;}
   if(action==='open-wallet'){window.top.postMessage({type:'home:open-target',target:'wallet',homeToken:frameHomeToken},homeOrigin);return;}
   if(action==='close-window'){window.top.postMessage({type:'home:close-self',homeToken:frameHomeToken},homeOrigin);return;}
-  if(signinRequest&&action==='stop-waiting'){await stopHomeSignin();return;}
+  if((signinRequest||appUseRequest)&&action==='stop-waiting'){await stopHomeSignin();return;}
   if (action === 'connect' || action === 'start-over') return onConnect();
   if (action === 'finish' || action === 'send-message') return onConnect({fresh:false});
   if (action === 'cancel') return qrControls ? qrControls.cancel() : cancelWalletWait();
@@ -379,6 +379,7 @@ draw();watchConnection();refreshWalletState().catch(showError);
 async function stopHomeSignin() {
   const owned=signinRequest,result=signinResult;signinSelection=undefined;
   if(owned){signinResult={request:owned,stage:'request-cancelled'};signinRequest=undefined;hostEffectInFlight=false;currentPhase='idle';draw();}
+  if(appUseRequest){appUseRequest=undefined;hostEffectInFlight=false;currentPhase='idle';draw();}
   await connector.effect({kind:'stop-signin'});
   if(result&&signinResult===result){signinResult=undefined;window.top.postMessage({type:'home:close-self',homeToken:frameHomeToken},homeOrigin);}
 }
@@ -387,8 +388,8 @@ async function stopHomeSignin() {
 addEventListener('message',async event=>{
   const data=event.data;
   if(event.source!==window.top||event.origin!==homeOrigin||data?.type!=='home:wallet-signin-effect'||data.homeToken!==frameHomeToken)return;
-  if(typeof data.requestId!=='string'||data.requestId.length>128||!['select','check','sign','complete','stop'].includes(data.operation))return;
-  const keys=['type','homeToken','requestId','operation',...(['check','sign'].includes(data.operation)?['address','chain_id']:[]),...(data.operation==='sign'?['message',...(Object.hasOwn(data,'action')?['action']:[])]:data.operation==='complete'?['reviewRequestId']:[])];
+  if(typeof data.requestId!=='string'||data.requestId.length>128||!['select','check','sign','connect-apps','complete','stop'].includes(data.operation))return;
+  const keys=['type','homeToken','requestId','operation',...(['check','sign','connect-apps'].includes(data.operation)?['address','chain_id']:[]),...(data.operation==='sign'?['message',...(Object.hasOwn(data,'action')?['action']:[])]:data.operation==='complete'?['reviewRequestId']:[])];
   if(Object.keys(data).length!==keys.length||keys.some(key=>!Object.hasOwn(data,key)))return;
   if(data.action!==undefined&&!['add','signin'].includes(data.action))return;
   const reply=result=>window.top.postMessage({type:'home:wallet-signin-effect-result',homeToken:frameHomeToken,requestId:data.requestId,...result},homeOrigin);
@@ -411,10 +412,13 @@ addEventListener('message',async event=>{
       const status=await connector.effect({kind:'status'}),selected=status.session;
       if(!selected||selected.address?.toLowerCase()!==data.address.toLowerCase()||selected.chain!==`eip155:${data.chain_id}`)throw new Error('Wallet changed');
       if(data.operation==='check')result={};
-      else {signinResult=undefined;signinRequest=ownedRequest={connector_id:CONNECTOR_ID,request_id:data.requestId,capsule_id:'home',intent:'auth_challenge',address:data.address,chain_namespace:`eip155:${data.chain_id}`,status:'pending',reason:'',action:data.action,expires_at:Math.floor(Date.now()/1000)+180};hostEffectInFlight=true;draw();result=await connector.effect({kind:'signin',address:data.address,chain_id:data.chain_id,message:data.message});if(signinRequest===ownedRequest)signinResult={request:ownedRequest,stage:'request-done',complete:false};}
+      else if(data.operation==='connect-apps') {
+        signinResult=undefined;appUseRequest=ownedRequest={request_id:data.requestId};hostEffectInFlight=true;draw();
+        result=await connector.effect({kind:'link',expectedAddress:data.address,expectedChain:`eip155:${data.chain_id}`});
+      } else {signinResult=undefined;signinRequest=ownedRequest={connector_id:CONNECTOR_ID,request_id:data.requestId,capsule_id:'home',intent:'auth_challenge',address:data.address,chain_namespace:`eip155:${data.chain_id}`,status:'pending',reason:'',action:data.action,expires_at:Math.floor(Date.now()/1000)+180};hostEffectInFlight=true;draw();result=await connector.effect({kind:'signin',address:data.address,chain_id:data.chain_id,message:data.message});if(signinRequest===ownedRequest)signinResult={request:ownedRequest,stage:'request-done',complete:false};}
     }
-    if(ownedRequest&&signinRequest!==ownedRequest)return reply({error:true});
+    if(ownedRequest&&signinRequest!==ownedRequest&&appUseRequest!==ownedRequest)return reply({error:true});
     reply({result});
-  } catch(error) {reply({error:true,code:error.code});}
-  finally {signinBusy=false;if(ownedRequest&&signinRequest===ownedRequest){signinRequest=undefined;hostEffectInFlight=false;currentPhase='idle';}draw();}
+  } catch(error) {if(error.code==='permission'){await api('internet',{method:'POST',body:JSON.stringify({action:'request'})}).then(()=>showInternetRequest()).catch(()=>{});}reply({error:true,code:error.code});}
+  finally {signinBusy=false;if(ownedRequest&&(signinRequest===ownedRequest||appUseRequest===ownedRequest)){signinRequest=undefined;appUseRequest=undefined;hostEffectInFlight=false;currentPhase='idle';}draw();}
 });

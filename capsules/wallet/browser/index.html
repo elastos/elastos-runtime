@@ -7,10 +7,12 @@
 <script src="./elastos-theme.js"></script>
 <link rel="stylesheet" href="./elastos-ui.css">
 <link rel="stylesheet" href="./style.css?v=wallet-20260819f">
+<link rel="stylesheet" href="./wallet-inventory.css">
 </head>
-<body>
+<body class="wallet-one-list">
   <main class="wallet-shell" aria-label="Wallet">
     <section class="wallet-page">
+      <div id="wallet-inventory" aria-live="polite"></div>
       <section class="wallet-hero" aria-label="Wallet balance" data-face="front">
         <nav class="wallet-hero-actions" aria-label="Wallet actions">
           <p id="wallet-status" class="wallet-status" hidden role="status" aria-live="polite"></p>
@@ -132,15 +134,7 @@
         </div>
       </section>
 
-      <section id="wallet-signers" class="wallet-section" aria-label="Wallets and signers">
-        <div class="wallet-section-heading">
-          <div>
-            <p class="eyebrow">Approval methods</p>
-            <h2>Wallets &amp; signers</h2>
-          </div>
-        </div>
-        <div id="wallet-methods" class="wallet-methods"></div>
-      </section>
+
     </section>
 
     <div id="wallet-drawer-backdrop" class="wallet-drawer-backdrop" hidden></div>

@@ -1623,11 +1623,6 @@ html[data-wallet-presentation="rail"] .wallet-drawer {
   gap: 10px;
 }
 
-#wallet-signers.is-highlighted {
-  outline: 1px solid color-mix(in oklab, var(--accent) 55%, transparent);
-  outline-offset: 4px;
-  border-radius: 14px;
-}
 
 .wallet-get-started[hidden] {
   display: none;
@@ -2140,10 +2135,5 @@ textarea {
 .wallet-request-outcome { margin: 0; }
 
 /* Accounts uses Wallet's connector panel for the sign-in ceremony. */
-html[data-signin-chooser] .wallet-page > :not(#wallet-signers) { display: none; }
-html[data-signin-chooser] #wallet-signers .eyebrow { display: none; }
-html[data-signin-chooser] #wallet-signers { margin-top: 0; }
-html[data-signin-chooser] #wallet-signin-actions { flex-wrap: wrap; }
-html[data-signin-chooser] #wallet-signin-actions p { flex-basis: 100%; }
 
 .wallet-request-site > span { display:inline; }

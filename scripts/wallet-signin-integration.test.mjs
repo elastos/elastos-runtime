@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {selectConnectedWalletConnect,openWalletSigninChooser} from '../capsules/home/browser/wallet-signin-connector.mjs';
+import {selectConnectedWalletConnect} from '../capsules/home/browser/wallet-signin-connector.mjs';
 const identity={connector:'walletconnect',address:'0x'+'12'.repeat(20),chain_id:20,network:''};
 for(const action of ['add','signin'])for(const connector of ['walletconnect'])test(`Home sends ${connector} ${action} action and completes only its matching request`,async()=>{
   const listen=new EventTarget(),controller=new AbortController(),sent=[];
@@ -18,21 +18,6 @@ for(const action of ['add','signin'])for(const connector of ['walletconnect'])te
     assert.equal(complete.reviewRequestId,request.requestId);
     assert.equal(sent.filter(d=>d.operation==='complete').length,1);
   } finally {controller.abort();}
-});
-
-test('Home refuses chooser Cancel during completing and unknown, including a lost window',async t=>{
-  t.mock.timers.enable({apis:['setInterval']});
-  const listen=new EventTarget(),sent=[],actions=[];let active=true;
-  const source={postMessage:d=>sent.push(d)},context={source,homeToken:'wallet'};
-  const chooser=await openWalletSigninChooser({listen,open:async()=>context,current:()=>active,focus(){},onAction:a=>actions.push(a)});
-  try {
-    for(const stage of ['completing','unknown']) {
-      active=true;chooser.render({stage});
-      listen.dispatchEvent(Object.assign(new Event('message'),{source,origin:'null',data:{type:'home:wallet-signin-chooser-action',homeToken:'wallet',requestId:sent.at(-1).requestId,action:'cancel'}}));
-      active=false;t.mock.timers.tick(250);
-      assert.deepEqual(actions,[],stage);
-    }
-  } finally {chooser.close();}
 });
 
 test('Home copies use the canonical connector view and its action completion screen',()=>{

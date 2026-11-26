@@ -64,6 +64,8 @@ const assert = (condition, message) => {
 
 const walletIndex = read("capsules/wallet/browser/index.html");
 const walletPreferences = read("capsules/wallet/browser/wallet-preferences.js");
+const walletInventory = read("capsules/wallet/browser/wallet-inventory.js");
+const walletApp = read("capsules/wallet/browser/wallet.js");
 const walletFormat = read("capsules/wallet/browser/wallet-format.js");
 const browserSources = [
   "capsules/browser/browser/index.html",
@@ -78,8 +80,8 @@ assert(
   "Ledger must stay hidden until a real connector is implemented and tested",
 );
 assert(
-  walletPreferences.includes("walletConnectAvailable") &&
-    walletPreferences.includes('method.id !== "wc" || walletConnectAvailable'),
+  walletInventory.includes("getApprovalMethods().walletconnect?.available !== true") &&
+    walletApp.includes("currentApprovalMethods.walletconnect?.available !== true"),
   "WalletConnect must stay hidden unless the operator-pinned connector config is available",
 );
 assert(
@@ -87,9 +89,8 @@ assert(
   "Hosted Browser must not advertise UniSat as an injected browser extension path",
 );
 assert(
-  walletPreferences.includes('target: "wallet-metamask"') &&
-    walletPreferences.includes('target: "wallet-unisat"') &&
-    walletPreferences.includes("[data-wallet-remove-account]"),
+  walletInventory.includes("walletOpenMethod") &&
+    walletApp.includes("wallet.account.delete") && walletInventory.includes("removeApps(entry"),
   "Wallet approval methods must expose connector-owned add/open actions and Wallet-owned remove actions",
 );
 

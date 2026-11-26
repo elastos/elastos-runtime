@@ -285,7 +285,20 @@ async function performConnectorEffect(connectorId, connectorToken, action, conte
   throw new Error("Unsupported wallet request.");
 }
 
-async function linkEvmWallet(connectorToken, walletChoiceId, context) {
+export async function connectInventoryWallet(entry, context, current) {
+  if (!current() || !entry.sign_in || entry.accounts.length
+    || context.targetId !== `wallet-${entry.sign_in.connector}` || context.walletEffectState.inFlight) {
+    throw new Error('This wallet connection changed. Try again.');
+  }
+  context.walletEffectState.inFlight = true;
+  try {
+    if (entry.sign_in.connector === 'metamask') return await linkEvmWallet(context.homeToken, null, context, {entry, current});
+    if (entry.sign_in.connector === 'unisat') return await linkBitcoinWallet(context.homeToken, {entry, current});
+    throw new Error('Open WalletConnect to connect this wallet for apps.');
+  } finally {context.walletEffectState.inFlight = false;}
+}
+
+async function linkEvmWallet(connectorToken, walletChoiceId, context, expected) {
   const selected = selectMetaMaskCompatibleProvider(context, walletChoiceId);
   ensureWalletPresent(selected);
   const provider = selected.provider;
@@ -293,6 +306,8 @@ async function linkEvmWallet(connectorToken, walletChoiceId, context) {
   const accounts = await provider.request({ method: "eth_requestAccounts" });
   const address = requireEvmAddress(firstProviderAccount(accounts));
   const chainId = requireEvmChainId(await provider.request({ method: "eth_chainId" }));
+  if (expected && (!expected.current() || address.toLowerCase() !== expected.entry.address.toLowerCase()
+    || `eip155:${chainId}` !== expected.entry.chain_namespace)) throw new Error('Select this wallet address and network, then try again.');
   const challengeResult = await runtimePost(
     "/api/apps/home/wallet-connector/evm/link/challenge",
     connectorBody(METAMASK_CONNECTOR_ID, connectorToken, {
@@ -308,6 +323,7 @@ async function linkEvmWallet(connectorToken, walletChoiceId, context) {
     method: "personal_sign",
     params: [challenge.message, signer],
   }), 16 * 1024, "Wallet returned an invalid signature.");
+  if (expected && !expected.current()) throw new Error('Connection cancelled.');
   const verified = await runtimePost(
     "/api/apps/home/wallet-connector/evm/link/verify",
     connectorBody(METAMASK_CONNECTOR_ID, connectorToken, {
@@ -320,10 +336,12 @@ async function linkEvmWallet(connectorToken, walletChoiceId, context) {
   return Object.freeze({ status: "linked", ...(wallet ? { wallet } : {}) });
 }
 
-async function linkBitcoinWallet(connectorToken) {
+async function linkBitcoinWallet(connectorToken, expected) {
   const provider = requireUniSatProvider();
   observeWalletProvider(provider, UNISAT_CONNECTOR_ID);
   const account = await requestUniSatAccount(provider);
+  if (expected && (!expected.current() || account.address !== expected.entry.address
+    || expected.entry.chain_namespace !== 'bip122:000000000019d6689c085ae165831e93')) throw new Error('Select this wallet address and network, then try again.');
   const challengeResult = await runtimePost(
     "/api/apps/home/wallet-connector/bitcoin/link/challenge",
     connectorBody(UNISAT_CONNECTOR_ID, connectorToken, {
@@ -335,6 +353,7 @@ async function linkBitcoinWallet(connectorToken) {
   const signer = await currentUniSatAccount(provider);
   ensureSameAddress(signer.address, account.address, "UniSat account changed before signing.");
   const proof = await signBitcoinMessage(provider, signer, challenge.message, challenge.proof_type);
+  if (expected && !expected.current()) throw new Error('Connection cancelled.');
   const verified = await runtimePost(
     "/api/apps/home/wallet-connector/bitcoin/link/verify",
     connectorBody(UNISAT_CONNECTOR_ID, connectorToken, {

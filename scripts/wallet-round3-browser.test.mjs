@@ -15,26 +15,15 @@ for(const width of [1280,390])test(`round3 pointer Choose survives a focus refre
  const f=await signinFixture(),browser=await requireProductSmokePlaywright().chromium.launch({headless:true,...productSmokeLaunchOptions()});
  const context=await browser.newContext({viewport:{width,height:900}});await context.addInitScript(installSigninProviders,{evmAddress,bitcoinAddress,theme:'light'});
  const page=await context.newPage();page.setDefaultTimeout(5000);f.state.methods=[];
- // Observe the real chooser reply after the focus action refreshes its rows.
- await page.route('**/wallet.js*',async route=>{
-  const source=await readFile('capsules/wallet/browser/wallet.js','utf8'),marker='renderMethods(buildViewAccounts(),currentApprovalMethods);';
-  assert(source.includes(marker));await route.fulfill({contentType:'text/javascript',body:source.replace(marker,marker+" window.dispatchEvent(new Event('round3-wallet-refreshed'));")});
- });
- if(process.env.WALLET_ROUND3_BASELINE)await page.route('**/wallet-preferences.js*',r=>r.fulfill({contentType:'text/javascript',body:historicalTestSource('61ed90494:capsules/wallet/browser/wallet-preferences.js')}));
  try {
   await page.goto(f.origin+'/home/');await page.waitForFunction(()=>window.fixtureReady);await page.evaluate(()=>window.showFixtureApps());
-  const system=page.frameLocator('iframe[title=system]'),wallet=page.frameLocator('iframe[title=wallet]');
-  await system.getByRole('button',{name:'Add wallet',exact:true}).click();await wallet.locator('#wallet-signers[data-signin=options]').waitFor();
-  const choose=wallet.locator('.wallet-method-head').filter({hasText:'MetaMask'}).getByRole('button',{name:'Choose',exact:true});await choose.waitFor();
-  await choose.evaluate(node=>window.round3Choose=node);
-  const box=await choose.boundingBox();await page.mouse.move(box.x+box.width/2,box.y+box.height/2);await page.mouse.down();
-  await wallet.locator('body').evaluate(()=>new Promise(resolve=>{
-   window.addEventListener('round3-wallet-refreshed',resolve,{once:true});window.dispatchEvent(new Event('focus'));
-  }));
-  assert.equal(await choose.evaluate(node=>node===window.round3Choose),true,'the refreshed row keeps the pressed control');
-  await shot(page,`pointer-${width}`);await page.mouse.up();
-  await system.locator('[data-wallet-method]').filter({hasText:'MetaMask'}).waitFor();
-  assert.equal(f.state.methods.length,1);await shot(page,`added-${width}`);
+  const system=page.frameLocator('iframe[title=system]');await system.getByRole('button',{name:'Add wallet',exact:true}).click();
+  const choose=page.locator('.signin-dialog .connection-option').filter({hasText:'MetaMask'});await choose.waitFor();await choose.evaluate(node=>window.round3Choose=node);
+  await page.bringToFront();await page.evaluate(()=>document.fonts.ready);const box=await choose.boundingBox();await page.mouse.move(box.x+box.width/2,box.y+box.height/2);await page.mouse.down();
+  await system.locator('body').evaluate(()=>window.dispatchEvent(new Event('focus')));
+  assert.equal(await choose.evaluate(node=>node===window.round3Choose),true);await shot(page,`pointer-${width}`);await page.mouse.up();
+  await page.getByRole('button',{name:'Sign message',exact:true}).click();await page.getByRole('button',{name:'Approve with passkey',exact:true}).click();
+  await system.locator('[data-wallet-method]').filter({hasText:'MetaMask'}).waitFor();assert.equal(f.state.methods.length,1);await shot(page,`added-${width}`);
  }finally{await context.close();await browser.close();await f.close();}
 });
 for(const width of [1280,390])test(`round3 title identity status and text focus at ${width}`,async()=>{
@@ -124,10 +113,10 @@ for(const width of [1280,390])for(const status of [403,409])test(`round3 ${statu
  const f=await signinFixture(),browser=await requireProductSmokePlaywright().chromium.launch({headless:true,...productSmokeLaunchOptions()});const context=await browser.newContext({viewport:{width,height:900}});await context.addInitScript(installSigninProviders,{evmAddress,bitcoinAddress,theme:'light'});const page=await context.newPage();page.setDefaultTimeout(5000);f.state.methods=[];let refuse=true;
  await page.route('**/api/auth/wallet-methods/complete',route=>refuse?route.fulfill({status,json:{error:'wallet_signin_refused'}}):route.continue());
  try{
-  await page.goto(f.origin+'/home/');await page.waitForFunction(()=>window.fixtureReady);await page.evaluate(()=>window.showFixtureApps());const system=page.frameLocator('iframe[title=system]'),wallet=page.frameLocator('iframe[title=wallet]');
-  await system.getByRole('button',{name:'Add wallet',exact:true}).click();await wallet.locator('#wallet-signers[data-signin=options]').waitFor();await wallet.locator('.wallet-method-head').filter({hasText:'MetaMask'}).getByRole('button',{name:'Choose',exact:true}).click();
-  await wallet.locator('#wallet-signers[data-signin=error]').waitFor();const text=await wallet.locator('#wallet-signers').innerText();assert.match(text,/Home could not/);assert.doesNotMatch(text,/Check again/);assert(f.state.calls.some(c=>c.path.endsWith('/cancel')));await shot(page,`refusal-${status}-${width}`);
-  refuse=false;await wallet.getByRole('button',{name:'Try again',exact:true}).click();await wallet.locator('#wallet-signers[data-signin=options]').waitFor();await wallet.locator('.wallet-method-head').filter({hasText:'MetaMask'}).getByRole('button',{name:'Choose',exact:true}).click();await system.locator('[data-wallet-method]').filter({hasText:'MetaMask'}).waitFor();assert.equal(f.state.methods.length,1);
+  await page.goto(f.origin+'/home/');await page.waitForFunction(()=>window.fixtureReady);await page.evaluate(()=>window.showFixtureApps());const system=page.frameLocator('iframe[title=system]'),wallet=page;
+  await system.getByRole('button',{name:'Add wallet',exact:true}).click();await wallet.locator('.signin-dialog[data-state=options]').waitFor();await wallet.locator('.connection-option').filter({hasText:'MetaMask'}).click();await wallet.getByRole('button',{name:'Sign message',exact:true}).click();await wallet.getByRole('button',{name:'Approve with passkey',exact:true}).click();
+  await wallet.locator('.signin-dialog[data-state=error]').waitFor();const text=await wallet.locator('.signin-dialog').innerText();assert.match(text,/Home could not/);assert.doesNotMatch(text,/Check again/);assert(f.state.calls.some(c=>c.path.endsWith('/cancel')));await shot(page,`refusal-${status}-${width}`);
+  refuse=false;await wallet.getByRole('button',{name:'Try again',exact:true}).click();await wallet.locator('.signin-dialog[data-state=options]').waitFor();await wallet.locator('.connection-option').filter({hasText:'MetaMask'}).click();await wallet.getByRole('button',{name:'Sign message',exact:true}).click();await wallet.getByRole('button',{name:'Approve with passkey',exact:true}).click();await system.locator('[data-wallet-method]').filter({hasText:'MetaMask'}).waitFor();assert.equal(f.state.methods.length,1);
  }finally{await context.close();await browser.close();await f.close();}
 });
 
@@ -135,9 +124,9 @@ for(const width of [1280,390])test(`round3 a second Add brings the unknown chang
  const f=await signinFixture(),browser=await requireProductSmokePlaywright().chromium.launch({headless:true,...productSmokeLaunchOptions()});const context=await browser.newContext({viewport:{width,height:900}});await context.addInitScript(installSigninProviders,{evmAddress,bitcoinAddress,theme:'light'});const page=await context.newPage();page.setDefaultTimeout(5000);f.state.methods=[];
  await page.route('**/api/auth/wallet-methods/complete',route=>route.abort('failed'));
  try{
-  await page.goto(f.origin+'/home/');await page.waitForFunction(()=>window.fixtureReady);await page.evaluate(()=>window.showFixtureApps());const system=page.frameLocator('iframe[title=system]'),wallet=page.frameLocator('iframe[title=wallet]');
-  await system.getByRole('button',{name:'Add wallet',exact:true}).click();await wallet.locator('#wallet-signers[data-signin=options]').waitFor();await wallet.locator('.wallet-method-head').filter({hasText:'MetaMask'}).getByRole('button',{name:'Choose',exact:true}).click();await wallet.locator('#wallet-signers[data-signin=unknown]').waitFor();
-  await page.locator('iframe[title=wallet]').evaluate(frame=>frame.remove());await page.locator('#show-system').evaluate(el=>el.click());await system.getByRole('button',{name:'Add wallet',exact:true}).click();await wallet.getByRole('button',{name:'Check again',exact:true}).waitFor();assert.equal(await page.locator('iframe[title=wallet]').isVisible(),true);assert.equal(f.state.calls.filter(c=>c.path.endsWith('/wallet-methods/complete')).length,0,'lost transport sends no replacement proof');await shot(page,`unknown-second-add-${width}`);
+  await page.goto(f.origin+'/home/');await page.waitForFunction(()=>window.fixtureReady);await page.evaluate(()=>window.showFixtureApps());const system=page.frameLocator('iframe[title=system]'),wallet=page;
+  await system.getByRole('button',{name:'Add wallet',exact:true}).click();await wallet.locator('.signin-dialog[data-state=options]').waitFor();await wallet.locator('.connection-option').filter({hasText:'MetaMask'}).click();await wallet.getByRole('button',{name:'Sign message',exact:true}).click();await wallet.getByRole('button',{name:'Approve with passkey',exact:true}).click();await wallet.locator('.signin-dialog[data-state=unknown]').waitFor();
+  await page.locator('#show-system').evaluate(el=>el.click());await system.getByRole('button',{name:'Add wallet',exact:true}).evaluate(el=>el.click());await wallet.getByRole('button',{name:'Check again',exact:true}).waitFor();assert.equal(await page.locator('.signin-dialog').isVisible(),true);assert.equal(f.state.calls.filter(c=>c.path.endsWith('/wallet-methods/complete')).length,0,'lost transport sends no replacement proof');await shot(page,`unknown-second-add-${width}`);
  }finally{await context.close();await browser.close();await f.close();}
 });
 

@@ -1799,3 +1799,52 @@ async fn round9_ten_cancelled_passkeys_release_pending_capacity() {
         assert_eq!(status, StatusCode::OK, "{result}");
     }
 }
+
+#[tokio::test]
+async fn wallet_inventory_http_rejects_inbox_and_browser_and_survives_provider_down() {
+    let f = wallet_fixture::fixture();
+    wallet_fixture::enabled(&f);
+    let app = gateway_router(test_state(f.data.path()));
+    for capsule in [
+        INBOX_CAPSULE_ID,
+        BROWSER_CAPSULE_ID,
+        HOME_CAPSULE_ID,
+        SYSTEM_CAPSULE_ID,
+        WALLET_CAPSULE_ID,
+    ] {
+        let (token, origin) = if capsule == HOME_CAPSULE_ID {
+            (
+                issue_home_launch_token_for_auth_grant(f.data.path(), capsule, &f.actor).unwrap(),
+                ORIGIN,
+            )
+        } else {
+            (wallet_app_token(f.data.path(), capsule, &f.actor), "null")
+        };
+        let response = app
+            .clone()
+            .oneshot(
+                test_browser_request("localhost:61180", origin)
+                    .uri("/api/apps/wallet/wallet/inventory")
+                    .header("x-elastos-home-token", token)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        if [INBOX_CAPSULE_ID, BROWSER_CAPSULE_ID].contains(&capsule) {
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{capsule}");
+            continue;
+        }
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let out: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(status, StatusCode::OK, "{capsule}: {out}");
+        assert_eq!(
+            out["entries"][0]["sign_in"]["method_id"],
+            auth::list(f.data.path(), &f.actor).unwrap()["methods"][0]["method_id"]
+        );
+        assert_eq!(out["apps_available"], false);
+    }
+}

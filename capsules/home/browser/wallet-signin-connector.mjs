@@ -10,7 +10,7 @@ async function completeReview(send, reviewRequestId) {
 }
 
 // Home talks only to its admitted WalletConnect window. Proof stays in memory.
-export async function selectConnectedWalletConnect({signal,method,opened,action='signin',changed=()=>{}},{open,current,listen=window}) {
+export async function selectConnectedWalletConnect({signal,method,opened,action='signin',appUse=false,ready=()=>{},changed=()=>{}},{open,current,listen=window}) {
   const context=await open();signal.throwIfAborted();opened?.(context.focus);
   const pending=new Map();let sequence=0,monitor,closed=false;
   const prefix=crypto.randomUUID();let reviewRequestId;
@@ -38,6 +38,13 @@ export async function selectConnectedWalletConnect({signal,method,opened,action=
     if(!wallet||wallet.connector!=='walletconnect'||!/^0x[0-9a-fA-F]{40}$/.test(wallet.address)||!Number.isSafeInteger(wallet.chain_id)||wallet.chain_id<=0||wallet.network!=='')throw new Error('Invalid wallet identity');
     if(![20,8453].includes(wallet.chain_id))throw Object.assign(new Error('Unsupported sign-in network'),{code:'network'});
     if(method&&(method.address.toLowerCase()!==wallet.address.toLowerCase()||method.chain_id!==wallet.chain_id))throw Object.assign(new Error('Wallet changed'),{code:'changed'});
+    if (appUse) {
+      if (!method) throw new Error('Select a saved wallet first.');
+      ready();
+      const result = await send('connect-apps', {address:wallet.address,chain_id:wallet.chain_id});
+      if (result?.status !== 'linked') throw new Error('Home could not confirm app use.');
+      close(); return result;
+    }
     return {...wallet,focus:context.focus,check:()=>send('check',{address:wallet.address,chain_id:wallet.chain_id}),
       complete:()=>completeReview(send,reviewRequestId),
       async sign(message){
@@ -46,24 +53,4 @@ export async function selectConnectedWalletConnect({signal,method,opened,action=
         return {signature:proof.signature,signature_type:'personal_sign',public_key:''};
       },close};
   }catch(error){close();throw error;}
-}
-
-
-// The admitted Wallet owns the chooser; Home owns its ceremony and proof.
-export async function openWalletSigninChooser({open,current,focus,listen=window,onAction,setStage=()=>{}}) {
-  const context=await open('wallet'),requestId=crypto.randomUUID();
-  let stopped=false,monitor,acknowledged=false,lastState;
-  const valid=()=>!stopped&&current(context);
-  const canCancel=()=>!['completing','unknown'].includes(lastState?.stage);
-  const send=state=>{lastState=state;setStage(context.homeToken,state.stage);if(valid())context.source.postMessage({type:'home:wallet-signin-chooser',homeToken:context.homeToken,requestId,state},'*');};
-  const receive=event=>{
-    const data=event.data;
-    if(!valid()||event.source!==context.source||event.origin!=='null'||data?.type!=='home:wallet-signin-chooser-action'||data.homeToken!==context.homeToken||data.requestId!==requestId||Object.keys(data).length!==4)return;
-    if(data.action==='ready'){acknowledged=true;return;}
-    if(data.action==='cancel'&&!canCancel())return;
-    if(['metamask','unisat','walletconnect','cancel','retry','approve','check','refresh'].includes(data.action)||lastState?.stage==='options'&&lastState.methods?.some(m=>m.providerId&&data.action===`${m.connector}:${m.providerId}`))onAction(data.action);
-  };
-  listen.addEventListener('message',receive);
-  monitor=setInterval(()=>{if(!stopped&&!current(context)&&canCancel()){onAction('cancel');}else if(!acknowledged&&lastState)send(lastState);},250);
-  return {isOpen:valid,render:send,focus:()=>{if(valid())focus(context.homeToken);},close(){if(stopped)return;send({stage:'closed'});stopped=true;clearInterval(monitor);listen.removeEventListener('message',receive);}};
 }

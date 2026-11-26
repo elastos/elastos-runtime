@@ -56,6 +56,7 @@ export async function runtimeView(t, app, state = {}) {
         if (state.beforeInboxSummary) await state.beforeInboxSummary();
         return json(snapshot);
       }
+      if (url.pathname === "/api/apps/wallet/wallet/inventory") return json({schema:'elastos.wallet.inventory/v1',account_id:'fixture-account',account_name:'Alex',entries:state.accounts.map(account=>({inventory_id:`${account.chain_namespace}:${account.address.toLowerCase()}`,address:account.address,chain_namespace:account.chain_namespace,accounts:[account],sign_in:null}))});
       if (url.pathname === "/api/apps/wallet/wallet/summary" && (state.approvalsUnavailable || state.decisionComplete && state.summaryFailureAfterDecision === "unavailable")) return json({ wallet_accounts:{available:true, accounts:state.accounts, default_accounts:[]}, wallet_approvals:{available:false, pending_count:0, approval_requests:[], note:"Wallet requests are unavailable."}, approval_methods:{} });
       if (url.pathname === "/api/apps/wallet/wallet/summary" && state.decisionComplete && state.summaryFailureAfterDecision) return route.abort("failed");
       if (url.pathname === "/api/apps/wallet/wallet/summary") return json({ wallet_accounts: { available:true, accounts: state.accounts, default_accounts: [] }, wallet_approvals: { available:true, pending_count:state.approvals.filter(r => r.status === "pending").length, approval_requests: state.approvals }, approval_methods: { walletconnect: { available: true } } });

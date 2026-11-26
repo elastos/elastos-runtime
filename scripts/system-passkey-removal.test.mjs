@@ -29,9 +29,8 @@ async function fixture(run, engine = "chromium") {
         jsonResponse(response, summary);
         return true;
       }
-      if (url.pathname === "/api/auth/wallet-methods") {
-        jsonResponse(response, { account_id: passkeys.find(key => key.current)?.principal_id || owner.principal_id, methods });
-        return true;
+      if (url.pathname === "/api/apps/wallet/wallet/inventory") {
+        jsonResponse(response, {schema:'elastos.wallet.inventory/v1',account_id:passkeys.find(key=>key.current)?.principal_id||owner.principal_id,entries:methods.map(method=>({inventory_id:`eip155:${method.chain_id}:${method.address}`,address:method.address,chain_namespace:`eip155:${method.chain_id}`,accounts:[],sign_in:method}))});return true;
       }
       if (url.pathname === "/api/auth/passkeys") {
         listReads++;
@@ -71,8 +70,10 @@ async function fixture(run, engine = "chromium") {
       failure = options.failure || null;
       afterFailurePasskeys = options.afterFailurePasskeys || null;
       await page.goto(`${server.baseUrl}/fixture?settings=account`);
+      await page.bringToFront();
       const frame = await page.locator("#system-frame").elementHandle().then(handle => handle.contentFrame());
       await frame.waitForSelector(".account-row");
+      await frame.evaluate(() => document.fonts.ready);
       return frame;
     };
     await run({ page, open, writes, consoleErrors, listReads: () => listReads });
@@ -314,7 +315,7 @@ test("System distinguishes two passkeys and identifies this window at desktop an
       assert.equal(await rows.nth(0).locator(".passkey-name").textContent(), "Apple Passwords");
       assert.match(await rows.nth(0).locator(".account-name-wrap").getAttribute("title"), /added from Safari on Mac or iPad/);
       assert.equal(await rows.nth(1).locator(".passkey-name").textContent(), "Saved on a phone or tablet");
-      assert.equal(await rows.nth(0).locator(".passkey-current").textContent(), "Current");
+      assert.equal(await rows.nth(0).locator(".passkey-current").textContent(), "Current passkey");
       assert.notEqual(await rows.nth(0).locator(".account-used").textContent(), "Not used yet");
       assert.equal(await rows.nth(1).locator(".passkey-current").count(), 0);
       assert.equal(await frame.locator("#passkey-add-help").count(), 0);
@@ -359,25 +360,22 @@ for (const engine of ["chromium", "webkit"]) test(`Accounts groups methods benea
         const block = frame.locator(".account-block");
         assert.equal(await block.count(), 1);
         assert.equal(await block.locator(".account-header h2").textContent(), "Alex");
-        assert.equal(await block.locator(".account-row").count(), keys.length + (options.methods?.length || 0));
+        assert.equal(await block.locator(".account-row").count(), keys.length);
         assert.equal(await block.locator(".passkey-current").count(), 1);
         assert.equal(await frame.locator("#passkey-add-help").count(), 0);
         assert.equal(await block.getByText("Signs in", {exact:true}).count(), 0);
-        for (const action of await block.locator('.passkey-remove, .account-remove, .signin-method-controls button').all()) {
+        for (const action of await block.locator('.passkey-remove, .account-remove').all()) {
           const style=await action.evaluate(node=>{const s=getComputedStyle(node);return {background:s.backgroundColor,border:s.borderTopColor,height:node.getBoundingClientRect().height,padding:s.padding};});
-          assert.equal(style.background,"rgba(0, 0, 0, 0)","destructive actions have a quiet background");
-          assert.equal(style.border,"rgba(0, 0, 0, 0)","destructive actions have no visible border");
+          assert.notEqual(style.background,"rgba(0, 0, 0, 0)","passkey and account actions keep the approved button surface");
+          assert.notEqual(style.border,"rgba(0, 0, 0, 0)","passkey and account actions have a visible boundary");
           assert.ok(style.height>=44);
           assert.equal(style.padding,"8px 12px","all destructive actions use the same padding");
         }
-        const add = frame.locator(".account-add-actions button");
-        if (options.role === "guest") assert.equal(await frame.locator(".account-add-actions button:visible").count(), 0);
+        const add = frame.locator("#passkey-add, #wallet-signin-add");
+        if (options.role === "guest") {assert.equal(await frame.locator(".account-add-actions button:visible").count(),0);assert.equal(await frame.locator(".system-signin-wallets").getByRole("button",{name:"Add wallet",exact:true}).count(),0);}
         else {
           const boxes = await Promise.all((await add.all()).map(button => button.boundingBox()));
-          assert.equal(boxes[0].height, boxes[1].height);
-          assert.equal(boxes[0].width, boxes[1].width);
-          assert.equal(boxes[0].y, boxes[1].y);
-          assert.ok(boxes[0].height >= 44);
+          assert.ok(boxes.every(box=>box&&box.height>=44));
         }
         assert.equal(await frame.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
         for (const note of await frame.locator(".passkey-removal-note").all()) {
@@ -389,11 +387,11 @@ for (const engine of ["chromium", "webkit"]) test(`Accounts groups methods benea
           const walletRow = block.locator("[data-wallet-method]");
           assert.equal(await walletRow.getByRole("button").count(), 1);
           assert.equal(await walletRow.getByRole("switch").count(), 0);
-          assert.equal(await walletRow.getByRole("button", { name: "Remove", exact: true }).count(), 1);
-          const walletSize = await walletRow.getByRole("button", { name: "Remove", exact: true }).boundingBox();
+          assert.equal(await walletRow.getByRole("button", { name: "Remove from sign-in", exact: true }).count(), 1);
+          const walletSize = await walletRow.getByRole("button", { name: "Remove from sign-in", exact: true }).boundingBox();
           const passkeySize = await block.locator(".passkey-remove").first().boundingBox();
-          assert(Math.abs(walletSize.width - passkeySize.width) <= 1, "wallet and passkey Remove use the same width");
-          assert(Math.abs(walletSize.height - passkeySize.height) <= 1, "wallet and passkey Remove use the same height");
+          assert(walletSize.width > passkeySize.width, "Remove from sign-in retains its full action label");
+          assert(Math.abs(walletSize.height - passkeySize.height) <= 1, `wallet and passkey Remove use the same height: ${JSON.stringify({walletSize,passkeySize,theme,width})}`);
           assert.equal(await block.getByRole("button", { name: "Remove account", exact: true }).count(), 0);
           assert.equal(new Set(await block.locator(".passkey-name").allTextContents()).size, 2);
           const remove = block.locator(".passkey-remove").first();

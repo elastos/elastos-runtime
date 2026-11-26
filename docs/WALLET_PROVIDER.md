@@ -29,6 +29,52 @@ component, capability-request, and Inspect callers cannot select a principal,
 forward a local bearer token, dispatch `wallet_contract`, or request any Wallet
 account, proof, approval, signing, secret, Recovery, or transaction operation.
 
+## Wallet list and uses
+
+Runtime supplies one account-scoped read-only inventory at
+`GET /api/apps/wallet/wallet/inventory`. It joins active wallet-provider account
+links and auth wallet sign-in methods by verified address and network. The
+projection creates neither a store nor a new proof binding. Auth owns sign-in;
+wallet-provider owns app use, defaults and approval requests.
+
+When wallet-provider is unavailable, Runtime keeps sign-in entries readable and
+sets `apps_available` to `false`. System keeps sign-in removal available. Wallet
+marks app use unavailable and offers Try again to read its saved state. If the
+inventory read fails, Wallet keeps available app data visible and offers the
+same retry. System reads auth's saved sign-in methods.
+
+Wallet shows each inventory entry once. Its Used by section links System use
+to System > Accounts and gives Wallet one Apps and websites switch. One
+ownership signature enables app use. A fresh passkey approval removes the
+selected entry's app-use records. The switch keeps the saved value until
+completion, and Cancel preserves that value. For an entry with several app-use
+links, one approval binds all selected account IDs. Every later app request has
+its own approval. The built-in EVM card lists each network's balance and keeps
+Send, Receive and key management. The built-in Bitcoin card keeps its own balance,
+Receive and key management. UniSat proves Bitcoin address ownership to apps. Sending
+Bitcoin from this Home is not available yet.
+
+For a sign-in-only wallet, Wallet sends Home the inventory identity.
+Home reads its own account inventory, obtains a live connector launch, and uses
+the existing ownership challenge and verification endpoints with that connector's
+authority. Home checks the selected address and network before signing and the
+request lifetime before submission. For WalletConnect, Home binds the admitted
+connector to the saved address and network. Cancel retires the ownership request
+while the saved phone session stays connected. WalletConnect retains its connector
+window, pairing and persistent internet permission steps. These transport permissions
+remain separate from sign-in enrollment.
+
+### General approval-method interface (proposed)
+
+A future `proof.sign` interface can declare supported purposes:
+`sign-in-enrollment`, `sign-in`, `wallet-ownership`, and `app-request`. Runtime
+would bind the caller, account, Home, address, network, exact purpose, payload,
+nonce and expiry. The approval method would obtain one purpose-specific
+signature, and Runtime would verify and settle only that operation. Such an
+interface would let System use a method directly while Wallet supplies the list.
+The current manifests keep their existing Wallet-specific methods. This proposed
+interface adds zero callable operations or authority to those manifests.
+
 ## Authority Model
 
 Runtime authority comes first:

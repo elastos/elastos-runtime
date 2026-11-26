@@ -4,11 +4,11 @@ export async function observeCopiedFeedback(frame,selector){
   const state={seen:false};
   const observer=new MutationObserver(()=>{
    const button=document.querySelector(selector);
-   if(button?.getAttribute('title')==='Copied'&&button?.getAttribute('aria-label')==='Copied'){
+   if(button?.textContent==='Copied'||button?.getAttribute('title')==='Copied'&&button?.getAttribute('aria-label')==='Copied'){
     state.seen=true;observer.disconnect();
    }
   });
-  observer.observe(document,{subtree:true,attributes:true,attributeFilter:['title','aria-label']});
+  observer.observe(document,{subtree:true,attributes:true,childList:true,characterData:true,attributeFilter:['title','aria-label']});
   return {state,stop:()=>observer.disconnect()};
  },selector);
  return {

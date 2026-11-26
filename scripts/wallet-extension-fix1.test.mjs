@@ -45,38 +45,43 @@ async function visibleBrandMarkCount(frame, mark) {
   }).length);
 }
 
+// Observe the real snapshot used by the renderer; the shell owns the visible brand.
+const observeDiscovery=source=>source.replace('const provider = buildProviderSnapshot();', 'const provider = buildProviderSnapshot(); window.__testDiscoveryAvailability = provider.availability;');
 async function unisatIdentity(f, saved) {
   await f.state(saved ? 'linked' : 'ready');
   await assertNoVisibleWindowHeading(f.frame, 'UniSat');
   assert.equal(await f.top.evaluate(() => testState.calls.length), 0, 'a saved link is not fresh discovery');
   assert.equal(await visibleBrandMarkCount(f.frame, 'unisat'), 0, 'no visible UniSat mark before fresh Home discovery');
+  assert.equal(await f.frame.evaluate(()=>window.__testDiscoveryAvailability),'unknown','a saved link grants no fresh discovery');
   if (saved) {
-    assert.match(await f.frame.locator('.connection-account-header img').getAttribute('src'), /connection-wallet\.png$/);
+    assert.equal(await f.frame.locator('.connection-account-header').count(), 0);
     // The same validated Home event that the real host sends after discovery.
     await f.top.evaluate(() => document.querySelector('iframe').contentWindow.postMessage({
       type:'home:wallet-connector-event', connectorId:'wallet-unisat', event:'accountsChanged', value:[testState.address],
     }, '*'));
-    await f.frame.locator('.connection-account-header img[src$="connection-unisat.png"]').waitFor();
+    await f.frame.waitForFunction(()=>window.__testDiscoveryAvailability==='found');
+    assert.equal(await f.frame.locator('.connection-account-header').count(), 0);
   } else {
     assert.equal(await f.frame.locator('.connection-account').count(), 0, 'no account before connection');
     await f.action('connect').click();
     await f.state('linked');
     assert.ok(await f.top.evaluate(() => testState.calls.length) > 0, 'Home called the wallet');
   }
-  assert.equal(await visibleBrandMarkCount(f.frame, 'unisat'), 1, 'visible UniSat account mark after fresh Home discovery');
+  assert.equal(await f.frame.evaluate(()=>window.__testDiscoveryAvailability),'found','Home confirmed discovery');
+  assert.equal(await visibleBrandMarkCount(f.frame, 'unisat'), 0, 'the shell owns the UniSat name and mark');
+  assert.equal(await f.frame.locator('.connection-account-header').count(),0,'the entry keeps address and network without a second title');
 }
 
 for (const engine of ['chromium', 'webkit']) for (const saved of [true, false]) test(`${engine} UniSat: identity waits for fresh Home discovery (Y11, ${saved ? 'saved link' : 'fresh window'})`, { timeout: 20000, skip: engineSkip(engine) }, async t => {
   const browser = await playwright[engine].launch({ headless: true });
   try {
-    const good = await fixture(browser, 'unisat', {saved});
+    const good = await fixture(browser, 'unisat', {saved,mutate:observeDiscovery});
     try { await unisatIdentity(good, saved); } finally { await good.close(); }
-    const bad = await baseFixture(browser, 'unisat', { saved, mutate: source => {
-      const broken = breaks[saved ? 'Y11' : 'Y11-discovery'](source); assert.notEqual(broken, source, 'Y11 applies'); return broken;
-    } });
-    try { await assert.rejects(() => unisatIdentity(bad, saved), { code: 'ERR_ASSERTION' }); }
-    finally { await bad.close(); }
-    t.diagnostic(`Y11 ${saved ? 'saved link' : 'fresh window'}: clean oracle passed; product discovery break caught`);
+    const bad=await baseFixture(browser,'unisat',{saved,mutate:source=>{
+      const broken=breaks[saved?'Y11':'Y11-discovery'](source);assert.notEqual(broken,source,'Y11 applies');return observeDiscovery(broken);
+    }});
+    try {await assert.rejects(()=>unisatIdentity(bad,saved),{code:'ERR_ASSERTION'});}finally{await bad.close();}
+    t.diagnostic('Y11: clean discovery passed; premature or missing discovery was caught.');
   } finally { await browser.close(); }
 });
 

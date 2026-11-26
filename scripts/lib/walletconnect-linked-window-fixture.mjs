@@ -36,6 +36,7 @@ export async function linkedWindow(t,engine,{holdWalletRead=false,sourceRef}={})
   const gate=apiGates.get(route.request().method()+' '+path);if(gate){apiGates.delete(route.request().method()+' '+path);gate.enter();await gate.wait;}
   const json=value=>route.fulfill({headers:cors,contentType:'application/json',body:JSON.stringify(value)});
   if(route.request().method()==='OPTIONS')return json({});
+  if(path==='/api/apps/wallet/wallet/inventory')return json({schema:'elastos.wallet.inventory/v1',account_id:'fixture',account_name:'Alex',entries:fixture.state.accounts.map(account=>({inventory_id:`${account.chain_namespace}:${account.address.toLowerCase()}`,address:account.address,chain_namespace:account.chain_namespace,accounts:[account],sign_in:null}))});
   if(path==='/api/apps/wallet/wallet/summary'){
    walletReads.push(fixture.state.accounts.length);
    const snapshot=structuredClone({wallet_accounts:{available:true,accounts:fixture.state.accounts,default_accounts:[]},wallet_approvals:{available:true,approval_requests:[],pending_count:0},approval_methods:{walletconnect:{available:true}}});
@@ -79,7 +80,7 @@ export async function linkedWindow(t,engine,{holdWalletRead=false,sourceRef}={})
  await page.goto(fixture.origin);
  frame=page.frames().find(f=>f.url().includes('/apps/wallet-walletconnect/'));
  const wallet=page.frameLocator('#accounts');await wallet.locator('.wallet-shell').waitFor();
- if(!holdWalletRead)try{await wallet.locator('[data-wallet-open-method="wallet-walletconnect"]').waitFor();}catch(error){throw new Error('Wallet boot: '+await wallet.locator('main').innerText()+'; reads='+JSON.stringify(walletReads)+'; failed='+JSON.stringify(walletFailures),{cause:error});}
+ if(!holdWalletRead)try{await wallet.getByRole('button',{name:'Add wallet for apps',exact:true}).waitFor();}catch(error){throw new Error('Wallet boot: '+await wallet.locator('main').innerText()+'; reads='+JSON.stringify(walletReads)+'; failed='+JSON.stringify(walletFailures),{cause:error});}
  async function state(name){try{await frame.locator(`[data-state="${name}"]`).waitFor();}catch(error){throw new Error(`Expected ${name}: ${await frame.locator('main').innerText()}`,{cause:error});}}
  const click=action=>frame.locator(`[data-action="${action}"]`).click();
  async function link(){await state('internet-ready');await click('connect');await state('qr-shown');await pair();await state('linked');}
@@ -87,7 +88,7 @@ export async function linkedWindow(t,engine,{holdWalletRead=false,sourceRef}={})
  async function refresh(){await frame.evaluate(()=>window.dispatchEvent(new Event('focus')));}
  async function reopen(){await settle(frame);const loaded=page.waitForEvent('framenavigated',f=>f.parentFrame()===page.mainFrame()&&f.url().includes('/apps/wallet-walletconnect/'));await page.locator('#wallet').evaluate((node,src)=>node.src=src,nodeURL());frame=await loaded;await frame.locator('main[data-state]').waitFor();}
  function nodeURL(){return fixture.origin+'/apps/wallet-walletconnect/?home_origin='+encodeURIComponent(fixture.origin)+'#home_token=fixture-wallet';}
- async function openFromWallet(){await settle(frame);const loaded=page.waitForEvent('framenavigated',f=>f.parentFrame()===page.mainFrame()&&f.url().includes('/apps/wallet-walletconnect/'));await wallet.locator('[data-wallet-open-method="wallet-walletconnect"]').click();frame=await loaded;await state('linked');}
+ async function openFromWallet(){await settle(frame);const loaded=page.waitForEvent('framenavigated',f=>f.parentFrame()===page.mainFrame()&&f.url().includes('/apps/wallet-walletconnect/'));await wallet.getByRole('button',{name:'Add wallet for apps',exact:true}).click();await wallet.locator('[data-wallet-open-method="wallet-walletconnect"]').click();frame=await loaded;await state('linked');}
  const records=captures.get(engine)||[];captures.set(engine,records);
  async function capture(name){
   const output=process.env.WALLETCONNECT_LINKED_SCREENS;if(!output)return;
@@ -108,7 +109,7 @@ export async function linkedWindow(t,engine,{holdWalletRead=false,sourceRef}={})
   if(life.pending||life.fetches||life.bodies||life.providers.some(p=>p.signer.client.engine.relayMessageCache?.length||p.signer.client.engine.requestQueue?.queue?.length)){window.__linkedIdleSince=undefined;return false;}
   window.__linkedIdleSince??=performance.now();return performance.now()-window.__linkedIdleSince>=500;
  });}
- async function reopenWallet(){const navigated=page.waitForEvent('framenavigated',f=>f.url().includes('/apps/wallet/'));await page.getByRole('button',{name:'Reload Wallet',exact:true}).click();await navigated;await wallet.locator('[data-wallet-open-method="wallet-walletconnect"]').waitFor();}
+ async function reopenWallet(){const navigated=page.waitForEvent('framenavigated',f=>f.url().includes('/apps/wallet/'));await page.getByRole('button',{name:'Reload Wallet',exact:true}).click();await navigated;await wallet.getByRole('button',{name:'Add wallet for apps',exact:true}).waitFor();}
  if(sourceRef?.startsWith('0db7'))await page.evaluate(()=>{const button=document.createElement('button');button.textContent='Reload Wallet';button.style='position:absolute;top:0;right:0';button.onclick=()=>{const wallet=document.querySelector('#accounts');wallet.src=wallet.src;};document.body.append(button);});
  await state('internet-ready');
  return {fixture,peer,page,wallet,holdApi,waitWalletRead,releaseWalletRead,get frame(){return frame;},state,click,link,pair,refresh,reopen,reopenWallet,openFromWallet,capture,idle,settle:()=>settle(frame)};
