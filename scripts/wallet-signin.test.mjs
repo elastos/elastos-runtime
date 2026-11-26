@@ -541,3 +541,29 @@ test('Home app-use bridge binds the phone identity and stops a cancelled ownersh
     assert.equal(sent.filter(data=>data.operation==='stop').length,1);assert(!sent.some(data=>data.operation==='sign'));
   }
 });
+
+test('a repeated System Add keeps its original result when the auth read crosses completion',async()=>{
+  const {handleWalletSigninRequest}=await import('../capsules/home/browser/wallet-signin-host.mjs');
+  const source={postMessage:message=>replies.push(message)},replies=[];
+  const context={kind:'app-frame',targetId:'system',source,homeToken:'system'};
+  let finish,releaseRead,starts=0,reads=0,active=false,shared;
+  const delayed=new Promise(resolve=>releaseRead=resolve);
+  const dependencies={current:()=>true,authorityToken:()=> 'home',changed(){},
+    api:async path=>{
+      if(path.endsWith('/wallet-methods')){if(++reads===2)await delayed;return {account_id:'alex',methods:[]};}
+      return {passkeys:[{principal_id:'alex',role:'admin'}]};
+    },
+    manage:()=>{
+      if(active)return shared;active=true;starts++;
+      shared=new Promise(resolve=>finish=resolve).then(result=>{active=false;return result;});return shared;
+    },
+  };
+  const send=requestId=>handleWalletSigninRequest({source,data:{type:'home:wallet-signin-request',requestId,homeToken:'system',action:'add',methodId:''}},context,dependencies);
+  send('first');await new Promise(setImmediate);assert.equal(starts,1);
+  send('repeat');await new Promise(setImmediate);finish({status:'complete'});await new Promise(setImmediate);
+  releaseRead();await new Promise(setImmediate);
+  // Resolve any wrongly opened replacement so a failing run leaves no pending job.
+  if(active)finish({status:'cancelled'});await new Promise(setImmediate);
+  assert.equal(starts,1,'the repeated click belongs to the operation it observed');
+  assert.deepEqual(replies.map(reply=>reply.result.status),['complete','complete']);
+});
