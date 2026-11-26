@@ -22,7 +22,7 @@ for(const engine of ['chromium','webkit'])for(const width of [1280,390])for(cons
   await page.goto(f.origin+'/home/');await page.waitForFunction(()=>window.fixtureReady);if(process.env.WALLET_ROUND5_BASELINE)assert(baselineLoads>0,'pinned baseline module was served');await page.evaluate(()=>{window.showFixtureApps();window.walletFixture.passkeyMode='pending';});
   await system.getByRole('button',{name:'Add wallet',exact:true}).click();await wallet.locator('.signin-dialog[data-state=options]').waitFor();
   assert.doesNotMatch(await wallet.locator('.signin-dialog').innerText(),/Not connected|\bConnected\b/i);
-  if(kind==='WalletConnect')assert.match(await wallet.locator('.signin-dialog').innerText(),/Rainbow, Trust/);
+  if(kind==='WalletConnect'){assert.match(await wallet.locator('.signin-dialog').innerText(),/Rainbow, Trust/);assert.match(await wallet.locator('.signin-dialog').innerText(),/relay.*internet address/);}
   await shot(page,name+'-chooser');
   const choice=wallet.locator('.connection-option').filter({hasText:kind});
   const box=await choice.boundingBox();await page.mouse.click(box.x+box.width/2,box.y+box.height/2);

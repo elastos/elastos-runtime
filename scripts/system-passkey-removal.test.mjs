@@ -324,7 +324,7 @@ for (const engine of ["chromium", "webkit"]) test(`Accounts groups methods benea
           assert.equal(style.padding,"8px 12px","all destructive actions use the same padding");
         }
         const add = frame.locator("#passkey-add, #wallet-signin-add");
-        if (options.role === "guest") assert.equal(await frame.locator(".account-add-actions button:visible").count(), 0);
+        if (options.role === "guest") {assert.equal(await frame.locator(".account-add-actions button:visible").count(),0);assert.equal(await frame.locator(".system-signin-wallets").getByRole("button",{name:"Add wallet",exact:true}).count(),0);}
         else {
           const boxes = await Promise.all((await add.all()).map(button => button.boundingBox()));
           assert.ok(boxes.every(box=>box&&box.height>=44));
