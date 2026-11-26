@@ -7,20 +7,14 @@
 // exactly what Marketplace renders.
 
 import { createServer } from "node:http";
-import { createRequire } from "node:module";
+import { requireProductSmokePlaywright, productSmokeLaunchOptions } from "./product-smoke-browser.mjs";
 import { readFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
 const browserRoot = join(repoRoot, "capsules/marketplace/browser");
-const brave = process.env.BRAVE_BIN || "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser";
-// The pinned Playwright the other product smokes use. A worktree without its
-// own install names another checkout's engine directory here.
-const engineDir = process.env.MARKETPLACE_PLAYWRIGHT_ENGINE_DIR
-  || join(repoRoot, "elastos/tools/browser-playwright-engine");
-const require = createRequire(join(engineDir, "package.json"));
-const { chromium } = require("playwright");
+const { chromium } = requireProductSmokePlaywright();
 
 function assert(condition, message, details = undefined) {
   if (!condition) {
@@ -183,7 +177,7 @@ const cases = [
 async function run() {
   const server = await startServer();
   const origin = `http://127.0.0.1:${server.address().port}`;
-  const browser = await chromium.launch({ executablePath: brave, headless: true });
+  const browser = await chromium.launch({ ...productSmokeLaunchOptions(), headless: true });
   try {
     const page = await browser.newPage();
     const pageErrors = [];
