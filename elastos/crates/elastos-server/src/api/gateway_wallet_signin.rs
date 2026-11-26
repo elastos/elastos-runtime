@@ -219,7 +219,7 @@ pub(super) async fn signin_complete(
                 request_uses_tls(&headers),
             );
             let mut response = response(Ok(
-                json!({"schema":"elastos.auth.wallet.signin/v1","principal_id":grant.principal_id,"proof_binding_id":grant.proof_binding_id,"session_id":grant.session_id,"expires_at":grant.expires_at,"app_token":home_token,"home_token":home_token,"system_token":system_token}),
+                json!({"schema":auth::SCHEMA,"principal_id":grant.principal_id,"proof_binding_id":grant.proof_binding_id,"session_id":grant.session_id,"expires_at":grant.expires_at,"app_token":home_token,"home_token":home_token,"system_token":system_token}),
             ));
             if let Ok(cookie) = cookie {
                 response.headers_mut().append(SET_COOKIE, cookie);

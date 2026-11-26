@@ -4,7 +4,7 @@ use elastos_runtime::auth::{bitcoin, wallet_signin::*};
 use subtle::ConstantTimeEq;
 
 const FILE: &str = "wallet-signin.json";
-const SCHEMA: &str = "elastos.auth.wallet.signin/v1";
+pub(crate) const SCHEMA: &str = "elastos.auth.wallet.signin/v1";
 const LEGACY_SCHEMA: &str = "elastos.auth.wallet-signin/v1";
 const CANONICAL_FILE: &str = "wallet-signin-bindings.json";
 const TTL: u64 = 180;
@@ -1704,6 +1704,37 @@ pub(crate) mod tests {
                 .unwrap()
                 .is_empty());
             assert!(principal(f.data.path(), &id).is_err());
+            // A binding first enrolled with the new names also survives Undo.
+            let request = serde_json::from_value(serde_json::json!({"action":"add","connector":new,"address":address,"chain_id":chain,"network":network,"browser_secret":BROWSER,"allow_temporary_internet":true})).unwrap();
+            let b = begin(
+                f.data.path(),
+                ORIGIN,
+                "home-test",
+                request,
+                Some(f.actor.clone()),
+            )
+            .unwrap();
+            let added = complete(
+                f.data.path(),
+                ORIGIN,
+                &serde_json::from_value(proof(&b.ceremony_id, &b.message)).unwrap(),
+                Some(&f.actor),
+                |_| Ok(()),
+            )
+            .unwrap();
+            let b = rc1::begin(
+                f.data.path(),
+                ORIGIN,
+                "home-test",
+                legacy_input("signin", ""),
+                None,
+            )
+            .unwrap();
+            let session = rc1::complete(f.data.path(), ORIGIN, &legacy_complete(&b), None, |_| {
+                panic!("sign-in approval")
+            })
+            .unwrap();
+            assert_eq!(session["proof_binding_id"], added["proof_binding_id"]);
         }
     }
 
