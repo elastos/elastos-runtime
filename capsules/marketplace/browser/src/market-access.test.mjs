@@ -64,10 +64,11 @@ function fakeTimers() {
   };
 }
 
-function watchWith(read, { slots = createReadSlots(FINALITY_CHECK_CONCURRENCY), now = () => 0, timers = fakeTimers() } = {}) {
+function watchWith(read, { slots = createReadSlots(FINALITY_CHECK_CONCURRENCY), now = () => 0, timers = fakeTimers(), waitsForFinality } = {}) {
   const changed = [];
   const watch = createAccessWatch({
     read,
+    waitsForFinality,
     onChange: (key) => changed.push(key),
     slots,
     now,
@@ -505,4 +506,129 @@ test("back in sight, one shown card is read again to notice an account switch", 
   watch.resume();
   await flush();
   assert.equal(count, 3, "exactly one card is asked again");
+});
+
+// A key the finality watch holds is that watch's to read: its re-check is the
+// item's next read, and its answer is noted here. Nothing reads it here, in
+// any state, until the watch lets go; then the usual rules apply.
+function finalityHeldWatch(read, options = {}) {
+  const held = new Set();
+  return { held, ...watchWith(read, { ...options, waitsForFinality: (key) => held.has(key) }) };
+}
+
+test("a held key with no answer yet is not read until the finality watch lets go", async () => {
+  let count = 0;
+  const { watch, held } = finalityHeldWatch(async () => {
+    count += 1;
+    return { kind: "listing", listing: listing() };
+  });
+  held.add("a");
+  watch.show(["a"]);
+  await flush();
+  assert.equal(count, 0, "the finality watch reads it");
+  held.delete("a");
+  watch.show(["a"]);
+  await flush();
+  assert.equal(count, 1, "released, it is read as any unread card");
+  assert.equal(watch.state("a"), "available");
+});
+
+test("a settled held key is not read after its TTL or back in sight, then follows its TTL again", async () => {
+  let nowMs = 0;
+  let count = 0;
+  const { watch, held } = finalityHeldWatch(async () => {
+    count += 1;
+    return { kind: "listing", listing: listing() };
+  }, { now: () => nowMs });
+  watch.show(["a"]);
+  await flush();
+  assert.equal(count, 1);
+  held.add("a");
+  nowMs += ACCESS_SETTLED_TTL_MS;
+  watch.show(["a"]);
+  watch.pause();
+  watch.resume();
+  await flush();
+  assert.equal(count, 1, "past its TTL and back in sight, it waits for the re-check");
+  assert.equal(watch.state("a"), "available", "its answer stands meanwhile");
+  held.delete("a");
+  watch.show(["a"]);
+  await flush();
+  assert.equal(count, 2, "released and past its TTL, it is read again");
+});
+
+test("a held key another account invalidated is not read until the finality watch lets go", async () => {
+  const base = "eip155:8453";
+  let subject = "aa".repeat(16);
+  const reads = [];
+  const { watch, held } = finalityHeldWatch(async (key) => {
+    reads.push(key);
+    return { kind: "listing", listing: listing({ accessSubject: subject, chain: base }) };
+  }, { slots: createReadSlots(8) });
+  watch.show(["a", "b"]);
+  await flush();
+  assert.deepEqual(reads, ["a", "b"]);
+  held.add("a");
+  subject = "bb".repeat(16);
+  watch.note("c", listing({ accessSubject: subject, chain: base }));
+  watch.show(["a", "b"]);
+  await flush();
+  assert.deepEqual(reads, ["a", "b", "b"], "only the card the finality watch does not hold is read again");
+  held.delete("a");
+  watch.show(["a", "b"]);
+  await flush();
+  assert.deepEqual(reads, ["a", "b", "b", "a"], "released, it is read for the new account");
+});
+
+test("a retry that falls due while the finality watch holds the key waits for it to let go", async () => {
+  let nowMs = 0;
+  let count = 0;
+  const { watch, held, timers } = finalityHeldWatch(async () => {
+    count += 1;
+    return count === 1 ? { kind: "retry" } : { kind: "listing", listing: listing() };
+  }, { now: () => nowMs });
+  watch.show(["a"]);
+  await flush();
+  assert.equal(watch.state("a"), "retrying");
+  held.add("a");
+  nowMs += ACCESS_RETRY_BACKOFF_MS[0];
+  await timers.runAll();
+  watch.show(["a"]);
+  await flush();
+  assert.equal(count, 1, "the due retry is left to the finality watch");
+  held.delete("a");
+  watch.show(["a"]);
+  await flush();
+  assert.equal(count, 2, "released, the due retry runs");
+  assert.equal(watch.state("a"), "available");
+});
+
+test("a key queued for a slot that the finality watch takes meanwhile is dropped, and read once released", async () => {
+  const reads = heldReads();
+  const { watch, held } = finalityHeldWatch(reads.read, { slots: createReadSlots(1) });
+  watch.show(["a", "b"]);
+  await flush();
+  assert.deepEqual(reads.pending.map(({ key }) => key), ["a"], "b waits for the only slot");
+  held.add("b");
+  await reads.answer(0, { kind: "listing", listing: listing() });
+  assert.equal(reads.pending.length, 1, "the freed slot sends no read for the held key");
+  held.delete("b");
+  watch.show(["a", "b"]);
+  await flush();
+  assert.deepEqual(reads.pending.map(({ key }) => key), ["a", "b"], "released, it is read");
+});
+
+test("back in sight, the account check asks a card the finality watch does not hold", async () => {
+  const reads = [];
+  const { watch, held } = finalityHeldWatch(async (key) => {
+    reads.push(key);
+    return { kind: "listing", listing: listing() };
+  }, { slots: createReadSlots(8) });
+  watch.show(["a", "b"]);
+  await flush();
+  held.add("a");
+  watch.pause();
+  watch.resume();
+  await flush();
+  assert.deepEqual(reads, ["a", "b", "b"], "the held card is skipped; the next one is asked");
 });
