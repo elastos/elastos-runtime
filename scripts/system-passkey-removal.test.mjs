@@ -143,15 +143,18 @@ test("every allowed removal asks first and returns focus after Cancel or Escape"
         assert.equal(writes.length, before, "Enter takes the default Cancel action");
         await frame.waitForFunction(node => node === document.activeElement, await remove.elementHandle());
         await remove.click();
+        await dialog.waitFor();
         await page.keyboard.press("Escape");
         await dialog.waitFor({ state: "hidden" });
         assert.equal(writes.length, before);
         await frame.waitForFunction(node => node === document.activeElement, await remove.elementHandle());
         await remove.click();
+        await dialog.waitFor();
         await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
         assert.equal(writes.length, before);
         await frame.waitForFunction(node => node === document.activeElement, await remove.elementHandle());
         await remove.click();
+        await dialog.waitFor();
         await dialog.getByRole("button", { name: "Remove passkey", exact: true }).click();
         await frame.waitForFunction(() => document.querySelectorAll(".account-row").length === 2);
         assert.deepEqual(writes.at(-1), { path: "/api/auth/passkeys/proof%3Apasskey%3Asam/revoke", method: "POST", token: "system-token" });
