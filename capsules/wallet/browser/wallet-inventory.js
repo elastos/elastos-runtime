@@ -19,7 +19,7 @@ const kind = entry => entry.accounts[0]?.connector_id?.replace('wallet-', '') ||
 const bitcoin = entry => entry.chain_namespace.startsWith('bip122:');
 const appsStatement = entry => bitcoin(entry) ? 'Proves you own this Bitcoin address to apps' : 'Apps and websites can ask; you approve each request.';
 
-export function createWalletInventory({root, getApprovalMethods=()=>({}), openSystem, connectApps, removeApps, copyAddress, send, receive, manageBuiltIn, getBalance = () => '', openActivity, openSettings, togglePrivacy, isPrivate=()=>false, onError=()=>{}}) {
+export function createWalletInventory({root, getApprovalMethods=()=>({}), openSystem, connectApps, removeApps, copyAddress, send, receive, manageBuiltIn, refreshApps=async()=>{}, getBalance = () => '', openActivity, openSettings, togglePrivacy, isPrivate=()=>false, onError=()=>{}}) {
   let inventory = {entries:[]}, selected = new URLSearchParams(location.search).get('wallet_entry') || '';
   let result = '', dialog, operation = 0, busy = false, renderKey = '';
   let connectionController;
@@ -70,9 +70,10 @@ export function createWalletInventory({root, getApprovalMethods=()=>({}), openSy
       }
       const apps = text('div', '', 'one-owner one-apps'), copy = text('div', '', 'one-use-label');
       const label = text('span', 'Apps and websites'); label.id = 'inventory-apps-label';
-      copy.append(label, text('small', bitcoin(entry) ? 'Prove you own this Bitcoin address to apps.' : appsStatement(entry)), text('small', managed ? 'Approved with your passkey' : entry.accounts.length ? 'Connected for apps' : 'Off · Connect with one wallet signature.'));
+      copy.append(label, text('small', bitcoin(entry) ? 'Prove you own this Bitcoin address to apps.' : appsStatement(entry)));
+      if(inventory.apps_available !== false) copy.append(text('small', managed ? 'Approved with your passkey' : entry.accounts.length ? 'Connected for apps' : 'Off · Connect with one wallet signature.'));
       apps.append(copy);
-      if (!managed) {
+      if (!managed && inventory.apps_available !== false) {
         const toggle = button('', () => entry.accounts.length ? confirmOff(entry) : confirmOn(entry));
         toggle.className = 'one-switch'; toggle.setAttribute('role', 'switch'); toggle.setAttribute('aria-labelledby', label.id);
         toggle.setAttribute('aria-checked', String(entry.accounts.length > 0)); toggle.disabled = busy;
@@ -96,8 +97,12 @@ export function createWalletInventory({root, getApprovalMethods=()=>({}), openSy
     if (selected && !entry) selected = '';
     if (entry) title.append(button('Back to wallets', () => open('')));
     title.append(text('h1', entry ? 'Wallet' : 'Wallets')); heading.append(title);
-    if (!entry) {const add=button('Add wallet for apps', choose, true);add.id='wallet-add-apps';heading.append(add);}
+    if (!entry) {const add=button('Add wallet for apps', choose, true);add.id='wallet-add-apps';add.disabled=inventory.apps_available===false;heading.append(add);}
     section.append(heading);
+    if(inventory.apps_available === false) {
+      const notice=text('div','','one-note'), message=text('p','Home could not load app use.','one-muted');message.setAttribute('role','status');
+      notice.append(message,button('Try again',async event=>{const control=event.currentTarget;control.disabled=true;try{await refreshApps();}catch(error){onError(error);}finally{control.disabled=false;}}));section.append(notice);
+    }
     if (result) {const status=text('p',result,'one-result');status.setAttribute('role','status');section.append(status);}
     if (!entry) {
       const note = text('p', '', 'one-muted one-list-note');

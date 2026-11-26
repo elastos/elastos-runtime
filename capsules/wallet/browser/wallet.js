@@ -131,6 +131,7 @@ const inventoryView = createWalletInventory({
   getApprovalMethods: () => currentApprovalMethods,
   openSystem: () => window.top.postMessage({type:'home:open-target', target:'system', homeToken:activeHomeToken, query:{settings:'account'}}, homeParentOrigin),
   connectApps: connectInventoryApps,
+  refreshApps: () => refreshWalletState(),
   removeApps: async (entry, current) => {
     const accountIds = entry.accounts.map(account => account.account_id).sort();
     const request = accountIds.length === 1 ? {account_id:accountIds[0]} : {account_ids:accountIds};

@@ -37,13 +37,19 @@ links and auth wallet sign-in methods by verified address and network. The
 projection creates neither a store nor a new proof binding. Auth owns sign-in;
 wallet-provider owns app use, defaults and approval requests.
 
+When wallet-provider is unavailable, Runtime keeps sign-in entries readable and
+sets `apps_available` to `false`. System keeps sign-in removal available. Wallet
+marks app use unavailable and offers Try again to read its saved state.
+
 Wallet shows each inventory entry once. Its Used by section links System use
 to System > Accounts and gives Wallet one Apps and websites switch. One
 ownership signature enables app use. A fresh passkey approval removes the
 selected entry's app-use records. The switch keeps the saved value until
-completion, and Cancel preserves that value. Every later app request has its
-own approval. Built-in addresses keep their balances, Send, Receive and key
-management controls. UniSat proves Bitcoin address ownership to apps. Sending
+completion, and Cancel preserves that value. For an entry with several app-use
+links, one approval binds all selected account IDs. Every later app request has
+its own approval. The built-in EVM card lists each network's balance and keeps
+Send, Receive and key management. The built-in Bitcoin card keeps its own balance,
+Receive and key management. UniSat proves Bitcoin address ownership to apps. Sending
 Bitcoin from this Home is not available yet.
 
 For a sign-in-only wallet, Wallet sends Home the inventory identity.
