@@ -187,4 +187,87 @@ for(const engine of ['chromium','webkit'])test(`one wallet list: phone app use s
     assert.equal(f.fixture.state.calls.filter(c=>c.path==='/api/auth/evm/verify').length,1);assert.deepEqual(f.errors,[]);
   } finally {await f.close();}
 });
+// Fix-round regressions run the real capsule modules against controlled Runtime replies.
+for(const engine of ['chromium','webkit']) {
+  test(`fix1 built-in networks keep their own balances and one EVM card in ${engine}`,{timeout:45000},async()=>{
+    const f=await setup(engine,390);
+    try {
+      const home=f.fixture.state.connected[0];
+      f.fixture.state.connected.push({...home,account_id:'home-base',chain_namespace:'eip155:8453'}, {...home,account_id:'home-btc',address:bitcoinAddress,chain_namespace:btc,proof_type:'managed_btc_p2wpkh',label:'Bitcoin address'});
+      f.fixture.state.balanceValues[home.address]['base-mainnet']=String(5n*10n**17n);
+      await show(f,'wallet');await refresh(f);
+      const card=f.wallet.locator('.one-wallet').filter({has:f.wallet.getByRole('button',{name:'Open Home address',exact:true})});
+      await card.getByText('0.50 ETH',{exact:true}).waitFor();
+      assert.equal(await f.wallet.getByRole('button',{name:'Open Home address',exact:true}).count(),1);
+      assert.equal(await card.getByText('125.00 ELA',{exact:true}).count(),1);
+      const bitcoin=f.wallet.locator('.one-wallet').filter({hasText:'Bitcoin address'});
+      assert.equal(await bitcoin.getByRole('button',{name:'Send',exact:true}).count(),0);
+      await shot(f.wallet,'home-address-networks',390,engine);
+      f.fixture.state.balanceValues={};await refresh(f);
+      await card.getByText('0.00 ETH',{exact:true}).waitFor();assert.equal(await card.getByText('0.00 ELA',{exact:true}).count(),1);
+      await f.page.setViewportSize({width:1440,height:1000});await shot(f.wallet,'home-address-networks-zero',1440,engine);
+    }finally{await f.close();}
+  });
+  test(`fix1 relay disclosure precedes Add pairing in ${engine}`,{timeout:30000},async()=>{
+    const f=await setup(engine,390);
+    try {
+      f.fixture.state.methods=[];f.fixture.state.wcConnected=false;
+      await f.system.getByRole('button',{name:'Add wallet',exact:true}).click();
+      const row=f.page.locator('.signin-dialog .connection-option').filter({hasText:'WalletConnect'});
+      await row.waitFor();const copy=await row.locator('small').allTextContents();
+      assert.equal(copy[0],'Rainbow, Trust and other phone wallets');
+      assert.match(copy[1]||'',/relay.*internet address/);
+      assert.equal(f.fixture.state.calls.filter(c=>c.body?.allow_temporary_internet||c.path.endsWith('/relay-admission')).length,0);
+      await row.click();await f.page.locator('.signin-dialog[data-state=pairing]').waitFor();
+      assert.match(await f.page.locator('.signin-dialog').innerText(),/relay.*internet address/);
+    }finally{await f.close();}
+  });
+  test(`fix1 phone app use requests saved internet access and keeps pairing visible in ${engine}`,{timeout:45000},async()=>{
+    const f=await setup(engine,390);
+    try {
+      const phone=f.fixture.state.connected.find(a=>a.connector_id==='wallet-walletconnect');
+      f.fixture.state.revokedAccounts=[{...phone,chain_namespace:'eip155:20'}];
+      f.fixture.state.connected=f.fixture.state.connected.filter(a=>a!==phone);
+      f.fixture.state.methods.find(m=>m.connector==='walletconnect').chain_id=20;
+      f.fixture.state.wcConnected=false;f.fixture.state.internetStatus='required';
+      await show(f,'wallet');await refresh(f);await f.wallet.getByRole('button',{name:'Open Rainbow',exact:true}).click();
+      await f.wallet.getByRole('switch').click();await f.wallet.getByRole('button',{name:'Sign message',exact:true}).click();
+      await f.wallet.getByText('Allow WalletConnect internet access in Inbox, then select Try again.',{exact:true}).waitFor();
+      assert.equal(f.fixture.state.calls.filter(c=>c.path==='/api/apps/wallet-walletconnect/internet'&&c.body).length,1);
+      assert.equal(f.fixture.state.calls.filter(c=>c.path.endsWith('/relay-admission')).length,0);
+      f.fixture.state.internetStatus='granted';
+      await f.wallet.getByRole('button',{name:'Try again',exact:true}).click();
+      const connector=f.page.frameLocator('iframe[data-target=wallet-walletconnect]');
+      await connector.locator('[data-state=qr-shown]').waitFor();
+      assert.equal(await f.page.locator('iframe[data-target=wallet-walletconnect]').isVisible(),true);
+      await f.page.locator('iframe[data-target=wallet-walletconnect]').evaluate(frame=>frame.contentWindow.postMessage('fixture-pair','*'));
+      await f.wallet.getByText('Connected for apps.',{exact:true}).waitFor();
+    }finally{await f.close();}
+  });
+  test(`fix1 app off uses one approval for all links and Cancel preserves every link in ${engine}`,{timeout:45000},async()=>{
+    const f=await setup(engine,390);
+    try {
+      const account=f.fixture.state.connected.find(a=>a.connector_id==='wallet-metamask');
+      f.fixture.state.connected.push({...account,account_id:'app:second',connector_id:'wallet-walletconnect'});
+      await show(f,'wallet');await refresh(f);await f.wallet.getByRole('button',{name:'Open MetaMask',exact:true}).click();
+      await f.wallet.getByRole('switch').click();
+      await f.page.evaluate(()=>walletFixture.passkeyMode='cancelled');await f.wallet.getByRole('button',{name:'Approve with passkey',exact:true}).click();
+      await f.wallet.locator('[role=alert]').waitFor();assert.equal(f.fixture.state.connected.filter(a=>a.address===account.address).length,2);
+      await f.page.evaluate(()=>walletFixture.passkeyMode='normal');await f.wallet.getByRole('button',{name:'Approve with passkey',exact:true}).click();
+      await f.wallet.getByText('App use turned off.',{exact:true}).waitFor();
+      assert.equal(f.fixture.state.calls.filter(c=>c.path==='/api/auth/passkey-step-up/complete').length,1);
+      assert.equal(f.fixture.state.connected.filter(a=>a.address===account.address).length,0);
+    }finally{await f.close();}
+  });
+  test(`fix1 inventory failure keeps Wallet usable and System sign-in removable in ${engine}`,{timeout:30000},async()=>{
+    const f=await setup(engine,390);
+    try {
+      await f.context.route('**/api/apps/wallet/wallet/inventory',route=>route.fulfill({status:503,body:'{}'}));
+      await f.page.evaluate(()=>window.showFixtureApps());await show(f,'wallet');
+      await f.wallet.getByRole('button',{name:'Open Home address',exact:true}).waitFor();
+      await show(f,'system');await f.system.locator('[data-wallet-method]').nth(1).waitFor();
+      assert.equal(await f.system.getByRole('button',{name:'Remove from sign-in',exact:true}).count(),2);
+    }finally{await f.close();}
+  });
+}
 test.after(async()=>{if(output){const sources={};for(const path of ['capsules/wallet/browser/index.html','capsules/wallet/browser/wallet.js','capsules/wallet/browser/wallet-inventory.js','capsules/wallet/browser/wallet-inventory.css','capsules/system/browser/index.html','capsules/system/browser/system.js','capsules/system/browser/style.css','capsules/home/browser/wallet-signin-view.mjs','capsules/home/browser/wallet-signin-management.mjs','capsules/_shared/wallet-connection-view.mjs'])sources[path]=createHash('sha256').update(await readFile(path)).digest('hex');await writeFile(join(output,'captures.json'),JSON.stringify({sources,head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),tree:execFileSync('git',['rev-parse','HEAD^{tree}'],{encoding:'utf8'}).trim(),captures:captureRecords},null,2)+'\n');}});

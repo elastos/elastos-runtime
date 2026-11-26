@@ -598,6 +598,35 @@ mod wallet_inventory_tests {
     }
 
     #[test]
+    fn wallet_inventory_keeps_signin_when_home_address_collides() {
+        for (namespace, proof, connector, chain, network, address) in [
+            ("eip155:20", "managed_evm", "metamask", 20, "", "0x1234"),
+            ("eip155:8453", "managed_evm", "metamask", 8453, "", "0x1234"),
+            (
+                "bip122:000000000019d6689c085ae165831e93",
+                "managed_btc_p2wpkh",
+                "unisat",
+                0,
+                "bitcoin",
+                "bc1qverified",
+            ),
+        ] {
+            let mut managed = account("owner", namespace, address);
+            managed["proof_type"] = json!(proof);
+            managed["connector_id"] = Value::Null;
+            let method = json!({"method_id":"signin", "connector":connector, "address":address, "chain_id":chain, "network":network});
+            let entries =
+                wallet_inventory_entries("owner", &[managed], std::slice::from_ref(&method));
+            assert_eq!(entries.len(), 1);
+            assert_eq!(
+                entries[0].sign_in.as_ref(),
+                Some(&method),
+                "{namespace}: a stored sign-in method stays visible"
+            );
+        }
+    }
+
+    #[test]
     fn wallet_inventory_projects_each_use_and_removal_without_changing_authority() {
         let f = crate::auth::wallet_signin::tests::fixture();
         crate::auth::wallet_signin::tests::enabled(&f);

@@ -1799,3 +1799,39 @@ async fn round9_ten_cancelled_passkeys_release_pending_capacity() {
         assert_eq!(status, StatusCode::OK, "{result}");
     }
 }
+
+#[tokio::test]
+async fn wallet_inventory_http_rejects_inbox_and_browser_and_survives_provider_down() {
+    let f = wallet_fixture::fixture();
+    wallet_fixture::enabled(&f);
+    let app = gateway_router(test_state(f.data.path()));
+    for capsule in [INBOX_CAPSULE_ID, BROWSER_CAPSULE_ID] {
+        let token =
+            issue_home_launch_token_for_auth_grant(f.data.path(), capsule, &f.actor).unwrap();
+        let (status, _) = call(
+            &app,
+            "/api/apps/wallet/wallet/inventory",
+            Some(&token),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{capsule}");
+    }
+    for capsule in [HOME_CAPSULE_ID, SYSTEM_CAPSULE_ID, WALLET_CAPSULE_ID] {
+        let token =
+            issue_home_launch_token_for_auth_grant(f.data.path(), capsule, &f.actor).unwrap();
+        let (status, out) = call(
+            &app,
+            "/api/apps/wallet/wallet/inventory",
+            Some(&token),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{capsule}: {out}");
+        assert_eq!(
+            out["entries"][0]["sign_in"]["method_id"],
+            auth::list(f.data.path(), &f.actor).unwrap()["methods"][0]["method_id"]
+        );
+        assert_eq!(out["apps_available"], false);
+    }
+}

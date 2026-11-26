@@ -150,7 +150,7 @@ export async function signinFixture() {
           }
         }
         if(path==='/api/apps/wallet-walletconnect/wallet/config')return json({walletconnect:{project_id:'fixture-project',storage_revision:'"0"'}});
-        if(path==='/api/apps/wallet-walletconnect/internet')return json({status:'granted'});
+        if(path==='/api/apps/wallet-walletconnect/internet')return json({status:state.internetStatus||'granted'});
         if(path==='/api/apps/wallet-walletconnect/storage'&&!req.headers['x-elastos-wallet-attempt'])return json(state.wcConnected?{'wc//session':[{expiry:now+600}]}:{});
         const connectorRead=path.match(/^\/api\/apps\/(wallet-metamask|wallet-unisat|wallet-walletconnect)\/wallet\/(accounts|approvals)$/);
         if(connectorRead)return json(connectorRead[2]==='accounts'?{accounts:state.connected.filter(a=>a.connector_id===connectorRead[1])}:{approval_requests:[]});
@@ -265,8 +265,8 @@ const provider={connected:false,session:null,signer:{client:{core:{relayer:{tran
  async connect(){listeners.get('display_uri')?.('wc:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@2?relay-protocol=irn&symKey=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');await new Promise(resolve=>callback=resolve);this.connected=true;this.session={expiry:Date.now()/1000+180,peer:{metadata:{name:'Fixture Wallet'}},namespaces:{eip155:{chains:['eip155:20'],accounts:['eip155:20:'+account],methods:['personal_sign']}}};},
  async request({method,params}){await fetch('/api/fixture-sdk',{method:'POST',body:JSON.stringify({method,params})});if(method==='eth_accounts')return [account];if(method==='eth_chainId')return chainOverride??chain;if(method==='personal_sign'){if(rejectSignature){rejectSignature=false;throw Object.assign(new Error('Wallet declined'),{code:4001});}if(holdSignature)await new Promise(resolve=>releaseSignature=resolve);return 'fixture-signature';}}};
 addEventListener('message',event=>{if(event.source!==parent)return;if(event.data==='fixture-pair')callback?.();if(event.data==='fixture-sign-pending')holdSignature=true;if(event.data==='fixture-release-signature'){holdSignature=false;releaseSignature?.();}if(event.data?.type==='fixture-network')chainOverride=event.data.chain;if(event.data==='fixture-account-change'){account='0x'+'34'.repeat(20);listeners.get('accountsChanged')?.([account]);}});
-export async function restoreWalletConnectEvm(options){if(options.authenticationOnly!==true){provider.chainId=20;provider.accounts=[account];provider.connected=true;provider.session={expiry:Date.now()/1000+600,namespaces:{eip155:{chains:['eip155:20'],accounts:['eip155:20:'+account],methods:['personal_sign']}}};return provider;}await options.api('storage');await Promise.all([options.api('storage',{method:'POST',body:JSON.stringify({key:'fixture:first',value:1})}),options.api('storage',{method:'POST',body:JSON.stringify({key:'fixture:second',value:2})}),options.api('relay-admission',{method:'POST'})]);return provider;}
-export async function connectWalletConnectEvm(options){return restoreWalletConnectEvm(options);}
+export async function restoreWalletConnectEvm(options){if(options.authenticationOnly!==true&&${JSON.stringify(state.wcConnected)}){provider.chainId=20;provider.accounts=[account];provider.connected=true;provider.session={expiry:Date.now()/1000+600,namespaces:{eip155:{chains:['eip155:20'],accounts:['eip155:20:'+account],methods:['personal_sign']}}};return provider;}await options.api('storage');await Promise.all([options.api('storage',{method:'POST',body:JSON.stringify({key:'fixture:first',value:1})}),options.api('storage',{method:'POST',body:JSON.stringify({key:'fixture:second',value:2})}),options.api('relay-admission',{method:'POST'})]);return provider;}
+export async function connectWalletConnectEvm(options){await restoreWalletConnectEvm(options);await provider.connect();return provider;}
 export async function disconnectWalletConnectEvm(){}
 `);return;
       }
