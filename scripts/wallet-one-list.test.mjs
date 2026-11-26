@@ -276,4 +276,25 @@ for(const engine of ['chromium','webkit']) {
     }finally{await f.close();}
   });
 }
+for(const engine of ['chromium','webkit'])test(`fix1 provider outage keeps sign-in visible and app use unknown in ${engine}`,{timeout:30000},async()=>{
+  const f=await setup(engine,390);let partial=true;
+  try {
+    await f.context.route('**/api/apps/wallet/wallet/inventory',async route=>{
+      const response=await route.fetch(),inventory=await response.json();
+      if(partial){inventory.apps_available=false;inventory.entries=inventory.entries.filter(entry=>entry.sign_in).map(entry=>({...entry,accounts:[]}));}
+      await route.fulfill({response,json:inventory});
+    });
+    await f.page.evaluate(()=>window.showFixtureApps());await show(f,'wallet');
+    await f.wallet.getByRole('button',{name:'Open UniSat',exact:true}).click();
+    assert.equal(await f.wallet.getByRole('switch',{name:'Apps and websites',exact:true}).count(),0,'missing app-use data is not a saved Off value');
+    await f.wallet.getByText('Home could not load app use.',{exact:true}).waitFor();
+    assert.equal(await f.system.getByRole('button',{name:'Remove from sign-in',exact:true}).count(),2);
+    await shot(f.wallet,'app-use-unavailable',390,engine);
+    await f.page.setViewportSize({width:1440,height:1000});await shot(f.wallet,'app-use-unavailable',1440,engine);
+    partial=false;await f.wallet.getByRole('button',{name:'Try again',exact:true}).click();
+    await f.wallet.getByRole('switch',{name:'Apps and websites',exact:true}).waitFor();
+    assert.equal(await f.wallet.getByText('Home could not load app use.',{exact:true}).count(),0);
+    assert.deepEqual(f.errors,[]);
+  }finally{await f.close();}
+});
 test.after(async()=>{if(output){const sources={};for(const path of ['capsules/wallet/browser/index.html','capsules/wallet/browser/wallet.js','capsules/wallet/browser/wallet-inventory.js','capsules/wallet/browser/wallet-inventory.css','capsules/system/browser/index.html','capsules/system/browser/system.js','capsules/system/browser/style.css','capsules/home/browser/wallet-signin-view.mjs','capsules/home/browser/wallet-signin-management.mjs','capsules/_shared/wallet-connection-view.mjs'])sources[path]=createHash('sha256').update(await readFile(path)).digest('hex');await writeFile(join(output,'captures.json'),JSON.stringify({sources,head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),tree:execFileSync('git',['rev-parse','HEAD^{tree}'],{encoding:'utf8'}).trim(),captures:captureRecords},null,2)+'\n');}});
