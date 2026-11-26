@@ -34,7 +34,8 @@
         signature: pixels.join(',') };
     });
     const distinct = new Set(glyphs.map(glyph => glyph.signature)).size;
-    return { language, distinct, pass: distinct === glyphs.length &&
+    const expectedDistinct = new Set(text).size;
+    return { language, distinct, expectedDistinct, pass: distinct === expectedDistinct &&
       glyphs.every(glyph => glyph.ink && glyph.differs_from_tofu),
       glyphs: glyphs.map(({ signature, ...glyph }) => glyph) };
   });
