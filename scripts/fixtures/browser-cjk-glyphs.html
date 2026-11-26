@@ -1,0 +1,44 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Browser CJK glyph check</title>
+<style>
+  body { font: 24px sans-serif; color: #111; background: white; margin: 40px; }
+  .sample { font-size: 48px; margin: 20px 0; }
+  canvas { border: 1px solid #aaa; margin-right: 8px; }
+</style>
+<h1>Browser CJK glyph check</h1>
+<div class="sample" lang="zh">中文汉字</div>
+<div class="sample" lang="ja">日本語かなカナ</div>
+<div class="sample" lang="ko">한국어한글</div>
+<p>Missing-glyph reference (U+0378): <span id="reference"></span></p>
+<pre id="result">Checking glyphs...</pre>
+<script>
+  // All characters use the same canvas size, baseline and fallback font.
+  // An unassigned code point supplies Chromium's actual tofu raster.
+  function raster(character) {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 80;
+    const context = canvas.getContext('2d');
+    context.font = '48px sans-serif';
+    context.fillText(character, 8, 60);
+    return { canvas, pixels: [...context.getImageData(0, 0, 80, 80).data] };
+  }
+  const tofu = raster('\u0378');
+  document.querySelector('#reference').append(tofu.canvas);
+  const samples = { zh: '中文汉字', ja: '日本語かなカナ', ko: '한국어한글' };
+  const checks = Object.entries(samples).map(([language, text]) => {
+    const glyphs = [...text].map(character => {
+      const { pixels } = raster(character);
+      return { character, ink: pixels.some(value => value !== 0),
+        differs_from_tofu: pixels.some((value, index) => value !== tofu.pixels[index]),
+        signature: pixels.join(',') };
+    });
+    const distinct = new Set(glyphs.map(glyph => glyph.signature)).size;
+    return { language, distinct, pass: distinct === glyphs.length &&
+      glyphs.every(glyph => glyph.ink && glyph.differs_from_tofu),
+      glyphs: glyphs.map(({ signature, ...glyph }) => glyph) };
+  });
+  window.cjkGlyphCheck = { pass: checks.every(check => check.pass), checks };
+  document.body.dataset.result = window.cjkGlyphCheck.pass ? 'PASS' : 'FAIL';
+  document.querySelector('#result').textContent = JSON.stringify(window.cjkGlyphCheck, null, 2);
+</script>
