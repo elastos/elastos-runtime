@@ -7,6 +7,7 @@ export function createWalletFlows({
   heroBackNode = null,
   accountsSectionNode = null,
   accountsBackNode = null,
+  closeDrawers = () => {},
   showStatus,
 }) {
   const FLIP_MS = 420;
@@ -57,6 +58,7 @@ export function createWalletFlows({
   }
 
   function openFlowModal(title, subtitle, nodes, actions = [modalButton("Cancel", closeModal, true)], options = {}) {
+    closeDrawers();
     const useAccounts = shouldUseAccountsFlip(title, options);
     const useHero = !useAccounts && shouldUseHeroFlip(title, options);
     if (useAccounts || useHero) document.documentElement.dataset.walletFlow = 'true';

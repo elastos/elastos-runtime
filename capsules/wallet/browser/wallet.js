@@ -121,6 +121,7 @@ const {
   heroBackNode,
   accountsSectionNode,
   accountsBackNode,
+  closeDrawers: () => closeDrawers(),
   showStatus,
 });
 document.querySelector('.wallet-page').prepend(statusNode);
