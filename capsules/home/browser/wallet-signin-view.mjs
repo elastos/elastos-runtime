@@ -53,7 +53,7 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
     passkeyController?.abort();passkeyController=null;
     const pending=management;management={kind:'idle'};
     epoch++;clearInterval(watcher);clearTimeout(managementTimer);dialog?.close();dialog?.remove();dialog=null;previousFocus?.focus();
-    pending.resolve?.({status:'cancelled',...(initial.restarting?{refocus:false}:{})});
+    pending.resolve?.({status:'cancelled'});
   }
   function button(text,action,quiet=false) {
     const el=node('button',text,quiet?'el-button el-button-quiet connection-quiet':'el-button el-button-primary');el.type='button';el.onclick=action;return el;

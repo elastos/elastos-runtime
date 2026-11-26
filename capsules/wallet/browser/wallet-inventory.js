@@ -88,7 +88,8 @@ export function createWalletInventory({root, getApprovalMethods=()=>({}), openSy
     return article;
   }
   function render() {
-    const key = JSON.stringify([inventory, selected, result, busy, inventory.entries.filter(entry => entry.accounts.some(isPasskeyManagedAccount)).map(getBalance)]);
+    const balances = inventory.entries.flatMap(entry => entry.accounts.filter(isPasskeyManagedAccount).map(account => getBalance({...entry,chain_namespace:account.chain_namespace,accounts:[account]})));
+    const key = JSON.stringify([inventory, selected, result, busy, balances]);
     if (key === renderKey) return; renderKey = key;
     const section = text('section', '', 'wallet-section one-section'), heading = text('header', '', 'one-heading'), title = text('div', '');
     const entry = inventory.entries.find(entry => entry.inventory_id === selected);
