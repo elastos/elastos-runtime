@@ -1145,7 +1145,7 @@ async fn setup_server_infrastructure_impl(
     }
 
     if elastos_server::protected_content_runtime::protected_content_enabled(&data_dir) {
-    match binaries::resolve_verified_native_provider_binary(MEDIA_PROVIDER_ID) {
+        match binaries::resolve_verified_native_provider_binary(MEDIA_PROVIDER_ID) {
         Ok(Some(path)) => match media_provider_bridge_config(&data_dir) {
             Ok(Some(media_config)) => {
                 match provider::ProviderBridge::spawn(&path, media_config).await {
@@ -1587,18 +1587,19 @@ async fn setup_server_infrastructure_impl(
     // STAB-50: before Carrier starts, so no member copy is being staged.
     elastos_server::custody_pool_setup::remove_stale_member_copy_staging(&data_dir);
     if elastos_server::protected_content_runtime::protected_content_enabled(&data_dir) {
-    // Plan B T4.5: pool viewer records settle at every boot, whether or not
-    // a decrypt target registers below; their delivery secrets did not
-    // survive the restart.
-    elastos_server::protected_content_runtime::reconcile_runtime_custody_pool_viewers_at_boot(
-        &data_dir,
-        provider_registry.clone(),
-    )
-    .await;
+        // Plan B T4.5: pool viewer records settle at every boot, whether or not
+        // a decrypt target registers below; their delivery secrets did not
+        // survive the restart.
+        elastos_server::protected_content_runtime::reconcile_runtime_custody_pool_viewers_at_boot(
+            &data_dir,
+            provider_registry.clone(),
+        )
+        .await;
 
-    if let Some(path) = crate::find_installed_provider_binary("protected-content-decrypt-provider")
-    {
-        if let Err(e) = verify_provider_binary("protected-content-decrypt-provider", &path) {
+        if let Some(path) =
+            crate::find_installed_provider_binary("protected-content-decrypt-provider")
+        {
+            if let Err(e) = verify_provider_binary("protected-content-decrypt-provider", &path) {
             tracing::warn!(
                 "Skipping protected-content-decrypt-provider due to verification failure: {}",
                 e
@@ -1625,46 +1626,48 @@ async fn setup_server_infrastructure_impl(
             )
             .await;
         }
-    } else {
-        tracing::debug!(
+        } else {
+            tracing::debug!(
             "protected-content-decrypt-provider binary is not installed; protected-content open and play will fail closed"
         );
-    }
-
-    if let Some(path) = crate::find_installed_provider_binary("protected-content-protect-provider")
-    {
-        if let Err(e) = verify_provider_binary("protected-content-protect-provider", &path) {
-            tracing::warn!(
-                "Skipping protected-content-protect-provider due to verification failure: {}",
-                e
-            );
-        } else if let Err(e) = elastos_server::protected_content_runtime::register_protect_provider(
-            &provider_registry,
-            &path,
-        )
-        .await
-        {
-            tracing::warn!("Failed to register Runtime-only protect provider: {}", e);
-        } else {
-            tracing::info!(
-                "protected-content-protect-provider capsule from {}",
-                path.display()
-            );
         }
-    } else {
-        tracing::debug!(
+
+        if let Some(path) =
+            crate::find_installed_provider_binary("protected-content-protect-provider")
+        {
+            if let Err(e) = verify_provider_binary("protected-content-protect-provider", &path) {
+                tracing::warn!(
+                    "Skipping protected-content-protect-provider due to verification failure: {}",
+                    e
+                );
+            } else if let Err(e) =
+                elastos_server::protected_content_runtime::register_protect_provider(
+                    &provider_registry,
+                    &path,
+                )
+                .await
+            {
+                tracing::warn!("Failed to register Runtime-only protect provider: {}", e);
+            } else {
+                tracing::info!(
+                    "protected-content-protect-provider capsule from {}",
+                    path.display()
+                );
+            }
+        } else {
+            tracing::debug!(
             "protected-content-protect-provider binary is not installed; protected-content mint will fail closed"
         );
-    }
+        }
 
-    if let Some(path) = crate::find_installed_provider_binary("custody-provider") {
-        if let Err(e) = verify_provider_binary("custody-provider", &path) {
-            tracing::warn!(
-                "Skipping custody-provider due to verification failure: {}",
-                e
-            );
-        } else {
-            match elastos_server::protected_content_runtime::start_custody_provider_at_boot(
+        if let Some(path) = crate::find_installed_provider_binary("custody-provider") {
+            if let Err(e) = verify_provider_binary("custody-provider", &path) {
+                tracing::warn!(
+                    "Skipping custody-provider due to verification failure: {}",
+                    e
+                );
+            } else {
+                match elastos_server::protected_content_runtime::start_custody_provider_at_boot(
                 &provider_registry,
                 &path,
                 &data_dir,
@@ -1686,12 +1689,12 @@ async fn setup_server_infrastructure_impl(
                     );
                 }
             }
-        }
-    } else {
-        tracing::warn!(
+            }
+        } else {
+            tracing::warn!(
             "custody-provider binary is not installed; the inactive Runtime custody route will be unavailable"
         );
-    }
+        }
     }
 
     // Peers are served only CIDs an active publication lists: bring that

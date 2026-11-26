@@ -10247,7 +10247,7 @@ mod tests {
     }
 
     #[test]
-    fn provider_error_from_keeps_the_stable_message_and_exposes_the_cause_chain() {
+    fn provider_error_from_keeps_the_stable_message_and_hides_the_cause_chain() {
         let error = anyhow::anyhow!("(400, \"upstream_rpc_error: reverted\")")
             .context("gateway_provider_proxy.rs:1")
             .context("Runtime custody purchase is unavailable");
@@ -10256,8 +10256,6 @@ mod tests {
         assert!(value.get("detail").is_none());
         assert!(!value.to_string().contains("upstream_rpc_error"));
     }
-
-
 
     #[test]
     fn provider_error_from_answers_a_fixed_sentence_for_a_local_path_or_raw_fault() {
@@ -11616,7 +11614,6 @@ mod tests {
             b"updated"
         );
     }
-
 
     /// Documents edits text: a name routes to it only when its manifest
     /// accepts that extension, so a PDF or other binary never opens as text.

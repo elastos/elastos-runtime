@@ -578,6 +578,8 @@ fn first_evm_account_becomes_the_transaction_default_for_every_evm_chain() {
                 address: "0xabc".into(),
                 proof_type: "siwe".into(),
                 label: Some("MetaMask".into()),
+                provider_id: None,
+                wallet_peer_name: None,
             },
         ),
         Response::Ok { .. }
@@ -1120,6 +1122,8 @@ fn only_externally_owned_evm_accounts_become_the_default_on_another_evm_chain() 
                     address: address.into(),
                     proof_type: proof_type.into(),
                     label: None,
+                    provider_id: None,
+                    wallet_peer_name: None,
                 },
             ),
             Response::Ok { .. }
@@ -1186,6 +1190,8 @@ fn a_contract_account_serves_only_its_own_chain() {
                     address: address.into(),
                     proof_type: proof_type.into(),
                     label: None,
+                    provider_id: None,
+                    wallet_peer_name: None,
                 },
             ),
             Response::Ok { .. }

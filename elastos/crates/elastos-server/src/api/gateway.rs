@@ -156,10 +156,10 @@ use gateway_home_external_link::*;
 pub(crate) use gateway_home_runtime::is_wallet_connector_capsule_id;
 use gateway_home_runtime::*;
 use gateway_home_shared_content::*;
+use gateway_onchain_directory::*;
 pub(crate) use gateway_walletconnect::clear_principal_storage as clear_walletconnect_principal_storage;
 pub(super) use gateway_walletconnect::connector_launch_authority as walletconnect_connector_launch_authority;
 pub(crate) use gateway_walletconnect::retire_inactive_attempts as retire_inactive_walletconnect_attempts;
-use gateway_onchain_directory::*;
 
 pub(crate) fn principal_root_protected_object_inventory(
     localhost_root: &str,
@@ -241,14 +241,11 @@ pub(super) use gateway_passkey_step_up::{
 };
 use gateway_provider_proxy::*;
 pub(crate) use gateway_provider_proxy::{
-    bus_model_provider_request,
-    resolve_runtime_custody_creator_publish_binding,
-    runtime_custody_buy_via_gateway,
-    runtime_custody_publish_via_gateway,
-    place_runtime_custody_listing_copies,
-    runtime_custody_download_owned_copy_via_gateway,
-    runtime_custody_publish_object_via_gateway,
-    ResolvedProtectedContentMintReceipt, ResolvedProtectedContentVerifiedListing,
+    bus_model_provider_request, place_runtime_custody_listing_copies,
+    resolve_runtime_custody_creator_publish_binding, runtime_custody_buy_via_gateway,
+    runtime_custody_download_owned_copy_via_gateway, runtime_custody_publish_object_via_gateway,
+    runtime_custody_publish_via_gateway, ResolvedProtectedContentMintReceipt,
+    ResolvedProtectedContentVerifiedListing,
 };
 #[cfg(test)]
 pub(crate) use gateway_provider_proxy::{

@@ -213,13 +213,12 @@ pub(super) fn append_wallet_approval_notifications(
             || !is_managed_wallet_proof_type(&request.proof_type)
             || request.connector_id.is_some();
         let passkey_approval = !review_in_wallet;
-        let source_app = if request.capsule_id
-            == crate::protected_content_runtime::RUNTIME_PROVIDER_ID
-        {
-            String::new()
-        } else {
-            request.capsule_id.clone()
-        };
+        let source_app =
+            if request.capsule_id == crate::protected_content_runtime::RUNTIME_PROVIDER_ID {
+                String::new()
+            } else {
+                request.capsule_id.clone()
+            };
         let capsule = request
             .requesting_app_name
             .clone()

@@ -1803,7 +1803,7 @@ name = "elastos-protected-content-runtime"
 version = "2.0.2"
 dependencies = [
  "async-trait",
- "base64",
+ "base64 0.22.1",
  "ed25519-dalek 2.2.0",
  "elastos-auth",
  "elastos-protected-content-contracts",
@@ -4597,7 +4597,7 @@ dependencies = [
 name = "protected-content-protect-provider"
 version = "0.1.0"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "elastos-protected-content-contracts",
  "elastos-protected-content-custody",
  "elastos-protected-content-provider-contracts",

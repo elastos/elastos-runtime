@@ -243,13 +243,8 @@ fn ipfs_op_required_action(op: &str) -> Option<Action> {
     match op {
         "cat" | "get_bytes" | "ls" | "health" | "status" => Some(Action::Read),
         // Operations that store content, or that start the node, need Write.
-        "cat_to_path"
-        | "download_directory"
-        | "add_bytes"
-        | "add_path"
-        | "add_directory"
-        | "pin"
-        | "ensure_started" => Some(Action::Write),
+        "cat_to_path" | "download_directory" | "add_bytes" | "add_path" | "add_directory"
+        | "pin" | "ensure_started" => Some(Action::Write),
         "unpin" => Some(Action::Delete),
         _ => None,
     }

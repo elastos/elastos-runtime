@@ -142,11 +142,8 @@ impl ProviderPlane {
         );
         match self {
             ProviderPlane::Custody => {
-                if !elastos_server::protected_content_runtime::protected_content_enabled(data_dir)
-                {
-                    tracing::info!(
-                        "protected content is off; custody provider is not registered"
-                    );
+                if !elastos_server::protected_content_runtime::protected_content_enabled(data_dir) {
+                    tracing::info!("protected content is off; custody provider is not registered");
                     return Ok(());
                 }
                 // The unprovisioned case is already named precisely by

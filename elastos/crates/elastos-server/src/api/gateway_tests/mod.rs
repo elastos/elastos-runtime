@@ -1281,8 +1281,8 @@ mod browser_reconciliation;
 mod buy_offer;
 mod collaboration_presence;
 mod content_sandbox;
-pub(in crate::api) mod cs_child_saves;
 mod creator_channels;
+pub(in crate::api) mod cs_child_saves;
 #[cfg(unix)]
 mod custody;
 mod documents;
