@@ -3630,6 +3630,11 @@ async function run() {
     const marketDownloads = () => requestLog.filter((entry) => entry.path === "/api/provider/object/download_owned_copy");
     const mediaReads = () => requestLog.filter((entry) => entry.token === normalToken && entry.path === "/api/provider/object/list_runtime_custody").length;
     const catalogReads = () => requestLog.filter((entry) => entry.token === normalToken && entry.path === "/api/apps/marketplace/items").length;
+    // Purchases of one item. The Explore item's buy above is still polling in
+    // the background, so a page-wide count could tick during this step.
+    const buyOffersFor = (tokenId) => requestLog.filter(
+      (entry) => entry.path === "/api/provider/object/buy_offer" && entry.body?.item?.token_id === tokenId,
+    ).length;
     // The Explore film this page already read a listing for is now held,
     // and not adopted here: the market still lists it without a mint.
     state[normalToken].catalogItems[0].accessState = "purchased";
@@ -3659,7 +3664,7 @@ async function run() {
     const sheetDownloadsBefore = marketDownloads().length;
     const sheetMediaBefore = mediaReads();
     const sheetCatalogBefore = catalogReads();
-    const buyOffersBeforeDownload = buyOfferCount();
+    const buyOffersBeforeDownload = buyOffersFor("0x3e");
     await frame.locator('#detail-modal [data-action="download-market-copy"]').click();
     await waitForRequestCount(requestLog, normalToken, "/api/provider/object/download_owned_copy", sheetDownloadsBefore + 1);
     await waitForToast("Saved to your Library");
@@ -3678,7 +3683,7 @@ async function run() {
           },
         })
         && mediaReads() > sheetMediaBefore
-        && buyOfferCount() === buyOffersBeforeDownload,
+        && buyOffersFor("0x3e") === buyOffersBeforeDownload,
       "Download copy on a held sheet must name the item, pay nothing, and reload media and catalog",
       { sheetDownload, mediaReads: mediaReads(), sheetMediaBefore },
     );
