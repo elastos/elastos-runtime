@@ -299,8 +299,10 @@ for(const engine of ['chromium','webkit'])test(`fix1 provider outage keeps sign-
     await f.wallet.getByRole('button',{name:'Open UniSat',exact:true}).click();
     assert.equal(await f.wallet.getByRole('switch',{name:'Apps and websites',exact:true}).count(),0,'missing app-use data is not a saved Off value');
     await f.wallet.getByText('Home could not load app use.',{exact:true}).waitFor();
-    await f.system.locator('[data-wallet-method]').nth(1).waitFor({state:'attached'});
+    await show(f,'system');
+    await f.system.getByRole('button',{name:'Remove from sign-in',exact:true}).nth(1).waitFor();
     assert.equal(await f.system.getByRole('button',{name:'Remove from sign-in',exact:true}).count(),2);
+    await show(f,'wallet');await f.wallet.getByText('Home could not load app use.',{exact:true}).waitFor();
     await shot(f.wallet,'app-use-unavailable',390,engine);
     await f.page.setViewportSize({width:1440,height:1000});await shot(f.wallet,'app-use-unavailable',1440,engine);
     partial=false;await f.wallet.getByRole('button',{name:'Try again',exact:true}).click();
