@@ -9677,7 +9677,6 @@ async fn test_creator_same_file_after_expired_handoff_and_waiting_walletconnect(
     let _guard = protected_content_gateway_mock_test_guard().lock().await;
     let fx = CreatorRecoveryFixture::new().await;
     enable_protected_content(fx.dir.path());
-    crate::protected_content_runtime::tests::write_device_key(fx.dir.path(), 0x5a);
     let token = app_token_for_authority(fx.dir.path(), CREATOR_CAPSULE_ID, &fx.authority);
     let app = gateway_router(fx.state.clone());
     let mut seeded = Vec::new();
@@ -9697,13 +9696,12 @@ async fn test_creator_same_file_after_expired_handoff_and_waiting_walletconnect(
             let approval = approvals.iter_mut().find(|a| a["request_id"] == old_id).unwrap();
             approval["status"] = json!(status);
             approval["approved_at"] = json!(crate::auth::now_ts() - 2);
-            approval["expires_at"] = json!(crate::auth::now_ts() - 1);
         }
         seeded.push((input, facts, old_id, connector));
     }
     let _process_fixture = crate::protected_content_runtime::tests::register_runtime_custody_process_providers_for_test_registry(fx.dir.path(), &fx.registry).await;
     crate::protected_content_runtime::tests::register_runtime_custody_mock_media_provider_for_test_registry(fx.dir.path(), &fx.registry).await;
-    for (input, facts, old_id, connector) in seeded.into_iter().rev() {
+    for (input, facts, old_id, connector) in seeded {
         fx.link_account_to_connector(connector).await;
         if connector == "wallet-walletconnect" {
             match fx.unfinished(&input).await {
@@ -9718,7 +9716,21 @@ async fn test_creator_same_file_after_expired_handoff_and_waiting_walletconnect(
             assert_eq!(fx.current_attempt(&input).attempt(), 0);
             // The Wallet provider's own suite proves late connector receipt acceptance;
             // here its completed answer must still finish the original mint.
+            {
+                let mut approvals = fx.wallet_provider.provider.approvals.lock().await;
+                let index = approvals.iter().position(|a| a["request_id"] == old_id).unwrap();
+                let last = approvals.len() - 1;
+                approvals.swap(index, last);
+            }
             fx.wallet_provider.provider.complete_latest_transaction_approval().await;
+            {
+                let mut approvals = fx.wallet_provider.provider.approvals.lock().await;
+                let approval = approvals.iter_mut().find(|a| a["request_id"] == old_id).unwrap();
+                let result = approval["signed_result"].as_object_mut().unwrap();
+                result.remove("signed_transaction");
+                result.insert("schema".into(), json!("elastos.wallet.external-transaction-result/v1"));
+                result.insert("connector_id".into(), json!(connector));
+            }
             assert!(fx.resume(&input, &facts).await.unwrap().listing_uri.is_some());
             continue;
         }
@@ -9729,6 +9741,7 @@ async fn test_creator_same_file_after_expired_handoff_and_waiting_walletconnect(
         assert!(!fx.is_in_journal(facts.mint_id));
         let (_, note) = archived_attempt(fx.dir.path(), old_attempt.request_id());
         assert_eq!(note["stage"], "approval_handoff_expired");
+        assert_eq!(note["chain"]["transaction"], "unknown");
         let (_, fresh) = post_library(app.clone(), &token, "publish", json!({
             "uri": input.object_uri,
             "protection": {"mode": "runtime_custody", "channel": input.channel, "copies": input.copies, "price": input.price, "new_attempt": true},
@@ -15435,6 +15448,47 @@ async fn declined_library_buy_does_not_block_a_market_purchase() {
     );
 
     assert_market_buy_starts(&buyer, &package).await;
+}
+
+/// The listing-package buy also retires an expired handoff before the same
+/// item is bought again, with a new attempt and a new Wallet approval.
+#[tokio::test]
+async fn expired_handoff_library_buy_restarts_same_item() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    reset_mock_chain_raw_requests();
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+    set_mock_protected_content_purchase_native();
+    set_mock_protected_content_purchase_access_denied();
+    let asset = publish_two_runtime_market_asset().await;
+    let (buyer, mint_id) = buyer_holding_an_imported_listing(&asset).await;
+    {
+        let mut accounts = buyer.wallet.provider.accounts.lock().await;
+        for account in accounts.iter_mut() {
+            account["connector_id"] = json!("wallet-metamask");
+            account["proof_type"] = json!("siwe");
+            account["signing_status"] = json!("external_connector_available");
+        }
+    }
+    let dead = start_library_buy(&buyer, mint_id).await;
+    let old_id = buyer.wallet.provider.latest_transaction_approval_request_id().await.unwrap();
+    {
+        let mut approvals = buyer.wallet.provider.approvals.lock().await;
+        let approval = approvals.iter_mut().find(|a| a["request_id"] == old_id).unwrap();
+        approval["status"] = json!("expired");
+        approval["approved_at"] = json!(crate::auth::now_ts() - 2);
+    }
+    let (_, stopped) = post_library(buyer.app.clone(), &buyer.library_token, "buy", json!({"mint_id": asset.package.mint_id})).await;
+    assert_eq!(stopped["approval_closed"]["reason"], "handoff_expired", "{stopped}");
+    assert_eq!(stopped["message"], crate::protected_content_runtime::RUNTIME_CUSTODY_APPROVAL_HANDOFF_EXPIRED_MESSAGE);
+    let next = start_library_buy(&buyer, mint_id).await;
+    assert_ne!(next.attempt_id, dead.attempt_id);
+    assert_ne!(next.acquisition_stage.effect_id, dead.acquisition_stage.effect_id);
+    let new_id = buyer.wallet.provider.latest_transaction_approval_request_id().await.unwrap();
+    assert_ne!(new_id, old_id);
+    let approvals = buyer.wallet.provider.approvals.lock().await;
+    assert_eq!(approvals.iter().find(|a| a["request_id"] == old_id).unwrap()["status"], "expired");
+    assert_eq!(approvals.iter().find(|a| a["request_id"] == new_id).unwrap()["status"], "pending");
 }
 
 /// R41: a Library `buy` the chain mined and reverted is a spent effect that
