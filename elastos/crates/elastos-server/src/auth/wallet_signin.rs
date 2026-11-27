@@ -2274,7 +2274,10 @@ pub(crate) mod tests {
             .is_empty());
         let expected = b.approval.as_ref().unwrap()["request"].clone();
         assert_eq!(expected["action"], "add");
-        assert_eq!(expected["authorizes_short_public_walletconnect"], Value::Null);
+        assert_eq!(
+            expected["authorizes_short_public_walletconnect"],
+            Value::Null
+        );
         assert_ne!(b.approval.as_ref().unwrap()["notice"], RELAY_NOTICE);
         assert_eq!(
             approval_intent(f.data.path(), &b.ceremony_id, &f.actor).unwrap(),
@@ -2446,14 +2449,17 @@ pub(crate) mod tests {
             req._retired_allow_temporary_internet = consent;
             req
         };
-        assert!(begin(
-            f.data.path(),
-            ORIGIN,
-            "home-test",
-            request(false),
-            Some(f.actor.clone())
-        )
-        .is_ok(), "the retired client flag owns no authority; the gateway checks the Inbox grant");
+        assert!(
+            begin(
+                f.data.path(),
+                ORIGIN,
+                "home-test",
+                request(false),
+                Some(f.actor.clone())
+            )
+            .is_ok(),
+            "the retired client flag owns no authority; the gateway checks the Inbox grant"
+        );
         let pair = begin(
             f.data.path(),
             ORIGIN,
@@ -2477,7 +2483,10 @@ pub(crate) mod tests {
         let expected = selected.approval.as_ref().unwrap()["request"].clone();
         assert_eq!(expected["action"], "add");
         assert_eq!(expected["chain_id"], 8453);
-        assert_eq!(expected["authorizes_short_public_walletconnect"], Value::Null);
+        assert_eq!(
+            expected["authorizes_short_public_walletconnect"],
+            Value::Null
+        );
         assert_eq!(selected.approval.as_ref().unwrap()["notice"], RELAY_NOTICE);
         let out = complete(
             f.data.path(),

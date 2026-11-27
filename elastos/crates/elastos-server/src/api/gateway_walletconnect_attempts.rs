@@ -403,7 +403,9 @@ async fn response<T: Serialize>(
             Json(json!({"error":"wallet_transport_unavailable"})),
         )
             .into_response(),
-        Err(error) if error.is::<InternetOff>() => private_response::<serde_json::Value>(Err(error)),
+        Err(error) if error.is::<InternetOff>() => {
+            private_response::<serde_json::Value>(Err(error))
+        }
         Err(error) if error.is::<StaleRevision>() => {
             private_response::<serde_json::Value>(Err(error))
         }
@@ -848,7 +850,11 @@ mod tests {
 
 pub(super) fn cancel_all(data: &FsPath, inner: &mut Inner) -> anyhow::Result<()> {
     for (id, attempt) in &inner.attempts {
-        crate::auth::wallet_signin::expire_attempt(&home_launch_auth_data_dir(data), id, &attempt.instance)?;
+        crate::auth::wallet_signin::expire_attempt(
+            &home_launch_auth_data_dir(data),
+            id,
+            &attempt.instance,
+        )?;
     }
     inner.attempts.clear();
     Ok(())

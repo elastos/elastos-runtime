@@ -37,7 +37,7 @@ test('System cleanup waits in the same Inbox entry before filing the request',as
  await flow.start({action:'add'});await flow.choose('walletconnect');assert.equal(flow.state.stage,'internet-clearing');assert.match(flow.state.message,/Finish disconnecting in Inbox/);assert.equal(requests,0);
  cleanup=false;t.mock.timers.tick(1000);await new Promise(r=>setImmediate(r));assert.equal(requests,1);
 });
-for(const [permission,cleanupPending,pending,expected]of [['revoked',true,false,'internet-clearing'],['revoked',false,false,'internet-refused'],['refused',false,false,'internet-refused'],['requested',false,false,'internet-expired'],['requested',false,true,'internet-pending']])test(`window ${permission}, cleanup ${cleanupPending}, pending ${pending} leads to the one Inbox entry`,()=>{
+for(const [permission,cleanupPending,pending,expected]of [['revoked',true,false,'internet-clearing'],['revoked',false,false,'internet-refused'],['refused',false,false,'internet-refused'],['requested',false,false,'internet-off'],['requested',false,true,'internet-pending']])test(`window ${permission}, cleanup ${cleanupPending}, pending ${pending} leads to the one Inbox entry`,()=>{
  const result=windowPresentation({permission,cleanupPending,pending,accounts:[],requests:[]},Date.now()/1000);
  assert.equal(result.input.stage,expected);assert.equal(screens.walletconnect[expected].primary.id,'inbox');
  if(cleanupPending)assert.match(screens.walletconnect[expected].notice,/Finish disconnecting/);

@@ -39,7 +39,7 @@ export function windowPresentation(state, nowSeconds) {
   else if (busy && phase === 'disconnecting') stage = 'disconnecting';
   else if (state.cleanupPending && permission !== 'granted') stage='internet-clearing';
   else if (ownerNeeded && permission !== 'granted') stage = 'guest-access';
-  else if (permission === 'requested') stage = pending ? request ? 'request-internet-pending' : 'internet-pending' : 'internet-expired';
+  else if (permission === 'requested') stage = pending ? request ? 'request-internet-pending' : 'internet-pending' : request ? 'request-internet-off' : 'internet-off';
   else if (permission === 'refused' || permission === 'revoked' && !request) stage = 'internet-refused';
   else if (permission === 'revoked' && connection) stage = request ? 'request-internet-off' : 'internet-off';
   else if (qrData) stage = 'qr-shown';

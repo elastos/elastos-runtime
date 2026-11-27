@@ -28,13 +28,14 @@ export function contractCopy(expected, row, view) {
   if(['metamask','unisat'].includes(row.window)&&['extension-missing','extensions-unavailable','other-ethereum-wallet'].includes(row.stage)){result.status='Your browser wallet was not found here.';result.notice='Open this connection from Wallet in a browser where your wallet is available.';}
   if(['metamask','unisat'].includes(row.window)&&[`To try again, return to ${app}.`,`Start a new request in ${app} to try again.`].includes(result.notice))result.notice=`To try again, go back to ${app} and start a new request.`;
   if(facts.payment&&row.window==='metamask'&&row.stage==='ready-multiple')result.notice='Connect will use '+name+'.';
-  if(row.window==='walletconnect'&&row.stage==='internet-refused')result.notice='Connect a wallet to ask Home for internet access again.';
+  if(row.window==='walletconnect'&&row.stage==='internet-refused')result.notice='Allow internet access in Inbox, then connect your wallet.';
   if(row.window==='walletconnect'&&row.stage==='disconnected')result.notice='';
   if(row.window==='walletconnect'){
     const copy={
       'internet-off':{notice:'Allow internet access in Inbox, then connect your wallet.'},
-      'internet-refused':{status:'Internet access for WalletConnect is off.'},
-      'internet-clearing':{status:'Internet access for WalletConnect is off.'},
+      'internet-refused':{status:'Internet access for WalletConnect is off.',notice:'Allow internet access in Inbox, then connect your wallet.'},
+      'internet-expired':{notice:'Review the request in Inbox, then connect your wallet.'},
+      'internet-clearing':{status:'Internet access for WalletConnect is off.',notice:'Choose Finish disconnecting in Inbox before you allow internet access again.'},
       'link-wait':{status:`Open ${name} and sign the message to confirm this account is yours.`,notice:''},
       'link-declined':{status:'Your wallet declined to sign the message.',notice:'Send another message to confirm this account.'},
       'request-phone':{status:`Continue in ${name}.`,notice:''},

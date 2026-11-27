@@ -38,7 +38,7 @@ export function walletSigninError(error, action) {
 const fault = code => Object.assign(new Error(code),{code});
 export function createWalletSigninFlow({api,select,approve,render,onComplete=()=>{},randomSecret=walletBrowserSecret,now=()=>Date.now()/1000}) {
   let state={stage:'closed'}, run, timer, controls, cleanup;
-  function show(stage, extra={}) { state={...state,message:'',...extra,stage,expiresAt:run?.deadline};render(state); }
+  function show(stage, extra={}) { state={...state,message:'',walletconnectOff:false,...extra,stage,expiresAt:run?.deadline};render(state); }
   function live(current) { return run===current && !current.controller.signal.aborted; }
   function assertLive(current) {
     if(!live(current)) throw fault('cancelled');
@@ -162,7 +162,7 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
   }
   function fail(current,error) {
     if(!live(current))return;
-    show('error',{message:walletSigninError(error,state.action),refresh:error?.status===409 && state.action!=='signin'});
+    show('error',{message:walletSigninError(error,state.action),refresh:error?.status===409 && state.action!=='signin',walletconnectOff:error?.code==='walletconnect_internet_off'});
     run=null;clearTimeout(timer);void clear(current);
   }
   function unknown(current) {

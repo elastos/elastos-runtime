@@ -218,7 +218,7 @@ async function openConnector(target) {
 }
 const selectWalletConnect=options=>selectConnectedWalletConnect(options,{open:()=>openConnector('wallet-walletconnect'),current:context=>[...document.querySelectorAll('#fixture-desktop iframe')].some(f=>f.isConnected&&f.contentWindow===context.source)});
 window.openedPrincipal='';
-bindHomeUnlock();
+bindHomeUnlock({openTarget:(target,{query})=>{window.fixtureOpenedTarget={target,query};}});
 await showHomeUnlock(async (result,flow)=>{if(window.walletFixture.openFailed)throw new Error("Fixture Home opening failure");window.openedFlow=flow;window.openedPrincipal=result.principal_id;hideHomeUnlock();document.querySelector('.home-host-shell').hidden=true;document.querySelector('#fixture-desktop').hidden=false;});
 const area=document.createElement('section');area.id='fixture-desktop';area.hidden=true;area.innerHTML='<h1>Home</h1><p>Alex</p>';document.body.append(area);
 window.showFixtureApps=()=>{

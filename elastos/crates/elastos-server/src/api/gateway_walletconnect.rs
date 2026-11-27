@@ -182,7 +182,9 @@ fn request(c: &Consent) -> anyhow::Result<serde_json::Value> {
 }
 fn public(c: Option<&Consent>) -> serde_json::Value {
     match c {
-        Some(c) => json!({"status":c.status, "request":request(c).ok(), "cleanup_pending":c.cleanup_pending}),
+        Some(c) => {
+            json!({"status":c.status, "request":request(c).ok(), "cleanup_pending":c.cleanup_pending})
+        }
         None => json!({"status":"off"}),
     }
 }
@@ -195,8 +197,13 @@ impl std::fmt::Display for InternetOff {
 }
 impl std::error::Error for InternetOff {}
 
-pub(in crate::api) async fn check_owner(state: &GatewayState, audit_success: bool) -> anyhow::Result<()> {
-    check_owner_inner(state, audit_success).await.map_err(|_| InternetOff.into())
+pub(in crate::api) async fn check_owner(
+    state: &GatewayState,
+    audit_success: bool,
+) -> anyhow::Result<()> {
+    check_owner_inner(state, audit_success)
+        .await
+        .map_err(|_| InternetOff.into())
 }
 async fn check_owner_inner(state: &GatewayState, audit_success: bool) -> anyhow::Result<()> {
     let data = &state.data_dir;
@@ -333,10 +340,7 @@ pub(super) async fn answer(
                         .revoke(*capability.id(), "WalletConnect internet stopped")
                         .await?;
                 }
-                for socket in inner
-                    .sockets
-                    .values_mut()
-                {
+                for socket in inner.sockets.values_mut() {
                     tokio::time::timeout(
                         Duration::from_secs(3),
                         socket.done.wait_for(|done| *done),
@@ -426,7 +430,12 @@ pub(super) async fn internet(
         let authority = require_runtime_wallet_authority(
             &state.data_dir,
             &headers,
-            &[WALLET_WALLETCONNECT_CAPSULE_ID, INBOX_CAPSULE_ID, HOME_CAPSULE_ID, SYSTEM_CAPSULE_ID],
+            &[
+                WALLET_WALLETCONNECT_CAPSULE_ID,
+                INBOX_CAPSULE_ID,
+                HOME_CAPSULE_ID,
+                SYSTEM_CAPSULE_ID,
+            ],
         )?;
         let inner = state.walletconnect.inner.lock().await;
         if method == axum::http::Method::POST {
@@ -478,10 +487,7 @@ fn ensure_consent_request(
     }) {
         ensure_admin_context(&state.data_dir, context).map_err(|_| AdminConsentRequired)?;
         anyhow::ensure!(
-            inner
-                .sockets
-                .values()
-                .all(|s| *s.done.borrow()),
+            inner.sockets.values().all(|s| *s.done.borrow()),
             "Finish stopping WalletConnect first"
         );
         save(
@@ -610,7 +616,8 @@ fn private_response<T: Serialize>(result: anyhow::Result<T>) -> Response {
         Err(error) if error.is::<InternetOff>() => (
             StatusCode::FORBIDDEN,
             Json(json!({"error":"walletconnect_internet_off"})),
-        ).into_response(),
+        )
+            .into_response(),
         Err(error) if error.is::<StaleRevision>() => {
             (StatusCode::CONFLICT, error.to_string()).into_response()
         }

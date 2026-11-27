@@ -186,13 +186,14 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
       const walletName=state.wallet?.displayName||state.method?.displayName||connectorName(connector);
       const statuses={choice:'Opening wallet…',loading:'Loading wallets…',connecting:`Continue in ${walletName}`,signing:`Continue in ${walletName}`,approval:'Confirm with your passkey.',passkey:state.action==='remove'?'Confirm with your passkey to remove this wallet and end its sign-in sessions.':'Confirm with your passkey.',completing:state.action==='signin'?'Checking sign-in…':'Saving change…'};
       if(state.message||statuses[state.stage]){const status=node('p',state.message||statuses[state.stage],'connection-note');status.setAttribute('role','status');body.append(status);}
+      if(state.action==='signin'&&state.walletconnectOff)signinOptions(body,(initial.signinMethods||[]).filter(method=>method.connector!=='walletconnect'));
       if(state.approvalNotice&&state.wallet?.connector==='walletconnect')body.append(node('p',state.approvalNotice,'connection-note'));
       const actions=node('div',null,'connection-actions');
       if(state.stage==='approval')actions.append(button('Use passkey',()=>flow.approve()));
       if(state.stage==='unknown')actions.append(button('Check again',()=>flow.retry()));
       if(state.stage==='error'||state.stage==='list-error'||state.stage==='unknown') {
-        if(state.stage!=='unknown'&&state.retryable!==false)actions.append(button('Try again',()=>state.stage==='list-error'?connected():restart()));
-        if(state.action==='signin'&&onPasskey&&state.allowPasskey!==false&&initial.availability?.passkey!==false)actions.append(button('Use passkey',()=>chooseSignin(null),true));
+        if(state.stage!=='unknown'&&state.retryable!==false&&!state.walletconnectOff)actions.append(button('Try again',()=>state.stage==='list-error'?connected():restart()));
+        if(state.action==='signin'&&!state.walletconnectOff&&onPasskey&&state.allowPasskey!==false&&initial.availability?.passkey!==false)actions.append(button('Use passkey',()=>chooseSignin(null),true));
       }
       if(!['completing','unknown'].includes(state.stage)||state.action==='signin')actions.append(button('Cancel',cancel,true));footer.append(actions);
     }
