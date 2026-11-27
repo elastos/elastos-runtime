@@ -354,7 +354,7 @@ fn abandoned_non_dismissible_handoff_expires_releases_capacity_and_can_be_pruned
             }
             let new_request = WalletProviderRequestV2::new(
                 &wallet_context(PRINCIPAL, "system"),
-                "new-transaction".into(),
+                "new-transaction",
                 now_ts(),
                 now_ts() + 120,
                 original.operation.clone(),
