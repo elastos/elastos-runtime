@@ -25,6 +25,15 @@ const frameGeometry = {};
 const interactionChecks = [];
 test.after(()=>proofDirectory.cleanup());
 
+// Exercise each authority state independently, even when one browser layout fails first.
+for(const stage of ['internet-refused','internet-off','internet-expired','internet-clearing','request-internet-off'])test(`WalletConnect ${stage} gives the sole Inbox next step`,()=>{
+  const row=states.find(row=>row.window==='walletconnect'&&row.stage===stage);
+  const view=fixtureView(row);
+  assert.deepEqual(view.actions.map(({id,label,primary})=>({id,label:viewText(label),primary})),[{id:'inbox',label:'Open Inbox',primary:true}]);
+  assert.equal(view.focus,'inbox');
+  if(stage==='internet-clearing')assert.match(viewText(view.notice),/Finish disconnecting in Inbox/);
+});
+
 for (const engine of ['chromium','webkit']) test(`extension_request_feedback_in_view: render-only ${engine}, both themes and all states`, {skip:windowTestOptions(engine).skip}, async () => {
   const browser = await playwright[engine].launch({headless:true});
   try {
@@ -144,7 +153,7 @@ for (const engine of ['chromium','webkit']) test(`extension_request_feedback_in_
           const expectedFocus=row.window==='walletconnect'&&row.stage==='internet-expired'?'inbox':paymentRecovery?'open-wallet':['request-cancelled','transaction-cancelled'].includes(row.stage)?'open-wallet':fallbackClose&&facts.focus||row.unknownSafety&&['link-busy','request-busy','extension-busy','link-error'].includes(row.stage)?'close-window':facts.focus;
           assert.equal(observed.focus,expectedFocus,key+': design focus, with answered-outcome override');
           if(observed.clicks.length)assert.equal(observed.clicks.length,1,key+': exit operable');
-          const item={engine,theme,size:size.name,window:row.window,stage:row.stage,unknownSafety:!!row.unknownSafety,controls:observed.controls.map(({id,label,primary})=>({id,label,primary})),focus:observed.focus,text:observed.text,result:'pass'};
+          const item={engine,theme,size:size.name,window:row.window,stage:row.stage,unknownSafety:!!row.unknownSafety,controls:observed.controls.map(({id,label,primary})=>({id,label:viewText(label),primary})),focus:observed.focus,text:observed.text,result:'pass'};
           results.push(item);
           if(capture&&engine==='chromium'&&['window','390','1280'].includes(size.name))await page.screenshot({path:`${proof}/${row.window}-${row.stage}${row.unknownSafety?'-unknown-safety':''}-${theme}-${size.name}.png`,fullPage:true});
         }catch(error){await writeFile(`${proof}/failure-${engine}.json`,JSON.stringify({key,view,observed},null,2));await page.screenshot({path:`${proof}/failure-${engine}.png`});throw error;}
