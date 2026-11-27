@@ -1620,8 +1620,8 @@
       "did:key:z6MkgwHd2BCWe1jHMXPiR6H1q1RFPcv1YzhMbK5G1kBarbfe"
     ],
     "local_use": {
-      "max_cache_bytes": 8589934592,
-      "max_model_memory_bytes": 4294967296
+      "max_cache_bytes": 21474836480,
+      "max_model_memory_bytes": 9663676416
     }
   },
   "collaboration_network": {

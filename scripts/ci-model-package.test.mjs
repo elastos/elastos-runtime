@@ -38,7 +38,13 @@ test("producer refuses absent or truncated model before writing a package", t =>
   assert.throws(() => readFileSync(join(packageDir, "capsule.json")), /ENOENT/);
 });
 
-for (const fixture of [SMOL_FIXTURE, QWEN_FIXTURE]) {
+test("release contains exactly the three approved pinned model fixtures", () => {
+  const actual = readdirSync(new URL("./", import.meta.url)).filter(name => /^pinned-.*-fixture\.json$/.test(name)).sort();
+  assert.deepEqual(actual, ["pinned-smollm2-fixture.json", "pinned-qwen2.5-1.5b-fixture.json", "pinned-qwen3.5-9b-fixture.json"].sort());
+});
+
+for (const fixture of [SMOL_FIXTURE, QWEN_FIXTURE,
+  loadFixture(new URL("./pinned-qwen3.5-9b-fixture.json", import.meta.url))]) {
   test(`${fixture.id} fixture fetch selects its declared immutable provenance and licensing`, () => {
     const manifest = fixture.capsule_manifest, model = manifest.model_content;
     assert.equal(manifest.role, "content");
@@ -49,6 +55,43 @@ for (const fixture of [SMOL_FIXTURE, QWEN_FIXTURE]) {
     assert.equal(model.provenance.base_license.spdx_id, model.license.spdx_id);
   });
 }
+
+test("release model budgets cover all three pinned models and their preparation charges", () => {
+  const limits = JSON.parse(readFileSync(new URL("../components.json", import.meta.url))).model_catalog.local_use;
+  const fixtures = [SMOL_FIXTURE, QWEN_FIXTURE,
+    loadFixture(new URL("./pinned-qwen3.5-9b-fixture.json", import.meta.url))];
+  // Include both license copies, capsule metadata and room for provenance.
+  // Runtime charges three copies of the complete closure plus index overhead.
+  const charge = fixtures.reduce((total, fixture) => total + 3 * (fixture.model.size
+    + 2 * fixture.license.size + Buffer.byteLength(canonical(fixture.capsule_manifest)) + 1024)
+    + 8 * 1024 ** 2 + 3 * 65536, 0);
+  assert(limits.max_cache_bytes >= charge, `all three models need at least ${charge} cache bytes`);
+  for (const fixture of fixtures) {
+    assert(limits.max_model_memory_bytes >= fixture.capsule_manifest.model_content.minimum_memory_mb * 1024 ** 2,
+      `${fixture.id} exceeds the release model memory budget`);
+  }
+});
+
+test("Qwen3.5 pins the complete upstream license with its copyright notice", () => {
+  const fixture = loadFixture(new URL("./pinned-qwen3.5-9b-fixture.json", import.meta.url));
+  const provenance = fixture.capsule_manifest.model_content.provenance;
+  assert.equal(fixture.license.url,
+    `https://huggingface.co/${provenance.base_repository}/resolve/${provenance.base_revision}/LICENSE`);
+  assert.equal(fixture.license.size, 11544);
+  assert.equal(fixture.license.sha256, "bbedc3fda3305820b977265f01b8619d87570a6739de3a5582c3464840f1e57a");
+});
+
+test("a model fixture preserves the base revision license and refuses a mutable base license", t => {
+  const root = temporary(t), path = join(root, "fixture.json");
+  const fixture = structuredClone(QWEN_FIXTURE);
+  const provenance = fixture.capsule_manifest.model_content.provenance;
+  fixture.license.url = `https://huggingface.co/${provenance.base_repository}/resolve/${provenance.base_revision}/LICENSE`;
+  writeFileSync(path, JSON.stringify(fixture));
+  assert.deepEqual(loadFixture(path).license, fixture.license);
+  fixture.license.url = fixture.license.url.replace(provenance.base_revision, "main");
+  writeFileSync(path, JSON.stringify(fixture));
+  assert.throws(() => loadFixture(path), /pinned revision or the vendored Apache License text/);
+});
 
 test("fixture loading refuses escaping names, injected text, unpinned weights and a title Runtime would not show", t => {
   const root = temporary(t), path = join(root, "fixture.json");
@@ -92,6 +135,8 @@ function decodeBase(bytes, alphabet, bits) {
 test("disposable catalog verifies the domain, signed bytes, DID and raw content pin", () => {
   const entry = { cid: "bafyfixture", capsule_manifest: SMOL_FIXTURE.capsule_manifest, object_manifest: contentManifest([]) };
   const first = signedCatalog(entry, 12345), second = signedCatalog(entry, 12345);
+  const limits = JSON.parse(readFileSync(new URL("../components.json", import.meta.url))).model_catalog.local_use;
+  assert.equal(first.trust.local_use.max_model_memory_bytes, limits.max_model_memory_bytes);
   assert.notEqual(first.trust.publisher_dids[0], second.trust.publisher_dids[0]);
   const envelope = JSON.parse(first.catalog), multicodec = decodeBase(envelope.signer_did.slice("did:key:z".length), "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz");
   assert.deepEqual(multicodec.subarray(0, 2), Buffer.from([0xed, 1]));

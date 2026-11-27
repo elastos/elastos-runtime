@@ -58,8 +58,9 @@ export function loadFixture(path) {
   }
   const pinned = `https://huggingface.co/${provenance.quantized_repository}/resolve/${provenance.quantized_revision}/`;
   assert.equal(fixture.model.url, pinned + fixture.model.name, "fixture weights must come from the pinned quantized repository revision");
+  const basePinned = `https://huggingface.co/${provenance.base_repository}/resolve/${provenance.base_revision}/LICENSE`;
   assert(fixture.license.url === undefined ? fixture.license.path === APACHE_LICENSE_PATH
-    : fixture.license.path === undefined && fixture.license.url === pinned + "LICENSE",
+    : fixture.license.path === undefined && [pinned + "LICENSE", basePinned].includes(fixture.license.url),
   "fixture license must come from the pinned revision or the vendored Apache License text");
   assert(["Q1_0", "Q4_K_M", "Q8_0"].includes(model.quantization), "fixture quantization is unsupported");
   assert(model.license.spdx_id === "Apache-2.0" && provenance.base_license.spdx_id === "Apache-2.0", "fixture licenses must be Apache-2.0");
@@ -207,7 +208,7 @@ export function signedCatalog(entry, publishedAt = Math.floor(Date.now() / 1000)
   const signer_did = "did:key:z" + encode(Buffer.concat([Buffer.from([0xed, 1]), publicBytes]), "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz");
   const message = createHash("sha256").update("elastos.model.catalog.v1\0").update(canonical(payload)).digest();
   const catalog = Buffer.from(canonical({ payload, signer_did, signature: sign(null, message, privateKey).toString("hex") }));
-  return { catalog, trust: { head_cid: rawCid(catalog), publisher_dids: [signer_did], local_use: { max_cache_bytes: maxCacheBytes, max_model_memory_bytes: 4 * 1024 ** 3 } } };
+  return { catalog, trust: { head_cid: rawCid(catalog), publisher_dids: [signer_did], local_use: { max_cache_bytes: maxCacheBytes, max_model_memory_bytes: 9 * 1024 ** 3 } } };
 }
 
 // Production Kubo import profile; the package CID only reproduces with these flags.

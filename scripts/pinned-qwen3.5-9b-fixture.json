@@ -1,0 +1,63 @@
+{
+  "id": "qwen3.5-9b",
+  "display_name": "Qwen3.5 9B",
+  "model": {
+    "name": "Qwen3.5-9B-Q4_K_M.gguf",
+    "url": "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/3885219b6810b007914f3a7950a8d1b469d598a5/Qwen3.5-9B-Q4_K_M.gguf",
+    "size": 5680522464,
+    "sha256": "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8"
+  },
+  "license": {
+    "name": "LICENSE",
+    "url": "https://huggingface.co/Qwen/Qwen3.5-9B/resolve/c202236235762e1c871ad0ccb60c8ee5ba337b9a/LICENSE",
+    "size": 11544,
+    "sha256": "bbedc3fda3305820b977265f01b8619d87570a6739de3a5582c3464840f1e57a"
+  },
+  "capsule_manifest": {
+    "schema": "elastos.capsule/v1",
+    "name": "qwen3.5-9b-q4-k-m-local",
+    "role": "content",
+    "type": "data",
+    "projections": [
+      "content"
+    ],
+    "version": "0.1.0",
+    "entrypoint": "weights.gguf",
+    "model_content": {
+      "consumer_interface": "elastos.provider.model",
+      "consumer_interface_version": "0.1.0",
+      "engine": "llama.cpp",
+      "format": "gguf",
+      "quantization": "Q4_K_M",
+      "minimum_memory_mb": 8960,
+      "license": {
+        "path": "LICENSE",
+        "spdx_id": "Apache-2.0"
+      },
+      "provenance": {
+        "base_license": {
+          "path": "LICENSE.base",
+          "spdx_id": "Apache-2.0"
+        },
+        "base_repository": "Qwen/Qwen3.5-9B",
+        "base_revision": "c202236235762e1c871ad0ccb60c8ee5ba337b9a",
+        "quantized_repository": "unsloth/Qwen3.5-9B-GGUF",
+        "quantized_revision": "3885219b6810b007914f3a7950a8d1b469d598a5",
+        "path": "PROVENANCE.md"
+      }
+    },
+    "description": "Text model. Needs about 9 GiB of free memory."
+  },
+  "proof": {
+    "env_prefix": "QWEN35",
+    "native_test": "model_native_qwen35_exact_profile_lifecycle",
+    "cold_test": "model_preparation_real_qwen35_cold_reply_restart",
+    "engine_sha256": {
+      "linux-amd64": "93e2300242ded0aadabe83686e5aad9a06a3cefe63e3b5095aa4949c125f3869"
+    },
+    "engine_archive_sha256": {
+      "linux-amd64": "0dee60d855f864aa9e8a7200014baf9419e3a4c9ccb3f3609532aad0ed34f2c0"
+    },
+    "cancel_status": "cancelled"
+  }
+}

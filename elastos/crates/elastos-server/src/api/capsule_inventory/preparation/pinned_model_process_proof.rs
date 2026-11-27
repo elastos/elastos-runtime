@@ -77,6 +77,71 @@ const SMOLLM2: PinnedModel = PinnedModel {
     long_prompt: "Write a very long story about a lighthouse keeper. Keep writing new chapters and never stop.",
 };
 
+// New catalogue proofs share the producer's immutable input fixtures.
+// Existing Qwen and SmolLM2 proof inputs stay unchanged.
+static QWEN35_FIXTURE: std::sync::LazyLock<serde_json::Value> = std::sync::LazyLock::new(|| {
+    serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../scripts/pinned-qwen3.5-9b-fixture.json"
+    )))
+    .unwrap()
+});
+static QWEN35: std::sync::LazyLock<PinnedModel> =
+    std::sync::LazyLock::new(|| catalog_proof_model(&QWEN35_FIXTURE));
+
+fn catalog_proof_model(fixture: &'static serde_json::Value) -> PinnedModel {
+    let content = &fixture["capsule_manifest"]["model_content"];
+    let provenance = &content["provenance"];
+    PinnedModel {
+        env_prefix: fixture["proof"]["env_prefix"].as_str().unwrap(),
+        capsule_name: fixture["capsule_manifest"]["name"].as_str().unwrap(),
+        bytes: fixture["model"]["size"].as_u64().unwrap(),
+        sha: fixture["model"]["sha256"].as_str().unwrap(),
+        license_bytes: fixture["license"]["size"].as_u64().unwrap(),
+        license_sha: fixture["license"]["sha256"].as_str().unwrap(),
+        quantization: content["quantization"].as_str().unwrap(),
+        minimum_memory_mb: content["minimum_memory_mb"].as_u64().unwrap(),
+        base_repository: provenance["base_repository"].as_str().unwrap(),
+        base_revision: provenance["base_revision"].as_str().unwrap(),
+        quantized_repository: provenance["quantized_repository"].as_str().unwrap(),
+        quantized_revision: provenance["quantized_revision"].as_str().unwrap(),
+        provenance: "Isolated test attestation of catalogue fixture pins; not an upstream conversion signature.\n",
+        deadline_secs: 3500,
+        reply_accepts: |text| !text.trim().is_empty(),
+        long_prompt: QWEN.long_prompt,
+    }
+}
+
+#[test]
+fn catalog_proof_inputs_match_producer_fixtures() {
+    {
+        let (model, fixture) = (&*QWEN35, &*QWEN35_FIXTURE);
+        assert_eq!(model.bytes, fixture["model"]["size"].as_u64().unwrap());
+        assert_eq!(model.sha, fixture["model"]["sha256"].as_str().unwrap());
+        assert_eq!(
+            model.license_sha,
+            fixture["license"]["sha256"].as_str().unwrap()
+        );
+        assert!(model.bytes > SMOLLM2.bytes);
+        assert_eq!(model.quantization, "Q4_K_M");
+        assert_eq!(catalog_cancel_status(model), "cancelled");
+        assert_eq!(
+            catalog_engine_sha(model, "linux-amd64"),
+            "93e2300242ded0aadabe83686e5aad9a06a3cefe63e3b5095aa4949c125f3869"
+        );
+    }
+    assert_eq!(catalog_cancel_status(&SMOLLM2), "settlement_unknown");
+    assert_eq!(catalog_cancel_status(&QWEN), "settlement_unknown");
+    assert_eq!(
+        catalog_engine_sha(&SMOLLM2, "linux-amd64"),
+        pinned_engine_sha("linux-amd64")
+    );
+    assert_eq!(
+        catalog_engine_sha(&QWEN, "linux-amd64"),
+        pinned_engine_sha("linux-amd64")
+    );
+}
+
 /// SHA-256 of the verified `llama-server` executable inside the pinned
 /// b10516 bundle for each proved host profile.
 fn pinned_engine_sha(platform: &str) -> &'static str {
@@ -86,6 +151,28 @@ fn pinned_engine_sha(platform: &str) -> &'static str {
         "linux-arm64" => "da88cc0a679c80cdf699fe368c4d2f772e5bce4280ad9316c30ed4c09e9d2cde",
         other => panic!("no pinned b10516 engine identity for {other}"),
     }
+}
+
+// Existing proof pins remain stable; catalogue fixtures bind the bundle
+// selected by the current release recipes independently of those older pins.
+fn catalog_engine_sha(model: &PinnedModel, platform: &str) -> &'static str {
+    let fixture = match model.env_prefix {
+        "QWEN35" => &*QWEN35_FIXTURE,
+        _ => return pinned_engine_sha(platform),
+    };
+    fixture["proof"]["engine_sha256"][platform]
+        .as_str()
+        .expect("catalogue proof requires an engine pin for this host")
+}
+
+fn catalog_cancel_status(model: &PinnedModel) -> &'static str {
+    let fixture = match model.env_prefix {
+        "QWEN35" => &*QWEN35_FIXTURE,
+        _ => return "settlement_unknown",
+    };
+    fixture["proof"]["cancel_status"]
+        .as_str()
+        .expect("catalogue proof requires its cancellation contract")
 }
 
 const PACKAGE_ADD_ARGS: &[&str] = &[
@@ -511,7 +598,7 @@ impl PinnedModelProof {
             crate::setup::verified_local_model_engine(&self.engine_data, &manifest).unwrap();
         assert_eq!(
             identity.sha256.trim_start_matches("sha256:"),
-            pinned_engine_sha(&crate::setup::detect_platform())
+            catalog_engine_sha(self.model, &crate::setup::detect_platform())
         );
         let source = identity.path.parent().unwrap();
         let receipt: serde_json::Value =
@@ -603,6 +690,12 @@ async fn model_native_smollm2_exact_profile_lifecycle() {
     native_exact_profile_lifecycle(&SMOLLM2).await;
 }
 
+#[tokio::test]
+#[ignore = "requires pinned Qwen3.5 catalogue weights, verified engine and native provider"]
+async fn model_native_qwen35_exact_profile_lifecycle() {
+    native_exact_profile_lifecycle(&QWEN35).await;
+}
+
 async fn native_exact_profile_lifecycle(model: &'static PinnedModel) {
     use elastos_runtime::provider::{bridge::ProviderConfig, ProviderBridge};
     let platform = crate::setup::detect_platform();
@@ -621,7 +714,7 @@ async fn native_exact_profile_lifecycle(model: &'static PinnedModel) {
     let engine = crate::setup::verified_local_model_engine(&engine_data, &manifest).unwrap();
     assert_eq!(
         engine.sha256.trim_start_matches("sha256:"),
-        pinned_engine_sha(&platform)
+        catalog_engine_sha(model, &platform)
     );
     let engine_path = engine.path.canonicalize().unwrap();
     let base = weights
@@ -926,11 +1019,10 @@ async fn pinned_runs_and_active_cancel(
     let cancelled = bridge.send_raw(&cancel).await.unwrap();
     report_terminal(&cancelled);
     assert_eq!(cancelled["status"], "ok");
+    let expected_cancel = catalog_cancel_status(model);
     assert!(
-        matches!(
-            cancelled["data"]["status"].as_str(),
-            Some("reconciling" | "settlement_unknown")
-        ),
+        cancelled["data"]["status"] == "reconciling"
+            || cancelled["data"]["status"] == expected_cancel,
         "active cancellation raced terminal completion: {}",
         cancelled["data"]["status"]
     );
@@ -950,12 +1042,12 @@ async fn pinned_runs_and_active_cancel(
         tokio::time::sleep(Duration::from_millis(100)).await;
     };
     report_terminal(&cancelled_terminal);
-    // Preserve the unresolved run outcome. HTTP disconnect does not prove that
-    // backend execution stopped; later artifact removal needs physical close proof.
-    assert_eq!(cancelled_terminal["data"]["status"], "settlement_unknown");
+    // Preserve each fixture's cancellation contract. The older proof pins
+    // retain their unresolved outcome; current catalogue pins confirm stop.
+    assert_eq!(cancelled_terminal["data"]["status"], expected_cancel);
     assert_eq!(
         cancelled_terminal["data"]["terminal"]["error"]["class"],
-        "settlement_unknown"
+        expected_cancel
     );
     let events = serde_json::json!({"op":"runs_events","run_id":id,
         "after_sequence":0,"runtime_binding":access});
@@ -1059,8 +1151,8 @@ async fn pinned_reply_and_restart(
         .kept(&context().principal_id, cid));
     serde_json::json!({"offer_id":offer,"cid":cid,"reply_completed":true,"restart_replay_exact":true,
         "keep_persisted":true,"provider_shutdown_reap":true,"engine_process_group_absence":null,
-        "active_text_delta_bytes":proof.active_delta_bytes,"active_cancel_unknown_replay":true,
-        "per_run_backend_stop_confirmed":false})
+        "active_text_delta_bytes":proof.active_delta_bytes,"active_cancel_unknown_replay":catalog_cancel_status(model) == "settlement_unknown",
+        "per_run_backend_stop_confirmed":catalog_cancel_status(model) == "cancelled"})
 }
 
 #[tokio::test]
@@ -1076,4 +1168,10 @@ async fn model_preparation_real_smollm2_cold_reply_restart() {
     // Any host with a Runtime-owned startup profile runs this small model.
     local_model_startup_profile(&crate::setup::detect_platform()).unwrap();
     preparation_process_with_model(true, Some(PinnedModelProof::from_env(&SMOLLM2))).await;
+}
+
+#[tokio::test]
+#[ignore = "requires pinned Qwen3.5 catalogue weights and isolated Content prerequisites"]
+async fn model_preparation_real_qwen35_cold_reply_restart() {
+    preparation_process_with_model(true, Some(PinnedModelProof::from_env(&QWEN35))).await;
 }
