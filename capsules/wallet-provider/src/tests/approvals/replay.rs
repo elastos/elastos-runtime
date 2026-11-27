@@ -269,6 +269,34 @@ fn handed_off_transaction_survives_expiry_restart_and_history_pressure_until_fir
                 ),
                 Response::Error { .. }
             ));
+            // Runtime can finish the original effect with Chain's observation.
+            let outcome = ValidatedChainOutcomeV1 {
+                schema: elastos_wallet_contract::VALIDATED_CHAIN_OUTCOME_SCHEMA.into(),
+                approval_request_id: original.request_id.clone(),
+                account_id: handed_off.account_id.clone(),
+                chain_namespace: handed_off.chain_namespace.clone(),
+                network: elastos_wallet_contract::PublicNetwork::new("esc-mainnet").unwrap(),
+                binding: ValidatedChainOutcomeBindingV1::ExternalConnector {
+                    connector_id: connector.into(),
+                    originating_address: handed_off.address.clone(),
+                },
+                transaction_hash: transaction_hash.clone(),
+                chain_observation: json!({
+                    "network": "esc-mainnet", "hash": transaction_hash,
+                    "transaction": {
+                        "hash": transaction_hash, "from": handed_off.address,
+                        "blockNumber": "0x2a"
+                    }
+                }),
+                confirmed_at: now_ts(),
+            };
+            assert!(invoke_wallet(
+                &mut provider,
+                PRINCIPAL,
+                "system",
+                WalletProviderOperationV2::AttachValidatedChainOutcome { outcome },
+            )
+            .is_ok());
         }
     }
 }
