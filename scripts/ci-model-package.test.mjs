@@ -52,6 +52,23 @@ for (const fixture of [SMOL_FIXTURE, QWEN_FIXTURE,
   });
 }
 
+test("release model budgets cover all four pinned models and their preparation charges", () => {
+  const limits = JSON.parse(readFileSync(new URL("../components.json", import.meta.url))).model_catalog.local_use;
+  const fixtures = [SMOL_FIXTURE, QWEN_FIXTURE,
+    loadFixture(new URL("./pinned-qwen3.5-9b-fixture.json", import.meta.url)),
+    loadFixture(new URL("./pinned-gemma4-12b-fixture.json", import.meta.url))];
+  // Include both license copies, capsule metadata and room for provenance.
+  // Runtime charges three copies of the complete closure plus index overhead.
+  const charge = fixtures.reduce((total, fixture) => total + 3 * (fixture.model.size
+    + 2 * fixture.license.size + Buffer.byteLength(canonical(fixture.capsule_manifest)) + 1024)
+    + 8 * 1024 ** 2 + 3 * 65536, 0);
+  assert(limits.max_cache_bytes >= charge, `all four models need at least ${charge} cache bytes`);
+  for (const fixture of fixtures) {
+    assert(limits.max_model_memory_bytes >= fixture.capsule_manifest.model_content.minimum_memory_mb * 1024 ** 2,
+      `${fixture.id} exceeds the release model memory budget`);
+  }
+});
+
 test("fixture loading refuses escaping names, injected text, unpinned weights and a title Runtime would not show", t => {
   const root = temporary(t), path = join(root, "fixture.json");
   const refused = (mutate, message) => {

@@ -207,7 +207,7 @@ export function signedCatalog(entry, publishedAt = Math.floor(Date.now() / 1000)
   const signer_did = "did:key:z" + encode(Buffer.concat([Buffer.from([0xed, 1]), publicBytes]), "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz");
   const message = createHash("sha256").update("elastos.model.catalog.v1\0").update(canonical(payload)).digest();
   const catalog = Buffer.from(canonical({ payload, signer_did, signature: sign(null, message, privateKey).toString("hex") }));
-  return { catalog, trust: { head_cid: rawCid(catalog), publisher_dids: [signer_did], local_use: { max_cache_bytes: maxCacheBytes, max_model_memory_bytes: 4 * 1024 ** 3 } } };
+  return { catalog, trust: { head_cid: rawCid(catalog), publisher_dids: [signer_did], local_use: { max_cache_bytes: maxCacheBytes, max_model_memory_bytes: 12 * 1024 ** 3 } } };
 }
 
 // Production Kubo import profile; the package CID only reproduces with these flags.
