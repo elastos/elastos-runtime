@@ -24,10 +24,10 @@ for(const delegateWalletConnect of [false,true])test(`System waits for the one I
  assert.equal(selected,1);assert.equal(requests,1);assert.equal(begins,delegateWalletConnect?1:2);
  assert(!calls.some(c=>c.path.includes('grant')||c.path.includes('step-up')),'only Inbox grants internet');
 });
-test('signed-out off refusal names the state and other sign-in methods, without filing a request',async t=>{
+test('signed-out off refusal offers another sign-in method without filing a request',async t=>{
  const calls=[];const flow=createWalletSigninFlow({api:async(path,body)=>{calls.push({path,body});if(path.endsWith('/status'))return {walletconnect_signin_available:true};throw Object.assign(new Error('off'),{status:403,code:'walletconnect_internet_off'});},select(){throw new Error('QR before grant');},approve(){},render(){}});t.after(()=>flow.cancel());
  await flow.start();await flow.choose('walletconnect');assert.equal(flow.state.stage,'error');
- assert.equal(flow.state.message,'WalletConnect is off on this Home. Choose another way to sign in.');
+ assert.equal(flow.state.message,'Choose another way to sign in.');
  assert(!calls.some(c=>c.path===internet));
  assert.equal(walletSigninError({status:403,code:'walletconnect_internet_off'},'signin'),flow.state.message);
 });
@@ -54,4 +54,32 @@ test('Wallet app use gives the Inbox action that matches the cleanup state',asyn
   assert.equal(replies.length,1);assert.equal(replies[0].result.code,code);
   assert.equal(replies[0].result.message,code==='permission-cleanup'?'Choose Finish disconnecting in Inbox before you allow internet access again.':'Allow WalletConnect internet access in Inbox, then select Try again.');
  }
+});
+
+for(const code of ['walletconnect_internet_off','permission-cleanup','permission'])test(`sign-in ${code} gives only the other-method instruction`,()=>{
+ assert.equal(walletSigninError({code},'signin'),'Choose another way to sign in.');
+});
+test('System off error uses the same instruction as its Inbox waiting state',()=>{
+ assert.equal(walletSigninError({code:'walletconnect_internet_off'},'add'),'Allow WalletConnect internet access in Inbox to continue.');
+});
+test('a remembered unavailable WalletConnect choice returns to the plain list without posting or expiring',async t=>{
+ t.mock.timers.enable({apis:['setTimeout']});const calls=[],states=[];
+ const flow=createWalletSigninFlow({api:async(path,body)=>{calls.push({path,body});return {walletconnect_signin_available:false};},select(){throw new Error('unavailable wallet selected');},approve(){},render:state=>states.push(state)});
+ t.after(()=>flow.cancel());
+ await flow.start({action:'signin',automatic:true});await flow.choose('walletconnect');
+ assert.equal(flow.state.stage,'closed','Home maps the retired attempt back to its plain choice list');
+ assert.equal(flow.state.message,'');assert.equal(states.some(state=>state.stage==='error'),false);
+ assert.deepEqual(calls,[{path:'/api/auth/passkey/status',body:undefined}]);
+ const renders=states.length;t.mock.timers.tick(180001);assert.equal(states.length,renders,'retired choice has no later error deadline');
+});
+test('unknown WalletConnect availability keeps the existing status-check error',async t=>{
+ const flow=createWalletSigninFlow({api:async()=>{throw new Error('status unavailable');},select(){throw new Error('unknown wallet selected');},approve(){},render(){}});t.after(()=>flow.cancel());
+ await flow.start();await flow.choose('walletconnect');assert.equal(flow.state.stage,'error');assert.equal(flow.state.message,'Home could not check wallet sign-in; check the connection, then try again.');
+});
+
+test('System off decision keeps the Inbox waiting instruction',async t=>{
+ t.mock.timers.enable({apis:['setTimeout']});
+ const flow=createWalletSigninFlow({api:async path=>{if(path===internet)return {status:'refused'};throw Object.assign(new Error('off'),{code:'walletconnect_internet_off'});},select(){throw new Error('pairing before Allow');},approve(){},render(){}});t.after(()=>flow.cancel());
+ await flow.start({action:'add'});await flow.choose('walletconnect');
+ assert.equal(flow.state.stage,'internet-off');assert.equal(flow.state.message,'Allow WalletConnect internet access in Inbox to continue.');
 });
