@@ -7979,6 +7979,7 @@ pub(crate) async fn assert_same_epoch_custody_wrapper_boundary_for_test(
     for seed in 1u8..=3 {
         let home = temp.path().join(format!("node-{seed}"));
         owner_only_dir(&home);
+        fs::write(home.join("config.toml"), "protected_content = true\n").unwrap();
         owner_only_dir(&home.join("protected-content"));
         owner_only_dir(&home.join("protected-content/custody-provider"));
         let root = inactive_custody_state_root(&home);

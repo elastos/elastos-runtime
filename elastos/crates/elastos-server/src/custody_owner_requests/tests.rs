@@ -1204,7 +1204,9 @@ async fn a_request_over_carrier_comes_back_approved_with_the_node_card() {
     let pair = durable_profile_peer_pair(dir.path()).await;
     let now = crate::auth::now_ts();
     let (owner_root, node_root) = (dir.path().join("a"), dir.path().join("b"));
-    std::fs::write(node_root.join("config.toml"), "protected_content = true\n").unwrap();
+    for data_dir in [&owner_root, &node_root] {
+        std::fs::write(data_dir.join("config.toml"), "protected_content = true\n").unwrap();
+    }
     for (identity, data_dir) in [
         (&pair.identity_a, &owner_root),
         (&pair.identity_b, &node_root),
