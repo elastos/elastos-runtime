@@ -96,12 +96,12 @@ fn renewal_refuses_every_operation_substitution_after_expiry() {
     stored.expires_at = now_ts() - 1;
     for status in [ApprovalStatus::Pending, ApprovalStatus::Expired] {
         for field in [
+            "payload",
+            "reason",
             "account_id",
             "chain_namespace",
             "intent",
             "resource",
-            "reason",
-            "payload",
         ] {
             provider.store.approval_requests = vec![stored.clone()];
             provider.store.approval_requests[0].status = status.clone();
@@ -162,7 +162,7 @@ fn renewal_state_table_keeps_answers_and_allows_only_unanswered_expiry_retry() {
             assert_eq!(
                 response.is_ok(),
                 allowed,
-                "{connector:?}/{status:?}: {response:?}"
+                "{connector:?}/{status:?}/approved={approved}: {response:?}"
             );
             assert_eq!(provider.store.approval_requests.len(), 1);
             if allowed {
@@ -223,7 +223,7 @@ fn handed_off_transaction_survives_expiry_restart_and_history_pressure_until_fir
             );
             assert!(
                 matches!(listed, Response::Ok { data: Some(ref data) } if data["approval_requests"].as_array().unwrap().iter().any(|r| r["request_id"] == original.request_id && r["status"] == "approved")),
-                "{connector}/{legacy_expired}: {listed:?}"
+                "{connector}/{legacy_expired}: original handed-off approval must remain approved in history"
             );
             // The original id can never hand a second transaction to the connector.
             assert!(matches!(
