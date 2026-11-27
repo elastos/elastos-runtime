@@ -1833,7 +1833,6 @@ fn system_error_response(err: anyhow::Error) -> Response {
     let text = err.to_string();
     let status = if text.contains("home launch token")
         || text.contains("admin passkey required")
-        || text.contains("admin sign-in required")
         || text.contains("proof-bound passkey session required")
         || text.contains("fresh passkey")
         || text.contains("passkey step-up")
