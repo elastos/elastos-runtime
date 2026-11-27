@@ -27,6 +27,13 @@ pub(in crate::api::gateway) const TRANSACTION_APPROVAL_EXPIRED: &str =
     "transaction approval expired";
 pub(in crate::api::gateway) const TRANSACTION_APPROVAL_HANDOFF_EXPIRED: &str =
     crate::protected_content_runtime::RUNTIME_CUSTODY_APPROVAL_HANDOFF_EXPIRED_MESSAGE;
+
+fn expired_connector_handoff(approval: &Value) -> bool {
+    approval.get("status").and_then(Value::as_str) == Some("expired")
+        && approval.get("connector_id").and_then(Value::as_str).is_some()
+        && approval.get("approved_at").is_some_and(|value| !value.is_null())
+}
+
 const TRANSACTION_EFFECT_SCHEMA: &str = "elastos.runtime.transaction-effect/v1";
 const TRANSACTION_EFFECT_STORE_RELATIVE_PATH: &str =
     ".AppData/ElastOS/Runtime/transaction-effects.json";
@@ -722,6 +729,7 @@ pub(in crate::api::gateway) async fn runtime_transaction_effect_approval_lapsed(
         exact_wallet_approval_by_id(state, authority, &effect.approval_request_id).await?;
     Ok(approval
         .as_ref()
+        .filter(|approval| !expired_connector_handoff(approval))
         .and_then(|approval| approval.get("status"))
         .and_then(Value::as_str)
         == Some("expired"))
@@ -859,11 +867,7 @@ pub(in crate::api::gateway) async fn ensure_exact_runtime_transaction_approval(
                 let effect = &store.effects[effect_index];
                 validate_approval_snapshot(effect, authority, &approval)?;
                 let lapsed = approval.get("status").and_then(Value::as_str) == Some("expired");
-                if lapsed
-                    && effect.produced_nothing()
-                    && approval.get("connector_id").and_then(Value::as_str).is_some()
-                    && approval.get("approved_at").is_some_and(|value| !value.is_null())
-                {
+                if effect.produced_nothing() && expired_connector_handoff(&approval) {
                     // The connector may still send. Stop before changing the
                     // effect or attempting renewal of an answered request.
                     return Err((
@@ -1282,6 +1286,9 @@ pub(in crate::api::gateway) async fn complete_runtime_transaction_effect(
                 StatusCode::BAD_REQUEST,
                 match approval_status {
                     "rejected" => TRANSACTION_APPROVAL_REJECTED.to_string(),
+                    "expired" if expired_connector_handoff(&approval) => {
+                        TRANSACTION_APPROVAL_HANDOFF_EXPIRED.to_string()
+                    }
                     "expired" => TRANSACTION_APPROVAL_EXPIRED.to_string(),
                     _ => "transaction approval is not completed".to_string(),
                 },
@@ -4338,6 +4345,22 @@ mod approved_request_resume_tests {
             save_transaction_effect_store(&state, &store).unwrap();
             let before = serde_json::to_value(&store).unwrap();
 
+            // Creator settles an existing handoff without republishing metadata.
+            assert!(
+                !runtime_transaction_effect_approval_lapsed(&state, &authority, &request.effect_id)
+                    .await
+                    .unwrap()
+            );
+            let error = complete_runtime_transaction_effect(
+                &state,
+                &authority,
+                RuntimeTransactionLookup::ApprovalId(&store.effects[0].approval_request_id),
+                Some(&request),
+                None,
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(error, (StatusCode::BAD_REQUEST, message.to_string()));
             // Creator propagates this exact approval error to its failure view.
             let error =
                 ensure_exact_runtime_transaction_approval(&state, &authority, request.clone())
