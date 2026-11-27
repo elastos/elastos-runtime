@@ -2085,7 +2085,9 @@ async fn walletconnect_one_grant_turn_off_closes_real_signin_relay() {
         .await
         .unwrap();
     let admission: Value = serde_json::from_slice(&bytes).unwrap();
-    let mut socket = f.connect_ticket(admission["token"].as_str().unwrap(), RELAY).await;
+    let mut socket = f
+        .connect_ticket(admission["token"].as_str().unwrap(), RELAY)
+        .await;
     assert_eq!(
         tokio::time::timeout(Duration::from_secs(5), socket.next())
             .await

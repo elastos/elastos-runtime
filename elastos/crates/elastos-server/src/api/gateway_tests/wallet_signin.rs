@@ -2060,7 +2060,8 @@ async fn walletconnect_one_grant_system_requests_and_only_inbox_allows() {
     let app = gateway_router(state);
     let system = wallet_app_token(f.data.path(), SYSTEM_CAPSULE_ID, &f.actor);
     let inbox = wallet_app_token(f.data.path(), INBOX_CAPSULE_ID, &f.actor);
-    let home = issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &f.actor).unwrap();
+    let home =
+        issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &f.actor).unwrap();
     let (status, request) = call(
         &app,
         "/api/apps/wallet-walletconnect/internet",
