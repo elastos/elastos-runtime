@@ -31,6 +31,9 @@ export function createWalletInventory({root, getApprovalMethods=()=>({}), openSy
   let inventory = {entries:[]}, selected = new URLSearchParams(location.search).get('wallet_entry') || '';
   let result = '', dialog, operation = 0, busy = false, renderKey = '';
   let connectionController;
+  const section = text('section', '', 'wallet-section one-section'), heading = text('header', '', 'one-heading');
+  let headingDetail;
+  section.append(heading); root.replaceChildren(section);
   function link(label, action) {
     const node = text('a', label, 'wallet-inventory-link'); node.href = '#';
     node.onclick = event => {event.preventDefault(); action();}; return node;
@@ -100,31 +103,38 @@ export function createWalletInventory({root, getApprovalMethods=()=>({}), openSy
     const balances = inventory.entries.flatMap(entry => builtInBalanceEntries(entry).map(getBalance));
     const key = JSON.stringify([inventory, selected, result, busy, balances]);
     if (key === renderKey) return; renderKey = key;
-    const section = text('section', '', 'wallet-section one-section'), heading = text('header', '', 'one-heading'), title = text('div', '');
+    const content = document.createDocumentFragment();
     const entry = inventory.entries.find(entry => entry.inventory_id === selected);
     if (selected && !entry) selected = '';
-    if (entry) title.append(button('Back to wallets', () => open('')));
-    title.append(text('h1', entry ? 'Wallet' : 'Wallets')); heading.append(title);
-    if (!entry) {const add=button('Add wallet for apps', choose, true);add.id='wallet-add-apps';add.disabled=inventory.apps_available===false;heading.append(add);}
-    section.append(heading);
+    // Refresh the list without detaching a heading control during its click.
+    if (headingDetail !== Boolean(entry)) {
+      headingDetail = Boolean(entry);
+      const title = text('div', '');
+      if (entry) title.append(button('Back to wallets', () => open('')));
+      title.append(text('h1', entry ? 'Wallet' : 'Wallets')); heading.replaceChildren(title);
+      if (!entry) {const add=button('Add wallet for apps', choose, true);add.id='wallet-add-apps';heading.append(add);}
+    }
+    const add = heading.querySelector('#wallet-add-apps');
+    if (add) add.disabled = inventory.apps_available === false;
     const readError=inventory.signin_available===false ? 'Home could not load wallet sign-in use.' : inventory.apps_available===false ? 'Home could not load app use.' : '';
     if(readError) {
       const notice=text('div','','one-note'), message=text('p',readError,'one-muted');message.setAttribute('role','status');
-      notice.append(message,button('Try again',async event=>{const control=event.currentTarget;control.disabled=true;try{await refreshInventory();}catch(error){onError(error);}finally{control.disabled=false;}}));section.append(notice);
+      notice.append(message,button('Try again',async event=>{const control=event.currentTarget;control.disabled=true;try{await refreshInventory();}catch(error){onError(error);}finally{control.disabled=false;}}));content.append(notice);
     }
-    if (result) {const status=text('p',result,'one-result');status.setAttribute('role','status');section.append(status);}
+    if (result) {const status=text('p',result,'one-result');status.setAttribute('role','status');content.append(status);}
     if (!entry) {
       const note = text('p', '', 'one-muted one-list-note');
-      note.append('To sign in with a wallet, use ', link('System > Accounts', openSystem), '.'); section.append(note);
+      note.append('To sign in with a wallet, use ', link('System > Accounts', openSystem), '.'); content.append(note);
     }
     const list = text('div', '', 'one-list');
     for (const row of entry ? [entry] : inventory.entries) list.append(card(row, Boolean(entry)));
     if (!inventory.entries.length) list.append(text('p', 'Add a wallet for apps, or create a Home address in Settings.', 'one-muted'));
-    section.append(list);
+    content.append(list);
     if (!entry && !inventory.entries.some(entry=>entry.accounts.some(isPasskeyManagedAccount))) {
-      const controls = text('div', '', 'one-built-actions'); controls.append(button('Activity', openActivity), button('Settings', openSettings)); section.append(controls);
+      const controls = text('div', '', 'one-built-actions'); controls.append(button('Activity', openActivity), button('Settings', openSettings)); content.append(controls);
     }
-    root.replaceChildren(section);
+    for (const child of [...section.children]) if (child !== heading) child.remove();
+    section.append(content);
   }
   function open(id) {if (busy) return false; selected = inventory.entries.find(entry=>entry.inventory_ids.includes(id))?.inventory_id || id; result = ''; render(); return true;}
   function close() {const restore=Boolean(dialog);operation++;connectionController?.abort();connectionController=null;dialog?.close();dialog?.remove();dialog=null;busy=false;render();if(restore)(root.querySelector('[role=switch]')||root.querySelector('#wallet-add-apps'))?.focus({preventScroll:true});}
