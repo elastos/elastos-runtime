@@ -652,7 +652,8 @@ pub(crate) struct Begin {
     pub network: String,
     pub browser_secret: String,
     #[serde(default)]
-    pub allow_temporary_internet: bool,
+    #[serde(rename = "allow_temporary_internet")]
+    pub _retired_allow_temporary_internet: bool,
 }
 #[derive(Serialize, Deserialize)]
 pub(crate) struct BeginResult {
@@ -707,7 +708,7 @@ fn same_wallet(a: &Method, b: &Method) -> bool {
     a.address == b.address && a.chain_id == b.chain_id && a.network == b.network
 }
 fn approval(p: &Pending) -> Value {
-    serde_json::json!({"ceremony_id":p.id,"principal_id":p.method.principal_id,"action":p.action,"proof_binding_id":p.method.proof_binding_id,"connector":p.method.connector,"address":p.method.address,"chain_id":p.method.chain_id,"network":p.method.network,"authorizes_short_public_walletconnect":p.action == "add" && compatible_relay_method(&p.method)})
+    serde_json::json!({"ceremony_id":p.id,"principal_id":p.method.principal_id,"action":p.action,"proof_binding_id":p.method.proof_binding_id,"connector":p.method.connector,"address":p.method.address,"chain_id":p.method.chain_id,"network":p.method.network})
 }
 fn purpose(p: &Pending) -> WalletProofPurpose {
     if p.action == "signin" {
@@ -908,11 +909,9 @@ pub(crate) fn begin_for_peer(
         }
         if method.connector == "wallet-walletconnect"
             && matches!(input.action.as_str(), "signin" | "add")
+            && actor.is_none()
         {
-            require(input.allow_temporary_internet)?;
-            if actor.is_none() {
-                require(has_relay_method(store))?;
-            }
+            require(has_relay_method(store))?;
         }
         let token = random_secret_hex();
         let mut pending = Pending {
@@ -1271,7 +1270,7 @@ pub(crate) fn select(
             chain_id,
             network: String::new(),
             browser_secret: String::new(),
-            allow_temporary_internet: false,
+            _retired_allow_temporary_internet: false,
         };
         let (address, _) = normalize(&input)?;
         p.method.address = address;
@@ -1613,7 +1612,7 @@ pub(crate) mod tests {
     pub(crate) fn enabled_relay(f: &Fixture) -> String {
         let mut req = input("add", "", &f.address);
         req.connector = "wallet-walletconnect".into();
-        req.allow_temporary_internet = true;
+        req._retired_allow_temporary_internet = true;
         let b = begin(
             f.data.path(),
             ORIGIN,
@@ -1974,7 +1973,7 @@ pub(crate) mod tests {
         let mut req = input("signin", "", "");
         req.connector = "wallet-walletconnect".into();
         req.chain_id = 0;
-        req.allow_temporary_internet = true;
+        req._retired_allow_temporary_internet = true;
         assert!(begin(f.data.path(), ORIGIN, "home-test", req, None).is_err());
     }
     #[test]
@@ -2203,7 +2202,7 @@ pub(crate) mod tests {
         let mut second = input("add", "", &f.address);
         second.chain_id = 8453;
         second.connector = "wallet-walletconnect".into();
-        second.allow_temporary_internet = true;
+        second._retired_allow_temporary_internet = true;
         let b = begin(
             f.data.path(),
             ORIGIN,
@@ -2223,7 +2222,7 @@ pub(crate) mod tests {
         let mut req = input("signin", "", "");
         req.connector = "wallet-walletconnect".into();
         req.chain_id = 0;
-        req.allow_temporary_internet = true;
+        req._retired_allow_temporary_internet = true;
         let pair = begin(f.data.path(), ORIGIN, "home-test", req, None).unwrap();
         change(&f, "remove", &id);
         assert!(
@@ -2274,7 +2273,10 @@ pub(crate) mod tests {
             .is_empty());
         let expected = b.approval.as_ref().unwrap()["request"].clone();
         assert_eq!(expected["action"], "add");
-        assert_eq!(expected["authorizes_short_public_walletconnect"], false);
+        assert_eq!(
+            expected["authorizes_short_public_walletconnect"],
+            Value::Null
+        );
         assert_ne!(b.approval.as_ref().unwrap()["notice"], RELAY_NOTICE);
         assert_eq!(
             approval_intent(f.data.path(), &b.ceremony_id, &f.actor).unwrap(),
@@ -2423,7 +2425,7 @@ pub(crate) mod tests {
             let approval = b.approval.as_ref().unwrap();
             assert_eq!(
                 approval["request"]["authorizes_short_public_walletconnect"],
-                false
+                Value::Null
             );
             assert_ne!(approval["notice"], RELAY_NOTICE);
             complete(
@@ -2437,23 +2439,26 @@ pub(crate) mod tests {
         }
     }
     #[test]
-    fn walletconnect_add_signin_pairs_selects_and_completes_with_consent() {
+    fn walletconnect_add_pairs_selects_and_ignores_client_internet_flag() {
         let f = fixture();
         let request = |consent| {
             let mut req = input("add", "", "");
             req.connector = "wallet-walletconnect".into();
             req.chain_id = 0;
-            req.allow_temporary_internet = consent;
+            req._retired_allow_temporary_internet = consent;
             req
         };
-        assert!(begin(
-            f.data.path(),
-            ORIGIN,
-            "home-test",
-            request(false),
-            Some(f.actor.clone())
-        )
-        .is_err());
+        assert!(
+            begin(
+                f.data.path(),
+                ORIGIN,
+                "home-test",
+                request(false),
+                Some(f.actor.clone())
+            )
+            .is_ok(),
+            "the retired client flag owns no authority; the gateway checks the Inbox grant"
+        );
         let pair = begin(
             f.data.path(),
             ORIGIN,
@@ -2477,7 +2482,10 @@ pub(crate) mod tests {
         let expected = selected.approval.as_ref().unwrap()["request"].clone();
         assert_eq!(expected["action"], "add");
         assert_eq!(expected["chain_id"], 8453);
-        assert_eq!(expected["authorizes_short_public_walletconnect"], true);
+        assert_eq!(
+            expected["authorizes_short_public_walletconnect"],
+            Value::Null
+        );
         assert_eq!(selected.approval.as_ref().unwrap()["notice"], RELAY_NOTICE);
         let out = complete(
             f.data.path(),
@@ -2620,7 +2628,7 @@ pub(crate) mod tests {
         enabled_relay(&f);
         let mut req = input("signin", "", &f.address);
         req.connector = "wallet-walletconnect".into();
-        req.allow_temporary_internet = true;
+        req._retired_allow_temporary_internet = true;
         let b = begin(f.data.path(), ORIGIN, "home-test", req, None).unwrap();
         let proof = completion(&f, &b);
         let result = complete(f.data.path(), ORIGIN, &proof, None, |_| panic!("signin")).unwrap();
@@ -2997,7 +3005,7 @@ pub(crate) mod tests {
         enabled_relay(&f);
         let mut request = input("signin", "", "");
         request.connector = "wallet-walletconnect".into();
-        request.allow_temporary_internet = true;
+        request._retired_allow_temporary_internet = true;
         request.chain_id = 0;
         let b = begin(f.data.path(), ORIGIN, "home-test", request, None).unwrap();
         assert!(attempt_context(
@@ -3667,7 +3675,7 @@ pub(crate) mod tests {
         )));
         assert_eq!(
             b.approval.as_ref().unwrap()["request"]["authorizes_short_public_walletconnect"],
-            false
+            Value::Null
         );
         assert_ne!(b.approval.as_ref().unwrap()["notice"], RELAY_NOTICE);
         let sign = |message: &str| {
@@ -3806,7 +3814,7 @@ pub(crate) mod tests {
         let f = fixture();
         let mut request = input("add", "", "");
         request.connector = "wallet-walletconnect".into();
-        request.allow_temporary_internet = true;
+        request._retired_allow_temporary_internet = true;
         request.chain_id = 0;
         let pair = begin(
             f.data.path(),
@@ -3851,22 +3859,22 @@ pub(crate) mod tests {
         );
     }
     #[test]
-    fn walletconnect_requires_explicit_short_consent_and_enabled_method() {
+    fn walletconnect_requires_enabled_method_and_ignores_retired_consent_flag() {
         let f = fixture();
         let mut req = input("signin", "", "");
         req.connector = "wallet-walletconnect".into();
         req.chain_id = 0;
-        req.allow_temporary_internet = true;
+        req._retired_allow_temporary_internet = true;
         assert!(begin(f.data.path(), ORIGIN, "home-test", req, None).is_err());
         let id = enabled_relay(&f);
         let mut req = input("signin", "", "");
         req.connector = "wallet-walletconnect".into();
         req.chain_id = 0;
-        assert!(begin(f.data.path(), ORIGIN, "home-test", req, None).is_err());
+        assert!(begin(f.data.path(), ORIGIN, "home-test", req, None).is_ok());
         let mut req = input("signin", "", "");
         req.connector = "wallet-walletconnect".into();
         req.chain_id = 0;
-        req.allow_temporary_internet = true;
+        req._retired_allow_temporary_internet = true;
         let attempt = begin(f.data.path(), ORIGIN, "home-test", req, None).unwrap();
         assert!(attempt_context(
             f.data.path(),
@@ -3888,11 +3896,11 @@ pub(crate) mod tests {
             .contains(&attempt.ceremony_id));
     }
     #[test]
-    fn wallet_add_approval_discloses_short_public_relay_authority() {
+    fn wallet_add_approval_discloses_relay_without_granting_internet() {
         let f = fixture();
         let mut input = input("add", "", &f.address);
         input.connector = "wallet-walletconnect".into();
-        input.allow_temporary_internet = true;
+        input._retired_allow_temporary_internet = true;
         let request = begin(
             f.data.path(),
             ORIGIN,
@@ -3904,7 +3912,7 @@ pub(crate) mod tests {
         let approval = request.approval.unwrap();
         assert_eq!(
             approval["request"]["authorizes_short_public_walletconnect"],
-            true
+            Value::Null
         );
         assert!(approval["notice"]
             .as_str()

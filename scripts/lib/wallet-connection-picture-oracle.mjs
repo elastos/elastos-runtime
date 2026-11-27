@@ -28,20 +28,21 @@ export function contractCopy(expected, row, view) {
   if(['metamask','unisat'].includes(row.window)&&['extension-missing','extensions-unavailable','other-ethereum-wallet'].includes(row.stage)){result.status='Your browser wallet was not found here.';result.notice='Open this connection from Wallet in a browser where your wallet is available.';}
   if(['metamask','unisat'].includes(row.window)&&[`To try again, return to ${app}.`,`Start a new request in ${app} to try again.`].includes(result.notice))result.notice=`To try again, go back to ${app} and start a new request.`;
   if(facts.payment&&row.window==='metamask'&&row.stage==='ready-multiple')result.notice='Connect will use '+name+'.';
-  if(row.window==='walletconnect'&&row.stage==='internet-refused')result.notice='Connect a wallet to ask Home for internet access again.';
+  if(row.window==='walletconnect'&&row.stage==='internet-refused')result.notice='Allow internet access in Inbox, then connect your wallet.';
   if(row.window==='walletconnect'&&row.stage==='disconnected')result.notice='';
   if(row.window==='walletconnect'){
     const copy={
-      'internet-off':{notice:'Connect again to ask for internet access, then answer in Inbox.'},
-      'internet-refused':{status:'Internet access for WalletConnect is off.'},
-      'internet-clearing':{status:'Internet access for WalletConnect is off.'},
+      'internet-off':{notice:'Allow internet access in Inbox, then connect your wallet.'},
+      'internet-refused':{status:'Internet access for WalletConnect is off.',notice:'Allow internet access in Inbox, then connect your wallet.'},
+      'internet-expired':{notice:'Review the request in Inbox, then connect your wallet.'},
+      'internet-clearing':{status:'Internet access for WalletConnect is off.',notice:'Choose Finish disconnecting in Inbox before you allow internet access again.'},
       'link-wait':{status:`Open ${name} and sign the message to confirm this account is yours.`,notice:''},
       'link-declined':{status:'Your wallet declined to sign the message.',notice:'Send another message to confirm this account.'},
       'request-phone':{status:`Continue in ${name}.`,notice:''},
       'transaction-phone':{status:`The transaction may still be waiting in ${name} or may already have been sent.`,notice:'Home disconnects when you stop waiting; check your wallet and Activity in Wallet.'},
       'transaction-deadline':{notice:`Start a new transaction in ${app}.`},
       'transaction-declined':{notice:'Review this request in Wallet.'},
-      'request-internet-off':{status:'Internet access for WalletConnect is off.',notice:'Choose Back to connection and connect again to ask for internet access. Allow it in Inbox, then return to this request and send it.'},
+      'request-internet-off':{status:'Internet access for WalletConnect is off.',notice:'Allow internet access in Inbox to continue with this request.'},
       'request-internet-pending':{notice:'Allow internet access in Inbox to continue with this request.'},
       'guest-access':{status:'You cannot turn on internet access for WalletConnect.',notice:'Ask an admin of this Home to open WalletConnect, choose Connect wallet, then allow internet access in Inbox.'},
       'request-unavailable':{status:`This request is unavailable here. To try again, go back to ${app} and start a new request.`},

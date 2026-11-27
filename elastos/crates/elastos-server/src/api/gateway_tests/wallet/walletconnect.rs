@@ -95,6 +95,9 @@ impl Fixture {
                 "/tmp"
             })
             .unwrap();
+        Self::with_data(data).await
+    }
+    async fn with_data(data: tempfile::TempDir) -> Self {
         let owner = passkey_authority(data.path());
         seed_walletconnect_connector_config(data.path());
         let connector = projection_launch_token_for_authority_context(
@@ -2022,4 +2025,84 @@ async fn walletconnect_revision_recheck_under_storage_lock_returns_conflict() {
     assert_eq!(response.status(), StatusCode::CONFLICT);
     assert_eq!(response.headers()[CACHE_CONTROL], "no-store");
     assert_eq!(f.route(&f.connector, STORAGE, None).await.1, json!({}));
+}
+
+#[tokio::test]
+async fn walletconnect_one_grant_turn_off_closes_real_signin_relay() {
+    let wallet = crate::auth::wallet_signin::tests::fixture();
+    crate::auth::wallet_signin::tests::enabled_relay(&wallet);
+    let f = Fixture::with_data(wallet.data).await;
+    f.allow().await;
+    let input = json!({"connector":"wallet-walletconnect","address":"","chain_id":20,"browser_secret":"11".repeat(32),"allow_temporary_internet":true});
+    let response = f
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/auth/wallet/signin/begin")
+                .method("POST")
+                .header(HOST, f.addr.as_str())
+                .header("origin", format!("http://{}", f.addr))
+                .header(CONTENT_TYPE, "application/json")
+                .extension(axum::extract::ConnectInfo(
+                    "127.0.0.1:49152".parse::<std::net::SocketAddr>().unwrap(),
+                ))
+                .body(Body::from(input.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(response.into_body(), 8192)
+        .await
+        .unwrap();
+    let attempt: Value = serde_json::from_slice(&bytes).unwrap();
+    let response = f
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/apps/wallet-walletconnect/relay-admission")
+                .method("POST")
+                .header(HOST, f.addr.as_str())
+                .header("origin", "null")
+                .header(
+                    "x-elastos-wallet-attempt",
+                    attempt["attempt_token"].as_str().unwrap(),
+                )
+                .header(
+                    "x-elastos-wallet-instance",
+                    attempt["instance_id"].as_str().unwrap(),
+                )
+                .header("if-match", "\"0\"")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(response.into_body(), 8192)
+        .await
+        .unwrap();
+    let admission: Value = serde_json::from_slice(&bytes).unwrap();
+    let mut socket = f
+        .connect_ticket(admission["token"].as_str().unwrap(), RELAY)
+        .await;
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(5), socket.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap(),
+        Message::Text("{\"ready\":true}".into())
+    );
+    let (_, grant) = f.route(&f.inbox, INTERNET, None).await;
+    f.answer(&grant, true).await;
+    assert!(matches!(
+        tokio::time::timeout(Duration::from_secs(5), socket.next())
+            .await
+            .unwrap(),
+        Some(Ok(Message::Close(_))) | None
+    ));
+    assert_eq!(f.calls.load(Ordering::SeqCst), 1);
 }

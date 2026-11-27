@@ -28,32 +28,25 @@ const definitions = {
     },
     "internet-refused": {
       "status": "Internet access for WalletConnect is off.",
-      "notice": "Connect a wallet to ask Home for internet access again.",
+      "notice": "Allow internet access in Inbox, then connect your wallet.",
       "primary": {
-        "id": "connect",
-        "label": "Connect wallet",
+        "id": "inbox",
+        "label": "Open Inbox",
         "quiet": false
       }
     },
     "internet-off": {
       "status": "Internet access for WalletConnect is off.",
-      "notice": "Connect again to ask for internet access, then answer in Inbox.",
+      "notice": "Allow internet access in Inbox, then connect your wallet.",
       "primary": {
-        "id": "connect",
-        "label": "Connect wallet",
+        "id": "inbox",
+        "label": "Open Inbox",
         "quiet": false
-      },
-      "secondary": [
-        {
-          "id": "inbox",
-          "label": "Open Inbox",
-          "quiet": true
-        }
-      ]
+      }
     },
     "internet-expired": {
       "status": "The access request expired.",
-      "notice": "After Allow, return here to connect.",
+      "notice": "Review the request in Inbox, then connect your wallet.",
       "primary": {
         "id": "inbox",
         "label": "Open Inbox",
@@ -63,7 +56,7 @@ const definitions = {
     },
     "internet-clearing": {
       "status": "Internet access for WalletConnect is off.",
-      "notice": "Finish removing the saved connection in Inbox.",
+      "notice": "Choose Finish disconnecting in Inbox before you allow internet access again.",
       "primary": {
         "id": "inbox",
         "label": "Open Inbox",
@@ -671,7 +664,7 @@ const definitions = {
     },
     "request-internet-off": {
       "status": "Internet access for WalletConnect is off.",
-      "notice": "Choose Back to connection and connect again to ask for internet access. Allow it in Inbox, then return to this request and send it.",
+      "notice": "Allow internet access in Inbox to continue with this request.",
       "account": true,
       "request": true,
       "primary": {

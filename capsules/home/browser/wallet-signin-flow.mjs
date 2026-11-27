@@ -19,6 +19,9 @@ export function walletSigninError(error, action) {
   if(error?.code === 'changed') return 'Your wallet is using a different account or network; select Try again.';
   if(error?.code === 'wallet-unavailable') return 'Open the wallet with this account, then try again.';
   if(error?.code === 'payment-pending')return 'Finish or check the payment in Wallet, then select Try again.';
+  if(error?.code === 'walletconnect_internet_off') return action === 'signin' ? 'WalletConnect is off on this Home. Choose another way to sign in.' : 'WalletConnect is off on this Home. Allow internet access in Inbox to continue.';
+  if(error?.code === 'permission-cleanup') return action === 'signin' ? 'WalletConnect is off on this Home. Choose another way to sign in.' : 'Choose Finish disconnecting in Inbox before you allow internet access again.';
+  if(error?.code === 'permission' && action==='signin')return 'WalletConnect is off on this Home. Choose another way to sign in.';
   if(error?.code === 'permission') return 'Allow WalletConnect internet access in Inbox, then select Try again.';
   if(error?.code === 'missing') return 'Choose another wallet or use a browser with this wallet installed.';
   if(error?.code === 'network') return 'Use Elastos Smart Chain or Base with your wallet.';
@@ -37,13 +40,13 @@ export function walletSigninError(error, action) {
 const fault = code => Object.assign(new Error(code),{code});
 export function createWalletSigninFlow({api,select,approve,render,onComplete=()=>{},randomSecret=walletBrowserSecret,now=()=>Date.now()/1000}) {
   let state={stage:'closed'}, run, timer, controls, cleanup;
-  function show(stage, extra={}) { state={...state,message:'',...extra,stage,expiresAt:run?.deadline};render(state); }
+  function show(stage, extra={}) { state={...state,message:'',walletconnectOff:false,...extra,stage,expiresAt:run?.deadline};render(state); }
   function live(current) { return run===current && !current.controller.signal.aborted; }
   function assertLive(current) {
     if(!live(current)) throw fault('cancelled');
     if((current.effect==='open'||state.action==='signin') && now()>=current.deadline) throw fault('expired');
   }
-  function stopLocal(current) { current.controller.abort();current.wallet?.close?.(); }
+  function stopLocal(current) { clearTimeout(current.permissionTimer);current.controller.abort();current.wallet?.close?.(); }
   async function clear(current) {
     if(!current) return cleanup;
     stopLocal(current);
@@ -77,6 +80,11 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
     show('connecting',{connector});
     try {
       const method=state.method;
+      if(connector==='walletconnect' && state.action==='add' && state.delegateWalletConnect) {
+        const permission=await api('/api/apps/wallet-walletconnect/internet');
+        assertLive(current);
+        if(permission?.status!=='granted')throw fault('walletconnect_internet_off');
+      }
       let ceremony;
       if(state.action!=='signin' && state.action!=='add') {
         ceremony=await begin(current,'/api/auth/wallet-methods/begin',{action:state.action,proof_binding_id:method.proof_binding_id});
@@ -85,7 +93,7 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
       if(['signin','add'].includes(state.action)) {
         let transport=ceremony;
         if(connector==='walletconnect' && !transport && !state.delegateWalletConnect) transport=await begin(current,['add'].includes(state.action)?'/api/auth/wallet-methods/begin':'/api/auth/wallet/signin/begin',{
-          ...(['add'].includes(state.action)?{action:state.action}:{}),connector:walletConnectorId(connector),address:'',chain_id:20,network:'',allow_temporary_internet:true,
+          ...(['add'].includes(state.action)?{action:state.action}:{}),connector:walletConnectorId(connector),address:'',chain_id:20,network:'',
         });
         current.wallet=await select(connector,{
           signal:current.controller.signal,transport,method,providerId:state.providerId,action:state.action,
@@ -110,7 +118,7 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
         } else if(state.action==='signin') {
           ceremony=await begin(current,'/api/auth/wallet/signin/begin',identity);
         } else if(['add'].includes(state.action)) {
-          ceremony=await begin(current,'/api/auth/wallet-methods/begin',{action:state.action,...identity,...(connector==='walletconnect'?{allow_temporary_internet:true}:{})});
+          ceremony=await begin(current,'/api/auth/wallet-methods/begin',{action:state.action,...identity});
         }
       }
       assertLive(current);
@@ -125,11 +133,38 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
       current.ceremony=ceremony;
       show('review',{wallet:{...current.target,displayName:current.wallet?.name},message:'',signingMessage:ceremony.message,approvalNotice:state.action!=='signin'&&typeof ceremony.approval?.notice==='string'?ceremony.approval.notice.slice(0,4096):''});
       if(state.automatic)await controls.confirm();
-    } catch(error) { fail(current,error); }
+    } catch(error) {
+      if(live(current) && connector==='walletconnect' && state.action==='add' && error?.code==='walletconnect_internet_off' && !current.permissionContinued) await waitForInternet(current);
+      else fail(current,error);
+    }
+  }
+  async function waitForInternet(current) {
+    const path='/api/apps/wallet-walletconnect/internet';
+    async function check() {
+      try {
+        let permission=await api(path);
+        if(!live(current))return;
+        if(!permission.cleanup_pending && !current.requestFiled && permission.status!=='granted') {
+          permission=await api(path,{action:'request'});
+          if(!live(current))return;
+          current.requestFiled=true;
+        }
+        if(permission.status==='granted') {
+          if(current.permissionContinued)return;
+          current.permissionContinued=true;
+          await prepare(current,'walletconnect');return;
+        }
+        const stage=permission.cleanup_pending?'internet-clearing':permission.status==='requested'?'internet-pending':'internet-off';
+        const message=permission.cleanup_pending?'Choose Finish disconnecting in Inbox before you allow internet access again.':permission.status==='requested'?'Allow WalletConnect internet access in Inbox to continue.':'WalletConnect is off on this Home. Allow internet access in Inbox to continue.';
+        if(state.stage!==stage)show(stage,{message});
+        current.permissionTimer=setTimeout(()=>{if(live(current))void check();},1000);
+      } catch(error) {fail(current,error);}
+    }
+    await check();
   }
   function fail(current,error) {
     if(!live(current))return;
-    show('error',{message:walletSigninError(error,state.action),refresh:error?.status===409 && state.action!=='signin'});
+    show('error',{message:walletSigninError(error,state.action),refresh:error?.status===409 && state.action!=='signin',walletconnectOff:error?.code==='walletconnect_internet_off'});
     run=null;clearTimeout(timer);void clear(current);
   }
   function unknown(current) {

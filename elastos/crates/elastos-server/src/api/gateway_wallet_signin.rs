@@ -70,6 +70,11 @@ fn response<T: Serialize>(result: anyhow::Result<T>) -> Response {
             Json(json!({"error":"wallet_attempts_busy"})),
         )
             .into_response(),
+        Err(error) if error.is::<gateway_walletconnect::InternetOff>() => (
+            StatusCode::FORBIDDEN,
+            Json(json!({"error":"walletconnect_internet_off"})),
+        )
+            .into_response(),
         Err(error) if error.is::<auth::Conflict>() => (
             StatusCode::CONFLICT,
             Json(json!({"error":"wallet_method_conflict"})),
@@ -99,6 +104,11 @@ pub(super) async fn method_begin(
 ) -> Response {
     let result = async {
         let (_, a) = actor(&state, &headers)?;
+        let _issue = gateway_walletconnect::issue_lock(&state).await;
+        if input.connector == "wallet-walletconnect" && input.action == "add" {
+            gateway_walletconnect::preflight(&state, false, Some(&a.session_id), None, None)
+                .await?;
+        }
         let result = auth::begin(
             &home_launch_auth_data_dir(&state.data_dir),
             &management_origin(&state, &headers)?,
@@ -107,7 +117,6 @@ pub(super) async fn method_begin(
             Some(a.clone()),
         )?;
         if result.attempt_token.is_some() {
-            let _issue = gateway_walletconnect::issue_lock(&state).await;
             gateway_walletconnect::install_confirmation(&state, &result, &a.session_id).await?;
         }
         Ok::<_, anyhow::Error>(result)

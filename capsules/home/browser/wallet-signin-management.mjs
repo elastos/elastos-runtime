@@ -1,8 +1,8 @@
 // Home owns the sign-in ceremony; this view presents System's account operation.
 const names = {metamask:'MetaMask',unisat:'UniSat',walletconnect:'WalletConnect'};
 const node = (tag,value,className='') => {const el=document.createElement(tag);el.textContent=value;el.className=className;return el;};
-export function renderWalletSigninManagement(body, footer, state, {account, choose, confirm, approve, cancel, retry, methods}) {
-  const heading=node('h2', state.stage==='options' ? 'Add wallet for sign-in' : 'Turn on sign-in');heading.id='wallet-signin-title';body.append(heading);
+export function renderWalletSigninManagement(body, footer, state, {account, choose, confirm, approve, cancel, retry, methods, showRequest}) {
+  const heading=node('h2', 'Add wallet for sign-in');heading.id='wallet-signin-title';body.append(heading);
   const button=(label,action,primary=false)=>{const b=node('button',label,'el-button'+(primary?' el-button-primary':''));b.type='button';b.onclick=action;return b;};
   if(state.stage==='options') {
     body.append(node('p','Sign in to this Home','one-step'));
@@ -16,7 +16,7 @@ export function renderWalletSigninManagement(body, footer, state, {account, choo
       row.append(icon,label,node('span','›'));list.append(row);
     }
     body.append(list);
-  } else if(['loading','choice','connecting','error','list-error','unknown'].includes(state.stage)) {
+  } else if(['loading','choice','connecting','error','list-error','unknown','internet-pending','internet-off','internet-clearing'].includes(state.stage)) {
     const status=node('p',state.message || (state.stage==='connecting'?'Continue in your wallet.':'Loading wallets…'),'connection-note');status.setAttribute('role','status');body.append(status);
   } else {
     const signing=['review','signing'].includes(state.stage);
@@ -40,6 +40,7 @@ export function renderWalletSigninManagement(body, footer, state, {account, choo
   }
   const actions=node('div','','connection-actions');
   if(!['completing','unknown'].includes(state.stage))actions.append(button('Cancel',cancel));
+  if(['internet-pending','internet-off','internet-clearing'].includes(state.stage))actions.append(button('Show request',showRequest,true));
   if(state.stage==='review')actions.append(button('Sign message',confirm,true));
   if(state.stage==='approval')actions.append(button('Approve with passkey',approve,true));
   if(['error','list-error','unknown'].includes(state.stage))actions.append(button(state.stage==='unknown'?'Check again':'Try again',retry,true));

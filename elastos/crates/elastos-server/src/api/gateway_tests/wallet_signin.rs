@@ -2,6 +2,44 @@ use super::*;
 use crate::auth::wallet_signin::{self as auth, tests as wallet_fixture};
 const ORIGIN: &str = "http://localhost:61180";
 const BROWSER: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+async fn relay_state(f: &wallet_fixture::Fixture) -> GatewayState {
+    grant_state(f.data.path(), &f.actor).await
+}
+async fn grant_state(data: &std::path::Path, actor: &AuthSessionGrantV1) -> GatewayState {
+    use elastos_runtime::capability::{CapabilityManager, CapabilityStore};
+    use elastos_runtime::primitives::{audit::AuditLog, metrics::MetricsManager};
+    let mut state = test_state(data);
+    let store = Arc::new(
+        CapabilityStore::with_persistence(data.join("capability_store"))
+            .await
+            .unwrap(),
+    );
+    let manager = Arc::new(CapabilityManager::load_or_generate(
+        data,
+        store,
+        Arc::new(AuditLog::new()),
+        Arc::new(MetricsManager::new()),
+    ));
+    state.browser_internet = Arc::new(BrowserInternetService::new(Some(manager)));
+    allow_relay(&state, actor);
+    state
+}
+fn allow_relay(state: &GatewayState, actor: &AuthSessionGrantV1) {
+    use elastos_runtime::capability::{Action, ResourceId, TokenConstraints};
+    let manager = state.browser_internet.capability_manager().unwrap();
+    let capability = manager.grant(
+        &actor.principal_id,
+        ResourceId::new("elastos://wallet/walletconnect/internet"),
+        Action::Execute,
+        TokenConstraints::default(),
+        None,
+    );
+    let data = &state.data_dir;
+    let path = data.join("ElastOS/SystemServices/WalletConnect/internet.json");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, serde_json::to_vec(&json!({"status":"granted","id":"grant-fixture","at":now_ts(),"principal":actor.principal_id,"proof":actor.proof_binding_id,"capability":capability.to_base64().unwrap(),"cleanup_pending":false})).unwrap()).unwrap();
+}
+
 async fn call(
     app: &Router,
     path: &str,
@@ -10,10 +48,16 @@ async fn call(
 ) -> (StatusCode, Value) {
     let mut request = Request::builder()
         .uri(path)
+        .extension(axum::extract::ConnectInfo(
+            "127.0.0.1:49152".parse::<std::net::SocketAddr>().unwrap(),
+        ))
         .header(HOST, "localhost:61180")
         .header(
             "origin",
-            if path.starts_with("/api/apps/inbox/") || path.starts_with("/api/apps/chat-room/") {
+            if path.starts_with("/api/apps/inbox/")
+                || path.starts_with("/api/apps/chat-room/")
+                || path == "/api/apps/wallet-walletconnect/internet"
+            {
                 "null"
             } else {
                 ORIGIN
@@ -86,7 +130,7 @@ async fn round7_ten_cancelled_wallet_signins_keep_real_passkey_begin_available()
         for source in ["127.0.0.1:49152", "203.0.113.7:49152"] {
             let f = wallet_fixture::fixture();
             install_real_approver(f.data.path(), &f.actor.principal_id, b"round7-passkey");
-            let state = test_state(f.data.path());
+            let state = relay_state(&f).await;
             let token =
                 issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &f.actor)
                     .unwrap();
@@ -236,22 +280,24 @@ async fn wallet_one_state_http_remove_ends_pairing_and_preserves_payment_permiss
     let f = wallet_fixture::fixture();
     let token =
         issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &f.actor).unwrap();
-    let state = test_state(f.data.path());
+    let state = relay_state(&f).await;
     let app = gateway_router(state.clone());
     let payment_path = f
         .data
         .path()
         .join("ElastOS/SystemServices/WalletConnect/internet.json");
-    assert!(!payment_path.exists());
+    assert!(payment_path.exists());
     let added = change(&app, &token, &f, "add", "", "wallet-walletconnect").await;
     assert_eq!(added["sign_in_enabled"], true);
     assert!(
-        !payment_path.exists(),
-        "enrollment grants short sign-in access only"
+        payment_path.exists(),
+        "enrollment uses the existing Inbox grant"
     );
     let id = added["proof_binding_id"].as_str().unwrap();
     // Existing payment permissions remain byte-identical across sign-in method removal.
-    let payment = json!({"id":"payment-fixture", "status":"granted", "at":now_ts()});
+    let mut payment: Value =
+        serde_json::from_slice(&std::fs::read(&payment_path).unwrap()).unwrap();
+    payment["id"] = json!("payment-fixture");
     std::fs::create_dir_all(payment_path.parent().unwrap()).unwrap();
     std::fs::write(&payment_path, serde_json::to_vec(&payment).unwrap()).unwrap();
     let granted_bytes = std::fs::read(&payment_path).unwrap();
@@ -297,11 +343,14 @@ async fn wallet_one_state_http_remove_ends_pairing_and_preserves_payment_permiss
         id,
         "ending payment permission preserves sign-in authority"
     );
-    let payment_bytes = std::fs::read(&payment_path).unwrap();
+    let revoked_bytes = std::fs::read(&payment_path).unwrap();
     assert_eq!(
-        serde_json::from_slice::<Value>(&payment_bytes).unwrap()["status"],
+        serde_json::from_slice::<Value>(&revoked_bytes).unwrap()["status"],
         "revoked"
     );
+    // Re-enable the one grant before testing method-removal cleanup.
+    allow_relay(&state, &f.actor);
+    let payment_bytes = std::fs::read(&payment_path).unwrap();
     let pair = auth::begin(
         f.data.path(),
         ORIGIN,
@@ -692,7 +741,7 @@ async fn wallet_session_add_passkey_retains_the_exact_approving_key_until_comple
 #[tokio::test]
 async fn wallet_signin_public_options_come_from_runtime_without_account_details() {
     let f = wallet_fixture::fixture();
-    let app = gateway_router(test_state(f.data.path()));
+    let app = gateway_router(relay_state(&f).await);
     assert_eq!(
         call(&app, "/api/auth/passkey/status", None, None).await.1["wallet_signin_available"],
         false
@@ -937,7 +986,7 @@ async fn wallet_session_can_sign_out_but_other_session_revocation_needs_passkey(
     let session = wallet_fixture::signin(&f);
     let (approver, credential) =
         install_real_approver(f.data.path(), "person:local:alice", b"session-approver");
-    let state = test_state(f.data.path());
+    let state = relay_state(&f).await;
     let pending = auth::begin(
         f.data.path(), ORIGIN, "home-test",
         serde_json::from_value(json!({"action":"add","connector":"wallet-walletconnect","address":"","chain_id":0,"browser_secret":BROWSER,"allow_temporary_internet":true})).unwrap(),
@@ -997,7 +1046,7 @@ async fn wallet_explicit_account_removal_requires_exact_passkey_intent() {
     install_real_approver(f.data.path(), "person:local:bob", b"other-admin");
     let (approver, credential) =
         install_real_approver(f.data.path(), "person:local:alice", b"removal-approver");
-    let state = test_state(f.data.path());
+    let state = relay_state(&f).await;
     let attempt = auth::begin(
         f.data.path(),
         ORIGIN,
@@ -1194,7 +1243,7 @@ async fn wallet_hosted_permission_can_be_approved_then_ended_or_denied() {
 async fn walletconnect_review_note_storage_post_advances_etag_and_fences_stale_writes() {
     let f = wallet_fixture::fixture();
     wallet_fixture::enabled_relay(&f);
-    let state = test_state(f.data.path());
+    let state = relay_state(&f).await;
     let attempt = auth::begin(
         f.data.path(),
         ORIGIN,
@@ -1274,7 +1323,7 @@ async fn walletconnect_review_note_storage_post_advances_etag_and_fences_stale_w
 #[tokio::test]
 async fn walletconnect_live_relay_survives_its_own_storage_writes_but_retires_with_attempt() {
     let f = wallet_fixture::fixture();
-    let state = test_state(f.data.path());
+    let state = relay_state(&f).await;
     let pending = auth::begin(
         f.data.path(), ORIGIN, "home-test",
         serde_json::from_value(json!({"action":"add","connector":"wallet-walletconnect","address":"","chain_id":20,"browser_secret":BROWSER,"allow_temporary_internet":true})).unwrap(),
@@ -1338,7 +1387,7 @@ async fn walletconnect_live_relay_survives_its_own_storage_writes_but_retires_wi
 async fn walletconnect_passkey_session_end_retires_confirmation_relay() {
     for sign_out in [false, true] {
         let f = wallet_fixture::fixture();
-        let state = test_state(f.data.path());
+        let state = relay_state(&f).await;
         let pending = auth::begin(
             f.data.path(), ORIGIN, "home-test",
             serde_json::from_value(json!({"action":"add","connector":"wallet-walletconnect","address":"","chain_id":0,"browser_secret":BROWSER,"allow_temporary_internet":true})).unwrap(),
@@ -1422,7 +1471,11 @@ async fn walletconnect_owner_recovery_retires_confirmation_relay() {
     // Recovery appends to the owner's existing encrypted credential history.
     install_real_approver(data.path(), &owner.principal_id, b"owner-before-recovery");
     let bundle = recovery_bundle_for_authority(data.path(), &owner);
-    let state = test_state(data.path());
+    let state = grant_state(
+        data.path(),
+        &crate::auth::load_active_session_grant(data.path(), &owner.session_id, now_ts()).unwrap(),
+    )
+    .await;
     let (id, cancel) = open_passkey_confirmation_relay(&state, &owner).await;
     let code = crate::auth::arm_owner_recovery(data.path(), ORIGIN, "localhost", 300).unwrap();
     let app = gateway_router(state);
@@ -1478,7 +1531,11 @@ async fn walletconnect_recovery_kit_import_retires_confirmation_relay() {
     let data = tempfile::tempdir().unwrap();
     let owner = passkey_authority_with_name(data.path(), Some("Owner"));
     let bundle = recovery_bundle_for_authority(data.path(), &owner);
-    let state = test_state(data.path());
+    let state = grant_state(
+        data.path(),
+        &crate::auth::load_active_session_grant(data.path(), &owner.session_id, now_ts()).unwrap(),
+    )
+    .await;
     let (id, cancel) = open_passkey_confirmation_relay(&state, &owner).await;
     let (status, out) = call(
         &gateway_router(state),
@@ -1510,7 +1567,11 @@ async fn walletconnect_passkey_demotion_retires_confirmation_relay() {
         crate::auth::RuntimePrincipalRole::Admin,
         "demotion-admin",
     );
-    let state = test_state(data.path());
+    let state = grant_state(
+        data.path(),
+        &crate::auth::load_active_session_grant(data.path(), &owner.session_id, now_ts()).unwrap(),
+    )
+    .await;
     let (id, cancel) = open_passkey_confirmation_relay(&state, &owner).await;
     let (status, out) = call(
         &gateway_router(state),
@@ -1846,5 +1907,235 @@ async fn wallet_inventory_http_rejects_inbox_and_browser_and_survives_provider_d
             auth::list(f.data.path(), &f.actor).unwrap()["methods"][0]["proof_binding_id"]
         );
         assert_eq!(out["apps_available"], false);
+    }
+}
+
+#[tokio::test]
+async fn walletconnect_one_grant_refuses_signin_without_inbox_allow() {
+    let f = wallet_fixture::fixture();
+    wallet_fixture::enabled_relay(&f);
+    let app = gateway_router(test_state(f.data.path()));
+    let (status, out) = call(&app, "/api/auth/wallet/signin/begin", None, Some(json!({"connector":"wallet-walletconnect","address":"","chain_id":20,"browser_secret":BROWSER,"allow_temporary_internet":true}))).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(out["error"], "walletconnect_internet_off");
+}
+
+#[tokio::test]
+async fn walletconnect_one_grant_refuses_add_without_inbox_allow() {
+    let f = wallet_fixture::fixture();
+    let token =
+        issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &f.actor).unwrap();
+    let app = gateway_router(test_state(f.data.path()));
+    let (status, out) = call(&app, "/api/auth/wallet-methods/begin", Some(&token), Some(json!({"action":"add","connector":"wallet-walletconnect","address":"","chain_id":20,"browser_secret":BROWSER,"allow_temporary_internet":true}))).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(out["error"], "walletconnect_internet_off");
+}
+
+#[tokio::test]
+async fn walletconnect_one_grant_turn_off_ends_signin_and_add() {
+    let f = wallet_fixture::fixture();
+    wallet_fixture::enabled_relay(&f);
+    let state = relay_state(&f).await;
+    let token =
+        issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &f.actor).unwrap();
+    let app = gateway_router(state.clone());
+    let mut attempts = Vec::new();
+    for action in ["signin", "add"] {
+        let path = if action == "add" {
+            "/api/auth/wallet-methods/begin"
+        } else {
+            "/api/auth/wallet/signin/begin"
+        };
+        let (status, out) = call(&app, path, if action == "add" {Some(&token)} else {None}, Some(json!({"action":action,"connector":"wallet-walletconnect","address":"","chain_id":20,"browser_secret":BROWSER,"allow_temporary_internet":true}))).await;
+        assert_eq!(status, StatusCode::OK);
+        let id = out["ceremony_id"].as_str().unwrap().to_string();
+        let cancel = gateway_walletconnect::watch_attempt_socket_for_test(&state, &id).await;
+        attempts.push((id, cancel));
+    }
+    let inbox = wallet_app_token(f.data.path(), INBOX_CAPSULE_ID, &f.actor);
+    let (status, record) = call(
+        &app,
+        "/api/apps/wallet-walletconnect/internet",
+        Some(&inbox),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let approval = issue_passkey_step_up_token_for_test(
+        f.data.path(),
+        &inbox,
+        INBOX_CAPSULE_ID,
+        gateway_walletconnect::REVOKE,
+        &record["request"],
+    )
+    .unwrap();
+    let (status, _out) = call(&app, "/api/apps/inbox/actions", Some(&inbox), Some(json!({"action_id":"walletconnect-internet-turn-off:grant-fixture","step_up_token":approval}))).await;
+    assert_eq!(status, StatusCode::OK);
+    for (id, cancel) in attempts {
+        assert!(
+            *cancel.borrow(),
+            "Turn Off left sign-in/add relay open: {id}"
+        );
+    }
+    for action in ["signin", "add"] {
+        let path = if action == "add" {
+            "/api/auth/wallet-methods/begin"
+        } else {
+            "/api/auth/wallet/signin/begin"
+        };
+        let (status, out) = call(&app, path, if action == "add" {Some(&token)} else {None}, Some(json!({"action":action,"connector":"wallet-walletconnect","address":"","chain_id":20,"browser_secret":BROWSER,"allow_temporary_internet":true}))).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(out["error"], "walletconnect_internet_off");
+    }
+}
+
+#[tokio::test]
+async fn walletconnect_one_grant_refuses_new_attempts_after_turn_off() {
+    let f = wallet_fixture::fixture();
+    wallet_fixture::enabled_relay(&f);
+    let state = relay_state(&f).await;
+    let app = gateway_router(state);
+    let inbox = wallet_app_token(f.data.path(), INBOX_CAPSULE_ID, &f.actor);
+    let home =
+        issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &f.actor).unwrap();
+    let (status, record) = call(
+        &app,
+        "/api/apps/wallet-walletconnect/internet",
+        Some(&inbox),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let approval = issue_passkey_step_up_token_for_test(
+        f.data.path(),
+        &inbox,
+        INBOX_CAPSULE_ID,
+        gateway_walletconnect::REVOKE,
+        &record["request"],
+    )
+    .unwrap();
+    assert_eq!(call(&app, "/api/apps/inbox/actions", Some(&inbox), Some(json!({"action_id":"walletconnect-internet-turn-off:grant-fixture","step_up_token":approval}))).await.0, StatusCode::OK);
+    let mut outcomes = Vec::new();
+    for action in ["signin", "add"] {
+        for flag in [Some(true), Some(false), None] {
+            let mut input = json!({"action":action,"connector":"wallet-walletconnect","address":"","chain_id":20,"browser_secret":BROWSER});
+            if let Some(flag) = flag {
+                input["allow_temporary_internet"] = json!(flag);
+            }
+            let path = if action == "add" {
+                "/api/auth/wallet-methods/begin"
+            } else {
+                "/api/auth/wallet/signin/begin"
+            };
+            let (status, out) = call(
+                &app,
+                path,
+                if action == "add" { Some(&home) } else { None },
+                Some(input),
+            )
+            .await;
+            let code = out["error"].as_str().unwrap_or("success").to_string();
+            println!("GRANT MATRIX after_off {action} {flag:?}: {status} {code}");
+            outcomes.push((action, flag, status, code));
+        }
+    }
+    for (action, flag, status, code) in outcomes {
+        assert_eq!(status, StatusCode::FORBIDDEN, "{action} {flag:?}");
+        assert_eq!(code, "walletconnect_internet_off");
+    }
+}
+
+#[tokio::test]
+async fn walletconnect_one_grant_system_requests_and_only_inbox_allows() {
+    let f = wallet_fixture::fixture();
+    wallet_fixture::enabled_relay(&f);
+    let state = relay_state(&f).await;
+    let path = f
+        .data
+        .path()
+        .join("ElastOS/SystemServices/WalletConnect/internet.json");
+    let mut off: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    off["status"] = json!("revoked");
+    std::fs::write(path, serde_json::to_vec(&off).unwrap()).unwrap();
+    let app = gateway_router(state);
+    let system = wallet_app_token(f.data.path(), SYSTEM_CAPSULE_ID, &f.actor);
+    let inbox = wallet_app_token(f.data.path(), INBOX_CAPSULE_ID, &f.actor);
+    let home =
+        issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &f.actor).unwrap();
+    let (status, request) = call(
+        &app,
+        "/api/apps/wallet-walletconnect/internet",
+        Some(&system),
+        Some(json!({"action":"request"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{request}");
+    assert_eq!(request["status"], "requested");
+    let (_, same) = call(
+        &app,
+        "/api/apps/wallet-walletconnect/internet",
+        Some(&inbox),
+        None,
+    )
+    .await;
+    assert_eq!(request, same, "System files the existing Inbox request");
+    // The shared Add flow runs in Home, whose browser origin stays exact.
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/apps/wallet-walletconnect/internet")
+                .header(HOST, "localhost:61180")
+                .header("origin", ORIGIN)
+                .header("x-elastos-home-token", home.as_str())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(response.into_body(), 8192)
+        .await
+        .unwrap();
+    assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), request);
+
+    let id = request["request"]["id"].as_str().unwrap();
+    let action = format!("walletconnect-internet-allow:{id}");
+    assert!(!call(
+        &app,
+        "/api/apps/inbox/actions",
+        Some(&inbox),
+        Some(json!({"action_id":action})),
+    )
+    .await
+    .0
+    .is_success());
+    let approval = issue_passkey_step_up_token_for_test(
+        f.data.path(),
+        &inbox,
+        INBOX_CAPSULE_ID,
+        gateway_walletconnect::GRANT,
+        &request["request"],
+    )
+    .unwrap();
+    assert_eq!(
+        call(
+            &app,
+            "/api/apps/inbox/actions",
+            Some(&inbox),
+            Some(json!({"action_id":action,"step_up_token":approval})),
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    for action in ["signin", "add"] {
+        let path = if action == "add" {
+            "/api/auth/wallet-methods/begin"
+        } else {
+            "/api/auth/wallet/signin/begin"
+        };
+        let (status, _out) = call(&app, path, if action == "add" {Some(&home)} else {None}, Some(json!({"action":action,"connector":"wallet-walletconnect","address":"","chain_id":20,"browser_secret":BROWSER}))).await;
+        assert_eq!(status, StatusCode::OK);
     }
 }

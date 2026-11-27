@@ -593,3 +593,18 @@ for(const engine of ['chromium','webkit'])test(`round3 phone add names the unres
  await r.page.evaluate(()=>{window.signinRefusal=null;addEventListener('message',e=>{if(e.data?.type==='home:wallet-signin-effect-result')window.signinRefusal=e.data;});document.querySelector('iframe').contentWindow.postMessage({type:'home:wallet-signin-effect',homeToken:'fixture-wallet',requestId:'round3-add',operation:'select'},'*');});
  await r.page.waitForFunction(()=>window.signinRefusal);assert.equal(await r.page.evaluate(()=>signinRefusal.code),'payment-pending');assert.equal(r.fixture.state.completed,0);await r.state('transaction-phone');await r.capture('round3-payment-blocks-add');
 });
+
+for(const engine of ['chromium','webkit'])test(`one Inbox entry owns cleanup and Allow in ${engine}`,windowTestOptions(engine,60000),async t=>{
+ const r=await setup(t,engine);
+ await r.page.evaluate(()=>addEventListener('message',event=>{if(event.data?.type==='home:open-target')window.internetTarget=event.data;}));
+ r.fixture.state.cleanupPending=true;r.fixture.setPermission('revoked');await r.refresh();await r.state('internet-clearing');
+ assert.match(await r.frame.locator('main').innerText(),/Choose Finish disconnecting in Inbox before you allow internet access again\./);
+ assert.equal(await r.frame.locator('[data-action=connect]').count(),0);
+ assert.equal(await r.frame.locator('[data-action="back-to-connection"]').count(),0);
+ await r.capture('internet-clearing');await r.click('inbox');
+ await r.page.waitForFunction(()=>window.internetTarget);
+ assert.deepEqual(await r.page.evaluate(()=>({target:window.internetTarget.target,query:window.internetTarget.query})),{target:'inbox',query:{notification_id:'walletconnect-internet:permission'}});
+ r.fixture.state.cleanupPending=false;await r.refresh();await r.state('internet-refused');await r.capture('internet-refused-after-cleanup');
+ assert.equal(await r.frame.locator('[data-action=inbox]').count(),1);
+ r.fixture.setPermission('granted');await r.refresh();await r.state('internet-ready');
+});

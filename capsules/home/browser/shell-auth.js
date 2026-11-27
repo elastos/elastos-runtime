@@ -61,7 +61,9 @@ let unlockLeaveTimer = 0;
 let unlockPersonLabel = "";
 
 let signinAvailability = {passkey:true,walletconnect:false,connectors:[]};
+let openSigninRequest=()=>{};
 const walletSignin = createHomeWalletSignin({
+  onShowRequest: query=>openSigninRequest(query),
   approve: requestPasskeyStepUp,
   onPasskey: ({signal}={}) => runPasskeySignIn({signal}).catch(error=>{reportUnlockError(error);throw error;}),
   onSignin: async response => {
@@ -166,7 +168,8 @@ export function hideHomeUnlock() {
   }, 320);
 }
 
-export function bindHomeUnlock() {
+export function bindHomeUnlock({openTarget}={}) {
+  if(openTarget)openSigninRequest=query=>openTarget('inbox',{query});
   recoveryFile?.addEventListener("change", selectRecoveryKit);
   window.addEventListener("pagehide", () => {
     void walletSignin.cancel();

@@ -27,7 +27,7 @@ export function handleWalletAppUse(event, context, {inventory, connect, current,
     if (!active()) return;
     changed(); focus(); return {status:'complete'};
   }).then(result => {if (result && active()) reply(result);})
-    .catch(error => {if (active()) {focus(); reply({status:'failed',code:error.code,message:error.code === 'permission' ? 'Allow WalletConnect internet access in Inbox, then select Try again.' : error.message || 'Home could not connect this wallet.'});}})
+    .catch(error => {if (active()) {focus(); reply({status:'failed',code:error.code,message:error.code === 'permission-cleanup' ? 'Choose Finish disconnecting in Inbox before you allow internet access again.' : error.code === 'permission' ? 'Allow WalletConnect internet access in Inbox, then select Try again.' : error.message || 'Home could not connect this wallet.'});}})
     .finally(() => {if (state.appConnection === pending) state.appConnection = null;});
   return true;
 }

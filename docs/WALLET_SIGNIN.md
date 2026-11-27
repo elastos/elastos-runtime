@@ -9,8 +9,9 @@ sign-in. Account IDs, roots, Profiles and passkey added-from labels stay unchang
 An Admin adds his own wallet methods with one wallet signature and one fresh
 passkey approval for the exact action. Each added method can sign in. Each
 account can remove its own methods with fresh passkey approval, including after
-demotion to Guest. Wallet owns payment connections and their separate permissions;
-Runtime adds sign-in authority only through the explicit `add` operation.
+demotion to Guest. Wallet owns payment connections. All WalletConnect uses require
+the same Home-wide internet grant, allowed in Inbox with a passkey. Runtime adds
+account sign-in authority only through the explicit `add` operation.
 Wallet sessions can use Home; passkeys approve sensitive actions.
 Ordinary passkey removal keeps every account's final active passkey, including
 accounts with wallet sign-in methods. A separate passkey-approved Remove account
@@ -74,7 +75,7 @@ witnesses in one transaction after wallet verification and exact passkey approva
 
 For WalletConnect enrollment, use this authenticated management route with
 `action: "add"`, `connector: "wallet-walletconnect"`, an empty address, chain_id 20,
-network `""`, browser_secret and `allow_temporary_internet: true`. Show Runtime's
+network `""` and browser_secret. Show Runtime's
 relay disclosure before approval. Begin returns temporary pairing transport.
 After pairing, call `/api/auth/wallet/signin/select` with the same ceremony_id,
 browser_secret, selected address and chain_id to obtain the exact action-bound
@@ -93,7 +94,7 @@ connections and their Inbox permissions keep their separate lifecycle.
 Begin returns:
 
 ```json
-{"ceremony_id":"ceremony:…","message":"Home-built message, empty for remove","expires_at":1800000180,"approval":{"operation":"auth.wallet.method.change","request":{"ceremony_id":"ceremony:…","principal_id":"person:local:…","action":"add","proof_binding_id":"proof:signin-wallet:…","connector":"wallet-metamask","address":"0x…","chain_id":20,"network":"","authorizes_short_public_walletconnect":false},"notice":""},"instance_id":"…","storage_revision":0}
+{"ceremony_id":"ceremony:…","message":"Home-built message, empty for remove","expires_at":1800000180,"approval":{"operation":"auth.wallet.method.change","request":{"ceremony_id":"ceremony:…","principal_id":"person:local:…","action":"add","proof_binding_id":"proof:signin-wallet:…","connector":"wallet-metamask","address":"0x…","chain_id":20,"network":""},"notice":""},"instance_id":"…","storage_revision":0}
 ```
 
 The selected wallet shows the exact message and its fields before it signs. Home shows each control once. Home owns the
@@ -175,8 +176,9 @@ storage and relay-admission under `/api/apps/wallet-walletconnect/`, with
 Storage writes and new relay admissions require the current revision. A redeemed
 relay keeps its live ceremony and instance binding across SDK storage writes;
 retirement and expiry end its authority.
-The permission reaches only WalletConnect setup and relay endpoints, ends at the
-ceremony deadline, and grants neither payment nor capsule launch authority.
+The attempt credential reaches only WalletConnect setup and relay endpoints and
+ends at the ceremony deadline. The one Inbox internet grant remains necessary
+throughout use. The credential grants neither payment nor capsule launch authority.
 The SDK receives its minimum supported 300-second signature request expiry. Runtime and the
 Home flow enforce the shorter ceremony deadline and retire the transport frame.
 MetaMask and UniSat use the selected extension to sign; they receive no Runtime
@@ -261,25 +263,34 @@ wallet again with a fresh signature and passkey approval. This conservative
 refusal also covers recovery performed by the older binary. A malformed wallet
 file refuses wallet access while passkey access remains available.
 
-## Short WalletConnect sign-in permission
+## WalletConnect internet grant
 
-WalletConnect enrollment displays Runtime's short `approval.notice` before
-passkey approval. `approval.request.authorizes_short_public_walletconnect` is true
-only for a WalletConnect method on Elastos Smart Chain (20) or Base (8453).
-MetaMask and UniSat enrollment preserve their extension-only sign-in permission.
-The phone relay can see this computer's internet address. Runtime binds the relay
-grant to the fresh approval; payment connections keep their separate Inbox permission.
+Runtime owns one internet grant for every WalletConnect use:
+`elastos://wallet/walletconnect/internet`. The existing WalletConnect internet
+entry in Inbox is the only place to allow this grant, with a fresh admin passkey
+approval. It covers Wallet payment connections, System account enrollment, and
+signed-out wallet sign-in. Adding a sign-in method grants account sign-in
+access; the Inbox entry owns internet access.
 
-A WalletConnect add/sign-in begin sends `allow_temporary_internet: true` after the
-person selects the phone option beside Runtime's notice, or uses the connector's
-existing internet permission during authenticated enrollment. The field defaults
-to false. Runtime verifies the signed wallet proof against this Home's current
-account state.
+Every add/sign-in attempt, relay admission and live relay connection checks this
+grant. Without an active grant, begin returns HTTP 403 with
+`{"error":"walletconnect_internet_off"}`. The retired
+`allow_temporary_internet` field is ignored and grants no authority. Turn Off
+cancels all open WalletConnect sockets, clears relay admissions and retires
+pending sign-in/add transports. Every new relay use requires Inbox Allow again.
 
-Signed-out pairing requires at least one compatible WalletConnect sign-in method
-on this Home. `has_relay_method` checks this Home-wide condition before an address
-is selected and during relay use. Removing the final compatible method also ends
-anonymous pairing attempts that have yet to select an address.
+System Add wallet files the existing Inbox request, shows Show request while
+waiting, and continues once after Allow. If cleanup is pending, the same Inbox
+entry offers Finish disconnecting first. Signed-out screens create no request:
+they say WalletConnect is off on this Home and offer passkey, MetaMask or UniSat.
+Every account retains a passkey, so the person can sign in and open Inbox.
+
+WalletConnect enrollment shows the relay notice before pairing and passkey
+approval. The relay can see this computer's internet address. Signed-out pairing
+also requires at least one compatible WalletConnect sign-in method on this Home.
+`has_relay_method` checks that condition before address selection and during
+relay use. Removing the final compatible method ends anonymous pairing attempts
+that have yet to select an address.
 
 For wallet sessions, `/api/apps/system/access/guest-registration` requires a
 fresh passkey token in `x-elastos-step-up-token`, operation
@@ -319,11 +330,12 @@ adding a sign-in method creates only sign-in access and makes the wallet visible
 in Wallet's list.
 
 A wallet already connected in Wallet can use its existing connection for Add.
-Other WalletConnect choices show the relay disclosure before pairing and use a
-short temporary connection with the shared QR screen. Runtime's relay notice
-stays visible before passkey approval. Runtime checks the wallet proof and current
-method after pairing. Wallet payment permission and temporary sign-in permission
-remain separate.
+Every WalletConnect choice requires the one Inbox internet grant before relay
+use. While it is off, Add wallet files the existing request and waits with Show
+request. After Inbox Allow with a passkey, the flow continues once with the shared
+QR screen or its existing wallet connection. Runtime's relay notice stays visible
+before passkey approval. Runtime checks the wallet proof and current method after
+pairing. Turn Off in Inbox ends both payment and sign-in relay connections.
 
 ## Explicit account removal
 

@@ -42,6 +42,7 @@ test('Runtime confirmation owns connector completion, including a lost reply',as
   const method={...identity,proof_binding_id:'wallet:fixture',sign_in_enabled:true};
   const flow=createWalletSigninFlow({
     api:async(path,body)=>{
+      if(path==='/api/apps/wallet-walletconnect/internet')return {status:'granted'};
       if(path.endsWith('/begin'))return {ceremony_id:'ceremony',message:'Runtime sentence',expires_at:Date.now()/1000+120,approval:{operation:'auth.wallet.method.change',request:{ceremony_id:'ceremony',action:'add',principal_id:'account',proof_binding_id:method.proof_binding_id}}};
       if(path.endsWith('/complete')){committed=true;throw new TypeError('lost reply');}
       if(path==='/api/auth/wallet-methods'){if(unavailable)throw new TypeError('lost read');return {principal_id:'account',methods:committed?[method]:[]};}

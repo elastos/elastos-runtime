@@ -170,7 +170,7 @@ function draw() {
   const now = Math.floor(Date.now()/1000),payment=unresolvedPayment();
   const samePayment=!payment||payment.request_id===activeRequest?.request_id;
   const presentation = windowPresentation({loading:!accountsLoaded || !connectionState && !outcome && !hostEffectInFlight && !homeReadFailed && !launchExpired,connection:connectionState,accounts:linkedAccounts,requests:connectionPage ? [] : requests,busy:hostEffectInFlight && !outcome,
-    phase:currentPhase,checking:currentPhase==='checking',effectPhase,permission:permissionStatus,pending:pendingEffect,ownerNeeded:ownerConsentNeeded,expired:launchExpired,
+    phase:currentPhase,checking:currentPhase==='checking',effectPhase,permission:permissionStatus,cleanupPending:connectionState?.permission?.cleanup_pending===true,pending:pendingEffect,ownerNeeded:ownerConsentNeeded,expired:launchExpired,
     outcome:!samePayment?requestOutcomes.get(payment.request_id)?.outcome:homeReadFailed&&!knownOutcome()&&!hostEffectInFlight ? 'home-read-unavailable' : outcome,qrData,selectedId,activeRequest:payment||activeRequest,deadline,homeOrigin,action:recoveryAction,unrecordedHash,proofAccount,walletChanged,walletChange,dispatchedRequestId,connectionPage,resultWalletName:outcome?activeRequest?.walletName:undefined,
     paymentPending:Boolean(payment)},now);
   if (connectionPage === 'add-account' && presentation.input.stage === 'linked') {presentation.input.stage='add-account';presentation.input.localReturn=false;}
@@ -419,6 +419,16 @@ addEventListener('message',async event=>{
     }
     if(ownedRequest&&signinRequest!==ownedRequest&&appUseRequest!==ownedRequest)return reply({error:true});
     reply({result});
-  } catch(error) {if(error.code==='permission'){await api('internet',{method:'POST',body:JSON.stringify({action:'request'})}).then(()=>showInternetRequest()).catch(()=>{});}reply({error:true,code:error.code});}
+  } catch(error) {
+    if(error.code==='permission') {
+      try {
+        const permission=await api('internet');
+        if(permission.cleanup_pending)error.code='permission-cleanup';
+        else await api('internet',{method:'POST',body:JSON.stringify({action:'request'})});
+        showInternetRequest();
+      } catch {}
+    }
+    reply({error:true,code:error.code});
+  }
   finally {signinBusy=false;if(ownedRequest&&(signinRequest===ownedRequest||appUseRequest===ownedRequest)){signinRequest=undefined;appUseRequest=undefined;hostEffectInFlight=false;currentPhase='idle';}draw();}
 });

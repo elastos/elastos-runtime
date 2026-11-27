@@ -37,6 +37,7 @@ export function windowPresentation(state, nowSeconds) {
   else if (outcome === 'request-unavailable' && !sent && (connection?.removed || connection?.expired || permission && permission !== 'granted')) stage=outcome;
   else if (sent && permission && permission !== 'granted') stage=request.intent === 'transaction_intent' ? 'transaction-wallet-error' : 'request-unavailable';
   else if (busy && phase === 'disconnecting') stage = 'disconnecting';
+  else if (state.cleanupPending && permission !== 'granted') stage='internet-clearing';
   else if (ownerNeeded && permission !== 'granted') stage = 'guest-access';
   else if (permission === 'requested') stage = pending ? request ? 'request-internet-pending' : 'internet-pending' : request ? 'request-internet-off' : 'internet-off';
   else if (permission === 'refused' || permission === 'revoked' && !request) stage = 'internet-refused';
@@ -83,7 +84,7 @@ export function windowPresentation(state, nowSeconds) {
   const supportedActions=[...baseActions].filter(action=> (!unresolvedPayment || !['connect','start-over','finish','send-message','send-request','add-account','back-to-connection','view-requests','select-request'].includes(action)) && (!['finish','send-message'].includes(action) || session?.address && isWalletConnectNetwork(session.chain)));
   return {input:{walletResult,window:'walletconnect',stage,account,waitSeconds,qrData:qrData || undefined,homeOrigin:state.homeOrigin,
     localSafety,linkedConnection:Boolean(session),compact:false,targetNetwork:networkLabel(request?.chain_namespace),supportedActions,
-    connectionNotice,currentSelection,transactionHash,localReturn:!unresolvedPayment&&!expired&&!state.loading&&!['home-read-unavailable','guest-access'].includes(stage)&&!['linked','disconnected','saved-unlinked','account-changed','account-unavailable-unknown','network-unsupported','wallet-removed','connection-expired','internet-off','internet-refused','nothing-saved','internet-ready'].includes(stage),showNextRequests:true},request,otherRequests:requests.filter(row => row.request_id !== request?.request_id)};
+    connectionNotice,currentSelection,transactionHash,localReturn:!unresolvedPayment&&!expired&&!state.loading&&!['home-read-unavailable','guest-access'].includes(stage)&&!['linked','disconnected','saved-unlinked','account-changed','account-unavailable-unknown','network-unsupported','wallet-removed','connection-expired','internet-off','internet-refused','internet-clearing','nothing-saved','internet-ready'].includes(stage),showNextRequests:true},request,otherRequests:requests.filter(row => row.request_id !== request?.request_id)};
 }
 
 export function errorStage(error, action, phase) {
