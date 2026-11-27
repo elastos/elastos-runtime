@@ -1,5 +1,7 @@
 use super::*;
-use crate::protected_content_runtime::{RuntimeCustodyApprovalClosed, RuntimeCustodyApprovalClosedReason};
+use crate::protected_content_runtime::{
+    RuntimeCustodyApprovalClosed, RuntimeCustodyApprovalClosedReason,
+};
 
 /// Carry how far a purchase has got out to the caller, keeping the stable
 /// sentence outermost for the consumers that still read it.

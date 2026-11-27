@@ -4279,6 +4279,8 @@ mod approved_request_resume_tests {
 
     #[tokio::test]
     async fn expired_connector_handoff_stops_mint_and_buy_without_renewal() {
+        use super::super::gateway_provider_proxy::complete_runtime_custody_purchase_stage;
+
         let message = "This wallet request expired after it was sent to your wallet. Check your wallet for a sent transaction before you start a new request.";
         for connector in ["wallet-metamask", "wallet-unisat"] {
             let root = tempfile::tempdir().unwrap();
@@ -4307,7 +4309,8 @@ mod approved_request_resume_tests {
             effect.approval_snapshot = Some(approval.clone());
             let wallet = Arc::new(MockApprovedWalletProvider::new(vec![approval]));
             let mut fresh = request.clone();
-            fresh.request_sha256 = runtime_transaction_request_sha256(&json!({ "new": true })).unwrap();
+            fresh.request_sha256 =
+                runtime_transaction_request_sha256(&json!({ "new": true })).unwrap();
             fresh.effect_id = exact_runtime_transaction_effect_id(
                 fresh.source,
                 authority.verified_context().principal_id(),
@@ -4335,18 +4338,15 @@ mod approved_request_resume_tests {
             let before = serde_json::to_value(&store).unwrap();
 
             // Creator propagates this exact approval error to its failure view.
-            let error = ensure_exact_runtime_transaction_approval(&state, &authority, request.clone())
-                .await
-                .unwrap_err();
+            let error =
+                ensure_exact_runtime_transaction_approval(&state, &authority, request.clone())
+                    .await
+                    .unwrap_err();
             assert_eq!(error, (StatusCode::CONFLICT, message.to_string()));
-            let error = super::super::gateway_provider_proxy::complete_runtime_custody_purchase_stage(
-                &state,
-                &authority,
-                &request,
-            )
-            .await
-            .err()
-            .expect("buy must stop waiting after the handoff expires");
+            let error = complete_runtime_custody_purchase_stage(&state, &authority, &request)
+                .await
+                .err()
+                .expect("buy must stop waiting after the handoff expires");
             let answer = crate::library::provider_error_from_for_test(&error);
             assert_eq!(answer["message"], message);
             assert_eq!(answer["approval_closed"]["reason"], "handoff_expired");
