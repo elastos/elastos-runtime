@@ -1535,6 +1535,15 @@ impl Controller {
         if self.child.is_none() && !InstallTransaction::has_pending_recovery(&self.receipt.binary) {
             self.start_initial().await?;
         }
+        // A settled update stays successful when only endpoint cleanup times out.
+        // The drain already warns; the new Home has passed readiness.
+        if result.is_ok()
+            && closed
+                .as_ref()
+                .is_err_and(|error| error.is::<crate::update::UpdateSourceUnavailable>())
+        {
+            return Ok(());
+        }
         result.and(closed)
     }
 
