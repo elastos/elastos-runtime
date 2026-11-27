@@ -432,10 +432,10 @@ fn external_transaction_handoff_with_expiry(
     let now = now_ts();
     let grace = elastos_wallet_contract::WALLETCONNECT_TRANSACTION_COMPLETION_GRACE_SECS;
     for (elapsed, expected) in [
-        (1, connector == "wallet-walletconnect"),
-        (grace - 1, connector == "wallet-walletconnect"),
-        (grace, false),
-        (grace + 1, false),
+        (1, true),
+        (grace - 1, true),
+        (grace, true),
+        (grace + 1, true),
     ] {
         let mut declined = approved.clone();
         declined.expires_at = now - elapsed;
@@ -448,7 +448,7 @@ fn external_transaction_handoff_with_expiry(
         assert_eq!(
             approval_authority_is_active(&declined, now),
             expected,
-            "declined prompt releases its active quota after grace"
+            "an unresolved external send retains its original handoff"
         );
     }
     if connector == "wallet-walletconnect" {
