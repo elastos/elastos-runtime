@@ -54,7 +54,7 @@ async fn call(
         .header(HOST, "localhost:61180")
         .header(
             "origin",
-            if path.starts_with("/api/apps/inbox/") || path.starts_with("/api/apps/chat-room/") {
+            if path.starts_with("/api/apps/") {
                 "null"
             } else {
                 ORIGIN
@@ -1950,13 +1950,14 @@ async fn walletconnect_one_grant_turn_off_ends_signin_and_add() {
         attempts.push((id, cancel));
     }
     let inbox = wallet_app_token(f.data.path(), INBOX_CAPSULE_ID, &f.actor);
-    let (_, record) = call(
+    let (status, record) = call(
         &app,
         "/api/apps/wallet-walletconnect/internet",
         Some(&inbox),
         None,
     )
     .await;
+    assert_eq!(status, StatusCode::OK);
     let approval = issue_passkey_step_up_token_for_test(
         f.data.path(),
         &inbox,
@@ -1994,13 +1995,14 @@ async fn walletconnect_one_grant_refuses_new_attempts_after_turn_off() {
     let inbox = wallet_app_token(f.data.path(), INBOX_CAPSULE_ID, &f.actor);
     let home =
         issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &f.actor).unwrap();
-    let (_, record) = call(
+    let (status, record) = call(
         &app,
         "/api/apps/wallet-walletconnect/internet",
         Some(&inbox),
         None,
     )
     .await;
+    assert_eq!(status, StatusCode::OK);
     let approval = issue_passkey_step_up_token_for_test(
         f.data.path(),
         &inbox,
