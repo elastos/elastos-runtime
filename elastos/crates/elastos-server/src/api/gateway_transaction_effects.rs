@@ -4265,6 +4265,105 @@ mod approved_request_resume_tests {
     }
 
     #[tokio::test]
+    async fn expired_connector_handoff_stops_mint_and_buy_without_renewal() {
+        let message = "This wallet request expired after it was sent to your wallet. Check your wallet for a sent transaction before you start a new request.";
+        for connector in ["wallet-metamask", "wallet-unisat"] {
+            let root = tempfile::tempdir().unwrap();
+            let authority = test_authority(
+                "principal:test",
+                "session:create",
+                "library",
+                "launch:create",
+            );
+            let (request, mut effect, mut approval, _hash) = exact_resume_fixture(&authority);
+            effect.state = TransactionEffectState::ApprovalPending;
+            effect.requested_audit_completed = true;
+            effect.approval_expires_at = now_ts() - 1;
+            effect.wallet_request_sha256 = wallet_operation_request_sha256(
+                &authority,
+                &effect.approval_request_id,
+                transaction_approval_operation(&effect),
+            )
+            .unwrap();
+            approval["status"] = json!("expired");
+            approval["approved_at"] = json!(now_ts() - 2);
+            approval["connector_id"] = json!(connector);
+            approval["expires_at"] = json!(effect.approval_expires_at);
+            approval["wallet_request_sha256"] = json!(effect.wallet_request_sha256);
+            approval.as_object_mut().unwrap().remove("signed_result");
+            effect.approval_snapshot = Some(approval.clone());
+            let wallet = Arc::new(MockApprovedWalletProvider::new(vec![approval]));
+            let mut fresh = request.clone();
+            fresh.request_sha256 = runtime_transaction_request_sha256(&json!({ "new": true })).unwrap();
+            fresh.effect_id = exact_runtime_transaction_effect_id(
+                fresh.source,
+                authority.verified_context().principal_id(),
+                &fresh.request_sha256,
+                &transaction_request_binding(&fresh),
+            )
+            .unwrap();
+            let chain = Arc::new(MockPrepareChainProvider::new(
+                fresh.clone(),
+                effect.intent.clone(),
+            ));
+            let registry = Arc::new(ProviderRegistry::new());
+            registry
+                .register_sub_provider("wallet", wallet.clone())
+                .await
+                .unwrap();
+            registry
+                .register_sub_provider("chain", chain.clone())
+                .await
+                .unwrap();
+            let state = test_gateway_state(root.path(), Some(registry));
+            let mut store = RuntimeTransactionEffectStore::empty("principal:test");
+            store.effects.push(effect);
+            save_transaction_effect_store(&state, &store).unwrap();
+            let before = serde_json::to_value(&store).unwrap();
+
+            // Creator propagates this exact approval error to its failure view.
+            let error = ensure_exact_runtime_transaction_approval(&state, &authority, request.clone())
+                .await
+                .unwrap_err();
+            assert_eq!(error, (StatusCode::CONFLICT, message.to_string()));
+            let error = super::super::gateway_provider_proxy::complete_runtime_custody_purchase_stage(
+                &state,
+                &authority,
+                &request,
+            )
+            .await
+            .err()
+            .expect("buy must stop waiting after the handoff expires");
+            let answer = crate::library::provider_error_from_for_test(&error);
+            assert_eq!(answer["message"], message);
+            assert!(answer.get("buy_progress").is_none());
+            assert_eq!(wallet.request_approval_calls.load(Ordering::SeqCst), 0);
+            assert_eq!(chain.calls.load(Ordering::SeqCst), 0);
+            assert_eq!(
+                serde_json::to_value(
+                    load_transaction_effect_store(&state, "principal:test").unwrap()
+                )
+                .unwrap(),
+                before
+            );
+            // History pruning also cannot recreate this effect's old approval.
+            wallet.approvals.lock().await.clear();
+            assert!(
+                ensure_exact_runtime_transaction_approval(&state, &authority, request)
+                    .await
+                    .is_err()
+            );
+            assert_eq!(wallet.request_approval_calls.load(Ordering::SeqCst), 0);
+            let accepted = ensure_exact_runtime_transaction_approval(&state, &authority, fresh)
+                .await
+                .unwrap();
+            assert_eq!(accepted.approval_request["status"], "pending");
+            assert_eq!(wallet.request_approval_calls.load(Ordering::SeqCst), 1);
+            assert_eq!(chain.calls.load(Ordering::SeqCst), 1);
+        }
+    }
+
+    #[tokio::test]
     async fn exact_transaction_approval_adopts_prepared_effect_without_duplicate() {
         let root = tempfile::tempdir().unwrap();
         let original_authority = test_authority(
