@@ -1027,6 +1027,88 @@ async fn apply_keeps_a_head_cid_mismatch_retryable_and_records_no_refusal() {
     assert!(!release_refused(&fixture.data, &request.head_cid, &request.release_cid).unwrap());
 }
 
+/// A failed fetch must retire its request even if endpoint cleanup stalls.
+#[tokio::test]
+async fn stalled_apply_carrier_close_fails_and_accepts_retry() {
+    let fixture = PrivateFixture::new();
+    let source = fixture.publish_installed_release();
+    publish_retained_receipt(&fixture);
+    let (_, request, _) = choice_fixture();
+    let (_, endpoint, serving) = crate::setup::tests::carrier_cid_source(
+        &fixture.data,
+        &source,
+        std::collections::HashMap::new(),
+    )
+    .await;
+    let mut command = tokio::process::Command::new("/bin/sh");
+    command.args(["-c", "exec sleep 60"]);
+    let mut controller = Controller {
+        receipt: read_private_json(&fixture.directory.join(RECEIPT)).unwrap(),
+        directory: fixture.directory.clone(),
+        child: Some(child::OwnedChild::spawn(&mut command).unwrap()),
+        request: None,
+        previous_binary_sha256: String::new(),
+        previous_version: String::new(),
+        generation: "a".repeat(32),
+        host_ready: true,
+        carrier: None,
+        carrier_close: None,
+        download_meter: Default::default(),
+        test_readiness: None,
+    };
+    controller.publish("ready", "Home is ready.").unwrap();
+    queue_update(&fixture.data, request.clone()).unwrap();
+    let (started, starting) = tokio::sync::oneshot::channel();
+    let (dropped, stopped) = tokio::sync::oneshot::channel::<()>();
+    let mut applying = tokio::spawn(async move {
+        let result = crate::carrier::with_test_client_close(
+            async move {
+                let _lifetime = dropped;
+                let _ = started.send(());
+                std::future::pending::<()>().await;
+            },
+            controller.process_request(),
+        )
+        .await;
+        (controller, result)
+    });
+    tokio::time::timeout(Duration::from_secs(10), starting)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(status(&fixture.data).unwrap().unwrap().phase, "downloading");
+    assert!(fixture.directory.join(ACTIVE_REQUEST).exists());
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(5)).await;
+    let completed = tokio::time::timeout(Duration::from_millis(1), &mut applying).await;
+    tokio::time::resume();
+    if completed.is_err() {
+        applying.abort();
+        let _ = applying.await;
+    }
+    let (mut controller, result) = completed
+        .expect("apply must finish within the Carrier cleanup deadline")
+        .unwrap();
+    assert!(result.unwrap(), "the unchanged Home must keep serving");
+    assert!(controller.carrier_close.is_none());
+    assert!(tokio::time::timeout(Duration::from_secs(1), stopped)
+        .await
+        .unwrap()
+        .is_err(), "the stalled drain must be aborted and joined");
+    let status = status(&fixture.data).unwrap().unwrap();
+    assert_eq!(status.phase, "failed");
+    assert_eq!(status.message, ApplyFailure::SourceUnavailable.message());
+    assert!(!fixture.directory.join(ACTIVE_REQUEST).exists());
+    assert!(!fixture.directory.join(REFUSED).exists());
+    let mut retry = request;
+    retry.id = "b".repeat(32);
+    queue_update(&fixture.data, retry.clone()).unwrap();
+    assert_eq!(read_private_json::<UpdateRequest>(&fixture.directory.join(REQUEST)).unwrap(), retry);
+    controller.stop_child().await.unwrap();
+    endpoint.close().await;
+    serving.await.unwrap();
+}
+
 #[test]
 fn receipt_round_trip_keeps_non_utf8_launch_args_environment_and_working_directory() {
     let fixture = PrivateFixture::new();
