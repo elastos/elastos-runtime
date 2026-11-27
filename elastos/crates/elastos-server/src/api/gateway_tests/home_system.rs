@@ -12141,7 +12141,7 @@ async fn test_system_ai_provider_guest_get_forbidden() {
 }
 
 #[tokio::test]
-async fn test_system_ai_provider_requires_a_passkey_bound_admin_session() {
+async fn test_system_ai_provider_requires_an_admin_signin_session() {
     let dir = tempfile::tempdir().unwrap();
     let app = gateway_router(test_state(dir.path()));
     let passkey_admin = passkey_authority_with_name(dir.path(), Some("owner"));
@@ -12189,6 +12189,180 @@ async fn test_system_ai_provider_requires_a_passkey_bound_admin_session() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
+}
+
+fn ai_provider_wallet_grant(
+    data_dir: &std::path::Path,
+    authority: &TestPasskeyAuthority,
+) -> AuthSessionGrantV1 {
+    let actor = crate::auth::load_active_session_grant(
+        data_dir,
+        &authority.session_id,
+        crate::auth::now_ts(),
+    )
+    .unwrap();
+    let grant = crate::auth::wallet_signin::tests::enabled_session_for_actor(data_dir, &actor);
+    assert!(grant.proof_binding_id.starts_with("proof:signin-wallet:"));
+    let principal =
+        crate::auth::load_principal_for_proof_binding(data_dir, &grant.proof_binding_id).unwrap();
+    assert_eq!(principal.principal_id, authority.principal_id);
+    assert!(principal.proof_binding.passkey.is_none());
+    grant
+}
+
+#[tokio::test]
+async fn test_system_ai_provider_wallet_signin_admin_status_and_management() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = gateway_router(test_state(dir.path()));
+    let authority = passkey_authority(dir.path());
+    let grant = ai_provider_wallet_grant(dir.path(), &authority);
+    let token =
+        issue_home_launch_token_for_auth_grant(dir.path(), SYSTEM_CAPSULE_ID, &grant).unwrap();
+    let (status, body) =
+        ai_provider_raw(&app, "GET", "/api/apps/system/ai-provider", &token, None).await;
+    assert_eq!(status, StatusCode::OK, "wallet admin GET: {body}");
+    assert_ai_provider_http_omits_secrets(&body);
+
+    install_valid_hosted_doubles();
+    let (status, body) = ai_provider_raw(
+        &app,
+        "POST",
+        "/api/apps/system/ai-provider/validate",
+        &token,
+        Some(json!({"provider": "openrouter", "api_key": "sk-or-fixture-valid"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(serde_json::from_str::<Value>(&body).unwrap()["valid"], true);
+    assert_ai_provider_http_omits_secrets(&body);
+    let (status, body) = ai_provider_raw(
+        &app,
+        "POST",
+        "/api/apps/system/ai-provider",
+        &token,
+        Some(json!({
+            "provider": "openrouter",
+            "api_key": "sk-or-fixture-valid",
+            "model": "fixture/model"
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_ai_provider_http_omits_secrets(&body);
+    let payload: Value = serde_json::from_str(&body).unwrap();
+    let id = connection_id(&payload, "openrouter");
+    assert_eq!(connection(&payload, "openrouter")["connected"], true);
+    let (status, body) = ai_provider_raw(
+        &app,
+        "POST",
+        "/api/apps/system/ai-provider/share",
+        &token,
+        Some(json!({"id": id, "enabled": true, "terms_ack": "openrouter-5.1-5.2+model"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(shareable_hosted_ids(dir.path()), vec![id.clone()]);
+    let (status, body) = ai_provider_raw(
+        &app,
+        "DELETE",
+        "/api/apps/system/ai-provider",
+        &token,
+        Some(json!({"id": id})),
+    )
+    .await;
+    clear_hosted_ai_validate_doubles();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(shareable_hosted_ids(dir.path()).is_empty());
+    let payload: Value = serde_json::from_str(&body).unwrap();
+    assert!(!has_provider(&payload, "openrouter"));
+}
+
+#[tokio::test]
+async fn test_system_ai_provider_refuses_non_admin_and_non_signin_authority_on_every_route() {
+    for kind in [
+        "local",
+        "guest",
+        "wallet-guest",
+        "revoked",
+        "payment-wallet",
+        "principal-mismatch",
+        "wrong-app",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let app = gateway_router(test_state(dir.path()));
+        let authority = passkey_authority(dir.path());
+        let token = match kind {
+            "local" => issue_home_launch_token(dir.path(), SYSTEM_CAPSULE_ID).unwrap(),
+            "guest" | "wallet-guest" => {
+                let guest = passkey_authority_with_name_role(
+                    dir.path(),
+                    Some("guest"),
+                    crate::auth::RuntimePrincipalRole::Guest,
+                );
+                if kind == "guest" {
+                    guest.system_token
+                } else {
+                    let grant = ai_provider_wallet_grant(dir.path(), &guest);
+                    issue_home_launch_token_for_auth_grant(dir.path(), SYSTEM_CAPSULE_ID, &grant)
+                        .unwrap()
+                }
+            }
+            "revoked" => {
+                crate::auth::revoke_passkey_binding(
+                    dir.path(),
+                    &authority.proof_binding_id,
+                    crate::auth::now_ts(),
+                )
+                .unwrap();
+                authority.system_token
+            }
+            "payment-wallet" => {
+                let now = crate::auth::now_ts();
+                let principal = crate::auth::upsert_principal_for_binding_as_role_named(
+                    dir.path(),
+                    ProofBinding::evm_account(1, "0x0000000000000000000000000000000000000001", now),
+                    authority.principal_id.clone(),
+                    crate::auth::RuntimePrincipalRole::Admin,
+                    Some("owner"),
+                    now,
+                )
+                .unwrap();
+                assert!(principal.proof_binding_id.starts_with("proof:wallet:"));
+                let mut grant = crate::auth::load_active_session_grant(
+                    dir.path(),
+                    &authority.session_id,
+                    now,
+                )
+                .unwrap();
+                grant.proof_binding_id = principal.proof_binding_id;
+                grant.session_id = format!("auth:{}", uuid_like_token());
+                grant.grant_id = format!("grant:{}", uuid_like_token());
+                crate::auth::store_session_grant(dir.path(), grant.clone()).unwrap();
+                issue_home_launch_token_for_auth_grant(dir.path(), SYSTEM_CAPSULE_ID, &grant).unwrap()
+            }
+            "principal-mismatch" => {
+                let mut grant = ai_provider_wallet_grant(dir.path(), &authority);
+                grant.principal_id = "principal:other".to_string();
+                issue_home_launch_token_for_auth_grant(dir.path(), SYSTEM_CAPSULE_ID, &grant).unwrap()
+            }
+            "wrong-app" => authority.home_token,
+            _ => unreachable!(),
+        };
+        for (method, route, body) in [
+            ("GET", "/api/apps/system/ai-provider", None),
+            ("POST", "/api/apps/system/ai-provider/validate", Some(json!({"provider": "openrouter", "api_key": "sk-or-fixture-valid"}))),
+            ("POST", "/api/apps/system/ai-provider", Some(json!({"provider": "openrouter", "api_key": "sk-or-fixture-valid", "model": "fixture/model"}))),
+            ("POST", "/api/apps/system/ai-provider/share", Some(json!({"id": "model:fixture", "enabled": true, "terms_ack": "openrouter-5.1-5.2+model"}))),
+            ("DELETE", "/api/apps/system/ai-provider", Some(json!({"id": "model:fixture"}))),
+            ("DELETE", "/api/apps/system/ai-provider/staged", Some(json!({"id": "model:fixture"}))),
+            ("POST", "/api/apps/system/approval-lens/revoke", Some(json!({"id": "model:fixture"}))),
+        ] {
+            let (status, body) = ai_provider_raw(&app, method, route, &token, body).await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{kind} {method} {route}: {body}");
+            assert_ai_provider_http_omits_secrets(&body);
+        }
+        assert!(!ai_provider_config_path(dir.path()).exists(), "{kind}");
+    }
 }
 
 #[tokio::test]
