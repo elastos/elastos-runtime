@@ -352,14 +352,10 @@ fn abandoned_non_dismissible_handoff_expires_releases_capacity_and_can_be_pruned
                 other.request_id = format!("active:{i}");
                 provider.store.approval_requests.push(other);
             }
-            let new_request = WalletProviderRequestV2::new(
+            let new_request = wallet_request(
                 &wallet_context(PRINCIPAL, "system"),
-                "new-transaction",
-                now_ts(),
-                now_ts() + 120,
                 original.operation.clone(),
-            )
-            .unwrap();
+            );
             assert!(matches!(
                 invoke_wallet_request(&mut provider, &new_request),
                 Response::Error { ref code, .. } if code == "approval_limit_reached"
