@@ -41,14 +41,14 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 - Home and apps can enter full screen in Safari and the desktop app. Apps load in Safari and other WebKit browsers.
 - Home repairs local Community connection failures, keeps trying while it runs, and shows the same reconnecting state in Chat and System. Community posts keep arriving when one connection stalls.
 - To add another address from a connected wallet, choose Add address. Choose another account in your wallet, then get a new QR code and scan it. You can also scan with another wallet.
-- Wallet keeps showing your answer to a request when its request list refreshes. You can dismiss an unfinished WalletConnect payment in Wallet. Home can record a later WalletConnect confirmation for up to 24 hours after the request expires.
+- Wallet keeps your answer visible when its request list refreshes. A WalletConnect payment stays in Wallet until confirmation arrives or you press Dismiss.
 - Assistant opens from Marketplace and offers to get a model when none is installed. Manage models opens System at its model section, including when System is maximized, minimized or on another Desktop.
 - Typing in a new document stays in the document.
 - After you refuse internet access, Browser asks again when you press Return, and returns to full screen when you allow it. Browser keeps your page when its internet access is renewed.
 - Browser displays Chinese, Japanese and Korean text, and opens on the first try after its engine finishes downloading.
 - Copy works in Wallet, its connection windows and Assistant.
 - Updating works for a Home installed through a linked folder.
-- A newly connected wallet appears right away and the Wallet window scrolls without clicking elsewhere.
+- A newly connected wallet appears right away. Wallet buttons still work while the list refreshes, and the Wallet window scrolls without clicking elsewhere.
 
 ### Security
 
@@ -85,14 +85,14 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 - Home and apps can enter full screen in Safari and the desktop app. Apps load in Safari and other WebKit browsers.
 - Home repairs local Community connection failures, keeps trying while it runs, and shows the same reconnecting state in Chat and System. Community posts keep arriving when one connection stalls.
 - To add another address from a connected wallet, choose Add address. Choose another account in your wallet, then get a new QR code and scan it. You can also scan with another wallet.
-- Wallet keeps showing your answer to a request when its request list refreshes. You can dismiss an unfinished WalletConnect payment in Wallet. Home can record a later WalletConnect confirmation for up to 24 hours after the request expires.
+- Wallet keeps your answer visible when its request list refreshes. A WalletConnect payment stays in Wallet until confirmation arrives or you press Dismiss.
 - Assistant opens from Marketplace and offers to get a model when none is installed. Manage models opens System at its model section, including when System is maximized, minimized or on another Desktop.
 - Typing in a new document stays in the document.
 - After you refuse internet access, Browser asks again when you press Return, and returns to full screen when you allow it. Browser keeps your page when its internet access is renewed.
 - Browser displays Chinese, Japanese and Korean text, and opens on the first try after its engine finishes downloading.
 - Copy works in Wallet, its connection windows and Assistant.
 - Updating works for a Home installed through a linked folder.
-- A newly connected wallet appears right away and the Wallet window scrolls without clicking elsewhere.
+- A newly connected wallet appears right away. Wallet buttons still work while the list refreshes, and the Wallet window scrolls without clicking elsewhere.
 
 ### Security
 
