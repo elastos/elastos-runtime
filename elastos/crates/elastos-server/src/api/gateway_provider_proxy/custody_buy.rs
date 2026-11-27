@@ -138,9 +138,9 @@ pub(in crate::api::gateway) fn runtime_custody_purchase_stage_record(
     )
 }
 
-/// What the stable request hash binds besides the offer. A listing-package
-/// buy binds its package digest and mint id exactly as today; a market buy
-/// binds the asset URI instead.
+/// What the stable request hash binds besides the offer. A listing buy binds
+/// its package digest and mint id, plus its attempt id for new purchases.
+/// Legacy records keep their original hash; a market buy binds its asset URI.
 pub(crate) enum RuntimePurchaseBinding<'a> {
     ListingPackage {
         listing_sha256: &'a str,
@@ -1717,9 +1717,9 @@ pub(crate) async fn runtime_custody_buy_via_gateway(
     Ok(runtime_custody_buy_terminal_response(&purchase))
 }
 
-/// Retire a listing-package attempt that is provably over without payment
-/// (R41): its Wallet approval was declined, or its buy was mined and
-/// reverted. R29 refuses a market purchase of an item while a listing
+/// Retire a listing-package attempt after decline, a mined revert, or an
+/// expired external handoff. The expired handoff's payment outcome stays
+/// unknown. R29 refuses a market purchase of an item while a listing
 /// purchase of it is recorded, so a dead attempt left recorded would block
 /// the item on both paths for good. Only this attempt is removed, under the
 /// market-purchase lock; a newer one is left as it is. A revert known only
@@ -1734,7 +1734,7 @@ fn retire_runtime_listing_attempt(
     tracing::debug!(
         effect_id = %purchase.acquisition_stage.effect_id,
         retired,
-        "runtime custody purchase: attempt over without payment"
+        "runtime custody purchase: local attempt retired"
     );
     Ok(())
 }

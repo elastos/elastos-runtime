@@ -5541,8 +5541,8 @@ pub(crate) fn runtime_purchase_lock_test_overlap_detected(path: &Path) -> bool {
 /// the same moment. `Ok(false)` when the record is gone, complete, or another
 /// attempt -- which is then left exactly as it is.
 ///
-/// Only for an attempt that is provably over without payment (R41). The
-/// caller holds the market-purchase lock around this, so the removal and
+/// The caller establishes decline, a mined revert, or an expired external
+/// handoff, and holds the market-purchase lock so the removal and
 /// R29's cross-path check never interleave.
 pub(crate) fn retire_runtime_custody_purchase_attempt(
     data_dir: &Path,
