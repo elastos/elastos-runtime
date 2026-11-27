@@ -3427,16 +3427,23 @@ async function run() {
       "A Buy of an item whose kid is null must name no kid, and a Buy refused as unavailable must stay pressable",
       unreachableRequest,
     );
-    state[normalToken].expiredHandoffSeller = marketSellerUnreachable;
-    await pressBuy(marketSellerUnreachable);
+    await closeSheet();
+    await pasteLink(marketScenarioLink);
+    await frame.locator("#detail-modal.active .offer-list").waitFor();
+    state[normalToken].expiredHandoffSeller = marketSellerDeclined;
+    await pressBuy(marketSellerDeclined);
     await waitForToast(expiredHandoffMessage);
     const afterExpiredHandoff = buyOfferCount();
     await page.waitForTimeout(200);
     assert(
       buyOfferCount() === afterExpiredHandoff
-        && await offerRow(marketSellerUnknownOk).locator('[data-action="buy-offer"]').isEnabled(),
-      "An expired handoff must stop polling and leave a new purchase available",
+        && await offerRow(marketSellerDeclined).locator('[data-action="buy-offer"]').isEnabled(),
+      "An expired handoff must stop polling and clear the busy control",
     );
+    delete state[normalToken].expiredHandoffSeller;
+    await closeSheet();
+    await pasteLink(marketUnknownLink);
+    await frame.locator("#detail-modal.active .offer-list").waitFor();
     await pressBuy(marketSellerUnknownOk);
     await waitForToast("Bought. The item is in your Library.");
 
