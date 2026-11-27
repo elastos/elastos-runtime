@@ -147,7 +147,7 @@ test('signed-out WalletConnect requires an enabled compatible method and interne
     await flow.start();assert.equal(states.at(-1).walletconnectAvailable,available);await flow.choose('walletconnect');
     assert.equal(calls.filter(c=>c.path.endsWith('/begin')).length,available?1:0);
     if(available)assert.equal(calls.find(c=>c.path.endsWith('/begin')).body.allow_temporary_internet,undefined);
-    else assert.equal(states.at(-1).stage,'error');
+    else {assert.equal(states.at(-1).stage,'closed');assert.equal(states.at(-1).message,'');}
     await flow.cancel();
   }
 });
@@ -424,11 +424,11 @@ test('closing the admitted phone window ends a pending signature without waiting
   assert.equal(sent.filter(data=>data.operation==='sign').length,1);controller.abort();
 });
 
-test('a revoked WalletConnect option offers an error instead of an empty choice screen',async()=>{
+test('a revoked remembered WalletConnect option retires to the plain choice list',async()=>{
   const states=[],paths=[];
   const flow=createWalletSigninFlow({api:async path=>{paths.push(path);return {walletconnect_signin_available:false};},select:async()=>{throw new Error('relay must remain unused');},approve:async()=>{},render:s=>states.push(s)});flows.push(flow);
   await flow.start({action:'signin',automatic:true});await flow.choose('walletconnect');
-  assert.equal(states.at(-1).stage,'error');assert.match(states.at(-1).message,/Use your passkey/);assert.deepEqual(paths,['/api/auth/passkey/status']);
+  assert.equal(states.at(-1).stage,'closed');assert.equal(states.at(-1).message,'');assert.deepEqual(paths,['/api/auth/passkey/status']);
 });
 
 test('Runtime connector choices work in a fresh browser and on a desktop surface',()=>{

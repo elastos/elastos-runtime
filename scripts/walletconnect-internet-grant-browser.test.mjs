@@ -50,7 +50,7 @@ for(const engine of ['chromium','webkit'])test(`${baseline?'baseline':'one-grant
  const choice=page.locator('.signin-dialog .connection-option').filter({hasText:'WalletConnect'});await choice.waitFor();
  await choice.click();
  if(baseline){await page.locator('.signin-dialog[data-state=pairing]').waitFor();assert.equal(f.state.internetStatus,'off');await shot('signed-out-off-opened-qr');await dialog.getByRole('button',{name:'Cancel',exact:true}).click();await page.waitForLoadState('networkidle');}
- else {await page.locator('.signin-dialog[data-state=error]').waitFor();assert.match(await dialog.innerText(),/WalletConnect is off on this Home\. Choose another way to sign in\./);assert.equal(await dialog.locator('.connection-option').filter({hasText:'Passkey'}).count(),1);assert.equal(await dialog.getByRole('button',{name:'Try again',exact:true}).count(),0);await shot('signed-out-off');await dialog.locator('.connection-option').filter({hasText:'Passkey'}).click();await page.waitForFunction(()=>window.openedPrincipal==='principal:alex');assert.equal(f.state.internetStatus,'off','passkey signs in while WalletConnect stays off');assert.equal(f.state.calls.filter(c=>c.path.endsWith('/internet')&&c.body?.action==='request').length,1,'signed-out sign-in files no internet request');}
+ else {await page.locator('.signin-dialog[data-state=error]').waitFor();assert.equal(await dialog.locator('[role=status]').innerText(),'Choose another way to sign in.');assert.equal(await dialog.locator('.connection-option').filter({hasText:'Passkey'}).count(),1);assert.equal(await dialog.getByRole('button',{name:'Try again',exact:true}).count(),0);await shot('signed-out-off');await dialog.locator('.connection-option').filter({hasText:'Passkey'}).click();await page.waitForFunction(()=>window.openedPrincipal==='principal:alex');assert.equal(f.state.internetStatus,'off','passkey signs in while WalletConnect stays off');assert.equal(f.state.calls.filter(c=>c.path.endsWith('/internet')&&c.body?.action==='request').length,1,'signed-out sign-in files no internet request');}
  await page.goto(f.origin+'/home/');
  await page.setContent('<!doctype html><html data-el-theme=light><head></head><body></body></html>');
  await page.addStyleTag({content:await readFile(new URL('../capsules/wallet-walletconnect/browser/elastos-ui.css',import.meta.url),'utf8')});
@@ -67,4 +67,29 @@ for(const engine of ['chromium','webkit'])test(`${baseline?'baseline':'one-grant
   await shot('window-'+stage);
  }
  assert.deepEqual(errors,[]);
+});
+
+for(const engine of ['chromium','webkit'])test(`remembered unavailable WalletConnect opens the plain sign-in list in ${engine}`,windowTestOptions(engine,60000),async t=>{
+ const f=await signinFixture();t.after(()=>f.close());f.state.internetStatus='off';
+ const browser=await requireProductSmokePlaywright()[engine].launch({headless:true});t.after(()=>browser.close());
+ const context=await browser.newContext({viewport:{width:480,height:560},locale:'en-US',reducedMotion:'reduce'});
+ await context.addInitScript(installSigninProviders,{evmAddress,bitcoinAddress});
+ const page=await context.newPage();let checks=0;const posts=[];
+ await page.route('**/api/auth/passkey/status',async route=>{
+  const response=await route.fetch(),status=await response.json();
+  if(++checks>1)status.walletconnect_signin_available=false;
+  await route.fulfill({response,json:status});
+ });
+ await page.goto(f.origin+'/home/');await page.waitForFunction(()=>window.fixtureReady);
+ await page.evaluate(()=>localStorage.setItem('elastos.signin.choice.v1','walletconnect'));
+ page.on('request',request=>{if(request.method()==='POST')posts.push(new URL(request.url()).pathname);});
+ const unavailable=page.waitForResponse(async response=>response.url().endsWith('/api/auth/passkey/status')&&(await response.json()).walletconnect_signin_available===false);
+ await page.getByRole('button',{name:'Sign in',exact:true}).click();await unavailable;
+ const dialog=page.locator('.signin-dialog');await page.locator('.signin-dialog[data-state=options],.signin-dialog[data-state=error]').waitFor();
+ assert.equal(await dialog.getAttribute('data-state'),'options');
+ assert.equal(await dialog.locator('[role=status],[role=alert]').count(),0);
+ assert.equal(await dialog.locator('.connection-option').filter({hasText:'Passkey'}).count(),1);
+ assert.doesNotMatch(await dialog.innerText(),/WalletConnect is off|Choose another way|Waiting for/);
+ assert.equal(await dialog.locator('.connection-qr').count(),0);assert.deepEqual(posts,[]);
+ if(output){await mkdir(output,{recursive:true});await page.screenshot({path:join(output,`${engine}-remembered-walletconnect-off-plain-list.png`),animations:'disabled'});}
 });

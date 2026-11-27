@@ -19,9 +19,9 @@ export function walletSigninError(error, action) {
   if(error?.code === 'changed') return 'Your wallet is using a different account or network; select Try again.';
   if(error?.code === 'wallet-unavailable') return 'Open the wallet with this account, then try again.';
   if(error?.code === 'payment-pending')return 'Finish or check the payment in Wallet, then select Try again.';
-  if(error?.code === 'walletconnect_internet_off') return action === 'signin' ? 'WalletConnect is off on this Home. Choose another way to sign in.' : 'WalletConnect is off on this Home. Allow internet access in Inbox to continue.';
-  if(error?.code === 'permission-cleanup') return action === 'signin' ? 'WalletConnect is off on this Home. Choose another way to sign in.' : 'Choose Finish disconnecting in Inbox before you allow internet access again.';
-  if(error?.code === 'permission' && action==='signin')return 'WalletConnect is off on this Home. Choose another way to sign in.';
+  if(error?.code === 'walletconnect_internet_off') return action === 'signin' ? 'Choose another way to sign in.' : 'Allow WalletConnect internet access in Inbox to continue.';
+  if(error?.code === 'permission-cleanup') return action === 'signin' ? 'Choose another way to sign in.' : 'Choose Finish disconnecting in Inbox before you allow internet access again.';
+  if(error?.code === 'permission' && action==='signin')return 'Choose another way to sign in.';
   if(error?.code === 'permission') return 'Allow WalletConnect internet access in Inbox, then select Try again.';
   if(error?.code === 'missing') return 'Choose another wallet or use a browser with this wallet installed.';
   if(error?.code === 'network') return 'Use Elastos Smart Chain or Base with your wallet.';
@@ -155,7 +155,7 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
           await prepare(current,'walletconnect');return;
         }
         const stage=permission.cleanup_pending?'internet-clearing':permission.status==='requested'?'internet-pending':'internet-off';
-        const message=permission.cleanup_pending?'Choose Finish disconnecting in Inbox before you allow internet access again.':permission.status==='requested'?'Allow WalletConnect internet access in Inbox to continue.':'WalletConnect is off on this Home. Allow internet access in Inbox to continue.';
+        const message=permission.cleanup_pending?'Choose Finish disconnecting in Inbox before you allow internet access again.':'Allow WalletConnect internet access in Inbox to continue.';
         if(state.stage!==stage)show(stage,{message});
         current.permissionTimer=setTimeout(()=>{if(live(current))void check();},1000);
       } catch(error) {fail(current,error);}
@@ -251,6 +251,7 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
     async choose(connector) {
       if(!run || state.stage!=='choice' || !['metamask','walletconnect','unisat'].includes(connector))return;
       if(connector==='walletconnect') {
+        if(state.action==='signin' && state.walletconnectAvailable===false){await controls.cancel();return;}
         if(state.walletconnectAvailable!==true){fail(run,state.walletconnectAvailable===null?fault('status-unavailable'):{status:403});return;}
         await prepare(run,connector);
       } else await prepare(run,connector);

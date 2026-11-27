@@ -281,8 +281,10 @@ pending sign-in/add transports. Every new relay use requires Inbox Allow again.
 
 System Add wallet files the existing Inbox request, shows Show request while
 waiting, and continues once after Allow. If cleanup is pending, the same Inbox
-entry offers Finish disconnecting first. Signed-out screens create no request:
-they say WalletConnect is off on this Home and offer passkey, MetaMask or UniSat.
+entry offers Finish disconnecting first. Signed-out screens create no request.
+An unavailable remembered WalletConnect choice leaves the plain sign-in list.
+If an attempt loses access, Home says "Choose another way to sign in." and
+offers the available passkey, MetaMask or UniSat methods.
 Every account retains a passkey, so the person can sign in and open Inbox.
 
 WalletConnect enrollment shows the relay notice before pairing and passkey
@@ -315,8 +317,9 @@ compatible WalletConnect method. A fresh browser and the desktop app use the sam
 Runtime list. Signed-out choices show the wallet name and icon. The browser stores
 only the remembered choice (passkey or connector kind), with no wallet identity
 hints. Each press of Sign in opens the same list and starts the remembered option
-once. Cancel stops the wallet request and leaves the list available. Passkey and
-other wallet choices stay available during the request. With Remember my choice
+once when it is available. An unavailable remembered WalletConnect choice leaves
+the list without an error. Cancel stops the wallet request and leaves the list
+available. Passkey and other wallet choices stay available during the request. With Remember my choice
 ticked, choosing another option saves that choice; unticking it clears the saved
 choice. Cancel on the idle list closes the sheet.
 
