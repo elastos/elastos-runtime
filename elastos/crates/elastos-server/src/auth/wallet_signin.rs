@@ -909,10 +909,9 @@ pub(crate) fn begin_for_peer(
         }
         if method.connector == "wallet-walletconnect"
             && matches!(input.action.as_str(), "signin" | "add")
+            && actor.is_none()
         {
-            if actor.is_none() {
-                require(has_relay_method(store))?;
-            }
+            require(has_relay_method(store))?;
         }
         let token = random_secret_hex();
         let mut pending = Pending {

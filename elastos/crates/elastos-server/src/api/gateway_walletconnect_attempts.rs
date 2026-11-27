@@ -651,6 +651,18 @@ fn address_budget_key(ip: std::net::IpAddr) -> std::net::IpAddr {
     }
 }
 
+pub(super) fn cancel_all(data: &FsPath, inner: &mut Inner) -> anyhow::Result<()> {
+    for (id, attempt) in &inner.attempts {
+        crate::auth::wallet_signin::expire_attempt(
+            &home_launch_auth_data_dir(data),
+            id,
+            &attempt.instance,
+        )?;
+    }
+    inner.attempts.clear();
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -846,16 +858,4 @@ mod tests {
         )
         .is_ok());
     }
-}
-
-pub(super) fn cancel_all(data: &FsPath, inner: &mut Inner) -> anyhow::Result<()> {
-    for (id, attempt) in &inner.attempts {
-        crate::auth::wallet_signin::expire_attempt(
-            &home_launch_auth_data_dir(data),
-            id,
-            &attempt.instance,
-        )?;
-    }
-    inner.attempts.clear();
-    Ok(())
 }
