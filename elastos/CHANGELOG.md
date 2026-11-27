@@ -17,7 +17,7 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 
 ### Added
 
-- Marketplace adds Qwen3.5 9B alongside the two existing text models for use on this computer.
+- Marketplace adds Qwen3.5 9B for use on this computer. After updating, press Use again on each model you already use.
 - In System > Accounts, Add wallet takes one wallet signature, then a passkey approves sign-in access. Wallet manages payment connections. Sign in offers your available methods and can remember your choice on this device.
 - WalletConnect connects your wallet to Wallet. Scan the QR code with your wallet, or copy the connection link. Compatible browser wallets can connect through the MetaMask option, which uses MetaMask when it is installed.
 - The Home address card in Wallet shows your ESC and Base balances.
@@ -30,7 +30,7 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 - Direct messages reach contacts on other networks while both Homes are on. Chat explains why a message is Delivery unconfirmed and what you can do, such as checking that both Homes and their networks are on.
 - MetaMask, UniSat and WalletConnect open in smaller windows that show one step at a time. Marketplace opens these connection windows through Wallet.
 - Wallet requests are headed by the action, such as Sign a message, and show the network and the app or website that asked. Browser website wallet requests also name the connector.
-- Inbox asks before WalletConnect uses the internet, and you can turn that access off in the same Inbox entry.
+- Inbox asks once before WalletConnect uses the internet. That permission covers WalletConnect in Wallet, Add wallet in System > Accounts and wallet sign-in. Turn Off in that Inbox entry ends all of them, including open sign-in attempts.
 - A connected account without a name shows Your wallet.
 - Model downloads and Library uploads show their progress and use the same units for file sizes.
 - Home checks for updates in the background by default. Inbox checks that an update is available before showing a notice. System > About shows release notes and update download progress. To stop background checks, turn off Check for updates automatically there.
@@ -61,7 +61,7 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 
 ### Added
 
-- Marketplace adds Qwen3.5 9B alongside the two existing text models for use on this computer.
+- Marketplace adds Qwen3.5 9B for use on this computer. After updating, press Use again on each model you already use.
 - In System > Accounts, Add wallet takes one wallet signature, then a passkey approves sign-in access. Wallet manages payment connections. Sign in offers your available methods and can remember your choice on this device.
 - WalletConnect connects your wallet to Wallet. Scan the QR code with your wallet, or copy the connection link. Compatible browser wallets can connect through the MetaMask option, which uses MetaMask when it is installed.
 - The Home address card in Wallet shows your ESC and Base balances.
@@ -74,7 +74,7 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 - Direct messages reach contacts on other networks while both Homes are on. Chat explains why a message is Delivery unconfirmed and what you can do, such as checking that both Homes and their networks are on.
 - MetaMask, UniSat and WalletConnect open in smaller windows that show one step at a time. Marketplace opens these connection windows through Wallet.
 - Wallet requests are headed by the action, such as Sign a message, and show the network and the app or website that asked. Browser website wallet requests also name the connector.
-- Inbox asks before WalletConnect uses the internet, and you can turn that access off in the same Inbox entry.
+- Inbox asks once before WalletConnect uses the internet. That permission covers WalletConnect in Wallet, Add wallet in System > Accounts and wallet sign-in. Turn Off in that Inbox entry ends all of them, including open sign-in attempts.
 - A connected account without a name shows Your wallet.
 - Model downloads and Library uploads show their progress and use the same units for file sizes.
 - Home checks for updates in the background by default. Inbox checks that an update is available before showing a notice. System > About shows release notes and update download progress. To stop background checks, turn off Check for updates automatically there.
@@ -82,7 +82,7 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 
 ### Fixed
 
-- Since 2.0.2-rc.1: Wallet lists every wallet and who uses it, and System manages sign-in with the same names throughout. The Home address card in Wallet shows your ESC and Base balances. Browser names the wallet connector, displays Chinese, Japanese and Korean text, and opens on the first try after its engine finishes downloading. Manage models in Assistant opens System at its model section in any window state or Desktop. Copy works in Wallet, its connection windows and Assistant.
+- Since 2.0.2-rc.1: Marketplace adds Qwen3.5 9B. One Inbox permission covers every WalletConnect use, including sign-in. Wallet lists wallets and who uses them, and System manages sign-in. Wallet shows ESC and Base balances. Browser names the wallet connector, displays Chinese, Japanese and Korean text, and opens on the first try after its engine downloads. Manage models in Assistant opens System at its model section. Copy works in Wallet, its connection windows and Assistant.
 - New passkeys show which Home they belong to in the browser's picker. Existing passkeys keep their saved names. Home keeps at least one admin passkey. Removing a passkey asks you to confirm and signs out the windows that used it.
 - Home and apps can enter full screen in Safari and the desktop app. Apps load in Safari and other WebKit browsers.
 - Home repairs local Community connection failures, keeps trying while it runs, and shows the same reconnecting state in Chat and System. Community posts keep arriving when one connection stalls.
