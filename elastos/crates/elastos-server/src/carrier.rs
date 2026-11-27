@@ -9670,7 +9670,7 @@ impl CarrierEndpointDrain {
         }
         task.take();
     }
-    // Update checking owns a finite drain. Abort and join the endpoint close
+    // Update cleanup owns a finite drain. Abort and join the endpoint close
     // itself, rather than leaving its task behind when a waiter times out.
     async fn close_with_deadline(&self, deadline: Duration) -> Result<()> {
         self.signal
@@ -9682,11 +9682,11 @@ impl CarrierEndpointDrain {
             return Ok(());
         };
         let result = match tokio::time::timeout(deadline, &mut *running).await {
-            Ok(result) => result.context("drain update check endpoint"),
+            Ok(result) => result.context("drain update endpoint"),
             Err(error) => {
                 warn!(
                     timeout_seconds = deadline.as_secs(),
-                    "update check endpoint close timed out; cancelling drain"
+                    "update endpoint close timed out; cancelling drain"
                 );
                 running.abort();
                 let _ = running.await;
@@ -13999,7 +13999,7 @@ pub(crate) mod tests {
         assert!(drain.task.lock().await.is_none(), "no drain task remains");
         let log = std::fs::read_to_string(warning.path()).unwrap();
         assert_eq!(
-            log.matches("update check endpoint close timed out").count(),
+            log.matches("update endpoint close timed out").count(),
             1,
             "{log}"
         );

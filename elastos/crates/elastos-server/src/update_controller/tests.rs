@@ -1027,6 +1027,94 @@ async fn apply_keeps_a_head_cid_mismatch_retryable_and_records_no_refusal() {
     assert!(!release_refused(&fixture.data, &request.head_cid, &request.release_cid).unwrap());
 }
 
+/// A failed fetch must retire its request even if endpoint cleanup stalls.
+#[tokio::test]
+async fn stalled_apply_carrier_close_fails_and_accepts_retry() {
+    let fixture = PrivateFixture::new();
+    let source = fixture.publish_installed_release();
+    publish_retained_receipt(&fixture);
+    let (_, request, _) = choice_fixture();
+    let (_, endpoint, serving) = crate::setup::tests::carrier_cid_source(
+        &fixture.data,
+        &source,
+        std::collections::HashMap::new(),
+    )
+    .await;
+    let mut command = tokio::process::Command::new("/bin/sh");
+    command.args(["-c", "exec sleep 60"]);
+    let mut controller = Controller {
+        receipt: read_private_json(&fixture.directory.join(RECEIPT)).unwrap(),
+        directory: fixture.directory.clone(),
+        child: Some(child::OwnedChild::spawn(&mut command).unwrap()),
+        request: None,
+        previous_binary_sha256: String::new(),
+        previous_version: String::new(),
+        generation: "a".repeat(32),
+        host_ready: true,
+        carrier: None,
+        carrier_close: None,
+        download_meter: Default::default(),
+        test_readiness: None,
+    };
+    controller.publish("ready", "Home is ready.").unwrap();
+    queue_update(&fixture.data, request.clone()).unwrap();
+    let (started, starting) = tokio::sync::oneshot::channel();
+    let (dropped, stopped) = tokio::sync::oneshot::channel::<()>();
+    let mut applying = tokio::spawn(async move {
+        let result = crate::carrier::with_test_client_close(
+            async move {
+                let _lifetime = dropped;
+                let _ = started.send(());
+                std::future::pending::<()>().await;
+            },
+            controller.process_request(),
+        )
+        .await;
+        (controller, result)
+    });
+    tokio::time::timeout(Duration::from_secs(10), starting)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(status(&fixture.data).unwrap().unwrap().phase, "staging");
+    assert!(fixture.directory.join(ACTIVE_REQUEST).exists());
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(5)).await;
+    let completed = tokio::time::timeout(Duration::from_millis(1), &mut applying).await;
+    tokio::time::resume();
+    if completed.is_err() {
+        applying.abort();
+        let _ = applying.await;
+    }
+    let (mut controller, result) = completed
+        .expect("apply must finish within the Carrier cleanup deadline")
+        .unwrap();
+    assert!(result.unwrap(), "the unchanged Home must keep serving");
+    assert!(controller.carrier_close.is_none());
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), stopped)
+            .await
+            .unwrap()
+            .is_err(),
+        "the stalled drain must be aborted and joined"
+    );
+    let status = status(&fixture.data).unwrap().unwrap();
+    assert_eq!(status.phase, "failed");
+    assert_eq!(status.message, ApplyFailure::SourceUnavailable.message());
+    assert!(!fixture.directory.join(ACTIVE_REQUEST).exists());
+    assert!(!fixture.directory.join(REFUSED).exists());
+    let mut retry = request;
+    retry.id = "b".repeat(32);
+    queue_update(&fixture.data, retry.clone()).unwrap();
+    assert_eq!(
+        read_private_json::<UpdateRequest>(&fixture.directory.join(REQUEST)).unwrap(),
+        retry
+    );
+    controller.stop_child().await.unwrap();
+    endpoint.close().await;
+    serving.await.unwrap();
+}
+
 #[test]
 fn receipt_round_trip_keeps_non_utf8_launch_args_environment_and_working_directory() {
     let fixture = PrivateFixture::new();
@@ -2642,6 +2730,7 @@ async fn cancelled_carrier_close_await_keeps_the_same_task_until_cleanup_complet
             entered.notify_one();
             release.notified().await;
             completions.fetch_add(1, Ordering::SeqCst);
+            Ok(())
         })
     };
     let task_id = task.id();
@@ -2678,6 +2767,49 @@ async fn cancelled_carrier_close_await_keeps_the_same_task_until_cleanup_complet
     controller.close_carrier().await.unwrap();
     assert_eq!(executions.load(Ordering::SeqCst), 1);
     assert_eq!(completions.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn shutdown_joins_cancelled_apply_carrier_close_within_original_deadline() {
+    let fixture = PrivateFixture::new();
+    let mut controller = download_progress_controller(&fixture);
+    let (started, starting) = tokio::sync::oneshot::channel();
+    let (dropped, stopped) = tokio::sync::oneshot::channel::<()>();
+    controller.carrier_close = Some(tokio::spawn(crate::carrier::update_check_close_fixture(
+        async move {
+            let _lifetime = dropped;
+            let _ = started.send(());
+            std::future::pending::<()>().await;
+        },
+    )));
+    let task_id = controller.carrier_close.as_ref().unwrap().id();
+    {
+        let close = controller.close_carrier();
+        tokio::pin!(close);
+        tokio::select! {
+            biased;
+            result = &mut close => panic!("cleanup completed before deadline: {result:?}"),
+            _ = starting => {},
+        }
+        tokio::time::advance(Duration::from_secs(2)).await;
+        // A controller signal drops apply's waiter, while its drain keeps running.
+    }
+    assert_eq!(controller.carrier_close.as_ref().unwrap().id(), task_id);
+    tokio::time::advance(Duration::from_secs(3)).await;
+    let error = tokio::time::timeout(Duration::from_millis(1), controller.close_carrier())
+        .await
+        .expect("shutdown must retain the original cleanup deadline")
+        .unwrap_err();
+    assert_eq!(
+        classify_apply_failure(&error),
+        ApplyFailure::SourceUnavailable
+    );
+    assert!(
+        stopped.await.is_err(),
+        "shutdown must join the aborted drain"
+    );
+    assert!(controller.carrier_close.is_none());
+    controller.close_carrier().await.unwrap();
 }
 
 #[test]
@@ -3989,6 +4121,75 @@ async fn real_controller_accepts_a_new_home_ready_after_45_seconds() {
     );
     assert_no_recovery_files(&fixture);
     owner.controller.stop_child().await.unwrap();
+}
+
+#[tokio::test]
+async fn stalled_apply_carrier_close_keeps_completed_update_successful() {
+    let RestartScenario {
+        fixture,
+        owner,
+        request,
+        fetch,
+        ..
+    } = restart_scenario(
+        |_| format!("#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'elastos 0.7.1\\n'; exit 0; fi\n{}",
+            fixture_home_exec("RESTART_FIXTURE_ROLE=candidate RESTART_FIXTURE_VERSION=0.7.1")),
+        0, None,
+    ).await;
+    let mut items = std::collections::HashMap::new();
+    for cid in [&request.head_cid, &request.release_cid] {
+        items.insert(cid.clone(), fetch(cid.clone()).await.unwrap());
+    }
+    let release: Value = serde_json::from_slice(&items[&request.release_cid]).unwrap();
+    let platform = &release["payload"]["platforms"][crate::update::detect_release_platform()];
+    for cid in [
+        platform["binary"]["cid"].as_str().unwrap().to_owned(),
+        platform["components"]["cid"].as_str().unwrap().to_owned(),
+        raw_cid(b"new support"),
+    ] {
+        items.insert(cid.clone(), fetch(cid).await.unwrap());
+    }
+    let source = installed_source(&fixture.data).unwrap();
+    let (_, endpoint, serving) =
+        crate::setup::tests::carrier_cid_source(&fixture.data, &source, items).await;
+    let mut controller = owner.controller;
+    controller.finish_request().unwrap();
+    controller.request = None;
+    queue_update(&fixture.data, request).unwrap();
+    let (started, starting) = tokio::sync::oneshot::channel();
+    let mut applying = tokio::spawn(async move {
+        let result = crate::carrier::with_test_client_close(
+            async move {
+                let _ = started.send(());
+                std::future::pending::<()>().await;
+            },
+            controller.process_request(),
+        )
+        .await;
+        (controller, result)
+    });
+    tokio::time::timeout(Duration::from_secs(30), starting)
+        .await
+        .unwrap()
+        .unwrap();
+    // The new Home is already ready and its transaction has finished.
+    assert!(fixture.data.join("candidate-ready").exists());
+    assert!(!InstallTransaction::has_pending_recovery(&fixture.binary));
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(5)).await;
+    let completed = tokio::time::timeout(Duration::from_millis(1), &mut applying).await;
+    tokio::time::resume();
+    let (mut controller, result) = completed
+        .expect("completed update must finish bounded cleanup")
+        .unwrap();
+    let status = status(&fixture.data).unwrap().unwrap();
+    controller.stop_child().await.unwrap();
+    endpoint.close().await;
+    serving.await.unwrap();
+    assert!(result.unwrap());
+    assert_eq!(status.current_version, "0.7.1");
+    assert_eq!(status.phase, "updated");
+    assert!(!fixture.directory.join(ACTIVE_REQUEST).exists());
 }
 
 #[tokio::test]
