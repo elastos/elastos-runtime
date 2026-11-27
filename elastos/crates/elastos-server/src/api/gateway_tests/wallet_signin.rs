@@ -54,7 +54,10 @@ async fn call(
         .header(HOST, "localhost:61180")
         .header(
             "origin",
-            if path.starts_with("/api/apps/") {
+            if path.starts_with("/api/apps/inbox/")
+                || path.starts_with("/api/apps/chat-room/")
+                || path == "/api/apps/wallet-walletconnect/internet"
+            {
                 "null"
             } else {
                 ORIGIN
@@ -2057,6 +2060,7 @@ async fn walletconnect_one_grant_system_requests_and_only_inbox_allows() {
     let app = gateway_router(state);
     let system = wallet_app_token(f.data.path(), SYSTEM_CAPSULE_ID, &f.actor);
     let inbox = wallet_app_token(f.data.path(), INBOX_CAPSULE_ID, &f.actor);
+    let home = issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &f.actor).unwrap();
     let (status, request) = call(
         &app,
         "/api/apps/wallet-walletconnect/internet",
@@ -2074,6 +2078,26 @@ async fn walletconnect_one_grant_system_requests_and_only_inbox_allows() {
     )
     .await;
     assert_eq!(request, same, "System files the existing Inbox request");
+    // The shared Add flow runs in Home, whose browser origin stays exact.
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/apps/wallet-walletconnect/internet")
+                .header(HOST, "localhost:61180")
+                .header("origin", ORIGIN)
+                .header("x-elastos-home-token", home.as_str())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(response.into_body(), 8192)
+        .await
+        .unwrap();
+    assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), request);
+
     let id = request["request"]["id"].as_str().unwrap();
     let action = format!("walletconnect-internet-allow:{id}");
     assert!(!call(
@@ -2110,7 +2134,7 @@ async fn walletconnect_one_grant_system_requests_and_only_inbox_allows() {
         } else {
             "/api/auth/wallet/signin/begin"
         };
-        let (status, out) = call(&app, path, if action == "add" {Some(&system)} else {None}, Some(json!({"action":action,"connector":"wallet-walletconnect","address":"","chain_id":20,"browser_secret":BROWSER}))).await;
+        let (status, out) = call(&app, path, if action == "add" {Some(&home)} else {None}, Some(json!({"action":action,"connector":"wallet-walletconnect","address":"","chain_id":20,"browser_secret":BROWSER}))).await;
         assert_eq!(status, StatusCode::OK);
     }
 }
