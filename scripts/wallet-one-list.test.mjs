@@ -81,6 +81,7 @@ for(const engine of ['chromium','webkit'])for(const width of [1440,390]) {
       assert.equal(await f.wallet.locator('#wallet-methods').count(),0);
       await shot(f.wallet,'wallet-list',width,engine);
       await f.wallet.getByRole('button',{name:'Add wallet for apps',exact:true}).click();
+      await f.wallet.locator('[data-wallet-open-method]').nth(2).waitFor();
       assert.equal(await f.wallet.locator('[data-wallet-open-method]').count(),3);await f.wallet.getByRole('button',{name:'Cancel',exact:true}).click();
       await f.wallet.getByRole('button',{name:'Open UniSat',exact:true}).click();
       await f.wallet.getByRole('heading',{name:'Used by',exact:true}).waitFor();
