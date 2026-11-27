@@ -9689,6 +9689,34 @@ async fn test_runtime_custody_creator_connector_approval_is_never_declined_or_se
 /// raises a new approval for the same file. A waiting WalletConnect stays live.
 #[tokio::test]
 async fn test_creator_same_file_after_expired_handoff_and_waiting_walletconnect() {
+    struct ExternalMintChain {
+        hash: String,
+        from: String,
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for ExternalMintChain {
+        async fn handle(&self, request: ResourceRequest) -> Result<ResourceResponse, ProviderError> {
+            MockChainProvider.handle(request).await
+        }
+
+        fn schemes(&self) -> Vec<&'static str> {
+            vec!["elastos"]
+        }
+
+        fn name(&self) -> &'static str {
+            "external-mint-chain"
+        }
+
+        async fn send_raw(&self, request: &Value) -> Result<Value, ProviderError> {
+            let mut answer = MockChainProvider.send_raw(request).await?;
+            if request["op"] == "transaction" && request["hash"] == self.hash {
+                answer["data"]["transaction"]["from"] = json!(self.from);
+            }
+            Ok(answer)
+        }
+    }
+
     let _guard = protected_content_gateway_mock_test_guard().lock().await;
     let fx = CreatorRecoveryFixture::new().await;
     enable_protected_content(fx.dir.path());
@@ -9771,10 +9799,21 @@ async fn test_creator_same_file_after_expired_handoff_and_waiting_walletconnect(
                 let last = approvals.len() - 1;
                 approvals.swap(index, last);
             }
-            fx.wallet_provider
+            let external_hash = fx
+                .wallet_provider
                 .provider
                 .complete_latest_transaction_approval()
                 .await;
+            fx.registry
+                .register_sub_provider(
+                    "chain",
+                    Arc::new(ExternalMintChain {
+                        hash: external_hash,
+                        from: input.wallet_account_address.clone(),
+                    }),
+                )
+                .await
+                .unwrap();
             {
                 let mut approvals = fx.wallet_provider.provider.approvals.lock().await;
                 let approval = approvals
