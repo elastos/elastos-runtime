@@ -12334,11 +12334,7 @@ async fn test_system_ai_provider_refuses_non_admin_and_non_signin_authority_on_e
                 let now = crate::auth::now_ts();
                 let principal = crate::auth::upsert_principal_for_binding_as_role_named(
                     dir.path(),
-                    ProofBinding::evm_account(
-                        1,
-                        "0x0000000000000000000000000000000000000001",
-                        now,
-                    ),
+                    ProofBinding::evm_account(1, "0x0000000000000000000000000000000000000001", now),
                     authority.principal_id.clone(),
                     crate::auth::RuntimePrincipalRole::Admin,
                     Some("owner"),
@@ -12346,12 +12342,9 @@ async fn test_system_ai_provider_refuses_non_admin_and_non_signin_authority_on_e
                 )
                 .unwrap();
                 assert!(principal.proof_binding_id.starts_with("proof:wallet:"));
-                let mut grant = crate::auth::load_active_session_grant(
-                    dir.path(),
-                    &authority.session_id,
-                    now,
-                )
-                .unwrap();
+                let mut grant =
+                    crate::auth::load_active_session_grant(dir.path(), &authority.session_id, now)
+                        .unwrap();
                 grant.proof_binding_id = principal.proof_binding_id;
                 grant.session_id = format!("auth:{}", uuid_like_token());
                 grant.grant_id = format!("grant:{}", uuid_like_token());
@@ -12378,12 +12371,16 @@ async fn test_system_ai_provider_refuses_non_admin_and_non_signin_authority_on_e
             (
                 "POST",
                 "/api/apps/system/ai-provider",
-                Some(json!({"provider": "openrouter", "api_key": "sk-or-fixture-valid", "model": "fixture/model"})),
+                Some(
+                    json!({"provider": "openrouter", "api_key": "sk-or-fixture-valid", "model": "fixture/model"}),
+                ),
             ),
             (
                 "POST",
                 "/api/apps/system/ai-provider/share",
-                Some(json!({"id": "model:fixture", "enabled": true, "terms_ack": "openrouter-5.1-5.2+model"})),
+                Some(
+                    json!({"id": "model:fixture", "enabled": true, "terms_ack": "openrouter-5.1-5.2+model"}),
+                ),
             ),
             (
                 "DELETE",
