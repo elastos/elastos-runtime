@@ -35,15 +35,7 @@ else if (process.env.WALLET_CONNECT_RETURN === "1") {
   const recoveries = process.env.WALLET_RETURN_RECOVERY === 'all' ? ['summary','approvals'] : [process.env.WALLET_RETURN_RECOVERY || ''];
   for (const marketFailure of recoveries) for (const slowMarket of delays) for (const width of [1440, 390]) {
     try {
-      const options={connectReturn:true,width,slowMarket,marketFailure};
-      try { await runSmoke(options); }
-      catch(error) {
-        if(engine!=='webkit' || error.message!=='timed out waiting for real Home GUI frame')throw error;
-        // Match the phone layout smoke's bounded fresh-context boot recovery.
-        // runSmoke has closed the failed browser; Wallet has not opened yet.
-        console.warn(`[wallet-connect-return] ${engine} ${width} ${slowMarket}: Home GUI boot retry in a fresh browser`);
-        await runSmoke(options);
-      }
+      await runSmoke({connectReturn:true,width,slowMarket,marketFailure});
     }
     catch (error) { failures.push(error); console.error(`[wallet-connect-return] FAIL ${engine} ${width} ${marketFailure || slowMarket}: ${error.stack}`); }
   }

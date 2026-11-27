@@ -2109,7 +2109,7 @@ async function runProfile(browser, engineId, profile, origin) {
     hasTouch: profile.hasTouch,
     reducedMotion: "reduce",
   };
-  let context = await browser.newContext(contextOptions);
+  const context = await browser.newContext(contextOptions);
   const surfaces = [];
   let dockProbe = null;
   let stageProbe = null;
@@ -2126,25 +2126,8 @@ async function runProfile(browser, engineId, profile, origin) {
   let backRacesProbe = null;
   let welcomeReachProbe = null;
   let viewportMeta = null;
-  let bootRetries = 0;
   try {
-    let booted;
-    try {
-      booted = await bootHome(context, origin);
-    } catch (error) {
-      // A lost WebKit blank-reset navigation can survive page replacement in
-      // the same context. Retire that context before the single recorded retry;
-      // a second boot failure keeps its frame state and fails the smoke.
-      if (!/Home GUI frame/.test(error.message)) {
-        throw error;
-      }
-      bootRetries += 1;
-      console.warn(`[home-phone-layout] ${engineId}/${profile.id} boot retry: ${error.message}`);
-      await context.close();
-      context = await browser.newContext(contextOptions);
-      booted = await bootHome(context, origin);
-    }
-    const { page, frame } = booted;
+    const { page, frame } = await bootHome(context, origin);
     viewportMeta = await settledHostViewportMeta(page, profile.id.startsWith("phone"));
     await recordPointerEvents(frame);
     for (const surface of SHELL_SURFACES) {
@@ -2216,7 +2199,7 @@ async function runProfile(browser, engineId, profile, origin) {
   } finally {
     await context.close();
   }
-  return { engine: engineId, profile: profile.id, viewport: profile.viewport, viewportMeta, surfaces, dock: dockProbe, stage: stageProbe, keyboard: keyboardProbe, spotlight: spotlightProbe, sheetHandles: sheetHandleProbe, link: linkProbe, touchMenu: touchMenuProbe, inboxOpen: inboxOpenProbe, home: homeProbe, homeEdit: homeEditProbe, back: backProbe, promptClose: promptCloseProbe, backRaces: backRacesProbe, welcomeReach: welcomeReachProbe, externalLink: await runExternalLinkProbe(browser, profile, origin, dir), browserLink: await runBrowserLinkProbe(browser, profile, origin), bootRetries };
+  return { engine: engineId, profile: profile.id, viewport: profile.viewport, viewportMeta, surfaces, dock: dockProbe, stage: stageProbe, keyboard: keyboardProbe, spotlight: spotlightProbe, sheetHandles: sheetHandleProbe, link: linkProbe, touchMenu: touchMenuProbe, inboxOpen: inboxOpenProbe, home: homeProbe, homeEdit: homeEditProbe, back: backProbe, promptClose: promptCloseProbe, backRaces: backRacesProbe, welcomeReach: welcomeReachProbe, externalLink: await runExternalLinkProbe(browser, profile, origin, dir), browserLink: await runBrowserLinkProbe(browser, profile, origin) };
 }
 
 // The link probe opens a real new tab, so it runs on its own Home: the layout
@@ -2883,7 +2866,7 @@ function phoneTouchMenuFailures(run) {
 const CLOSED_STREAM_REFRESH_TIMEOUT_MS = 10_000;
 const CLOSED_STREAM_PROFILE = PROFILES.find((profile) => profile.id === "phone-portrait");
 
-async function runClosedStream(browser, engineId, origin, { platform = process.platform } = {}) {
+async function runClosedStream(browser, engineId, origin) {
   const dir = join(outputRoot, engineId, "phone-portrait-closed-stream");
   mkdirSync(dir, { recursive: true });
   const context = await browser.newContext({
@@ -2895,31 +2878,7 @@ async function runClosedStream(browser, engineId, origin, { platform = process.p
   });
   fixture.closeEventStream = true;
   try {
-    // Linux WebKit can commit the blank reset after a fast fixture launch reply,
-    // discard the later GUI navigation, and leave src pointing at an unloaded URL.
-    // Let that reset load before releasing the mock root launch. This only paces
-    // fixture bootstrap; the closed stream and redraw-under-hold checks stay live.
-    if (platform === "linux" && engineId === "webkit") {
-      await context.addInitScript(() => {
-        document.addEventListener("load", (event) => {
-          const frame = event.target;
-          if (frame instanceof HTMLIFrameElement && frame.id === "active-shell-frame" && frame.getAttribute("src") === "about:blank") {
-            window.__phoneSmokeShellReset = { loadedAt: performance.now() };
-          }
-        }, true);
-      });
-      await context.route("**/api/apps/home/launch", async (route) => {
-        const input = route.request().postDataJSON();
-        if (input?.target === "home-gui" && input.query?.shell_mode === "root") {
-          const page = route.request().frame().page();
-          await page.waitForFunction(() => Boolean(window.__phoneSmokeShellReset), null, { timeout: BOOT_TIMEOUT_MS });
-          await page.evaluate(() => { window.__phoneSmokeShellReset.launchReleasedAt = performance.now(); });
-        }
-        await route.continue();
-      });
-    }
     const { page, frame } = await bootHome(context, origin);
-    const bootstrapReset = await page.evaluate(() => window.__phoneSmokeShellReset || null);
     const windowsBefore = await frame.locator(".window").count();
     const repliesAtBoot = fixture.summaryReplies;
     await waitFor(() => fixture.summaryReplies > repliesAtBoot, CLOSED_STREAM_REFRESH_TIMEOUT_MS,
@@ -2947,7 +2906,7 @@ async function runClosedStream(browser, engineId, origin, { platform = process.p
     await screenshot(page, dir, "closed-stream-dock-hold");
     const windowsAfter = await frame.locator(".window").count();
     await pressEscape(frame);
-    return { engine: engineId, target, expectedTitle, tileRemovedAfterMs, menu, windowsBefore, windowsAfter, bootstrapReset };
+    return { engine: engineId, target, expectedTitle, tileRemovedAfterMs, menu, windowsBefore, windowsAfter };
   } finally {
     fixture.closeEventStream = false;
     releaseHeldSummaries();
@@ -3812,7 +3771,6 @@ try {
     `home-phone-layout-smoke: PASS engines=${completedRuns.map((run) => run.engine).filter((value, index, all) => all.indexOf(value) === index).join("+")} ` +
       `viewport_meta=${Object.values(source.baseViewportMeta).every(Boolean) ? "base" : "changed"} ` +
       `bare_100vh=${source.bareViewportHeightUnits} backdrop_filters=${source.backdropFilters} ` +
-      `boot_retries=${report.runs.reduce((sum, run) => sum + run.bootRetries, 0)} ` +
       `${skippedEngines.length ? `skipped=${skippedEngines.join(",")} (not installed) ` : ""}report=${join(outputRoot, "report.json")}`,
   );
 } finally {

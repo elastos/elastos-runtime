@@ -14,17 +14,17 @@ test("Home forwards connector account hints to the kept-open Wallet in WebKit", 
 });
 
 for (const engine of ["chromium", "webkit"]) {
-  test(`Wallet preserves market refreshes after account errors in ${engine}`, windowTestOptions(engine,180000), async () => {
+  test(`Wallet preserves market refreshes after account errors in ${engine}`, windowTestOptions(engine,90000), async () => {
     const { stdout, stderr } = await promisify(execFile)(process.execPath, ["scripts/home-wallet-connector-launch-headless-smoke.mjs"], {
-      env: {...process.env, HOME_WALLET_CONNECTOR_ENGINE:engine, WALLET_CONNECT_RETURN:"1", WALLET_RETURN_RECOVERY:"all"}, timeout:175000,
+      env: {...process.env, HOME_WALLET_CONNECTOR_ENGINE:engine, WALLET_CONNECT_RETURN:"1", WALLET_RETURN_RECOVERY:"all"}, timeout:85000,
     });
     process.stdout.write(stdout);
     process.stderr.write(stderr);
   });
 
-  test(`Wallet updates and accepts the first wheel after MetaMask closes in ${engine}`, windowTestOptions(engine,180000), async () => {
+  test(`Wallet updates and accepts the first wheel after MetaMask closes in ${engine}`, windowTestOptions(engine,90000), async () => {
     const { stdout, stderr } = await promisify(execFile)(process.execPath, ["scripts/home-wallet-connector-launch-headless-smoke.mjs"], {
-      env: {...process.env, HOME_WALLET_CONNECTOR_ENGINE:engine, WALLET_CONNECT_RETURN:"1", WALLET_RETURN_SLOW:"all"}, timeout:175000,
+      env: {...process.env, HOME_WALLET_CONNECTOR_ENGINE:engine, WALLET_CONNECT_RETURN:"1", WALLET_RETURN_SLOW:"all"}, timeout:85000,
     });
     process.stdout.write(stdout);
     process.stderr.write(stderr);
