@@ -1913,7 +1913,7 @@ async fn walletconnect_one_grant_refuses_signin_without_inbox_allow() {
     wallet_fixture::enabled_relay(&f);
     let app = gateway_router(test_state(f.data.path()));
     let (status, out) = call(&app, "/api/auth/wallet/signin/begin", None, Some(json!({"connector":"wallet-walletconnect","address":"","chain_id":20,"browser_secret":BROWSER,"allow_temporary_internet":true}))).await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "{out}");
+    assert_eq!(status, StatusCode::FORBIDDEN);
     assert_eq!(out["error"], "walletconnect_internet_off");
 }
 
@@ -1924,7 +1924,7 @@ async fn walletconnect_one_grant_refuses_add_without_inbox_allow() {
         issue_home_launch_token_for_auth_grant(f.data.path(), HOME_CAPSULE_ID, &f.actor).unwrap();
     let app = gateway_router(test_state(f.data.path()));
     let (status, out) = call(&app, "/api/auth/wallet-methods/begin", Some(&token), Some(json!({"action":"add","connector":"wallet-walletconnect","address":"","chain_id":20,"browser_secret":BROWSER,"allow_temporary_internet":true}))).await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "{out}");
+    assert_eq!(status, StatusCode::FORBIDDEN);
     assert_eq!(out["error"], "walletconnect_internet_off");
 }
 
@@ -1944,7 +1944,7 @@ async fn walletconnect_one_grant_turn_off_ends_signin_and_add() {
             "/api/auth/wallet/signin/begin"
         };
         let (status, out) = call(&app, path, if action == "add" {Some(&token)} else {None}, Some(json!({"action":action,"connector":"wallet-walletconnect","address":"","chain_id":20,"browser_secret":BROWSER,"allow_temporary_internet":true}))).await;
-        assert_eq!(status, StatusCode::OK, "{out}");
+        assert_eq!(status, StatusCode::OK);
         let id = out["ceremony_id"].as_str().unwrap().to_string();
         let cancel = gateway_walletconnect::watch_attempt_socket_for_test(&state, &id).await;
         attempts.push((id, cancel));
@@ -1966,7 +1966,7 @@ async fn walletconnect_one_grant_turn_off_ends_signin_and_add() {
     )
     .unwrap();
     let (status, out) = call(&app, "/api/apps/inbox/actions", Some(&inbox), Some(json!({"action_id":"walletconnect-internet-turn-off:grant-fixture","step_up_token":approval}))).await;
-    assert_eq!(status, StatusCode::OK, "{out}");
+    assert_eq!(status, StatusCode::OK);
     for (id, cancel) in attempts {
         assert!(
             *cancel.borrow(),
@@ -1980,7 +1980,7 @@ async fn walletconnect_one_grant_turn_off_ends_signin_and_add() {
             "/api/auth/wallet/signin/begin"
         };
         let (status, out) = call(&app, path, if action == "add" {Some(&token)} else {None}, Some(json!({"action":action,"connector":"wallet-walletconnect","address":"","chain_id":20,"browser_secret":BROWSER,"allow_temporary_internet":true}))).await;
-        assert_eq!(status, StatusCode::FORBIDDEN, "{out}");
+        assert_eq!(status, StatusCode::FORBIDDEN);
         assert_eq!(out["error"], "walletconnect_internet_off");
     }
 }
@@ -2010,6 +2010,7 @@ async fn walletconnect_one_grant_refuses_new_attempts_after_turn_off() {
     )
     .unwrap();
     assert_eq!(call(&app, "/api/apps/inbox/actions", Some(&inbox), Some(json!({"action_id":"walletconnect-internet-turn-off:grant-fixture","step_up_token":approval}))).await.0, StatusCode::OK);
+    let mut outcomes = Vec::new();
     for action in ["signin", "add"] {
         for flag in [Some(true), Some(false), None] {
             let mut input = json!({"action":action,"connector":"wallet-walletconnect","address":"","chain_id":20,"browser_secret":BROWSER});
@@ -2028,9 +2029,14 @@ async fn walletconnect_one_grant_refuses_new_attempts_after_turn_off() {
                 Some(input),
             )
             .await;
-            assert_eq!(status, StatusCode::FORBIDDEN, "{action} {flag:?}: {out}");
-            assert_eq!(out["error"], "walletconnect_internet_off");
+            let code = out["error"].as_str().unwrap_or("success").to_string();
+            println!("GRANT MATRIX after_off {action} {flag:?}: {status} {code}");
+            outcomes.push((action, flag, status, code));
         }
+    }
+    for (action, flag, status, code) in outcomes {
+        assert_eq!(status, StatusCode::FORBIDDEN, "{action} {flag:?}");
+        assert_eq!(code, "walletconnect_internet_off");
     }
 }
 
@@ -2103,6 +2109,6 @@ async fn walletconnect_one_grant_system_requests_and_only_inbox_allows() {
             "/api/auth/wallet/signin/begin"
         };
         let (status, out) = call(&app, path, if action == "add" {Some(&system)} else {None}, Some(json!({"action":action,"connector":"wallet-walletconnect","address":"","chain_id":20,"browser_secret":BROWSER}))).await;
-        assert_eq!(status, StatusCode::OK, "{out}");
+        assert_eq!(status, StatusCode::OK);
     }
 }
