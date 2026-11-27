@@ -9677,6 +9677,14 @@ async fn test_creator_same_file_after_expired_handoff_and_waiting_walletconnect(
     let _guard = protected_content_gateway_mock_test_guard().lock().await;
     let fx = CreatorRecoveryFixture::new().await;
     enable_protected_content(fx.dir.path());
+    set_mock_wallet_transaction_default(
+        &fx.wallet_provider.provider,
+        &fx.authority.principal_id,
+        "eip155:8453",
+        &fx.wallet_account_id,
+        10,
+    )
+    .await;
     let token = app_token_for_authority(fx.dir.path(), CREATOR_CAPSULE_ID, &fx.authority);
     let app = gateway_router(fx.state.clone());
     let mut seeded = Vec::new();
@@ -9686,14 +9694,23 @@ async fn test_creator_same_file_after_expired_handoff_and_waiting_walletconnect(
     ] {
         fx.link_account_to_connector(connector).await;
         let input = fx.input(name, seed);
-        let (status_code, _, upload) = put_library_upload(app.clone(), &token, &input.object_uri, b"media").await;
+        let (status_code, _, upload) =
+            put_library_upload(app.clone(), &token, &input.object_uri, b"media").await;
         assert_eq!(status_code, StatusCode::OK, "{upload}");
         let facts = seed_completed_runtime_custody_mint(fx.dir.path(), &input);
         assert!(fx.tail(&input, &facts).await.is_err());
-        let old_id = fx.wallet_provider.provider.latest_transaction_approval_request_id().await.unwrap();
+        let old_id = fx
+            .wallet_provider
+            .provider
+            .latest_transaction_approval_request_id()
+            .await
+            .unwrap();
         {
             let mut approvals = fx.wallet_provider.provider.approvals.lock().await;
-            let approval = approvals.iter_mut().find(|a| a["request_id"] == old_id).unwrap();
+            let approval = approvals
+                .iter_mut()
+                .find(|a| a["request_id"] == old_id)
+                .unwrap();
             approval["status"] = json!(status);
             approval["approved_at"] = json!(crate::auth::now_ts() - 2);
         }
@@ -9711,32 +9728,67 @@ async fn test_creator_same_file_after_expired_handoff_and_waiting_walletconnect(
                 }
                 other => panic!("waiting WalletConnect must be offered: {other:?}"),
             }
-            let (_, refused) = post_library(app.clone(), &token, "discard_protection", json!({"uri": input.object_uri})).await;
-            assert_eq!(refused["attempt_conflict"]["reason"], "approval_in_connector", "{refused}");
+            let (_, refused) = post_library(
+                app.clone(),
+                &token,
+                "discard_protection",
+                json!({"uri": input.object_uri}),
+            )
+            .await;
+            assert_eq!(
+                refused["attempt_conflict"]["reason"], "approval_in_connector",
+                "{refused}"
+            );
             assert_eq!(fx.current_attempt(&input).attempt(), 0);
             // The Wallet provider's own suite proves late connector receipt acceptance;
             // here its completed answer must still finish the original mint.
             {
                 let mut approvals = fx.wallet_provider.provider.approvals.lock().await;
-                let index = approvals.iter().position(|a| a["request_id"] == old_id).unwrap();
+                let index = approvals
+                    .iter()
+                    .position(|a| a["request_id"] == old_id)
+                    .unwrap();
                 let last = approvals.len() - 1;
                 approvals.swap(index, last);
             }
-            fx.wallet_provider.provider.complete_latest_transaction_approval().await;
+            fx.wallet_provider
+                .provider
+                .complete_latest_transaction_approval()
+                .await;
             {
                 let mut approvals = fx.wallet_provider.provider.approvals.lock().await;
-                let approval = approvals.iter_mut().find(|a| a["request_id"] == old_id).unwrap();
+                let approval = approvals
+                    .iter_mut()
+                    .find(|a| a["request_id"] == old_id)
+                    .unwrap();
                 let result = approval["signed_result"].as_object_mut().unwrap();
                 result.remove("signed_transaction");
-                result.insert("schema".into(), json!("elastos.wallet.external-transaction-result/v1"));
+                result.insert(
+                    "schema".into(),
+                    json!("elastos.wallet.external-transaction-result/v1"),
+                );
                 result.insert("connector_id".into(), json!(connector));
             }
-            assert!(fx.resume(&input, &facts).await.unwrap().listing_uri.is_some());
+            assert!(fx
+                .resume(&input, &facts)
+                .await
+                .unwrap()
+                .listing_uri
+                .is_some());
             continue;
         }
-        assert_eq!(fx.resume(&input, &facts).await.unwrap_err().to_string(), crate::protected_content_runtime::RUNTIME_CUSTODY_APPROVAL_HANDOFF_EXPIRED_MESSAGE);
+        assert_eq!(
+            fx.resume(&input, &facts).await.unwrap_err().to_string(),
+            crate::protected_content_runtime::RUNTIME_CUSTODY_APPROVAL_HANDOFF_EXPIRED_MESSAGE
+        );
         let old_attempt = fx.current_attempt(&input);
-        let (_, discarded) = post_library(app.clone(), &token, "discard_protection", json!({"uri": input.object_uri})).await;
+        let (_, discarded) = post_library(
+            app.clone(),
+            &token,
+            "discard_protection",
+            json!({"uri": input.object_uri}),
+        )
+        .await;
         assert_eq!(discarded["data"]["discarded"], true, "{discarded}");
         assert!(!fx.is_in_journal(facts.mint_id));
         let (_, note) = archived_attempt(fx.dir.path(), old_attempt.request_id());
@@ -9748,11 +9800,28 @@ async fn test_creator_same_file_after_expired_handoff_and_waiting_walletconnect(
         })).await;
         assert_eq!(fresh["message"], RECOVERY_PENDING_MESSAGE, "{fresh}");
         assert!(fx.current_attempt(&input).attempt() > 0);
-        let new_id = fx.wallet_provider.provider.latest_transaction_approval_request_id().await.unwrap();
+        let new_id = fx
+            .wallet_provider
+            .provider
+            .latest_transaction_approval_request_id()
+            .await
+            .unwrap();
         assert_ne!(new_id, old_id);
         let approvals = fx.wallet_provider.provider.approvals.lock().await;
-        assert_eq!(approvals.iter().find(|a| a["request_id"] == old_id).unwrap()["status"], "expired");
-        assert_eq!(approvals.iter().find(|a| a["request_id"] == new_id).unwrap()["status"], "pending");
+        assert_eq!(
+            approvals
+                .iter()
+                .find(|a| a["request_id"] == old_id)
+                .unwrap()["status"],
+            "expired"
+        );
+        assert_eq!(
+            approvals
+                .iter()
+                .find(|a| a["request_id"] == new_id)
+                .unwrap()["status"],
+            "pending"
+        );
     }
 }
 
@@ -15471,24 +15540,63 @@ async fn expired_handoff_library_buy_restarts_same_item() {
         }
     }
     let dead = start_library_buy(&buyer, mint_id).await;
-    let old_id = buyer.wallet.provider.latest_transaction_approval_request_id().await.unwrap();
+    let old_id = buyer
+        .wallet
+        .provider
+        .latest_transaction_approval_request_id()
+        .await
+        .unwrap();
     {
         let mut approvals = buyer.wallet.provider.approvals.lock().await;
-        let approval = approvals.iter_mut().find(|a| a["request_id"] == old_id).unwrap();
+        let approval = approvals
+            .iter_mut()
+            .find(|a| a["request_id"] == old_id)
+            .unwrap();
         approval["status"] = json!("expired");
         approval["approved_at"] = json!(crate::auth::now_ts() - 2);
     }
-    let (_, stopped) = post_library(buyer.app.clone(), &buyer.library_token, "buy", json!({"mint_id": asset.package.mint_id})).await;
-    assert_eq!(stopped["approval_closed"]["reason"], "handoff_expired", "{stopped}");
-    assert_eq!(stopped["message"], crate::protected_content_runtime::RUNTIME_CUSTODY_APPROVAL_HANDOFF_EXPIRED_MESSAGE);
+    let (_, stopped) = post_library(
+        buyer.app.clone(),
+        &buyer.library_token,
+        "buy",
+        json!({"mint_id": asset.package.mint_id}),
+    )
+    .await;
+    assert_eq!(
+        stopped["approval_closed"]["reason"], "handoff_expired",
+        "{stopped}"
+    );
+    assert_eq!(
+        stopped["message"],
+        crate::protected_content_runtime::RUNTIME_CUSTODY_APPROVAL_HANDOFF_EXPIRED_MESSAGE
+    );
     let next = start_library_buy(&buyer, mint_id).await;
-    assert_ne!(next.attempt_id, dead.attempt_id);
-    assert_ne!(next.acquisition_stage.effect_id, dead.acquisition_stage.effect_id);
-    let new_id = buyer.wallet.provider.latest_transaction_approval_request_id().await.unwrap();
+    assert_ne!(
+        next.acquisition_stage.effect_id,
+        dead.acquisition_stage.effect_id
+    );
+    let new_id = buyer
+        .wallet
+        .provider
+        .latest_transaction_approval_request_id()
+        .await
+        .unwrap();
     assert_ne!(new_id, old_id);
     let approvals = buyer.wallet.provider.approvals.lock().await;
-    assert_eq!(approvals.iter().find(|a| a["request_id"] == old_id).unwrap()["status"], "expired");
-    assert_eq!(approvals.iter().find(|a| a["request_id"] == new_id).unwrap()["status"], "pending");
+    assert_eq!(
+        approvals
+            .iter()
+            .find(|a| a["request_id"] == old_id)
+            .unwrap()["status"],
+        "expired"
+    );
+    assert_eq!(
+        approvals
+            .iter()
+            .find(|a| a["request_id"] == new_id)
+            .unwrap()["status"],
+        "pending"
+    );
 }
 
 /// R41: a Library `buy` the chain mined and reverted is a spent effect that

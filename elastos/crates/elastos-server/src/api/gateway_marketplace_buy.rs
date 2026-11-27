@@ -1379,7 +1379,11 @@ async fn drive_runtime_market_purchase(
             outcome => {
                 // A declined or expired handoff ends this attempt. A new
                 // purchase gets its own effect; the old effect stays closed.
-                if matches!(outcome, RuntimeCustodyPurchaseStageOutcome::Declined | RuntimeCustodyPurchaseStageOutcome::HandoffExpired) {
+                if matches!(
+                    outcome,
+                    RuntimeCustodyPurchaseStageOutcome::Declined
+                        | RuntimeCustodyPurchaseStageOutcome::HandoffExpired
+                ) {
                     retire_runtime_market_attempt(state, &purchase)?;
                 } else {
                     persist(&mut purchase)?;
@@ -1433,7 +1437,11 @@ async fn drive_runtime_market_purchase(
         let buy_completion = match buy_completion {
             RuntimeCustodyPurchaseStageOutcome::Confirmed(completion) => *completion,
             outcome => {
-                if matches!(outcome, RuntimeCustodyPurchaseStageOutcome::Declined | RuntimeCustodyPurchaseStageOutcome::HandoffExpired) {
+                if matches!(
+                    outcome,
+                    RuntimeCustodyPurchaseStageOutcome::Declined
+                        | RuntimeCustodyPurchaseStageOutcome::HandoffExpired
+                ) {
                     retire_runtime_market_attempt(state, &purchase)?;
                 } else {
                     persist(&mut purchase)?;

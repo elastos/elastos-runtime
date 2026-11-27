@@ -204,7 +204,9 @@ pub(crate) fn classify_runtime_custody_unfinished_mint(
             Some(RuntimeCustodyCreatorEffectProgress::ClosedWithoutTransaction) => {
                 Stage::ApprovalClosed
             }
-            Some(RuntimeCustodyCreatorEffectProgress::HandoffExpired) => Stage::ApprovalHandoffExpired,
+            Some(RuntimeCustodyCreatorEffectProgress::HandoffExpired) => {
+                Stage::ApprovalHandoffExpired
+            }
             Some(RuntimeCustodyCreatorEffectProgress::Sent) => Stage::TransactionSent,
             Some(RuntimeCustodyCreatorEffectProgress::Mined) => Stage::TransactionMined,
             Some(RuntimeCustodyCreatorEffectProgress::InConnector { .. }) => {

@@ -1047,26 +1047,59 @@ async fn buy_offer_restarts_same_item_after_expired_handoff() {
         };
         env.buy_offer(body.clone()).await;
         let dead = env.market_purchase().unwrap();
-        let old_id = env.wallet.latest_transaction_approval_request_id().await.unwrap();
+        let old_id = env
+            .wallet
+            .latest_transaction_approval_request_id()
+            .await
+            .unwrap();
         {
             let mut approvals = env.wallet.approvals.lock().await;
-            let approval = approvals.iter_mut().find(|a| a["request_id"] == old_id).unwrap();
+            let approval = approvals
+                .iter_mut()
+                .find(|a| a["request_id"] == old_id)
+                .unwrap();
             approval["status"] = json!("expired");
             approval["approved_at"] = json!(crate::auth::now_ts() - 2);
         }
         let (_, stopped) = env.buy_offer(body.clone()).await;
-        assert_eq!(stopped["approval_closed"]["reason"], "handoff_expired", "{stopped}");
-        assert_eq!(stopped["message"], crate::protected_content_runtime::RUNTIME_CUSTODY_APPROVAL_HANDOFF_EXPIRED_MESSAGE);
+        assert_eq!(
+            stopped["approval_closed"]["reason"], "handoff_expired",
+            "{stopped}"
+        );
+        assert_eq!(
+            stopped["message"],
+            crate::protected_content_runtime::RUNTIME_CUSTODY_APPROVAL_HANDOFF_EXPIRED_MESSAGE
+        );
         assert_eq!(env.wallet_transaction_requests().await, 1);
         let (_, fresh) = env.buy_offer(body).await;
-        assert_eq!(fresh["buy_progress"]["stage"], if allowance { "allowance_approval" } else { "purchase_approval" }, "{fresh}");
+        assert_eq!(
+            fresh["buy_progress"]["stage"],
+            if allowance {
+                "allowance_approval"
+            } else {
+                "purchase_approval"
+            },
+            "{fresh}"
+        );
         let next = env.market_purchase().unwrap();
         assert_ne!(next.attempt_id, dead.attempt_id);
-        assert_ne!(next.acquisition_stage.effect_id, dead.acquisition_stage.effect_id);
-        assert_ne!(env.wallet.latest_transaction_approval_request_id().await.unwrap(), old_id);
+        assert_ne!(
+            next.acquisition_stage.effect_id,
+            dead.acquisition_stage.effect_id
+        );
+        assert_ne!(
+            env.wallet
+                .latest_transaction_approval_request_id()
+                .await
+                .unwrap(),
+            old_id
+        );
         assert_eq!(env.wallet_transaction_requests().await, 2);
         let approvals = env.wallet.approvals.lock().await;
-        let old = approvals.iter().find(|a| a["request_id"] == old_id).unwrap();
+        let old = approvals
+            .iter()
+            .find(|a| a["request_id"] == old_id)
+            .unwrap();
         assert_eq!(old["status"], "expired");
     }
 }
