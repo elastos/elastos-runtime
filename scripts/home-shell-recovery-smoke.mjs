@@ -67,7 +67,6 @@ class FakeElement {
     this.removed = false;
     this.textContent = "";
     this.title = "";
-    this.src = "";
     this.attributes = new Map();
     this.listeners = new Map();
     this.classList = new FakeClassList();
@@ -77,6 +76,12 @@ class FakeElement {
           cloneNode: () => new FakeElement(`:template-fragment`, false),
         }
       : { firstElementChild: null };
+  }
+
+  get src() { return this.attributes.get("src") || ""; }
+
+  set src(value) {
+    this.attributes.set("src", String(value));
   }
 
   addEventListener(type, callback) {
@@ -523,4 +528,6 @@ for (const reconnecting of [false, true]) {
   assert(f.timers.size === 0 && f.streams.every(stream => stream.closed), "auth refusal restarted the signed event channel");
 }
 
+assert(elementForSelector("#active-shell-frame").getAttribute("src") === elementForSelector("#active-shell-frame").src,
+  "fake iframe src property and content attribute diverged");
 console.log("[home-shell-recovery] PASS (6 event recovery cases)");

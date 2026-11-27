@@ -111,7 +111,6 @@ class FakeElement {
     this.removed = false;
     this.textContent = "";
     this.title = "";
-    this.src = "";
     this.attributes = new Map();
     this.listeners = new Map();
     this.classList = new FakeClassList();
@@ -121,6 +120,12 @@ class FakeElement {
           cloneNode: () => new FakeElement(`:template-fragment`, false),
         }
       : { firstElementChild: null };
+  }
+
+  get src() { return this.attributes.get("src") || ""; }
+
+  set src(value) {
+    this.attributes.set("src", String(value));
   }
 
   addEventListener(type, callback) {
@@ -333,4 +338,6 @@ assert(!localStorageValues.has("elastos.home.active-shell-hint"), "Home kept the
 assert(elementForSelector("#shell-host-recovery").hidden === true, "Home showed the shell recovery screen instead of falling back to the Desktop");
 assert(!requests.some((request) => request.url === "/api/apps/home/launch" && request.body?.target === "home-cli"), "Home tried to launch the unavailable shell", requests);
 
+assert(elementForSelector("#active-shell-frame").getAttribute("src") === elementForSelector("#active-shell-frame").src,
+  "fake iframe src property and content attribute diverged");
 console.log("[home-shell-unavailable-shell-fallback] PASS");

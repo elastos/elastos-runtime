@@ -57,8 +57,13 @@ test("phone smoke rejects an unknown case before starting a browser", () => {
   assert.match(result.stderr, /unsupported phone smoke case unknown/);
 });
 
-for (const smoke of ["phone", "wallet"]) for (const failure of ["Home GUI frame", "Home bootstrap"]) {
-  test(`${smoke} smoke preserves ${failure} failure evidence without retrying`, () => {
+for (const [smoke, failure, closeFails = false] of [
+  ["phone", "Home GUI frame"], ["phone", "Home bootstrap"],
+  ["wallet", "real Home GUI frame"], ["wallet", "real Home GUI frame", true],
+]) {
+  const failureMessage = `timed out waiting for ${failure}`;
+  test(closeFails ? "wallet smoke reports browser close failure and releases its server"
+    : `${smoke} smoke preserves ${failure} failure evidence without retrying`, () => {
     const directory = mkdtempSync(join(tmpdir(), "phone-layout-boot-"));
     try {
       const module = join(directory, "playwright.mjs");
@@ -66,30 +71,37 @@ for (const smoke of ["phone", "wallet"]) for (const failure of ["Home GUI frame"
         import assert from 'node:assert/strict';
         let contexts = 0;
         let pages = 0;
-        let closed = false;
-        const expectedContexts = ${smoke === 'phone' ? 1 : 2};
-        process.on('exit', () => { assert.equal(contexts, expectedContexts); assert.equal(pages, expectedContexts); });
+        const openContexts = new Set();
         const engine = {
           name: () => 'webkit',
           executablePath: () => ${JSON.stringify(module)},
           async launch() {
+            const contextClosers = [];
             return {
               async newContext(options) {
                 contexts += 1;
-                assert.ok(contexts <= expectedContexts, 'one cold context per profile, with no boot retry');
+                const contextId = contexts;
+                openContexts.add(contextId);
+                console.log('BOOT_CONTEXT_CREATED');
+                const close = async () => {
+                  if (openContexts.delete(contextId)) console.log('BOOT_CONTEXT_CLOSED');
+                };
+                contextClosers.push(close);
                 return {
                   async addInitScript() {},
                   async newPage() {
                     pages += 1;
-                    throw new Error('timed out waiting for ${failure}: FRAME_STATE_FIRST');
+                    throw new Error(${JSON.stringify(failureMessage)});
                   },
                   pages: () => [],
-                  async close() { closed = true; },
+                  close,
                 };
               },
               async close() {
                 assert.equal(pages, contexts);
-                assert.equal(closed, true, 'close the final context');
+                for (const close of contextClosers) await close();
+                assert.equal(openContexts.size, 0, 'browser close retires its contexts');
+                ${closeFails ? "throw new Error('WALLET_BROWSER_CLOSE_FAILED');" : ""}
               },
             };
           },
@@ -107,8 +119,12 @@ for (const smoke of ["phone", "wallet"]) for (const failure of ["Home GUI frame"
       });
       assert.equal(result.error, undefined);
       assert.equal(result.status, 1, 'the first boot failure fails the smoke');
-      assert.match(result.stderr, /FRAME_STATE_FIRST/);
+      assert.ok(result.stderr.includes(closeFails ? "WALLET_BROWSER_CLOSE_FAILED" : failureMessage), result.stderr);
       assert.doesNotMatch(result.stderr, /AssertionError/);
+      assert.equal(result.stdout.match(/BOOT_CONTEXT_CREATED/g)?.length || 0, smoke === "phone" ? 1 : 2,
+        "one cold context per profile, with no boot retry");
+      assert.equal(result.stdout.match(/BOOT_CONTEXT_CLOSED/g)?.length || 0, smoke === "phone" ? 1 : 2,
+        "close every context");
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

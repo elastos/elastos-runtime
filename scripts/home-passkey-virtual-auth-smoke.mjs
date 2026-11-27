@@ -746,6 +746,7 @@ async function homeState(page) {
     activeShellRootHidden: document.querySelector("#active-shell-root")?.hidden !== false,
     activeShellFrameHidden: document.querySelector("#active-shell-frame")?.hidden === true,
     activeShellFrameSrc: document.querySelector("#active-shell-frame")?.getAttribute("src") || "",
+    activeShellFrameRoute: document.querySelector("#active-shell-frame")?.dataset.route || "",
     activeShellFrameHasSrcdoc: document.querySelector("#active-shell-frame")?.hasAttribute("srcdoc") !== false,
     hostGuiDomPresent: Boolean(document.querySelector(
       "#desktop, .desktop-backdrop, .toolbar, .desktop-workspace, .taskbar, #launcher, #window-template",
@@ -757,7 +758,8 @@ async function assertSignedOutShell(page, state) {
   assert(
     state.authority === "unsigned" && state.shell === "resolving" && state.gui === "dormant"
       && state.activeShellRootHidden && state.activeShellFrameHidden
-      && state.activeShellFrameSrc === "about:blank" && !state.activeShellFrameHasSrcdoc
+      && ["", "about:blank"].includes(state.activeShellFrameSrc)
+      && !state.activeShellFrameRoute && !state.activeShellFrameHasSrcdoc
       && !state.hostGuiDomPresent,
     "A Home shell remained mounted behind the passkey prompt",
     state,

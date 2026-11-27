@@ -1430,8 +1430,11 @@ try {
       `connector_effects=${state.connectorEffects}`,
   );
 } finally {
-  await browser?.close().catch(() => {});
-  await new Promise((resolveClose) => server.close(resolveClose));
+  try {
+    await browser?.close();
+  } finally {
+    await new Promise((resolveClose) => server.close(resolveClose));
+  }
 }
 
 }
