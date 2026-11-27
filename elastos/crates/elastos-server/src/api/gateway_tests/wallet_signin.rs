@@ -1969,7 +1969,7 @@ async fn walletconnect_one_grant_turn_off_ends_signin_and_add() {
         &record["request"],
     )
     .unwrap();
-    let (status, out) = call(&app, "/api/apps/inbox/actions", Some(&inbox), Some(json!({"action_id":"walletconnect-internet-turn-off:grant-fixture","step_up_token":approval}))).await;
+    let (status, _out) = call(&app, "/api/apps/inbox/actions", Some(&inbox), Some(json!({"action_id":"walletconnect-internet-turn-off:grant-fixture","step_up_token":approval}))).await;
     assert_eq!(status, StatusCode::OK);
     for (id, cancel) in attempts {
         assert!(
@@ -2135,7 +2135,7 @@ async fn walletconnect_one_grant_system_requests_and_only_inbox_allows() {
         } else {
             "/api/auth/wallet/signin/begin"
         };
-        let (status, out) = call(&app, path, if action == "add" {Some(&home)} else {None}, Some(json!({"action":action,"connector":"wallet-walletconnect","address":"","chain_id":20,"browser_secret":BROWSER}))).await;
+        let (status, _out) = call(&app, path, if action == "add" {Some(&home)} else {None}, Some(json!({"action":action,"connector":"wallet-walletconnect","address":"","chain_id":20,"browser_secret":BROWSER}))).await;
         assert_eq!(status, StatusCode::OK);
     }
 }

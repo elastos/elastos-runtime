@@ -2041,8 +2041,8 @@ async fn walletconnect_one_grant_turn_off_closes_real_signin_relay() {
             Request::builder()
                 .uri("/api/auth/wallet/signin/begin")
                 .method("POST")
-                .header(HOST, "localhost:61180")
-                .header("origin", "http://localhost:61180")
+                .header(HOST, f.addr.as_str())
+                .header("origin", format!("http://{}", f.addr))
                 .header(CONTENT_TYPE, "application/json")
                 .extension(axum::extract::ConnectInfo(
                     "127.0.0.1:49152".parse::<std::net::SocketAddr>().unwrap(),
