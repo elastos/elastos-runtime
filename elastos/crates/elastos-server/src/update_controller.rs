@@ -40,6 +40,7 @@ const MAX_REFUSED: usize = 8;
 const LEASE_ENV: &str = "ELASTOS_UPDATE_CONTROLLER_LEASE";
 const HOST_ENV: &str = "ELASTOS_UPDATE_CONTROLLER_HOST";
 const MAX_PRIVATE_JSON: u64 = 256 * 1024;
+const UPDATE_CARRIER_CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 // Every Home start shares runtime_control::RUNTIME_READY_TIMEOUT. One update is
 // bounded by a candidate start plus one rollback start.
 use crate::runtime_control::RUNTIME_READY_TIMEOUT as READY_TIMEOUT;
@@ -1098,7 +1099,7 @@ struct Controller {
     generation: String,
     host_ready: bool,
     carrier: Option<Arc<crate::carrier::CarrierClient>>,
-    carrier_close: Option<tokio::task::JoinHandle<()>>,
+    carrier_close: Option<tokio::task::JoinHandle<Result<()>>>,
     download_meter: Arc<std::sync::Mutex<DownloadMeter>>,
     /// Test fixture: shortens the claimed candidate's readiness budget. A fixture Home
     /// binds an ephemeral port and reports it in `readiness-port`.
@@ -1111,13 +1112,15 @@ impl Controller {
         if self.carrier_close.is_none() {
             if let Some(client) = self.carrier.take() {
                 // Keep the same drain task when a signal cancels apply's await.
-                self.carrier_close = Some(tokio::spawn(async move { client.close().await }));
+                self.carrier_close = Some(tokio::spawn(async move {
+                    client.close_update_check(UPDATE_CARRIER_CLOSE_TIMEOUT).await
+                }));
             }
         }
         if let Some(task) = self.carrier_close.as_mut() {
             let result = task.await.context("Carrier cleanup task failed");
             self.carrier_close = None;
-            result?;
+            result??;
         }
         Ok(())
     }

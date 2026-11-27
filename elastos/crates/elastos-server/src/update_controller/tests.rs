@@ -1091,10 +1091,13 @@ async fn stalled_apply_carrier_close_fails_and_accepts_retry() {
         .unwrap();
     assert!(result.unwrap(), "the unchanged Home must keep serving");
     assert!(controller.carrier_close.is_none());
-    assert!(tokio::time::timeout(Duration::from_secs(1), stopped)
-        .await
-        .unwrap()
-        .is_err(), "the stalled drain must be aborted and joined");
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), stopped)
+            .await
+            .unwrap()
+            .is_err(),
+        "the stalled drain must be aborted and joined"
+    );
     let status = status(&fixture.data).unwrap().unwrap();
     assert_eq!(status.phase, "failed");
     assert_eq!(status.message, ApplyFailure::SourceUnavailable.message());
@@ -1103,7 +1106,10 @@ async fn stalled_apply_carrier_close_fails_and_accepts_retry() {
     let mut retry = request;
     retry.id = "b".repeat(32);
     queue_update(&fixture.data, retry.clone()).unwrap();
-    assert_eq!(read_private_json::<UpdateRequest>(&fixture.directory.join(REQUEST)).unwrap(), retry);
+    assert_eq!(
+        read_private_json::<UpdateRequest>(&fixture.directory.join(REQUEST)).unwrap(),
+        retry
+    );
     controller.stop_child().await.unwrap();
     endpoint.close().await;
     serving.await.unwrap();
@@ -2724,6 +2730,7 @@ async fn cancelled_carrier_close_await_keeps_the_same_task_until_cleanup_complet
             entered.notify_one();
             release.notified().await;
             completions.fetch_add(1, Ordering::SeqCst);
+            Ok(())
         })
     };
     let task_id = task.id();
@@ -2760,6 +2767,43 @@ async fn cancelled_carrier_close_await_keeps_the_same_task_until_cleanup_complet
     controller.close_carrier().await.unwrap();
     assert_eq!(executions.load(Ordering::SeqCst), 1);
     assert_eq!(completions.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn shutdown_joins_cancelled_apply_carrier_close_within_original_deadline() {
+    let fixture = PrivateFixture::new();
+    let mut controller = download_progress_controller(&fixture);
+    let (started, starting) = tokio::sync::oneshot::channel();
+    let (dropped, stopped) = tokio::sync::oneshot::channel::<()>();
+    controller.carrier_close = Some(tokio::spawn(crate::carrier::update_check_close_fixture(
+        async move {
+            let _lifetime = dropped;
+            let _ = started.send(());
+            std::future::pending::<()>().await;
+        },
+    )));
+    let task_id = controller.carrier_close.as_ref().unwrap().id();
+    {
+        let close = controller.close_carrier();
+        tokio::pin!(close);
+        tokio::select! {
+            biased;
+            result = &mut close => panic!("cleanup completed before deadline: {result:?}"),
+            _ = starting => {},
+        }
+        tokio::time::advance(Duration::from_secs(2)).await;
+        // A controller signal drops apply's waiter, while its drain keeps running.
+    }
+    assert_eq!(controller.carrier_close.as_ref().unwrap().id(), task_id);
+    tokio::time::advance(Duration::from_secs(3)).await;
+    let error = tokio::time::timeout(Duration::from_millis(1), controller.close_carrier())
+        .await
+        .expect("shutdown must retain the original cleanup deadline")
+        .unwrap_err();
+    assert_eq!(classify_apply_failure(&error), ApplyFailure::SourceUnavailable);
+    assert!(stopped.await.is_err(), "shutdown must join the aborted drain");
+    assert!(controller.carrier_close.is_none());
+    controller.close_carrier().await.unwrap();
 }
 
 #[test]
