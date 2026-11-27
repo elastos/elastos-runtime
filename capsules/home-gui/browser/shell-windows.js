@@ -1598,12 +1598,12 @@ function activateWindowEntry(entry) {
     setActiveStage(entry.id);
     return true;
   }
-  if (entry.node.classList.contains("hidden")) {
-    return restoreWindow(entry.id);
-  }
   const home = entry.desktopSpaceId || desktopStageId();
   if (!isDesktopSpace(getActiveStageId()) || getActiveStageId() !== home) {
     setActiveStage(home, { focus: false });
+  }
+  if (entry.node.classList.contains("hidden")) {
+    return restoreWindow(entry.id);
   }
   focusWindow(entry.id);
   return true;
@@ -1788,9 +1788,10 @@ export function openTarget(targetId, options = {}) {
     showAssistantFace(normalizedLaunchQuery(options.query));
     return;
   }
-  // Launching from a fullscreen Space returns to a Desktop first, so the new
-  // window opens somewhere it is visible.
-  ensureDesktopForNewLaunch();
+  // A new window needs a Desktop. An existing single window keeps its Space.
+  if (!isSingleWindowTarget(targetId) || !topBrowserWindowEntryForTarget(targetId)) {
+    ensureDesktopForNewLaunch();
+  }
   const launchOptions = { ...options, query: normalizedLaunchQuery(options.query) };
   const pendingLaunchKey = launchActionKey(targetId, launchOptions.query);
   const trackDefaultOpen = options.newWindow !== true;
@@ -1941,7 +1942,7 @@ async function launchBrowserTargetWindow(targetId, options = {}) {
       const frame = entry.node.querySelector(".window-frame");
       if (frame) postShellLayout(frame.contentWindow, { ...shellLayout(), visible: capsuleFrameVisible(frame) });
     }
-    else focusWindow(entry.id);
+    else activateWindowEntry(entry);
   }
   if (targetId === SYSTEM_APP_ID && Object.keys(options.query || {}).length > 0) {
     const ok = await requestSystemWindow(entry, "navigate", options.query);
