@@ -81,7 +81,7 @@ for(const engine of ['chromium','webkit'])for(const width of [1440,390]) {
       assert.equal(await f.wallet.locator('#wallet-methods').count(),0);
       await shot(f.wallet,'wallet-list',width,engine);
       await f.wallet.getByRole('button',{name:'Add wallet for apps',exact:true}).click();
-      await f.wallet.locator('[data-wallet-open-method]').nth(2).waitFor();assert.equal(await f.wallet.locator('[data-wallet-open-method]').count(),3);await f.wallet.getByRole('button',{name:'Cancel',exact:true}).click();
+      assert.equal(await f.wallet.locator('[data-wallet-open-method]').count(),3);await f.wallet.getByRole('button',{name:'Cancel',exact:true}).click();
       await f.wallet.getByRole('button',{name:'Open UniSat',exact:true}).click();
       await f.wallet.getByRole('heading',{name:'Used by',exact:true}).waitFor();
       const toggle=f.wallet.getByRole('switch',{name:'Apps and websites',exact:true});
@@ -122,6 +122,8 @@ for(const engine of ['chromium','webkit'])for(const width of [1440,390]) {
       assert.equal(await f.system.getByRole('heading',{name:'Wallets for sign-in',exact:true}).count(),1);
       assert.equal(await f.system.getByRole('link',{name:'Open Wallet',exact:true}).count(),2);
       await shot(f.system,'system-accounts',width,engine,f.page);
+      // The fixture navigates Wallet here; finish its initial read before replacing the frame document.
+      await f.wallet.getByText('125.00 ELA',{exact:true}).waitFor({state:'attached'});
       await f.system.locator('[data-wallet-method]').filter({hasText:'UniSat'}).getByRole('link',{name:'Open Wallet'}).click();
       await f.wallet.getByRole('heading',{name:'Used by'}).waitFor();assert.equal(await f.wallet.locator('.one-identity strong').textContent(),'UniSat');
       await f.wallet.getByRole('link',{name:'Manage in System'}).click();
@@ -166,6 +168,128 @@ for(const engine of ['chromium','webkit'])for(const width of [1440,390]) {
         if(kind==='walletconnect'||connectedName==='Rabby Wallet')assert.equal(measurements.peer,connectedName);
       }
     } finally {await f.close();}
+  });
+}
+// A refresh can finish between the native pointer press and release.
+for(const engine of ['chromium','webkit'])for(const width of [1440,390])for(const phase of ['inventory','balance']) {
+  test(`one wallet list: Add survives ${phase} refresh during a click in ${engine} at ${width}`,windowTestOptions(engine,45000),async()=>{
+    const f=await setup(engine,width);
+    try {
+      await show(f,'wallet');await f.wallet.getByText('125.00 ELA',{exact:true}).waitFor();
+      const add=f.wallet.getByRole('button',{name:'Add wallet for apps',exact:true});
+      const endpoint=phase==='inventory'?'inventory':'summary';
+      let release,requested;
+      const held=new Promise(resolve=>release=resolve),seen=new Promise(resolve=>requested=resolve);
+      await f.context.route(`**/api/apps/wallet/wallet/${endpoint}`,async route=>{
+        requested();await held;await route.continue();
+      });
+      try {
+        await refresh(f);await seen;
+        const bounds=await add.boundingBox();
+        await f.page.mouse.move(bounds.x+bounds.width/2,bounds.y+bounds.height/2);await f.page.mouse.down();
+        // Only data read after the press can satisfy the rendered-value barrier.
+        if(phase==='inventory')f.fixture.state.connected.find(account=>account.account_id==='app:phone').wallet_display_name='Trust';
+        f.fixture.state.balanceValues[f.addresses.home]['esc-mainnet']=String(126n*10n**18n);
+        release();
+        // renderAll also paints these outside the inventory. Its inventory paint
+        // may wait for release, so use the independent paint as the barrier.
+        await f.wallet.locator('#wallet-accounts').getByText('126 ELA',{exact:true}).waitFor({state:'attached'});
+        await f.page.mouse.up();
+        const chooser=f.wallet.getByRole('dialog',{name:'Add wallet for apps',exact:true});
+        await chooser.waitFor();assert.equal(await chooser.locator('[data-wallet-open-method]').count(),3);
+        await f.wallet.getByText('126.00 ELA',{exact:true}).waitFor();
+        // A further rendered refresh preserves the chooser and its Cancel control.
+        f.fixture.state.balanceValues[f.addresses.home]['esc-mainnet']=String((phase==='inventory'?124n:127n)*10n**18n);
+        await refresh(f);await f.wallet.getByText(phase==='inventory'?'124.00 ELA':'127.00 ELA',{exact:true}).waitFor();
+        assert.equal(await chooser.isVisible(),true);await chooser.getByRole('button',{name:'Cancel',exact:true}).click();
+        if(phase==='inventory')await f.wallet.getByRole('button',{name:'Open Trust',exact:true}).waitFor();
+      } finally {
+        release();await f.page.mouse.up();await f.context.unroute(`**/api/apps/wallet/wallet/${endpoint}`);
+      }
+      assert.deepEqual(f.errors,[]);
+    } finally {await f.close();}
+  });
+}
+// Each control must act after a real background paint between down and up.
+for(const engine of ['chromium','webkit'])for(const width of [1440,390])for(const control of ['Open','Manage address','Try again']) {
+  test(`one wallet list: held ${control} survives refresh in ${engine} at ${width}`,windowTestOptions(engine,45000),async()=>{
+    const f=await setup(engine,width);let release=()=>{},partial=control==='Try again';
+    try {
+      await show(f,'wallet');await f.wallet.getByText('125.00 ELA',{exact:true}).waitFor();
+      if(partial) {
+        await f.context.route('**/api/apps/wallet/wallet/inventory',async route=>{
+          const response=await route.fetch(),inventory=await response.json();
+          inventory.signin_available=!partial;await route.fulfill({response,json:inventory});
+        });
+        await refresh(f);await f.wallet.getByRole('button',{name:'Try again',exact:true}).waitFor();
+      }
+      if(control==='Manage address')await f.wallet.getByRole('button',{name:'Open Home address',exact:true}).click();
+      const target=f.wallet.getByRole('button',{name:control==='Open'?'Open Home address':control,exact:true});
+      await target.scrollIntoViewIfNeeded();
+      let requested;
+      const held=new Promise(resolve=>release=resolve),seen=new Promise(resolve=>requested=resolve);
+      await f.context.route('**/api/apps/wallet/wallet/summary',async route=>{requested();await held;await route.continue();});
+      await refresh(f);await seen;
+      const bounds=await target.boundingBox();
+      await f.page.mouse.move(bounds.x+bounds.width/2,bounds.y+bounds.height/2);await f.page.mouse.down();
+      f.fixture.state.balanceValues[f.addresses.home]['esc-mainnet']=String(126n*10n**18n);release();
+      // This real renderAll paint precedes inventory.update in the same task.
+      await f.wallet.locator('#wallet-accounts').getByText('126 ELA',{exact:true}).waitFor({state:'attached'});
+      partial=false;await f.page.mouse.up();
+      if(control==='Open')await f.wallet.getByRole('button',{name:'Back to wallets',exact:true}).waitFor();
+      else if(control==='Manage address')await f.wallet.getByText('Rename',{exact:true}).waitFor();
+      else {
+        await f.wallet.getByRole('button',{name:'Try again',exact:true}).waitFor({state:'detached'});
+        assert.equal(await f.wallet.getByText('Home could not load wallet sign-in use.',{exact:true}).count(),0);
+      }
+      assert.deepEqual(f.errors,[]);
+    } finally {release();await f.page.mouse.up();await f.close();}
+  });
+}
+// Exercise the real renderer's release paths, including a heading mode swap.
+for(const engine of ['chromium','webkit'])for(const width of [1440,390]) {
+  test(`one wallet list: press release paths in ${engine} at ${width}`,windowTestOptions(engine,45000),async()=>{
+    const f=await setup(engine,width);
+    try {
+      await show(f,'wallet');await f.wallet.getByText('125.00 ELA',{exact:true}).waitFor();
+      await f.wallet.locator('body').evaluate(async()=>{
+        const {createWalletInventory}=await import('/apps/wallet/wallet-inventory.js');
+        const inventory=await (await fetch('/api/apps/wallet/wallet/inventory')).json();
+        const root=document.createElement('div');root.id='press-fixture';root.style.cssText='position:fixed;inset:0;z-index:9999;overflow:auto;background:var(--el-surface)';document.body.append(root);
+        const view=createWalletInventory({root,getApprovalMethods:()=>({walletconnect:{available:true}})});
+        view.update(inventory);window.pressFixture={root,view,inventory};
+      });
+      const root=f.wallet.locator('#press-fixture');
+      for(const ending of ['outside','pointercancel','lostpointercapture','blur','Space','Enter','mode swap']) {
+        await root.evaluate(()=>{const f=window.pressFixture;f.view.open('');f.view.update(f.inventory);});
+        const target=root.getByRole('button',{name:ending==='mode swap'?'Add wallet for apps':'Open Home address',exact:true});
+        const pressed=await target.elementHandle();
+        if(ending==='Space'||ending==='Enter') {await target.focus();await f.page.keyboard.down(ending);}
+        else {await target.scrollIntoViewIfNeeded();const b=await target.boundingBox();await f.page.mouse.move(b.x+b.width/2,b.y+b.height/2);await f.page.mouse.down();}
+        await root.evaluate((_root,ending)=>{
+          const f=window.pressFixture;
+          f.view.update({...f.inventory,account_name:'Intermediate'});
+          f.view.update({...f.inventory,account_name:'Latest'});
+          if(ending==='mode swap')f.view.open(f.inventory.entries[0].inventory_id);
+        },ending);
+        assert.equal(await pressed.evaluate(node=>node.isConnected),true,ending+' keeps the pressed node');
+        if(ending==='outside') {await f.page.mouse.move(2,2);await f.page.mouse.up();}
+        else if(ending==='Space'||ending==='Enter')await f.page.keyboard.up(ending);
+        else if(ending==='mode swap')await f.page.mouse.up();
+        else {
+          if(ending==='blur')await root.evaluate(()=>window.dispatchEvent(new Event('blur')));
+          else await pressed.evaluate((node,type)=>node.dispatchEvent(new PointerEvent(type,{bubbles:true,pointerId:1})),ending);
+          // Wait for the pending render before the eventual physical release.
+        }
+        if(['Space','Enter','mode swap'].includes(ending))await root.getByRole('button',{name:'Back to wallets',exact:true}).waitFor();
+        else await root.getByText("Signs in to Latest's account",{exact:true}).first().waitFor();
+        if(ending==='mode swap') {
+          const chooser=f.wallet.getByRole('dialog',{name:'Add wallet for apps',exact:true});await chooser.waitFor();await chooser.getByRole('button',{name:'Cancel',exact:true}).click();
+        }
+        await f.page.mouse.up();await pressed.dispose();
+      }
+      assert.deepEqual(f.errors,[]);
+    } finally {await f.page.keyboard.up('Space');await f.page.keyboard.up('Enter');await f.page.mouse.up();await f.close();}
   });
 }
 for(const engine of ['chromium','webkit'])test(`one wallet list keeps saved identities while unavailable methods leave Add in ${engine}`,windowTestOptions(engine,30000),async()=>{
