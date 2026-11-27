@@ -501,6 +501,32 @@ async function waitForCondition(check, timeoutMs, label) {
   throw new Error(`timed out waiting for ${label}`);
 }
 
+function trackWalletRequests(page) {
+  const inFlight = new Set();
+  let lastActivity = Date.now();
+  page.on("request", (request) => {
+    inFlight.add(request);
+    lastActivity = Date.now();
+  });
+  const settled = (request) => {
+    inFlight.delete(request);
+    lastActivity = Date.now();
+  };
+  page.on("requestfinished", settled);
+  page.on("requestfailed", settled);
+  page.__waitForWalletIdle = async () => {
+    // Load-state networkidle can already be satisfied when an action starts a
+    // refresh. Observe a fresh quiet interval so inventory and its follow-on
+    // market reads finish before this smoke navigates or closes the page.
+    lastActivity = Date.now();
+    await waitForCondition(
+      () => inFlight.size === 0 && Date.now() - lastActivity >= 500,
+      5000,
+      "Wallet requests and market refresh to settle",
+    );
+  };
+}
+
 async function assertNoErrors(page, server, label) {
   const details = await page.evaluate(() => ({
     fixture: structuredClone(window.__walletFixture),
@@ -563,7 +589,7 @@ async function openAccountMenu(frame) {
 async function run(engine) {
   const server=await startServer(),tempDir=await mkdtemp(join(tmpdir(),'wallet-uiux-'));
   const browser=await ({chromium,webkit}[engine]).launch({...engine==='chromium'?productSmokeLaunchOptions():{},headless:true});
-  const pageWithErrors=async viewport=>{const page=await browser.newPage({viewport});page.__pageErrors=[];page.__consoleErrors=[];page.__requestFailures=[];page.on('pageerror',e=>page.__pageErrors.push(e.message));page.on('console',m=>{if(m.type()==='error')page.__consoleErrors.push(m.text());});page.on('requestfailed',r=>page.__requestFailures.push(r.url()));return page;};
+  const pageWithErrors=async viewport=>{const page=await browser.newPage({viewport});page.__pageErrors=[];page.__consoleErrors=[];page.__requestFailures=[];page.on('pageerror',e=>page.__pageErrors.push(e.message));page.on('console',m=>{if(m.type()==='error')page.__consoleErrors.push(m.text());});page.on('requestfailed',r=>page.__requestFailures.push(r.url()));if(engine==='webkit')trackWalletRequests(page);return page;};
   try {
     const locked=await pageWithErrors({width:1280,height:900});await locked.goto(server.baseUrl+'/fixture-host.html?mode=locked');const lockedFrame=await walletFrame(locked);
     await lockedFrame.getByText('Open Wallet from Home.',{exact:true}).waitFor();assert(server.state.summaryCalls===0&&server.state.priceCalls===0&&server.state.balanceCalls.length===0,'a locked Wallet keeps its APIs closed');await locked.close();
@@ -618,11 +644,11 @@ async function run(engine) {
     assert(await frame.locator('textarea[name="recovery_key"]').inputValue()==='','Import starts without a recovery secret');
     assert(await frame.getByText('Requires fresh passkey verification.',{exact:true}).isVisible(),'Import explains its passkey approval');
     await frame.getByRole('button',{name:'Cancel',exact:true}).click();
-    await assertNoErrors(page,server,'one-list journeys');await page.close();
+    if(engine==='webkit')await page.__waitForWalletIdle();await assertNoErrors(page,server,'one-list journeys');await page.close();
     server.state.accounts=structuredClone(defaultState().accounts);server.state.approvals=[{...defaultState().approvals[0],request_id:'approved-send',status:'approved',approved_at:Math.floor(Date.now()/1000),proof_type:'siwe',intent:'transaction_intent',connector_id:'wallet-walletconnect',transaction_hash:'0x'+'ab'.repeat(32),reason:'Payment result needs checking'}];
     const rail=await pageWithErrors({width:390,height:844});await rail.goto(server.baseUrl+'/fixture-host.html?mode=rail',{waitUntil:'networkidle'});let railFrame=await walletFrame(rail);await railFrame.getByRole('button',{name:'Dismiss',exact:true}).waitFor();assert(await railFrame.locator('#wallet-approvals-badge').textContent()==='1','WalletConnect unfinished send counts in Activity');const railState=await railFrame.evaluate(()=>({presentation:document.documentElement.dataset.walletPresentation,heroNavHidden:document.querySelector('.wallet-hero-nav')?.hasAttribute('hidden')===true}));assert(railState.presentation==='rail'&&railState.heroNavHidden,'Rail keeps its reviewed presentation');await assertNoHorizontalOverflow(railFrame,'late phone result');await railFrame.getByRole('button',{name:'Dismiss',exact:true}).click();await waitForCondition(()=>server.state.rejectBodies.length===1,5000,'dismissal');await railFrame.getByRole('button',{name:'Dismiss',exact:true}).waitFor({state:'hidden'});
     server.state.approvals[0].completed_at=Math.floor(Date.now()/1000);
-    await rail.waitForLoadState('networkidle');await rail.reload({waitUntil:'networkidle'});railFrame=await walletFrame(rail);
+    if(engine==='webkit')await rail.__waitForWalletIdle();await rail.waitForLoadState('networkidle');await rail.reload({waitUntil:'networkidle'});railFrame=await walletFrame(rail);
     await railFrame.getByRole('button',{name:'Open Family',exact:true}).first().click();
     await railFrame.getByRole('button',{name:'Activity',exact:true}).click();
     const lateRow=railFrame.locator('.wallet-activity-row');
@@ -632,16 +658,16 @@ async function run(engine) {
     await assertNoHorizontalOverflow(railFrame,'phone late hash');
     for(const connector_id of ['wallet-metamask','wallet-unisat']){
       server.state.approvals=[{...server.state.approvals[0],status:'approved',connector_id,expires_at:Math.floor(Date.now()/1000)+300,transaction_hash:undefined}];
-      await rail.waitForLoadState('networkidle');await rail.reload({waitUntil:'networkidle'});railFrame=await walletFrame(rail);
+      if(engine==='webkit')await rail.__waitForWalletIdle();await rail.waitForLoadState('networkidle');await rail.reload({waitUntil:'networkidle'});railFrame=await walletFrame(rail);
       await railFrame.locator('.one-wallet').first().waitFor();
       assert(await railFrame.locator('[data-wallet-request-id="approved-send"]').count()===0,`${connector_id} offers no second approval`);
     }
     for(const name of ['Scripted wallet','Phone <img src=x onerror=alert(1)>','界'.repeat(40),'x'.repeat(41)]){
-      server.state.accounts=[{account_id:'phone',address:sendAddress,connector_id:'wallet-walletconnect',proof_type:'siwe',chain_namespace:'eip155:8453',wallet_display_name:name,wallet_mark:'wallet'}];server.state.approvals=[];await rail.waitForLoadState('networkidle');await rail.reload({waitUntil:'networkidle'});railFrame=await walletFrame(rail);
+      server.state.accounts=[{account_id:'phone',address:sendAddress,connector_id:'wallet-walletconnect',proof_type:'siwe',chain_namespace:'eip155:8453',wallet_display_name:name,wallet_mark:'wallet'}];server.state.approvals=[];if(engine==='webkit')await rail.__waitForWalletIdle();await rail.waitForLoadState('networkidle');await rail.reload({waitUntil:'networkidle'});railFrame=await walletFrame(rail);
       await railFrame.locator('.one-identity strong').filter({hasText:name.length>40?'Your wallet':name}).waitFor();assert(await railFrame.locator('img[onerror]').count()===0,'wallet names render as text');await assertNoHorizontalOverflow(railFrame,'phone name');
       await railFrame.getByRole('button',{name:'Settings',exact:true}).click();await railFrame.locator('#wallet-settings-drawer').waitFor();await assertNoHorizontalOverflow(railFrame,'phone settings');
     }
-    await assertNoErrors(rail,server,'rail');await rail.close();console.log(`wallet-product-layout-smoke: PASS ${engine} (one list, Send, Receive, preferences, clipboard, connector, default, recovery, rename, delete, create/import Cancel, late result and peer names)`);
+    if(engine==='webkit')await rail.__waitForWalletIdle();await assertNoErrors(rail,server,'rail');await rail.close();console.log(`wallet-product-layout-smoke: PASS ${engine} (one list, Send, Receive, preferences, clipboard, connector, default, recovery, rename, delete, create/import Cancel, late result and peer names)`);
   } finally {await browser.close().catch(()=>{});await server.close().catch(()=>{});if(process.env.KEEP_WALLET_UIUX_SMOKE_TMP!=='1')await rm(tempDir,{recursive:true,force:true});}
 }
 const selectedEngine=process.env.WALLET_LAYOUT_ENGINE;
