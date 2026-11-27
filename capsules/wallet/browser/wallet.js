@@ -576,7 +576,7 @@ function onWalletActionClick(event) {
 async function refreshWalletState() {
   if (refreshWalletStateInFlight) {
     walletRefreshQueued = true;
-    return refreshWalletStateInFlight.then(refreshWalletMarketState);
+    return refreshWalletStateInFlight.finally(refreshWalletMarketState);
   }
   refreshWalletStateInFlight = (async () => {
     try {
@@ -588,12 +588,14 @@ async function refreshWalletState() {
       refreshWalletStateInFlight = null;
     }
   })();
-  return refreshWalletStateInFlight.then(refreshWalletMarketState);
+  // Market reads serve the committed list even when its requests are unavailable
+  // or a later account fetch fails. Preserve the account error for the caller.
+  return refreshWalletStateInFlight.finally(refreshWalletMarketState);
 }
 
 async function loadWalletState() {
-  walletStateRevision += 1;
   if (!activeHomeToken) {
+    walletStateRevision += 1;
     currentAccounts = [];
     currentDefaults = [];
     currentBalanceRows = [];
@@ -625,6 +627,8 @@ async function loadWalletState() {
     : [];
   if (!requestsUnavailable) currentRequests = requestsWithDecisions(Array.isArray(walletApprovals && walletApprovals.approval_requests)
     ? walletApprovals.approval_requests : []);
+  // Only a committed account read can supersede an in-flight market result.
+  walletStateRevision += 1;
   // Saved wallets and the list's scroll range are ready before market reads.
   renderAll();
   if (requestsUnavailable) throw new Error("Wallet could not load your requests.");

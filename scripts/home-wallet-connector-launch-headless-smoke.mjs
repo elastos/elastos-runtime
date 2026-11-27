@@ -32,9 +32,10 @@ else if (process.env.MARKETPLACE_CONNECT_BEFORE === "1") {
 else if (process.env.WALLET_CONNECT_RETURN === "1") {
   const failures = [];
   const delays = process.env.WALLET_RETURN_SLOW === 'all' ? ['prices','balances','existing-balances'] : [process.env.WALLET_RETURN_SLOW || 'normal'];
-  for (const slowMarket of delays) for (const width of [1440, 390]) {
+  const recoveries = process.env.WALLET_RETURN_RECOVERY === 'all' ? ['summary','approvals'] : [process.env.WALLET_RETURN_RECOVERY || ''];
+  for (const marketFailure of recoveries) for (const slowMarket of delays) for (const width of [1440, 390]) {
     try {
-      const options={connectReturn:true,width,slowMarket};
+      const options={connectReturn:true,width,slowMarket,marketFailure};
       try { await runSmoke(options); }
       catch(error) {
         if(engine!=='webkit' || error.message!=='timed out waiting for real Home GUI frame')throw error;
@@ -44,12 +45,12 @@ else if (process.env.WALLET_CONNECT_RETURN === "1") {
         await runSmoke(options);
       }
     }
-    catch (error) { failures.push(error); console.error(`[wallet-connect-return] FAIL ${engine} ${width} ${slowMarket}: ${error.stack}`); }
+    catch (error) { failures.push(error); console.error(`[wallet-connect-return] FAIL ${engine} ${width} ${marketFailure || slowMarket}: ${error.stack}`); }
   }
   if (failures.length) throw new AggregateError(failures, 'Wallet connection return failed');
 } else await runSmoke();
 
-async function runSmoke({connectReturn = false, width = 1440, slowMarket = 'normal'} = {}) {
+async function runSmoke({connectReturn = false, width = 1440, slowMarket = 'normal', marketFailure = ''} = {}) {
 const repoRoot = fileURLToPath(new URL("../", import.meta.url));
 const principalId = "did:elastos:fixture-wallet-connector-launch";
 const homeAuthorityToken = "fixture-home-authority-token";
@@ -83,6 +84,10 @@ const state = {
     {account_id:'fixture-bitcoin',address:bitcoinAddress,chain_namespace:'bip122:000000000019d6689c085ae165831e93',proof_type:'bip322_simple',connector_id:'wallet-unisat',wallet_display_name:'UniSat'},
   ] : [],
   walletSummaryReads: 0,
+  summaryFailure: false,
+  approvalsUnavailable: false,
+  balanceHex: marketFailure ? '0xde0b6b3a7640000' : '0x0',
+  balanceReads: [],
   holdMarket: '',
   heldMarket: [],
   homeStateWrites: [],
@@ -345,15 +350,18 @@ async function handleApi(req, res, url) {
       return true;
     }
     state.walletSummaryReads++;
+    if(state.summaryFailure) {json(res,503,{error:'fixture summary unavailable'});return true;}
     json(res, 200, {
       wallet_accounts: { accounts: state.walletAccounts, default_accounts: [] },
-      wallet_approvals: { approval_requests: state.approvalRequests },
+      wallet_approvals: { available: !state.approvalsUnavailable, approval_requests: state.approvalRequests },
       approval_methods: { walletconnect: { available: true } },
     });
     return true;
   }
   if (connectReturn && url.pathname === '/api/provider/chain/balance') {
-    const value = {status:'ok',data:{balance_hex:'0x0'}};
+    const input = await readBody(req);
+    state.balanceReads.push({address:input.address,network:input.network});
+    const value = {status:'ok',data:{balance_hex:state.balanceHex}};
     if (state.holdMarket === 'balances') state.heldMarket.push(()=>json(res,200,value));
     else json(res,200,value);
     return true;
@@ -889,6 +897,50 @@ try {
     const wallet = await (await walletFrame.elementHandle()).contentFrame();
     await wallet.locator('.one-wallet').nth(1).waitFor();
     await wallet.evaluate(()=>{window.walletReturnDocument=document;});
+    if(marketFailure) {
+      const balance = amount => wallet.waitForFunction(value=>[...document.querySelectorAll('.one-network-balance strong')].some(node=>node.textContent===value),`${amount}.00 ELA`,{timeout:3000});
+      const refresh = (count=1) => homeGui.evaluate(count=>{
+        const frame=document.querySelector('.window[data-target="wallet"] iframe');
+        for(let i=0;i<count;i++)frame.contentWindow.postMessage({type:'elastos:wallet-refresh'},'*');
+      },count);
+      const release = () => {for(const finish of state.heldMarket.splice(0))finish();};
+      const oldAddress=state.walletAccounts[0].address;
+      const newAddress='0x'+'56'.repeat(20);
+      await balance(1);
+      // A valid market result is already pending when the next account read fails.
+      state.holdMarket='balances';state.balanceHex='0x1bc16d674ec80000';
+      await refresh();
+      await waitFor(()=>state.heldMarket.length===3,3000,'market read for the shown accounts');
+      state.walletAccounts=[{...state.walletAccounts[0],account_id:'fixture-replacement',address:newAddress,label:'Replacement address'},state.walletAccounts[1]];
+      state.summaryFailure=marketFailure==='summary';
+      state.approvalsUnavailable=marketFailure==='approvals';
+      const response=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/apps/wallet/wallet/summary');
+      await refresh(2);
+      await (await response).finished();
+      await wallet.evaluate(()=>new Promise(requestAnimationFrame));
+      const shownAddress=marketFailure==='summary'?oldAddress:newAddress;
+      await wallet.locator(`.one-meta code[title="${shownAddress}"]`).waitFor();
+      state.balanceHex='0x29a2241af62c0000';
+      release();
+      try {
+        if(marketFailure==='summary')await balance(2);
+        await waitFor(()=>state.heldMarket.length===3,3000,'replacement market read after account error');
+      } catch(error) {
+        throw new Error(`${marketFailure}: ${error.message}; ${JSON.stringify({held:state.heldMarket.length,reads:state.balanceReads.length,view:await wallet.locator('#wallet-inventory').innerText()})}`);
+      }
+      const expectedAddresses=new Set([shownAddress,state.walletAccounts[1].address]);
+      assert(state.balanceReads.slice(-3).every(read=>expectedAddresses.has(read.address)),
+        'replacement balances belong to the committed account list',state.balanceReads.slice(-3));
+      if(marketFailure==='approvals')assert(!await wallet.locator('.one-network-balances').innerText().then(text=>text.includes('2.00 ELA')),
+        'old-account market results stay out of the new list');
+      state.holdMarket='';release();
+      await balance(3);
+      await wallet.waitForFunction(()=>document.querySelector('#wallet-status').dataset.tone==='error');
+      assert(await wallet.locator(`.one-meta code[title="${shownAddress}"]`).count()===1 && state.serverErrors.length===0 && pageErrors.length===0,
+        'account error keeps its committed list and reports its error after market recovery',{pageErrors,errors:state.serverErrors});
+      console.log(`[wallet-market-recovery] PASS ${engine} ${width} ${marketFailure}: shown-account balances 1 -> ${marketFailure==='summary'?'2 -> ':''}3; replacement market read completed`);
+      return;
+    }
     if (slowMarket === 'existing-balances') {
       state.holdMarket = 'balances';
       await wallet.evaluate(()=>top.postMessage({type:'home:refresh-summary',homeToken:new URLSearchParams(location.hash.slice(1)).get('home_token')},new URLSearchParams(location.search).get('home_origin')));
