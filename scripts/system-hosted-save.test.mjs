@@ -68,7 +68,7 @@ function fixture(connections = [], guest = false, staged = [], status = {}) {
         if (guest) throw new Error("request failed: 403 admin passkey required");
         if (failReads) throw new Error("request failed: 503 service unavailable");
         // Each read is a fresh reply, as over HTTP.
-        return structuredClone({ ...status, connections, staged_connections: stagedConnections });
+        return structuredClone({ can_change: true, ...status, connections, staged_connections: stagedConnections });
       }
       const body = JSON.parse(init.body);
       attempts.push(body);
@@ -112,6 +112,35 @@ function fixture(connections = [], guest = false, staged = [], status = {}) {
     failReads: () => { failReads = true; },
     staged: () => stagedConnections };
 }
+
+test("wallet admin sees hosted connections read-only and keeps Use in Assistant", async () => {
+  const f = fixture([{
+    id: "model:hosted-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", name: "Saved model",
+    provider: "openrouter", processor_label: "OpenRouter", selected_model: "fixture/model",
+    connected: true, operation: "text.generate", egress_state: "ready", egress_approval_state: "approved",
+  }], false, [{ id: "model:hosted-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", provider: "openrouter" }], { can_change: false });
+  await new Promise(setImmediate);
+  assert.equal(f.node("#ai-provider-add").hidden, true);
+  assert.equal(f.node("#ai-provider-form").hidden, true);
+  const buttons = [];
+  const collect = node => {
+    if (node.textContent) buttons.push(node.textContent);
+    for (const child of node.children) collect(child);
+  };
+  for (const card of f.node("#ai-provider-instances").children) collect(card);
+  assert.ok(buttons.includes("Saved model"));
+  assert.ok(buttons.includes("Use in Assistant"));
+  for (const label of ["Edit", "Disconnect", "Share", "End hosted approval", "Continue setup", "Discard staged key"]) {
+    assert.ok(!buttons.includes(label), label);
+  }
+  assert.equal(f.messages.at(-1), "Sign in with a passkey to change hosted AI.");
+  await new Promise(setImmediate);
+  f.node("#ai-provider-add").handlers.click();
+  await f.node("#ai-provider-validate").handlers.click();
+  await f.node("#ai-provider-save").handlers.click();
+  assert.equal(f.node("#ai-provider-form").hidden, true);
+  assert.equal(f.attempts.length, 0);
+});
 
 test("saved hosted connections keep management controls while Inbox owns access", async () => {
   const f = fixture([{
@@ -172,6 +201,7 @@ test("a decision model saved by an earlier release is listed so it can be discon
 test("Inbox approval prompts are neutral; real failures are errors", async () => {
   const f = fixture();
   f.pending();
+  await new Promise(setImmediate);
   f.node("#ai-provider-add").handlers.click();
   await f.node("#ai-provider-validate").handlers.click();
   assert.equal(f.messages.at(-1), "Approve this connection in Inbox, then check the key again.");
@@ -180,6 +210,7 @@ test("Inbox approval prompts are neutral; real failures are errors", async () =>
   assert.equal(f.messages.at(-1), "Approve this connection in Inbox, then select Save again.");
   assert.equal(f.stateNode.dataset.tone, "");
   const g = fixture();
+  await new Promise(setImmediate);
   g.node("#ai-provider-add").handlers.click();
   await g.node("#ai-provider-validate").handlers.click();
   assert.equal(g.messages.at(-1), "This Home could not check the key. Try again.");
@@ -209,6 +240,7 @@ test("System Models offers no Approval Lens evaluator choice", () => {
 
 test("hosted Save keeps one identity and entered key across activation failure and retry", async () => {
   const f = fixture();
+  await new Promise(setImmediate);
   f.node("#ai-provider-add").handlers.click();
   f.node("#ai-provider-name").value = "Chat";
   f.node("#ai-provider-model").value = "fixture/model";
@@ -226,6 +258,7 @@ test("hosted Save keeps one identity and entered key across activation failure a
   assert.equal(f.node("#ai-provider-key").value, "");
   assert.equal(f.node("#ai-provider-form").hidden, true);
   assert.equal(f.messages.at(-1), "This hosted model is saved on this Home.");
+  await new Promise(setImmediate);
   f.node("#ai-provider-add").handlers.click();
   await f.node("#ai-provider-save").handlers.click();
   assert.notEqual(f.attempts[2].id, first.id);
@@ -276,12 +309,14 @@ test("hosted key check names each known Runtime outcome and hides unknown detail
 test("Cancel after a failed Add restores provider choice and gives the next form a new identity", async () => {
   const f = fixture();
   f.pending();
+  await new Promise(setImmediate);
   f.node("#ai-provider-add").handlers.click();
   await f.node("#ai-provider-save").handlers.click();
   assert.equal(f.node("#ai-provider-kind").disabled, true);
   const firstId = f.attempts[0].id;
   f.node("#ai-provider-cancel").handlers.click();
   assert.equal(f.node("#ai-provider-instances").children.length, 1);
+  await new Promise(setImmediate);
   f.node("#ai-provider-add").handlers.click();
   assert.equal(f.node("#ai-provider-kind").disabled, false);
   f.node("#ai-provider-kind").value = "venice";
@@ -389,6 +424,7 @@ test("a live refresh waits for the person's open form and for the page's own req
   const f = fixture([venice]);
   await new Promise(setImmediate);
   const reads = f.reads.length;
+  await new Promise(setImmediate);
   f.node("#ai-provider-add").handlers.click();
   f.node("#ai-provider-name").value = "Typed name";
   f.node("#ai-provider-key").value = "typed-key";
@@ -426,6 +462,7 @@ test("a live refresh waits for the person's open form and for the page's own req
 test("a key the provider rejects is not kept staged; a check waiting for Inbox keeps its key behind Close", async () => {
   const f = fixture();
   f.rejectKey();
+  await new Promise(setImmediate);
   f.node("#ai-provider-add").handlers.click();
   f.node("#ai-provider-key").value = "test";
   await f.node("#ai-provider-validate").handlers.click();
@@ -440,6 +477,7 @@ test("a key the provider rejects is not kept staged; a check waiting for Inbox k
 
   const g = fixture();
   g.pending();
+  await new Promise(setImmediate);
   g.node("#ai-provider-add").handlers.click();
   await g.node("#ai-provider-validate").handlers.click();
   assert.equal(g.messages.at(-1), "Approve this connection in Inbox, then check the key again.");
@@ -484,6 +522,7 @@ test("a rejected key that cannot be removed is reported and stays on its card", 
   const f = fixture();
   f.rejectKey();
   f.failDiscard();
+  await new Promise(setImmediate);
   f.node("#ai-provider-add").handlers.click();
   f.node("#ai-provider-key").value = "test";
   await f.node("#ai-provider-validate").handlers.click();
@@ -504,6 +543,7 @@ test("a rejected key that cannot be removed while status cannot load points to a
   await new Promise(setImmediate);
   f.rejectKey();
   f.failDiscard();
+  await new Promise(setImmediate);
   f.node("#ai-provider-add").handlers.click();
   f.node("#ai-provider-key").value = "test";
   f.failReads();

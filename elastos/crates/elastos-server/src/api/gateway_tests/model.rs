@@ -329,6 +329,51 @@ async fn model_runs_create_injects_verified_runtime_binding() {
 }
 
 #[tokio::test]
+async fn test_system_ai_provider_wallet_admin_keeps_hosted_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let provider = RecordingModelProvider::default();
+    let app = gateway_router(model_test_state(dir.path(), provider.clone()).await);
+    let admin = passkey_authority(dir.path());
+    let actor = crate::auth::load_active_session_grant(
+        dir.path(),
+        &admin.session_id,
+        crate::auth::now_ts(),
+    )
+    .unwrap();
+    let wallet = crate::auth::wallet_signin::tests::enabled_session_for_actor(dir.path(), &actor);
+    let token = issue_home_projection_launch_token_with_context(
+        dir.path(),
+        "assistant",
+        "assistant",
+        &HomeLaunchTokenContext {
+            principal_id: wallet.principal_id,
+            session_id: wallet.session_id,
+            proof_binding_id: Some(wallet.proof_binding_id),
+            grant_id: wallet.grant_id,
+        },
+    )
+    .unwrap();
+    let hosted = format!("model:hosted-{}", "a".repeat(32));
+    let response = app
+        .oneshot(post_model(
+            token,
+            "runs_create",
+            json!({
+                "offer_id": hosted,
+                "operation": "text.generate",
+                "request_id": "wallet-hosted",
+                "input": {"messages": [{"role": "user", "content": "hello"}]}
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let requests = provider.requests.lock().await;
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0]["offer_id"], hosted);
+}
+
+#[tokio::test]
 async fn hosted_model_runs_are_for_admins_and_local_runs_stay_open_to_guests() {
     let dir = tempfile::tempdir().unwrap();
     let provider = RecordingModelProvider::default();

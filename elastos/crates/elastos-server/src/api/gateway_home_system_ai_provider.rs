@@ -233,14 +233,27 @@ fn require_system_admin(
     headers: &HeaderMap,
 ) -> anyhow::Result<HomeLaunchTokenContext> {
     let context = require_home_launch_token_context(data_dir, headers, SYSTEM_CAPSULE_ID)?;
-    let Some(proof_binding_id) = context.proof_binding_id.as_deref() else {
-        return Err(anyhow::anyhow!("admin passkey required"));
-    };
-    let principal = crate::auth::load_principal_for_proof_binding(data_dir, proof_binding_id)?;
-    crate::auth::ensure_proof_binding_not_revoked(&principal)?;
-    if !crate::auth::is_admin(&principal) || principal.proof_binding.passkey.is_none() {
-        return Err(anyhow::anyhow!("admin passkey required"));
-    }
+    super::gateway_home_system::require_admin_signin_principal(data_dir, &context).map_err(
+        |err| {
+            if err.to_string() == "admin sign-in required" {
+                anyhow::anyhow!("admin passkey required")
+            } else {
+                err
+            }
+        },
+    )?;
+    Ok(context)
+}
+
+fn require_system_passkey_admin(
+    data_dir: &std::path::Path,
+    headers: &HeaderMap,
+) -> anyhow::Result<HomeLaunchTokenContext> {
+    let context = require_system_admin(data_dir, headers)?;
+    super::gateway_home_system::require_admin_principal(
+        &home_launch_auth_data_dir(data_dir),
+        &context,
+    )?;
     Ok(context)
 }
 
@@ -612,14 +625,14 @@ pub(super) async fn system_approval_lens_revoke(
     headers: HeaderMap,
     Json(req): Json<ApprovalLensRequest>,
 ) -> Response {
-    if let Err(err) = require_system_admin(&state.data_dir, &headers) {
+    if let Err(err) = require_system_passkey_admin(&state.data_dir, &headers) {
         return system_error_response(err);
     }
     #[cfg(unix)]
     let _transition = crate::api::model_provider_egress_decision::transition_gate(&state.data_dir)
         .lock_owned()
         .await;
-    if let Err(err) = require_system_admin(&state.data_dir, &headers) {
+    if let Err(err) = require_system_passkey_admin(&state.data_dir, &headers) {
         return system_error_response(err);
     }
     #[cfg(unix)]
@@ -662,6 +675,8 @@ pub(super) async fn system_ai_provider_get(
     match crate::api::ai_provider_status(&state.data_dir) {
         Ok(status) => {
             let mut result = serde_json::to_value(status).expect("serializable provider status");
+            result["can_change"] =
+                serde_json::json!(require_system_passkey_admin(&state.data_dir, &headers).is_ok());
             result["hosted_external_https"] = serde_json::json!(if cfg!(target_os = "macos") {
                 "consent_required"
             } else {
@@ -764,7 +779,7 @@ pub(super) async fn system_ai_provider_validate(
     headers: HeaderMap,
     Json(req): Json<AiProviderValidateRequest>,
 ) -> Response {
-    let admin = match require_system_admin(&state.data_dir, &headers) {
+    let admin = match require_system_passkey_admin(&state.data_dir, &headers) {
         Ok(admin) => admin,
         Err(err) => return system_error_response(err),
     };
@@ -780,7 +795,7 @@ pub(super) async fn system_ai_provider_validate(
         .clone()
         .unwrap_or_else(|| format!("model:hosted-{:032x}", rand::random::<u128>()));
     let _setup = hosted_setup_gate(&state.data_dir).lock_owned().await;
-    if let Err(err) = require_system_admin(&state.data_dir, &headers) {
+    if let Err(err) = require_system_passkey_admin(&state.data_dir, &headers) {
         return system_error_response(err);
     }
     let api_key = match crate::api::model_provider_config::hosted_key_for_save(
@@ -827,7 +842,7 @@ pub(super) async fn system_ai_provider_save(
     headers: HeaderMap,
     Json(req): Json<AiProviderSaveRequest>,
 ) -> Response {
-    let admin = match require_system_admin(&state.data_dir, &headers) {
+    let admin = match require_system_passkey_admin(&state.data_dir, &headers) {
         Ok(admin) => admin,
         Err(err) => return system_error_response(err),
     };
@@ -843,7 +858,7 @@ pub(super) async fn system_ai_provider_save(
         .clone()
         .unwrap_or_else(|| format!("model:hosted-{:032x}", rand::random::<u128>()));
     let _setup = hosted_setup_gate(&state.data_dir).lock_owned().await;
-    if let Err(err) = require_system_admin(&state.data_dir, &headers) {
+    if let Err(err) = require_system_passkey_admin(&state.data_dir, &headers) {
         return system_error_response(err);
     }
     let api_key = match if req.api_key.trim().is_empty() {
@@ -890,7 +905,7 @@ pub(super) async fn system_ai_provider_save(
     let _model_share_guard = super::gateway_model_service::model_share_gate()
         .write()
         .await;
-    if let Err(err) = require_system_admin(&state.data_dir, &headers) {
+    if let Err(err) = require_system_passkey_admin(&state.data_dir, &headers) {
         return system_error_response(err);
     }
     match crate::api::save_hosted_offer(
@@ -940,7 +955,7 @@ pub(super) async fn system_ai_provider_delete(
     headers: HeaderMap,
     Json(req): Json<AiProviderDeleteRequest>,
 ) -> Response {
-    if let Err(err) = require_system_admin(&state.data_dir, &headers) {
+    if let Err(err) = require_system_passkey_admin(&state.data_dir, &headers) {
         return system_error_response(err);
     }
     let _setup = hosted_setup_gate(&state.data_dir).lock_owned().await;
@@ -948,7 +963,7 @@ pub(super) async fn system_ai_provider_delete(
     let _transition = crate::api::model_provider_egress_decision::transition_gate(&state.data_dir)
         .lock_owned()
         .await;
-    if let Err(err) = require_system_admin(&state.data_dir, &headers) {
+    if let Err(err) = require_system_passkey_admin(&state.data_dir, &headers) {
         return system_error_response(err);
     }
     let offer_id = match resolve_hosted_instance_id(
@@ -976,7 +991,7 @@ pub(super) async fn system_ai_provider_delete(
     let _model_share_guard = super::gateway_model_service::model_share_gate()
         .write()
         .await;
-    if let Err(err) = require_system_admin(&state.data_dir, &headers) {
+    if let Err(err) = require_system_passkey_admin(&state.data_dir, &headers) {
         return system_error_response(err);
     }
     if let Err(err) = crate::api::model_provider_config::remove_hosted_offer_configuration(
@@ -993,7 +1008,7 @@ pub(super) async fn system_ai_provider_delete(
     } else {
         None
     };
-    if let Err(err) = require_system_admin(&state.data_dir, &headers) {
+    if let Err(err) = require_system_passkey_admin(&state.data_dir, &headers) {
         return system_error_response(err);
     }
     match crate::api::model_provider_config::finish_hosted_offer_removal(
@@ -1013,14 +1028,14 @@ pub(super) async fn system_ai_provider_discard_staged(
     headers: HeaderMap,
     Json(req): Json<AiProviderDeleteRequest>,
 ) -> Response {
-    if let Err(err) = require_system_admin(&state.data_dir, &headers) {
+    if let Err(err) = require_system_passkey_admin(&state.data_dir, &headers) {
         return system_error_response(err);
     }
     let Some(id) = req.id.as_deref() else {
         return system_error_response(anyhow::anyhow!("staged hosted connection id required"));
     };
     match discard_staged_setup(&state.data_dir, id, || {
-        require_system_admin(&state.data_dir, &headers).map(|_| ())
+        require_system_passkey_admin(&state.data_dir, &headers).map(|_| ())
     })
     .await
     {
@@ -1034,7 +1049,7 @@ pub(super) async fn system_ai_provider_share(
     headers: HeaderMap,
     Json(req): Json<AiProviderShareRequest>,
 ) -> Response {
-    if let Err(err) = require_system_admin(&state.data_dir, &headers) {
+    if let Err(err) = require_system_passkey_admin(&state.data_dir, &headers) {
         return system_error_response(err);
     }
     let offer_id = match resolve_hosted_instance_id(
@@ -1048,7 +1063,7 @@ pub(super) async fn system_ai_provider_share(
     let _model_share_guard = super::gateway_model_service::model_share_gate()
         .write()
         .await;
-    if let Err(err) = require_system_admin(&state.data_dir, &headers) {
+    if let Err(err) = require_system_passkey_admin(&state.data_dir, &headers) {
         return system_error_response(err);
     }
     match crate::api::set_hosted_offer_share(
