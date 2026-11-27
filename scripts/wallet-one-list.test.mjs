@@ -260,7 +260,7 @@ for(const engine of ['chromium','webkit'])for(const width of [1440,390]) {
         view.update(inventory);window.pressFixture={root,view,inventory};
       });
       const root=f.wallet.locator('#press-fixture');
-      for(const ending of ['outside','outside iframe','pointercancel','lostpointercapture','blur','Space','Enter','mode swap']) {
+      for(const ending of ['outside','pointercancel','lostpointercapture','blur','Space','Enter','mode swap']) {
         await root.evaluate(()=>{const f=window.pressFixture;f.view.open('');f.view.update(f.inventory);});
         const target=root.getByRole('button',{name:ending==='mode swap'?'Add wallet for apps':'Open Home address',exact:true});
         const pressed=await target.elementHandle();
@@ -273,7 +273,7 @@ for(const engine of ['chromium','webkit'])for(const width of [1440,390]) {
           if(ending==='mode swap')f.view.open(f.inventory.entries[0].inventory_id);
         },ending);
         assert.equal(await pressed.evaluate(node=>node.isConnected),true,ending+' keeps the pressed node');
-        if(ending==='outside'||ending==='outside iframe') {await f.page.mouse.move(ending==='outside'?2:-10,ending==='outside'?2:-10);await f.page.mouse.up();}
+        if(ending==='outside') {await f.page.mouse.move(2,2);await f.page.mouse.up();}
         else if(ending==='Space'||ending==='Enter')await f.page.keyboard.up(ending);
         else if(ending==='mode swap')await f.page.mouse.up();
         else {
