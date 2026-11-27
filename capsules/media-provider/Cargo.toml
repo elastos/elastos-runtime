@@ -5,9 +5,11 @@ edition = "2021"
 description = "ElastOS protected-content media preparation provider capsule"
 license = "MIT"
 
+# main.rs only calls run_provider_process; the unit tests live in the library.
 [[bin]]
 name = "media-provider"
 path = "src/main.rs"
+test = false
 
 [dependencies]
 libc = "0.2"
