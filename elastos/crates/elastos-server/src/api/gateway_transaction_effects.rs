@@ -861,6 +861,7 @@ pub(in crate::api::gateway) async fn ensure_exact_runtime_transaction_approval(
                 let lapsed = approval.get("status").and_then(Value::as_str) == Some("expired");
                 if lapsed
                     && effect.produced_nothing()
+                    && approval.get("connector_id").and_then(Value::as_str).is_some()
                     && approval.get("approved_at").is_some_and(|value| !value.is_null())
                 {
                     // The connector may still send. Stop before changing the
