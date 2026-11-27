@@ -1,3 +1,4 @@
+import {windowTestOptions} from './lib/walletconnect-window-resources.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdir,readFile} from 'node:fs/promises';
@@ -7,7 +8,7 @@ import {states,fixtureArguments} from './wallet-connection-view-fixtures.mjs';
 import {requireProductSmokePlaywright} from './product-smoke-browser.mjs';
 import {signinFixture,installSigninProviders,evmAddress,bitcoinAddress} from './lib/wallet-signin-fixture.mjs';
 const baseline=process.env.WC_GRANT_BASELINE==='1',output=process.env.WC_GRANT_SCREENS;
-for(const engine of ['chromium','webkit'])test(`${baseline?'baseline':'one-grant'} System Add and signed-out off state in ${engine}`,{timeout:60000},async t=>{
+for(const engine of ['chromium','webkit'])test(`${baseline?'baseline':'one-grant'} System Add and signed-out off state in ${engine}`,windowTestOptions(engine,60000),async t=>{
  const f=await signinFixture();t.after(()=>f.close());
  f.state.methods=[];f.state.connected=[];f.state.wcConnected=false;f.state.internetStatus='off';f.state.allowLegacyRelay=baseline;
  const browser=await requireProductSmokePlaywright()[engine].launch({headless:true});t.after(()=>browser.close());
