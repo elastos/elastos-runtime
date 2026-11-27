@@ -12481,6 +12481,49 @@ async fn test_system_ai_provider_staged_discard_and_revoke_keep_passkey_authorit
             .unwrap()
             .is_empty()
     );
+    use crate::api::model_provider_egress_decision::{ConnectionScope, EgressScope};
+    let scope = EgressScope {
+        offer_id: id.into(),
+        effect: "validate_models".into(),
+        method: "GET".into(),
+        url: "https://example.com/models".into(),
+        origin: "https://example.com".into(),
+        recipient: "example.com".into(),
+        payer: "this Home".into(),
+        provider: "OpenRouter".into(),
+        purpose: "Load hosted model choices".into(),
+        configuration_id: "a".repeat(64),
+    };
+    let connection = ConnectionScope {
+        version: 1,
+        offer_id: id.into(),
+        provider: "OpenRouter".into(),
+        origin: "https://example.com".into(),
+        revision: "b".repeat(64),
+    };
+    let pending = crate::api::model_provider_egress_decision::request_connection(
+        dir.path(),
+        &scope,
+        &connection,
+        Some(&authority.proof_binding_id),
+    )
+    .unwrap();
+    crate::api::model_provider_egress_decision::approve(
+        dir.path(),
+        &pending,
+        &authority.proof_binding_id,
+    )
+    .unwrap();
+    let (status, body) = ai_provider_raw(
+        &app,
+        "POST",
+        "/api/apps/system/approval-lens/revoke",
+        &token,
+        Some(json!({"id": id})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(body, "admin passkey required");
     let (status, body) = ai_provider_raw(
         &app,
         "POST",
@@ -12489,8 +12532,8 @@ async fn test_system_ai_provider_staged_discard_and_revoke_keep_passkey_authorit
         Some(json!({"id": id})),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert_eq!(body, "hosted connection has no active approval");
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(serde_json::from_str::<Value>(&body).unwrap()["approval"], "ended");
 }
 
 #[tokio::test]
