@@ -41,7 +41,7 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 - Home and apps can enter full screen in Safari and the desktop app. Apps load in Safari and other WebKit browsers.
 - Home repairs local Community connection failures, keeps trying while it runs, and shows the same reconnecting state in Chat and System. Community posts keep arriving when one connection stalls.
 - To add another address from a connected wallet, choose Add address. Choose another account in your wallet, then get a new QR code and scan it. You can also scan with another wallet.
-- Wallet keeps your answer visible when its request list refreshes. A WalletConnect payment stays in Wallet until confirmation arrives or you press Dismiss.
+- Wallet keeps your answer visible when its request list refreshes. A WalletConnect payment stays in Wallet, even after the request expires, until your wallet confirms or declines it or you press Dismiss.
 - Assistant opens from Marketplace and offers to get a model when none is installed. Manage models opens System at its model section, including when System is maximized, minimized or on another Desktop.
 - Typing in a new document stays in the document.
 - After you refuse internet access, Browser asks again when you press Return, and returns to full screen when you allow it. Browser keeps your page when its internet access is renewed.
@@ -85,7 +85,7 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 - Home and apps can enter full screen in Safari and the desktop app. Apps load in Safari and other WebKit browsers.
 - Home repairs local Community connection failures, keeps trying while it runs, and shows the same reconnecting state in Chat and System. Community posts keep arriving when one connection stalls.
 - To add another address from a connected wallet, choose Add address. Choose another account in your wallet, then get a new QR code and scan it. You can also scan with another wallet.
-- Wallet keeps your answer visible when its request list refreshes. A WalletConnect payment stays in Wallet until confirmation arrives or you press Dismiss.
+- Wallet keeps your answer visible when its request list refreshes. A WalletConnect payment stays in Wallet, even after the request expires, until your wallet confirms or declines it or you press Dismiss.
 - Assistant opens from Marketplace and offers to get a model when none is installed. Manage models opens System at its model section, including when System is maximized, minimized or on another Desktop.
 - Typing in a new document stays in the document.
 - After you refuse internet access, Browser asks again when you press Return, and returns to full screen when you allow it. Browser keeps your page when its internet access is renewed.
