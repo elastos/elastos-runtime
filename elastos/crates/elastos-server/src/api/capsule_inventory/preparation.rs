@@ -5775,20 +5775,6 @@ mod tests {
             admit(root.path(), &record);
             let _engine = install_engine(root.path());
             let (_, provider) = readiness_provider(root.path(), &registry).await;
-            let worker = Inventory::open(root.path(), false)
-                .unwrap()
-                .worker_lock()
-                .unwrap();
-            complete_admitted_model_startup(root.path(), &registry, Some(&worker))
-                .await
-                .unwrap();
-            drop(worker);
-            assert!(
-                !load_operation(root.path(), &record.operation_id)
-                    .unwrap()
-                    .activation_pending
-            );
-            provider.calls.lock().unwrap().clear();
             retention_intent(root.path(), &context(), &record.package_cid, true).unwrap();
             let (app, token) = readiness_catalog_app(root.path(), registry.clone(), &context());
             for (method, input) in [

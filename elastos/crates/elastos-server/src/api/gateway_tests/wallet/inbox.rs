@@ -43,6 +43,10 @@ fn test_inbox_wallet_approval_offers_passkey_approval_only_for_built_in_wallets(
     let entries = serde_json::to_value(&notifications.entries).unwrap();
 
     assert_eq!(entries[0]["passkey_approval"], true);
+    assert_eq!(
+        entries[0]["action_ref"]["action_id"],
+        "wallet-approve-request:built-in"
+    );
     assert!(
         entries[1].get("passkey_approval").is_none(),
         "an external wallet request is approved in Wallet, not Inbox: {}",
