@@ -25,6 +25,15 @@ const frameGeometry = {};
 const interactionChecks = [];
 test.after(()=>proofDirectory.cleanup());
 
+// Exercise each authority state independently, even when one browser layout fails first.
+for(const stage of ['internet-refused','internet-off','internet-expired','internet-clearing','request-internet-off'])test(`WalletConnect ${stage} gives the sole Inbox next step`,()=>{
+  const row=states.find(row=>row.window==='walletconnect'&&row.stage===stage);
+  const view=fixtureView(row);
+  assert.deepEqual(view.actions.map(({id,label,primary})=>({id,label:viewText(label),primary})),[{id:'inbox',label:'Open Inbox',primary:true}]);
+  if(stage==='internet-expired')assert.equal(view.focus,'inbox');
+  if(stage==='internet-clearing')assert.match(viewText(view.notice),/Finish disconnecting in Inbox/);
+});
+
 for (const engine of ['chromium','webkit']) test(`extension_request_feedback_in_view: render-only ${engine}, both themes and all states`, {skip:windowTestOptions(engine).skip}, async () => {
   const browser = await playwright[engine].launch({headless:true});
   try {
@@ -130,8 +139,7 @@ for (const engine of ['chromium','webkit']) test(`extension_request_feedback_in_
           const paymentRecovery=row.window==='walletconnect'&&row.local.paymentPending===true&&['transaction-timeout','transaction-cancelled','transaction-wallet-error','transaction-reopened','transaction-wallet-removed'].includes(row.stage);
           if(paymentRecovery)expectedControls=[{label:'Open Wallet',primary:true},{label:'Close window',primary:false}];
           if(row.window==='walletconnect'&&row.stage==='internet-ready')expectedControls=expectedControls.filter(c=>c.label!=='Manage in Inbox');
-          if(row.window==='walletconnect'&&row.stage==='internet-refused')expectedControls=[{label:'Connect wallet',primary:true}];
-          if(row.window==='walletconnect'&&row.stage==='internet-off')expectedControls=[{label:'Connect wallet',primary:true},{label:'Open Inbox',primary:false}];
+          if(row.window==='walletconnect'&&['internet-refused','internet-off','internet-expired','internet-clearing','request-internet-off'].includes(row.stage))expectedControls=[{label:'Open Inbox',primary:true}];
           if(row.window==='metamask'&&['extension-missing','extensions-unavailable','other-ethereum-wallet','request-unsendable','link-error'].includes(row.stage))expectedControls=[{label:'Check again',primary:true},{label:'Close window',primary:false}];
           const fallbackClose=!expectedControls.length&&row.window==='metamask'&&expected?.inventory.some(s=>s.startsWith('WalletConnect [primary]'))&&(facts.payment||facts.capability);
           if(fallbackClose)expectedControls=[{label:'Close window',primary:true}];
@@ -142,7 +150,7 @@ for (const engine of ['chromium','webkit']) test(`extension_request_feedback_in_
           if(['transaction-reopened','transaction-wallet-error','transaction-cancelled','transaction-timeout','transaction-wallet-removed'].includes(row.stage)&&!expectedControls.some(c=>c.label==='Close window'))expectedControls.push({label:'Close window',primary:false});
           const actual=observed.controls.map(b=>({label:b.label.replace(/\s+/g,' '),primary:b.primary}));
           assert.deepEqual(actual,expectedControls,key+': control order and main control');
-          const expectedFocus=paymentRecovery?'open-wallet':['request-cancelled','transaction-cancelled'].includes(row.stage)?'open-wallet':fallbackClose&&facts.focus||row.unknownSafety&&['link-busy','request-busy','extension-busy','link-error'].includes(row.stage)?'close-window':facts.focus;
+          const expectedFocus=row.window==='walletconnect'&&row.stage==='internet-expired'?'inbox':paymentRecovery?'open-wallet':['request-cancelled','transaction-cancelled'].includes(row.stage)?'open-wallet':fallbackClose&&facts.focus||row.unknownSafety&&['link-busy','request-busy','extension-busy','link-error'].includes(row.stage)?'close-window':facts.focus;
           assert.equal(observed.focus,expectedFocus,key+': design focus, with answered-outcome override');
           if(observed.clicks.length)assert.equal(observed.clicks.length,1,key+': exit operable');
           const item={engine,theme,size:size.name,window:row.window,stage:row.stage,unknownSafety:!!row.unknownSafety,controls:observed.controls.map(({id,label,primary})=>({id,label,primary})),focus:observed.focus,text:observed.text,result:'pass'};

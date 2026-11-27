@@ -235,6 +235,8 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
       status='off';await reload();await invoke('connect');
       await wallet.locator('[data-state=internet-pending] [data-action=inbox]:enabled,[data-state=request-internet-pending] [data-action=inbox]:enabled').waitFor();await page.evaluate(()=>inbox.style.display='none');
       status='granted';requestId++;
+      await walletFrame.evaluate(()=>window.fixtureStatusPoll());
+      await wallet.locator('main[data-state=internet-ready]').waitFor();
       holdConnectionStatus=true;const held=new Promise(resolve=>connectionStatusHeld=resolve);
       await walletFrame.evaluate(()=>{window.heldStatusPoll=window.fixtureStatusPoll();});await held;
       await walletFrame.evaluate(()=>window.phoneWait=true);
@@ -256,7 +258,9 @@ test('WalletConnect permission, expiry and Turn Off journeys in real capsules',{
         await walletFrame.evaluate(()=>{const now=Date.now;Date.now=()=>now()+1801000;});
       } else if(reason==='replacement'){requestId++;}
       else if(reason==='new-link') {
-        // A fresh link starts while the first permission is still pending.
+        // Cancel consumes the earlier action; start a fresh request before an old Allow arrives.
+        await invoke('cancel');
+        status='off';
         await invoke('connect');
         await wallet.locator('[data-state=internet-pending] [data-action=inbox]:enabled,[data-state=request-internet-pending] [data-action=inbox]:enabled').waitFor();
         requestId++; // A later grant of the earlier entry cannot match this new request.
@@ -491,19 +495,6 @@ for (const journey of ['A','B']) test(`round18 ${journey}: the open window recov
     const shell=page.frames().find(f=>f.url().endsWith('/shell'));
     const wallet=page.frameLocator('#home').frameLocator('#wallet'),frame=page.frames().find(f=>f.url().includes('/apps/wallet-walletconnect/'));
     const text=()=>wallet.locator('[data-focus=outcome]').innerText();
-    const connectVisible=async()=>{
-      const end=Date.now()+15000;
-      while(Date.now()<end){
-        try{
-          const connect=wallet.getByRole('button',{name:'Connect wallet',exact:true});
-          if(await connect.count()){await connect.click({timeout:750});return;}
-          const back=wallet.getByRole('button',{name:'Back to connection',exact:true});if(await back.count())await back.click({timeout:750});
-        }catch(error){if(error.name!=='TimeoutError')throw error;}
-        await page.waitForTimeout(25);
-      }
-      assert.fail('Connect is unreachable after revocation: '+await text());
-    };
-
     const nextPoll=async()=>{const before=polls;await page.waitForFunction(()=>true);for(let i=0;polls===before&&i<70;i++)await page.waitForTimeout(100);assert.ok(polls>before);await frame.evaluate(()=>new Promise(resolve=>setTimeout(resolve,50)));};
     await wallet.locator('[data-action=connect],[data-action=start-over]').click();await wallet.locator('.connection-qr').waitFor({timeout:20000});
     if(journey==='A') {
@@ -511,8 +502,14 @@ for (const journey of ['A','B']) test(`round18 ${journey}: the open window recov
       await wallet.locator('[data-focus=outcome]').filter({hasText:'Connection cancelled.'}).waitFor();
       await t.test('own Cancel has neutral tone',async()=>assert.equal(await wallet.locator('[data-focus=outcome]').getAttribute('aria-live'),'polite'));
       status='revoked';revision++;keys={};
-      await connectVisible();
-      await wallet.locator('[data-focus=outcome]').filter({hasText:permissionText}).waitFor();
+      await wallet.locator('main[data-state=internet-refused]').waitFor();
+      await page.evaluate(()=>window.openedTargets=[]);
+      await page.evaluate(()=>addEventListener('message',event=>{if(event.data?.type==='home:open-target')window.openedTargets.push(event.data);}));
+      assert.equal(await wallet.locator('[data-action=connect]').count(),0,'revoked access sends the user to Inbox');
+      await wallet.getByRole('button',{name:'Open Inbox',exact:true}).click();
+      await page.waitForFunction(()=>window.openedTargets.length===1);
+      assert.deepEqual(await page.evaluate(()=>({target:openedTargets[0].target,query:openedTargets[0].query})),{target:'inbox',query:{notification_id:'walletconnect-internet:permission'}});
+      assert.equal(status,'revoked','opening Inbox carries no grant');
       status='refused';await nextPoll();
       await t.test('refusal gives a true sentence and a working next step',async()=>assert.equal(await text(),'Internet access for WalletConnect is off.'));
     } else {

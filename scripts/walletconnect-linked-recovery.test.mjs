@@ -40,18 +40,25 @@ for(const engine of ['chromium','webkit']){
   await r.link();await r.peer.deleteConnection();await r.state('wallet-removed');await r.capture('linked-wallet-removed');
   const text=await r.frame.locator('main').innerText();assert.equal(text.match(/Your wallet removed this connection\./g)?.length,1);
  });
- test(`turned-off access can be requested again without a navigation loop in ${engine}`,windowTestOptions(engine,60000),async t=>{
-  const r=await linkedWindow(t,engine,{sourceRef:process.env.WALLETCONNECT_LINKED_BEFORE==='access'?'40af50bac2d0047500185205c0a50cea3744677c':undefined});
-  await r.link();await r.idle();r.fixture.setPermission('revoked');await r.refresh();await r.state('internet-refused');await r.capture('linked-access-turned-off');
-  assert.equal(await r.frame.locator('[data-action=inbox],[data-action=back-to-connection]').count(),0,'a decided request cannot be answered again in Inbox');
+ test(`turned-off access recovers through the same Inbox entry without a navigation loop in ${engine}`,windowTestOptions(engine,60000),async t=>{
+  const r=await linkedWindow(t,engine);await r.link();await r.idle();
+  const originalFrame=r.frame,posts=[];
+  r.page.on('request',request=>{if(request.method()==='POST'&&new URL(request.url()).pathname.endsWith('/internet'))posts.push(request);});
+  await r.page.evaluate(()=>{window.inboxTargets=[];addEventListener('message',event=>{if(event.data?.type==='home:open-target')inboxTargets.push(event.data);});});
+  r.fixture.setPermission('revoked');await r.refresh();await r.state('internet-refused');await r.capture('linked-access-turned-off');
+  assert.equal(await r.frame.locator('[data-action=connect],[data-action=back-to-connection]').count(),0,'Inbox owns the next action after Turn Off');
   assert.equal(await r.wallet.locator('#wallet-account-state').innerText(),'1 address','turning off access keeps the linked Wallet account');
-  await r.click('connect');await r.state('internet-pending');await r.capture('linked-access-requested-again');
-  assert.equal(r.fixture.state.permission,'requested');assert.equal(await r.frame.locator('[data-action=inbox]').count(),1);
-  const clearing=r.holdApi('/api/apps/wallet-walletconnect/storage','DELETE');await r.click('cancel');await clearing.entered;await r.state('disconnecting');
-  assert.equal(await r.frame.locator('button').count(),0,'cleanup owns the transition before recovery actions appear');await r.capture('linked-access-cancelling');
-  clearing.release();await r.state('internet-off');await r.frame.locator('[data-action=connect]').waitFor();await r.capture('linked-access-request-without-wait');
-  assert.equal(await r.frame.locator('[data-action=connect]').count(),1,'a waiting access request can resume connection without a Back detour');
-  await r.click('connect');await r.state('internet-pending');
+  await r.click('inbox');await r.page.waitForFunction(()=>inboxTargets.length===1);
+  assert.deepEqual(await r.page.evaluate(()=>({target:inboxTargets[0].target,query:inboxTargets[0].query})),{target:'inbox',query:{notification_id:'walletconnect-internet:permission'}});
+  assert.equal(r.fixture.state.permission,'revoked','Open Inbox carries no grant');
+  assert.equal(posts.length,0,'the connector files no replacement request from a stored off decision');
+  assert.equal(await r.frame.locator('.connection-qr').count(),0,'Turn Off removes relay use before Allow');
+  r.fixture.setPermission('granted');await r.refresh();await r.state('internet-ready');
+  assert.equal(r.frame,originalFrame,'Allow recovers the existing frame');
+  assert.equal(await r.frame.locator('[data-action=inbox],[data-action=back-to-connection]').count(),0,'Allow ends the Inbox navigation step');
+  await r.click('connect');await r.state('qr-shown');await r.pair();await r.state('linked');
+  assert.equal(r.fixture.state.verified,2,'one explicit reconnect completes after the new Allow');
+  assert.equal(r.frame,originalFrame,'reconnection preserves the open frame');
  });
  test(`access-ready window offers the useful connection step in ${engine}`,windowTestOptions(engine,60000),async t=>{
   const r=await linkedWindow(t,engine,{sourceRef});await r.capture('access-ready');
