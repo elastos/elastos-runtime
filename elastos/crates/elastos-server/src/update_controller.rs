@@ -1113,7 +1113,9 @@ impl Controller {
             if let Some(client) = self.carrier.take() {
                 // Keep the same drain task when a signal cancels apply's await.
                 self.carrier_close = Some(tokio::spawn(async move {
-                    client.close_update_check(UPDATE_CARRIER_CLOSE_TIMEOUT).await
+                    client
+                        .close_update_check(UPDATE_CARRIER_CLOSE_TIMEOUT)
+                        .await
                 }));
             }
         }

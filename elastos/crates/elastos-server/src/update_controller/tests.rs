@@ -2800,8 +2800,14 @@ async fn shutdown_joins_cancelled_apply_carrier_close_within_original_deadline()
         .await
         .expect("shutdown must retain the original cleanup deadline")
         .unwrap_err();
-    assert_eq!(classify_apply_failure(&error), ApplyFailure::SourceUnavailable);
-    assert!(stopped.await.is_err(), "shutdown must join the aborted drain");
+    assert_eq!(
+        classify_apply_failure(&error),
+        ApplyFailure::SourceUnavailable
+    );
+    assert!(
+        stopped.await.is_err(),
+        "shutdown must join the aborted drain"
+    );
     assert!(controller.carrier_close.is_none());
     controller.close_carrier().await.unwrap();
 }
