@@ -121,6 +121,8 @@ for(const engine of ['chromium','webkit'])for(const width of [1440,390]) {
       assert.equal(await f.system.getByRole('heading',{name:'Wallets for sign-in',exact:true}).count(),1);
       assert.equal(await f.system.getByRole('link',{name:'Open Wallet',exact:true}).count(),2);
       await shot(f.system,'system-accounts',width,engine,f.page);
+      // The fixture navigates Wallet here; finish its initial read before replacing the frame document.
+      await f.wallet.getByText('125.00 ELA',{exact:true}).waitFor({state:'attached'});
       await f.system.locator('[data-wallet-method]').filter({hasText:'UniSat'}).getByRole('link',{name:'Open Wallet'}).click();
       await f.wallet.getByRole('heading',{name:'Used by'}).waitFor();assert.equal(await f.wallet.locator('.one-identity strong').textContent(),'UniSat');
       await f.wallet.getByRole('link',{name:'Manage in System'}).click();
@@ -180,12 +182,13 @@ for(const engine of ['chromium','webkit'])for(const width of [1440,390])for(cons
       await f.context.route(`**/api/apps/wallet/wallet/${endpoint}`,async route=>{
         requested();await held;await route.continue();
       });
-      if(phase==='inventory')f.fixture.state.connected.find(account=>account.account_id==='app:phone').wallet_display_name='Trust';
-      else f.fixture.state.balanceValues[f.addresses.home]['esc-mainnet']=String(126n*10n**18n);
       try {
         await refresh(f);await seen;
         const bounds=await add.boundingBox();
         await f.page.mouse.move(bounds.x+bounds.width/2,bounds.y+bounds.height/2);await f.page.mouse.down();
+        // Only data read after the press can satisfy the rendered-value barrier.
+        if(phase==='inventory')f.fixture.state.connected.find(account=>account.account_id==='app:phone').wallet_display_name='Trust';
+        else f.fixture.state.balanceValues[f.addresses.home]['esc-mainnet']=String(126n*10n**18n);
         release();
         if(phase==='inventory')await f.wallet.getByRole('button',{name:'Open Trust',exact:true}).waitFor();
         else await f.wallet.getByText('126.00 ELA',{exact:true}).waitFor();
