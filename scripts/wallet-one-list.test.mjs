@@ -167,6 +167,42 @@ for(const engine of ['chromium','webkit'])for(const width of [1440,390]) {
     } finally {await f.close();}
   });
 }
+// A refresh can finish between the native pointer press and release.
+for(const engine of ['chromium','webkit'])for(const width of [1440,390])for(const phase of ['inventory','balance']) {
+  test(`one wallet list: Add survives ${phase} refresh during a click in ${engine} at ${width}`,{timeout:45000},async()=>{
+    const f=await setup(engine,width);
+    try {
+      await show(f,'wallet');await f.wallet.getByText('125.00 ELA',{exact:true}).waitFor();
+      const add=f.wallet.getByRole('button',{name:'Add wallet for apps',exact:true});
+      const endpoint=phase==='inventory'?'inventory':'summary';
+      let release,requested;
+      const held=new Promise(resolve=>release=resolve),seen=new Promise(resolve=>requested=resolve);
+      await f.context.route(`**/api/apps/wallet/wallet/${endpoint}`,async route=>{
+        requested();await held;await route.continue();
+      });
+      if(phase==='inventory')f.fixture.state.connected.find(account=>account.account_id==='app:phone').wallet_display_name='Trust';
+      else f.fixture.state.balanceValues[f.addresses.home]['esc-mainnet']=String(126n*10n**18n);
+      try {
+        await refresh(f);await seen;
+        const bounds=await add.boundingBox();
+        await f.page.mouse.move(bounds.x+bounds.width/2,bounds.y+bounds.height/2);await f.page.mouse.down();
+        release();
+        if(phase==='inventory')await f.wallet.getByRole('button',{name:'Open Trust',exact:true}).waitFor();
+        else await f.wallet.getByText('126.00 ELA',{exact:true}).waitFor();
+        await f.page.mouse.up();
+        const chooser=f.wallet.getByRole('dialog',{name:'Add wallet for apps',exact:true});
+        await chooser.waitFor();assert.equal(await chooser.locator('[data-wallet-open-method]').count(),3);
+        // A further rendered refresh preserves the chooser and its Cancel control.
+        f.fixture.state.balanceValues[f.addresses.home]['esc-mainnet']=String((phase==='inventory'?124n:127n)*10n**18n);
+        await refresh(f);await f.wallet.getByText(phase==='inventory'?'124.00 ELA':'127.00 ELA',{exact:true}).waitFor();
+        assert.equal(await chooser.isVisible(),true);await chooser.getByRole('button',{name:'Cancel',exact:true}).click();
+      } finally {
+        release();await f.page.mouse.up();await f.context.unroute(`**/api/apps/wallet/wallet/${endpoint}`);
+      }
+      assert.deepEqual(f.errors,[]);
+    } finally {await f.close();}
+  });
+}
 for(const engine of ['chromium','webkit'])test(`one wallet list keeps saved identities while unavailable methods leave Add in ${engine}`,{timeout:30000},async()=>{
   const f=await setup(engine,390);
   try {
