@@ -4201,6 +4201,7 @@ mod tests {
     /// A data dir shaped exactly like `elastos protected-content-config
     /// provision-custody-node` leaves it: owner-only, with a provisioned
     /// inactive custody state root bound to this home's Runtime issuer.
+    /// Protected content is explicitly enabled for the provider-host tests.
     #[cfg(unix)]
     fn provisioned_provider_host_data_dir(temp: &TempDir) -> PathBuf {
         let data_dir = fs::canonicalize(temp.path()).unwrap().join("data");
@@ -4210,6 +4211,7 @@ mod tests {
         let device_key = elastos_identity::load_or_create_device_key(&data_dir).unwrap();
         let issuer = derive_protected_content_runtime_issuer(&device_key).unwrap();
         custody_provider::provision_state_root(&state_root, issuer).unwrap();
+        fs::write(data_dir.join("config.toml"), "protected_content = true\n").unwrap();
         data_dir
     }
 
@@ -4277,6 +4279,38 @@ mod tests {
                 },
             },
         })
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn provider_host_keeps_custody_unregistered_when_protected_content_is_off() {
+        let custody_binary = required_provider_host_test_binary(PROVIDER_HOST_TEST_CUSTODY_BIN_ENV);
+        for config in [None, Some("protected_content = false\n")] {
+            let temp = TempDir::new().unwrap();
+            let data_dir = provisioned_provider_host_data_dir(&temp);
+            let config_path = data_dir.join("config.toml");
+            match config {
+                Some(config) => fs::write(&config_path, config).unwrap(),
+                None => fs::remove_file(&config_path).unwrap(),
+            }
+            let plan = crate::provider_host::ProviderHostPlan::resolve(
+                data_dir,
+                custody_binary.to_str().unwrap(),
+                &[],
+                Some("127.0.0.1:0"),
+            )
+            .unwrap();
+            let host = crate::provider_host::compose(&plan).await.unwrap();
+            let status = host
+                .registry()
+                .invoke_provider(custody_status_invocation())
+                .await;
+            host.shutdown().await.unwrap();
+            assert!(matches!(
+                status,
+                Err(provider::ProviderError::NoProvider(target)) if target == "custody"
+            ));
+        }
     }
 
     #[cfg(unix)]
