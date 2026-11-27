@@ -8868,6 +8868,14 @@ impl CreatorRecoveryFixture {
             .provider
             .seed_managed_evm_account_for_principal(&authority.principal_id)
             .await;
+        set_mock_wallet_transaction_default(
+            &wallet_provider.provider,
+            &authority.principal_id,
+            "eip155:8453",
+            &wallet_account_id,
+            10,
+        )
+        .await;
         Self {
             dir,
             state,
@@ -9687,14 +9695,6 @@ async fn test_creator_same_file_after_expired_handoff_and_waiting_walletconnect(
         )
         .await
         .unwrap();
-    set_mock_wallet_transaction_default(
-        &fx.wallet_provider.provider,
-        &fx.authority.principal_id,
-        "eip155:8453",
-        &fx.wallet_account_id,
-        10,
-    )
-    .await;
     let token = app_token_for_authority(fx.dir.path(), CREATOR_CAPSULE_ID, &fx.authority);
     let app = gateway_router(fx.state.clone());
     let mut seeded = Vec::new();
@@ -9708,7 +9708,10 @@ async fn test_creator_same_file_after_expired_handoff_and_waiting_walletconnect(
             put_library_upload(app.clone(), &token, &input.object_uri, b"media").await;
         assert_eq!(status_code, StatusCode::OK, "{upload}");
         let facts = seed_completed_runtime_custody_mint(fx.dir.path(), &input);
-        assert!(fx.tail(&input, &facts).await.is_err());
+        assert_eq!(
+            fx.tail(&input, &facts).await.unwrap_err().to_string(),
+            RECOVERY_PENDING_MESSAGE
+        );
         let old_id = fx
             .wallet_provider
             .provider
@@ -11366,7 +11369,8 @@ async fn test_runtime_custody_buy_confirmed_approval_stage_is_not_redriven() {
     assert_eq!(priming_payload["status"], "error");
     assert_eq!(
         priming_payload["message"],
-        crate::protected_content_runtime::RUNTIME_CUSTODY_PURCHASE_PENDING_MESSAGE
+        crate::protected_content_runtime::RUNTIME_CUSTODY_PURCHASE_PENDING_MESSAGE,
+        "{priming_payload}"
     );
     wallet_provider
         .provider
@@ -11383,7 +11387,8 @@ async fn test_runtime_custody_buy_confirmed_approval_stage_is_not_redriven() {
     assert_eq!(first_payload["status"], "error");
     assert_eq!(
         first_payload["message"],
-        crate::protected_content_runtime::RUNTIME_CUSTODY_PURCHASE_PENDING_MESSAGE
+        crate::protected_content_runtime::RUNTIME_CUSTODY_PURCHASE_PENDING_MESSAGE,
+        "{first_payload}"
     );
 
     let purchase_after_first = crate::protected_content_runtime::load_runtime_custody_purchase(
@@ -11421,7 +11426,8 @@ async fn test_runtime_custody_buy_confirmed_approval_stage_is_not_redriven() {
     assert_eq!(second_payload["status"], "error");
     assert_eq!(
         second_payload["message"],
-        crate::protected_content_runtime::RUNTIME_CUSTODY_PURCHASE_PENDING_MESSAGE
+        crate::protected_content_runtime::RUNTIME_CUSTODY_PURCHASE_PENDING_MESSAGE,
+        "{second_payload}"
     );
     let second_call_ops = wallet_provider.recorded_v2_operation_kinds().await;
     let list_approvals_count = second_call_ops
