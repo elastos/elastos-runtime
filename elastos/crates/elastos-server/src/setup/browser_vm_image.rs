@@ -943,7 +943,8 @@ fn install_archive_reader(
         found.len() == FILES.len(),
         "Browser image archive is missing a required image-set file"
     );
-    verify_payload_with_cancel(&bundle, platform, Some(cancelled))?;
+    let identities = image_identities(&FILES.map(|name| bundle.join(name)))?;
+    let digests = verify_payload_with_cancel(&bundle, platform, Some(cancelled))?;
     super::write_platform_cache_metadata(info, &bundle)?;
     fs::write(
         bundle.join(RECEIPT_HASH),
@@ -977,7 +978,26 @@ fn install_archive_reader(
         }
     }
     // TempDir removes the old set after exchange, or failed staging before it.
-    outcome
+    outcome?;
+    check_aliases(data, platform, true)?;
+    let paths = FILES.map(|name| dest.join(name));
+    // The rename preserves the verified files. Admit their installed paths
+    // using those hashes only while their identities still match staging.
+    // Cancellation ends at the atomic commit above; a committed set is complete.
+    verify_cached_payload(
+        &paths,
+        platform,
+        &serde_json::to_string(info)?,
+        None,
+        || {
+            ensure!(
+                image_identities(&paths)? == identities,
+                "Browser image set changed during installation; retry preparation"
+            );
+            Ok(digests)
+        },
+    )
+    .map(|_| ())
 }
 
 fn lock_installation(parent: &Path) -> anyhow::Result<crate::host_lock::FileLock> {
