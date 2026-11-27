@@ -1271,12 +1271,9 @@ pub(in crate::api::gateway) async fn complete_runtime_transaction_effect(
             .await?
         };
         validate_approval_snapshot(&store.effects[effect_index], authority, &approval)?;
-        // "not completed" used to cover all three of pending, rejected and
-        // expired, so a caller polling for completion could not tell a wait
-        // from a dead end and waited on an approval that would never complete.
-        // Only `pending` is a wait; the other two are terminal, because a
-        // declined or lapsed approval never produced a signature and so can
-        // never produce a transaction.
+        // Rejected and expired end local approval. An expired external
+        // handoff may still send outside Runtime, so its terminal answer
+        // tells the person to check the wallet before a new request.
         let approval_status = approval
             .get("status")
             .and_then(Value::as_str)
