@@ -1076,7 +1076,7 @@ async fn stalled_apply_carrier_close_fails_and_accepts_retry() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(status(&fixture.data).unwrap().unwrap().phase, "downloading");
+    assert_eq!(status(&fixture.data).unwrap().unwrap().phase, "staging");
     assert!(fixture.directory.join(ACTIVE_REQUEST).exists());
     tokio::time::pause();
     tokio::time::advance(Duration::from_secs(5)).await;
