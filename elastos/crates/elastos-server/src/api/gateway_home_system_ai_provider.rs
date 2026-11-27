@@ -233,13 +233,15 @@ fn require_system_admin(
     headers: &HeaderMap,
 ) -> anyhow::Result<HomeLaunchTokenContext> {
     let context = require_home_launch_token_context(data_dir, headers, SYSTEM_CAPSULE_ID)?;
-    super::gateway_home_system::require_admin_signin_principal(data_dir, &context).map_err(|err| {
-        if err.to_string() == "admin sign-in required" {
-            anyhow::anyhow!("admin passkey required")
-        } else {
-            err
-        }
-    })?;
+    super::gateway_home_system::require_admin_signin_principal(data_dir, &context).map_err(
+        |err| {
+            if err.to_string() == "admin sign-in required" {
+                anyhow::anyhow!("admin passkey required")
+            } else {
+                err
+            }
+        },
+    )?;
     Ok(context)
 }
 

@@ -12533,7 +12533,10 @@ async fn test_system_ai_provider_staged_discard_and_revoke_keep_passkey_authorit
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(serde_json::from_str::<Value>(&body).unwrap()["approval"], "ended");
+    assert_eq!(
+        serde_json::from_str::<Value>(&body).unwrap()["approval"],
+        "ended"
+    );
 }
 
 #[tokio::test]
