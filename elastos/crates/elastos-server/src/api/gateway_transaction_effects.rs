@@ -25,6 +25,8 @@ pub(in crate::api::gateway) const TRANSACTION_APPROVAL_REJECTED: &str =
     "transaction approval was rejected";
 pub(in crate::api::gateway) const TRANSACTION_APPROVAL_EXPIRED: &str =
     "transaction approval expired";
+pub(in crate::api::gateway) const TRANSACTION_APPROVAL_HANDOFF_EXPIRED: &str =
+    "This wallet request expired after it was sent to your wallet. Check your wallet for a sent transaction before you start a new request.";
 const TRANSACTION_EFFECT_SCHEMA: &str = "elastos.runtime.transaction-effect/v1";
 const TRANSACTION_EFFECT_STORE_RELATIVE_PATH: &str =
     ".AppData/ElastOS/Runtime/transaction-effects.json";
@@ -856,7 +858,19 @@ pub(in crate::api::gateway) async fn ensure_exact_runtime_transaction_approval(
             Some(approval) => {
                 let effect = &store.effects[effect_index];
                 validate_approval_snapshot(effect, authority, &approval)?;
-                // A lapsed approval is asked again rather than kept forever.
+                let lapsed = approval.get("status").and_then(Value::as_str) == Some("expired");
+                if lapsed
+                    && effect.produced_nothing()
+                    && approval.get("approved_at").is_some_and(|value| !value.is_null())
+                {
+                    // The connector may still send. Stop before changing the
+                    // effect or attempting renewal of an answered request.
+                    return Err((
+                        StatusCode::CONFLICT,
+                        TRANSACTION_APPROVAL_HANDOFF_EXPIRED.to_string(),
+                    ));
+                }
+                // A lapsed, unanswered approval is asked again.
                 //
                 // An approval that expired never produced a signature, so no
                 // transaction can ever come of it -- but the effect stays
@@ -872,7 +886,6 @@ pub(in crate::api::gateway) async fn ensure_exact_runtime_transaction_approval(
                 // something was signed or sent, and asking again could put a
                 // second transaction on chain for one intent. A rejected
                 // approval is never re-raised either: the person answered.
-                let lapsed = approval.get("status").and_then(Value::as_str) == Some("expired");
                 if lapsed && effect.produced_nothing() {
                     let effect = &mut store.effects[effect_index];
                     // The approval operation carries its own expiry, so the

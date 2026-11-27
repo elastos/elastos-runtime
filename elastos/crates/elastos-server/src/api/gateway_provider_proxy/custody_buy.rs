@@ -734,7 +734,13 @@ pub(in crate::api::gateway) async fn complete_runtime_custody_purchase_stage(
 ) -> anyhow::Result<RuntimeCustodyPurchaseStageOutcome> {
     let _approval = ensure_exact_runtime_transaction_approval(state, authority, request.clone())
         .await
-        .map_err(purchase_unavailable!())?;
+        .map_err(|error| {
+            if error.1 == super::gateway_transaction_effects::TRANSACTION_APPROVAL_HANDOFF_EXPIRED {
+                anyhow::anyhow!(error.1)
+            } else {
+                purchase_unavailable!()(error)
+            }
+        })?;
     let completion = match complete_runtime_transaction_effect(
         state,
         authority,

@@ -230,16 +230,16 @@ pub(super) fn prune_store(mut store: WalletStore, now: u64) -> WalletStore {
     store
 }
 
-// An approved external send can land after any local deadline. Wallet keeps
-// its original handoff until completion or an explicit answer from the owner
-// or connector; expiry alone grants no second handoff.
+// WalletConnect has an owner Dismiss control, so its original send can wait
+// past expiry. Other connectors expire normally; renewal still refuses a
+// second handoff for an already approved request.
 fn awaiting_external_transaction(request: &WalletApprovalRequest) -> bool {
     matches!(
         request.status,
         ApprovalStatus::Approved | ApprovalStatus::Expired
     ) && request.approved_at.is_some()
         && request.intent == "transaction_intent"
-        && request.connector_id.is_some()
+        && request.connector_id.as_deref() == Some("wallet-walletconnect")
         && request.signed_result.is_none()
         && request.signature_receipt.is_none()
         && request.wallet_outcome.is_none()

@@ -18,6 +18,7 @@ const mediaErrorToken = "marketplace-media-error-token";
 const mediaMalformedToken = "marketplace-media-malformed-token";
 const mediaEmptyToken = "marketplace-media-empty-token";
 const mediaPendingBuyToken = "marketplace-media-pending-buy-token";
+const expiredHandoffMessage = "This wallet request expired after it was sent to your wallet. Check your wallet for a sent transaction before you start a new request.";
 // A fresh page whose first market read fails once, and one whose market
 // cannot be reached at all. Both hold one listing of this Home's own.
 const marketRetryToken = "marketplace-market-retry-token";
@@ -1242,6 +1243,10 @@ function startServer() {
         requestLog.push({ path: url.pathname, token, method: request.method, body });
         const scenario = state[token] || {};
         const seller = String(body?.seller || "");
+        if (scenario.expiredHandoffSeller === seller) {
+          json(response, buyOfferRefusal("library_error", { message: expiredHandoffMessage }));
+          return;
+        }
         if (scenario.buyOfferWaitingSellers?.has(seller)) {
           json(response, {
             status: "error",
@@ -3415,6 +3420,16 @@ async function run() {
         && (await offerRow(marketSellerUnreachable).locator('[data-action="buy-offer"]').count()) === 1,
       "A Buy of an item whose kid is null must name no kid, and a Buy refused as unavailable must stay pressable",
       unreachableRequest,
+    );
+    state[normalToken].expiredHandoffSeller = marketSellerUnreachable;
+    await pressBuy(marketSellerUnreachable);
+    await waitForToast(expiredHandoffMessage);
+    const afterExpiredHandoff = buyOfferCount();
+    await page.waitForTimeout(200);
+    assert(
+      buyOfferCount() === afterExpiredHandoff
+        && await offerRow(marketSellerUnknownOk).locator('[data-action="buy-offer"]').isEnabled(),
+      "An expired handoff must stop polling and leave a new purchase available",
     );
     await pressBuy(marketSellerUnknownOk);
     await waitForToast("Bought. The item is in your Library.");
