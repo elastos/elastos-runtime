@@ -47,5 +47,10 @@
       }
     },
     "description": "Text model. Needs about 10 GiB of free memory."
+  },
+  "proof": {
+    "env_prefix": "GEMMA4",
+    "native_test": "model_native_gemma4_exact_profile_lifecycle",
+    "cold_test": "model_preparation_real_gemma4_cold_reply_restart"
   }
 }

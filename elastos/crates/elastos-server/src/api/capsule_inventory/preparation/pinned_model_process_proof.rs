@@ -77,6 +77,64 @@ const SMOLLM2: PinnedModel = PinnedModel {
     long_prompt: "Write a very long story about a lighthouse keeper. Keep writing new chapters and never stop.",
 };
 
+// New catalogue proofs share the producer's immutable input fixtures.
+// Existing Qwen and SmolLM2 proof inputs stay unchanged.
+static QWEN35_FIXTURE: std::sync::LazyLock<serde_json::Value> = std::sync::LazyLock::new(|| {
+    serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../scripts/pinned-qwen3.5-9b-fixture.json"
+    )))
+    .unwrap()
+});
+static GEMMA4_FIXTURE: std::sync::LazyLock<serde_json::Value> = std::sync::LazyLock::new(|| {
+    serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../scripts/pinned-gemma4-12b-fixture.json"
+    )))
+    .unwrap()
+});
+static QWEN35: std::sync::LazyLock<PinnedModel> =
+    std::sync::LazyLock::new(|| catalog_proof_model(&QWEN35_FIXTURE));
+static GEMMA4: std::sync::LazyLock<PinnedModel> =
+    std::sync::LazyLock::new(|| catalog_proof_model(&GEMMA4_FIXTURE));
+
+fn catalog_proof_model(fixture: &'static serde_json::Value) -> PinnedModel {
+    let content = &fixture["capsule_manifest"]["model_content"];
+    let provenance = &content["provenance"];
+    PinnedModel {
+        env_prefix: fixture["proof"]["env_prefix"].as_str().unwrap(),
+        capsule_name: fixture["capsule_manifest"]["name"].as_str().unwrap(),
+        bytes: fixture["model"]["size"].as_u64().unwrap(),
+        sha: fixture["model"]["sha256"].as_str().unwrap(),
+        license_bytes: fixture["license"]["size"].as_u64().unwrap(),
+        license_sha: fixture["license"]["sha256"].as_str().unwrap(),
+        quantization: content["quantization"].as_str().unwrap(),
+        minimum_memory_mb: content["minimum_memory_mb"].as_u64().unwrap(),
+        base_repository: provenance["base_repository"].as_str().unwrap(),
+        base_revision: provenance["base_revision"].as_str().unwrap(),
+        quantized_repository: provenance["quantized_repository"].as_str().unwrap(),
+        quantized_revision: provenance["quantized_revision"].as_str().unwrap(),
+        provenance: "Isolated test attestation of catalogue fixture pins; not an upstream conversion signature.\n",
+        deadline_secs: 3500,
+        reply_accepts: |text| !text.trim().is_empty(),
+        long_prompt: QWEN.long_prompt,
+    }
+}
+
+#[test]
+fn catalog_proof_inputs_match_producer_fixtures() {
+    for (model, fixture) in [(&*QWEN35, &*QWEN35_FIXTURE), (&*GEMMA4, &*GEMMA4_FIXTURE)] {
+        assert_eq!(model.bytes, fixture["model"]["size"].as_u64().unwrap());
+        assert_eq!(model.sha, fixture["model"]["sha256"].as_str().unwrap());
+        assert_eq!(
+            model.license_sha,
+            fixture["license"]["sha256"].as_str().unwrap()
+        );
+        assert!(model.bytes > SMOLLM2.bytes);
+        assert_eq!(model.quantization, "Q4_K_M");
+    }
+}
+
 /// SHA-256 of the verified `llama-server` executable inside the pinned
 /// b10516 bundle for each proved host profile.
 fn pinned_engine_sha(platform: &str) -> &'static str {
@@ -603,6 +661,18 @@ async fn model_native_smollm2_exact_profile_lifecycle() {
     native_exact_profile_lifecycle(&SMOLLM2).await;
 }
 
+#[tokio::test]
+#[ignore = "requires pinned Qwen3.5 catalogue weights, verified engine and native provider"]
+async fn model_native_qwen35_exact_profile_lifecycle() {
+    native_exact_profile_lifecycle(&QWEN35).await;
+}
+
+#[tokio::test]
+#[ignore = "requires pinned Gemma 4 catalogue weights, verified engine and native provider"]
+async fn model_native_gemma4_exact_profile_lifecycle() {
+    native_exact_profile_lifecycle(&GEMMA4).await;
+}
+
 async fn native_exact_profile_lifecycle(model: &'static PinnedModel) {
     use elastos_runtime::provider::{bridge::ProviderConfig, ProviderBridge};
     let platform = crate::setup::detect_platform();
@@ -1076,4 +1146,16 @@ async fn model_preparation_real_smollm2_cold_reply_restart() {
     // Any host with a Runtime-owned startup profile runs this small model.
     local_model_startup_profile(&crate::setup::detect_platform()).unwrap();
     preparation_process_with_model(true, Some(PinnedModelProof::from_env(&SMOLLM2))).await;
+}
+
+#[tokio::test]
+#[ignore = "requires pinned Qwen3.5 catalogue weights and isolated Content prerequisites"]
+async fn model_preparation_real_qwen35_cold_reply_restart() {
+    preparation_process_with_model(true, Some(PinnedModelProof::from_env(&QWEN35))).await;
+}
+
+#[tokio::test]
+#[ignore = "requires pinned Gemma 4 catalogue weights and isolated Content prerequisites"]
+async fn model_preparation_real_gemma4_cold_reply_restart() {
+    preparation_process_with_model(true, Some(PinnedModelProof::from_env(&GEMMA4))).await;
 }

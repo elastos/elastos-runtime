@@ -40,7 +40,7 @@ Arguments:
                   unselected ignored test, wrong test, one real pass).
 
 Environment:
-  ELASTOS_PROOF_MODEL          Pinned model id. Default and only value: smollm2
+  ELASTOS_PROOF_MODEL          smollm2 (default), qwen3.5-9b, gemma4-12b
   ELASTOS_PROOF_MODEL_PATH     Read-only pinned GGUF file (owner-only write)
   ELASTOS_PROOF_LICENSE_PATH   Read-only license text with the pinned digest
   ELASTOS_PROOF_ELASTOS_BIN    Prebuilt `elastos` binary (default: cargo build)
@@ -73,17 +73,22 @@ sha256_file() {
 # engine executable identity is per platform and lives in the Rust proof.
 pinned_field() {
     local model="$1" field="$2"
-    python3 - "${ROOT}/scripts/pinned-smollm2-fixture.json" "$model" "$field" <<'PY'
+    python3 - "${ROOT}/scripts" "$model" "$field" <<'PY'
 import json, sys
-with open(sys.argv[1], encoding="utf-8") as source:
-    fixture = json.load(source)
+from pathlib import Path
 model, field = sys.argv[2:]
+fixtures = {"smollm2": "pinned-smollm2-fixture.json", "qwen3.5-9b": "pinned-qwen3.5-9b-fixture.json", "gemma4-12b": "pinned-gemma4-12b-fixture.json"}
+if model not in fixtures:
+    sys.exit(f"[pinned-model-proof] unknown pinned model field {model}:{field}")
+with open(Path(sys.argv[1]) / fixtures[model], encoding="utf-8") as source:
+    fixture = json.load(source)
 fields = {
     "file": fixture["model"]["name"],
     "url": fixture["model"]["url"],
     "bytes": fixture["model"]["size"],
     "sha256": fixture["model"]["sha256"],
-    "license_path": fixture["license"]["path"],
+    "license_path": fixture["license"].get("path", ""),
+    "license_url": fixture["license"].get("url", ""),
     "license_bytes": fixture["license"]["size"],
     "license_sha256": fixture["license"]["sha256"],
     "env_prefix": fixture["proof"]["env_prefix"],
@@ -182,6 +187,10 @@ verifier_self_test() {
         fi
         [[ "$reason" == "[pinned-model-proof] unknown pinned model field ${rejected}" ]] \
             || die "self-test: fixture refusal differs from the field contract"
+    done
+    for selected in qwen3.5-9b gemma4-12b; do
+        [[ "$(pinned_field "$selected" file)" == *.gguf ]] || die "missing fixture weights"
+        [[ "$(pinned_field "$selected" native_test)" == model_native_*_exact_profile_lifecycle ]] || die "missing native proof"
     done
     local intended="${PROOF_MODULE}::$(pinned_field smollm2 native_test)"
     local scratch
@@ -286,8 +295,12 @@ if [[ "$FETCH" == "1" ]]; then
     # before the model download starts.
     [[ -n "$LICENSE_PATH" ]] || {
         LICENSE_PATH="${PROOF_ROOT}/inputs/LICENSE"
-        copy_vendored "license" "${ROOT}/scripts/$(pinned_field "$MODEL" license_path)" "$LICENSE_PATH" \
-            "$(pinned_field "$MODEL" license_bytes)" "$(pinned_field "$MODEL" license_sha256)"
+        if [[ -n "$(pinned_field "$MODEL" license_url)" ]]; then
+            fetch_pinned "$(pinned_field "$MODEL" license_url)" "$LICENSE_PATH"
+        else
+            copy_vendored "license" "${ROOT}/scripts/$(pinned_field "$MODEL" license_path)" "$LICENSE_PATH" \
+                "$(pinned_field "$MODEL" license_bytes)" "$(pinned_field "$MODEL" license_sha256)"
+        fi
     }
     [[ -n "$MODEL_PATH" ]] || {
         MODEL_PATH="${PROOF_ROOT}/inputs/$(pinned_field "$MODEL" file)"

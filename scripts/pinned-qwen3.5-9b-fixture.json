@@ -47,5 +47,10 @@
       }
     },
     "description": "Text model. Needs about 8 GiB of free memory."
+  },
+  "proof": {
+    "env_prefix": "QWEN35",
+    "native_test": "model_native_qwen35_exact_profile_lifecycle",
+    "cold_test": "model_preparation_real_qwen35_cold_reply_restart"
   }
 }
