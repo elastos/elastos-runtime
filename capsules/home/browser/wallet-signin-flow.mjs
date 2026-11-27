@@ -155,7 +155,7 @@ export function createWalletSigninFlow({api,select,approve,render,onComplete=()=
           await prepare(current,'walletconnect');return;
         }
         const stage=permission.cleanup_pending?'internet-clearing':permission.status==='requested'?'internet-pending':'internet-off';
-        const message=permission.cleanup_pending?'Choose Finish disconnecting in Inbox before you allow internet access again.':permission.status==='requested'?'Allow WalletConnect internet access in Inbox to get your QR code.':'WalletConnect is off on this Home. Allow internet access in Inbox to continue.';
+        const message=permission.cleanup_pending?'Choose Finish disconnecting in Inbox before you allow internet access again.':permission.status==='requested'?'Allow WalletConnect internet access in Inbox to continue.':'WalletConnect is off on this Home. Allow internet access in Inbox to continue.';
         if(state.stage!==stage)show(stage,{message});
         current.permissionTimer=setTimeout(()=>{if(live(current))void check();},1000);
       } catch(error) {fail(current,error);}

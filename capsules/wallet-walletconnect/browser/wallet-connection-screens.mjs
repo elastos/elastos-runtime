@@ -664,7 +664,7 @@ const definitions = {
     },
     "request-internet-off": {
       "status": "Internet access for WalletConnect is off.",
-      "notice": "Allow internet access in Inbox, then return here to send this request.",
+      "notice": "Allow internet access in Inbox to continue with this request.",
       "account": true,
       "request": true,
       "primary": {

@@ -17,7 +17,7 @@ for(const delegateWalletConnect of [false,true])test(`System waits for the one I
  },select:async()=>{selected++;return wallet;},approve(){},render(){}});
  t.after(()=>flow.cancel());
  await flow.start({action:'add',delegateWalletConnect});await flow.choose('walletconnect');
- assert.equal(flow.state.stage,'internet-pending');assert.equal(requests,1);assert.equal(selected,0,'no pairing or QR before Inbox Allow');
+ assert.equal(flow.state.stage,'internet-pending');assert.equal(flow.state.message,'Allow WalletConnect internet access in Inbox to continue.');assert.equal(requests,1);assert.equal(selected,0,'no pairing or QR before Inbox Allow');
  status='granted';t.mock.timers.tick(1000);await new Promise(r=>setImmediate(r));
  assert.equal(flow.state.stage,'review');assert.equal(selected,1);
  t.mock.timers.tick(3000);await new Promise(r=>setImmediate(r));
@@ -41,4 +41,17 @@ for(const [permission,cleanupPending,pending,expected]of [['revoked',true,false,
  const result=windowPresentation({permission,cleanupPending,pending,accounts:[],requests:[]},Date.now()/1000);
  assert.equal(result.input.stage,expected);assert.equal(screens.walletconnect[expected].primary.id,'inbox');
  if(cleanupPending){assert.match(screens.walletconnect[expected].notice,/Finish disconnecting/);assert.equal(result.input.localReturn,false);}
+});
+
+test('Wallet app use gives the Inbox action that matches the cleanup state',async()=>{
+ const {handleWalletAppUse}=await import('../capsules/home/browser/wallet-app-use-host.mjs');
+ for(const code of ['permission','permission-cleanup']) {
+  const replies=[],source={postMessage:message=>replies.push(message)};
+  const context={kind:'app-frame',targetId:'wallet',source,homeToken:'wallet',walletEffectState:{}};
+  const event={source,data:{type:'home:wallet-app-connect',requestId:'one',homeToken:'wallet',inventoryId:'entry'}};
+  handleWalletAppUse(event,context,{inventory:async()=>({entries:[{inventory_id:'entry',sign_in:{connector:'wallet-walletconnect'},accounts:[]}]}),connect:async()=>{throw Object.assign(new Error('off'),{code});},current:()=>true,changed(){},focus(){}});
+  await new Promise(r=>setImmediate(r));
+  assert.equal(replies.length,1);assert.equal(replies[0].result.code,code);
+  assert.equal(replies[0].result.message,code==='permission-cleanup'?'Choose Finish disconnecting in Inbox before you allow internet access again.':'Allow WalletConnect internet access in Inbox, then select Try again.');
+ }
 });
