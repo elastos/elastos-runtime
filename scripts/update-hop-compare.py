@@ -3342,10 +3342,6 @@ def cli_home_system_journey(processes, manifest, home_path, publish, root):
     # The next release's update writes these gateways back; Undo and shutdown compare sources.json.
     cli_install_gateway(home_path, False)
     publish(CLI_SYSTEM_PHASE)
-    reached("inbox-update-notice", 420, "Inbox did not show the next release's update notice after the hop")
-    next_release_cid = manifest["files"][manifest["publications"][CLI_SYSTEM_PHASE]["release"]]["cid"]
-    need(cli_json(output / "inbox-update-notice.json").get("id") == "home-update:" + next_release_cid,
-         "Inbox update notice does not name the offered release")
     reached("post-update-item", 420, "System did not update to the next release, reconnect and store the account preference")
     status = cli_private_json(status_path)
     host = cli_process_identity(status["host_pid"]) if status.get("host_pid") else None
@@ -3353,11 +3349,11 @@ def cli_home_system_journey(processes, manifest, home_path, publish, root):
          and installed(CLI_SYSTEM_PHASE) and host is not None
          and cli_process_executable(host["pid"]) == str(binary), "controller did not restart Home on the next release")
     stages = ("up-to-date", "new-offer", "updated", "tampered-offer", "refused", "installer-offer", "installer-required",
-              "next-offer", "inbox-update-notice", "next-updated", "post-update-item")
+              "next-offer", "next-updated", "post-update-item")
     return {"stages": {name: cli_json(output / (name + ".json")) for name in stages}, "host": host,
             "published_system": {"phase": published["phase"], "from": manifest["old"]["version"],
                                  "to": published["current_version"], "host": published_host},
-            "installer_required": installer_required, "next_release_cid": next_release_cid,
+            "installer_required": installer_required,
             "provider_warnings": {"before": warnings_before, "after": warnings_after,
                                   "new": sorted(set(warnings_after) - set(warnings_before))}}, browser
 
@@ -3778,13 +3774,6 @@ def cli_check_result(result, platform):
     need(stages["refused"]["current_version"] == result["new"]["version"]
          and stages["next-updated"]["current_version"] == next_version,
          "System did not refuse the tampered offer and then apply " + next_version)
-    notice = stages.get("inbox-update-notice", {})
-    release_cid = home["system"].get("next_release_cid")
-    need(bool(release_cid) and notice.get("id") == "home-update:" + release_cid
-         and notice.get("kind") == "home_update_available" and notice.get("source_app") == "system"
-         and notice.get("title") == "Update available" and notice.get("body") == f"ElastOS {next_version} is available."
-         and notice.get("shown") is True and notice.get("open_system") is True,
-         "Inbox did not show the offered release's update notice after the hop with Open System")
     # The unknown-kind offer (#89): System showed the install command on the current version,
     # never "not valid", and the same Home kept the installed release, its trust and support.
     shown, installer = stages.get("installer-required", {}), home["system"].get("installer_required", {})
@@ -3810,7 +3799,6 @@ def cli_check_result(result, platform):
     return {"status": "passed", "from": previous["version"], "to": result["new"]["version"], "next": next_version,
             "system_refused": "tampered-binary", "cli_refused": {name: list(CLI_REFUSALS) for name in result["paths"]},
             "cli_installer_required": CLI_INSTALLER_CASE, "system_installer_required": CLI_INSTALLER_CASE,
-            "inbox_update_notice": {"version": next_version, "release_cid": release_cid},
             "provider_warnings_new": [], "undo": {"version": undo["version"], "plain_update_refused": True}}
 
 

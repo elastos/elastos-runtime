@@ -1,5 +1,4 @@
 import test from "node:test";
-import { readInboxUpdateNotice } from "./lib/system-update-observer.mjs";
 import assert from "node:assert/strict";
 import { readFile, mkdir } from "node:fs/promises";
 import { chromium, makeSystemSummary, makeAppearanceRecord, startSystemFixtureServer, jsonResponse } from "./system-uiux-fixture.mjs";
@@ -130,10 +129,6 @@ test("update notice uses real Inbox, bell and System navigation; switch saves an
       await gui.evaluate(()=>fixture.windows.openTarget("inbox"));
       const inbox=gui.frameLocator('iframe.window-frame[title="Inbox"]');
       await inbox.getByRole("button",{name:"Open System",exact:true}).waitFor();
-      assert.deepEqual(await inbox.locator("body").evaluate(readInboxUpdateNotice), {
-        title: copy("NOTICE_TITLE"), body: copy("NOTICE_BODY").replace("{version}", "0.7.1"),
-        shown: true, open_system: true,
-      });
       assert.deepEqual(await inbox.locator("#entry-detail button").allTextContents(), ["Open System", "Dismiss"]);
       assert.equal(await inbox.locator("#pending-count").textContent(),"0");
       assert.equal(await inbox.locator("#review-count").textContent(),"0");

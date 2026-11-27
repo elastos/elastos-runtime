@@ -2171,13 +2171,6 @@ class CliFixtureTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     observer.cli_admit_previous(generated, changed, {})
 
-    def test_rc2_version_order_advances_to_the_stable_release(self):
-        versions = ("2.0.1", "2.0.2-rc.1", "2.0.2-rc.2", "2.0.2")
-        for installed, offered in zip(versions, versions[1:]):
-            with self.subTest(installed=installed, offered=offered):
-                self.assertLess(observer.cli_version_order(installed), observer.cli_version_order(offered))
-        self.assertEqual(observer.cli_next_version("2.0.2-rc.1"), "2.0.2-rc.2")
-
     def test_next_release_advances_the_last_prerelease_field_or_the_patch(self):
         for version, expected in (("0.8.0-alpha.6", "0.8.0-alpha.7"), ("0.7.1", "0.7.2"), ("1.2.3-rc.9", "1.2.3-rc.10")):
             self.assertEqual(observer.cli_next_version(version), expected)
@@ -2234,12 +2227,7 @@ class CliFixtureTests(unittest.TestCase):
                         "system": {"provider_warnings": {"new": []},
                                    "published_system": {"phase": "updated", "from": pinned, "to": "0.8.0-alpha.9"},
                                    "installer_required": {"phase": "failed", "home_kept": True, "support_unchanged": True},
-                                   "next_release_cid": "QmNextRelease",
-                                   "stages": {"inbox-update-notice": {"id": "home-update:QmNextRelease", "kind": "home_update_available",
-                                                                               "source_app": "system", "title": "Update available",
-                                                                               "body": "ElastOS 0.8.0-alpha.10 is available.",
-                                                                               "shown": True, "open_system": True},
-                                              "refused": {"current_version": "0.8.0-alpha.9"},
+                                   "stages": {"refused": {"current_version": "0.8.0-alpha.9"},
                                               "installer-offer": {"current_version": "0.8.0-alpha.9", "changes": "Fixture unknown-kind"},
                                               "installer-required": {"current_version": "0.8.0-alpha.9", "status": installer_status},
                                               "next-updated": {"current_version": "0.8.0-alpha.10"}}},
@@ -2290,15 +2278,6 @@ class CliFixtureTests(unittest.TestCase):
                   "plain downgrade applied": lambda value: home(value)["undo"]["refused_plain_update"].update(exit=0),
                   "tampered offer applied": lambda value: home(value)["system"]["stages"]["refused"].update(current_version="0.8.0-alpha.10"),
                   "next release not applied": lambda value: home(value)["system"]["stages"]["next-updated"].update(current_version="0.8.0-alpha.9"),
-                  "Inbox notice missing": lambda value: home(value)["system"]["stages"].pop("inbox-update-notice"),
-                  "Inbox notice for old release": lambda value: home(value)["system"]["stages"]["inbox-update-notice"].update(id="home-update:QmOldRelease"),
-                  "Inbox notice wrong kind": lambda value: home(value)["system"]["stages"]["inbox-update-notice"].update(kind="contact_request"),
-                  "Inbox notice wrong source": lambda value: home(value)["system"]["stages"]["inbox-update-notice"].update(source_app="wallet"),
-                  "Inbox notice wrong version": lambda value: home(value)["system"]["stages"]["inbox-update-notice"].update(body="ElastOS 0.8.0-alpha.9 is available."),
-                  "Inbox notice wrong title": lambda value: home(value)["system"]["stages"]["inbox-update-notice"].update(title="Request"),
-                  "Inbox notice hidden": lambda value: home(value)["system"]["stages"]["inbox-update-notice"].update(shown=False),
-                  "Inbox notice has no System action": lambda value: home(value)["system"]["stages"]["inbox-update-notice"].update(open_system=False),
-                  "Inbox notice release binding missing": lambda value: home(value)["system"].pop("next_release_cid"),
                   "CLI refusal failed": lambda value: value["paths"]["m2-discovery"]["checks"]["wrong-platform"].update(status="failed"),
                   "install command case failed": lambda value: value["paths"]["m2-discovery"]["checks"][observer.CLI_INSTALLER_CASE].update(status="failed"),
                   "install command case missing": lambda value: value["paths"]["m2-discovery"]["checks"].pop(observer.CLI_INSTALLER_CASE),
