@@ -1,0 +1,51 @@
+{
+  "id": "qwen3.5-9b",
+  "display_name": "Qwen3.5 9B",
+  "model": {
+    "name": "Qwen3.5-9B-Q4_K_M.gguf",
+    "url": "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/3885219b6810b007914f3a7950a8d1b469d598a5/Qwen3.5-9B-Q4_K_M.gguf",
+    "size": 5680522464,
+    "sha256": "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8"
+  },
+  "license": {
+    "name": "LICENSE",
+    "path": "fixtures/licenses/Apache-2.0.txt",
+    "size": 11358,
+    "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+  },
+  "capsule_manifest": {
+    "schema": "elastos.capsule/v1",
+    "name": "qwen3.5-9b-q4-k-m-local",
+    "role": "content",
+    "type": "data",
+    "projections": [
+      "content"
+    ],
+    "version": "0.1.0",
+    "entrypoint": "weights.gguf",
+    "model_content": {
+      "consumer_interface": "elastos.provider.model",
+      "consumer_interface_version": "0.1.0",
+      "engine": "llama.cpp",
+      "format": "gguf",
+      "quantization": "Q4_K_M",
+      "minimum_memory_mb": 8192,
+      "license": {
+        "path": "LICENSE",
+        "spdx_id": "Apache-2.0"
+      },
+      "provenance": {
+        "base_license": {
+          "path": "LICENSE.base",
+          "spdx_id": "Apache-2.0"
+        },
+        "base_repository": "Qwen/Qwen3.5-9B",
+        "base_revision": "c202236235762e1c871ad0ccb60c8ee5ba337b9a",
+        "quantized_repository": "unsloth/Qwen3.5-9B-GGUF",
+        "quantized_revision": "3885219b6810b007914f3a7950a8d1b469d598a5",
+        "path": "PROVENANCE.md"
+      }
+    },
+    "description": "Text model. Needs about 8 GiB of free memory."
+  }
+}

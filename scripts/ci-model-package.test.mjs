@@ -38,7 +38,9 @@ test("producer refuses absent or truncated model before writing a package", t =>
   assert.throws(() => readFileSync(join(packageDir, "capsule.json")), /ENOENT/);
 });
 
-for (const fixture of [SMOL_FIXTURE, QWEN_FIXTURE]) {
+for (const fixture of [SMOL_FIXTURE, QWEN_FIXTURE,
+  loadFixture(new URL("./pinned-qwen3.5-9b-fixture.json", import.meta.url)),
+  loadFixture(new URL("./pinned-gemma4-12b-fixture.json", import.meta.url))]) {
   test(`${fixture.id} fixture fetch selects its declared immutable provenance and licensing`, () => {
     const manifest = fixture.capsule_manifest, model = manifest.model_content;
     assert.equal(manifest.role, "content");

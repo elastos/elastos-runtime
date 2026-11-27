@@ -1,0 +1,51 @@
+{
+  "id": "gemma4-12b",
+  "display_name": "gemma 4 12B it",
+  "model": {
+    "name": "gemma-4-12b-it-Q4_K_M.gguf",
+    "url": "https://huggingface.co/unsloth/gemma-4-12b-it-GGUF/resolve/fc034cfff751157913579611efad8462ac1be606/gemma-4-12b-it-Q4_K_M.gguf",
+    "size": 7121861440,
+    "sha256": "0a270ec9fe6b34f4a0d33992b6135117b484ebc4766ab76b51d4ae8c457e4c42"
+  },
+  "license": {
+    "name": "LICENSE",
+    "path": "fixtures/licenses/Apache-2.0.txt",
+    "size": 11358,
+    "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+  },
+  "capsule_manifest": {
+    "schema": "elastos.capsule/v1",
+    "name": "gemma4-12b-q4-k-m-local",
+    "role": "content",
+    "type": "data",
+    "projections": [
+      "content"
+    ],
+    "version": "0.1.0",
+    "entrypoint": "weights.gguf",
+    "model_content": {
+      "consumer_interface": "elastos.provider.model",
+      "consumer_interface_version": "0.1.0",
+      "engine": "llama.cpp",
+      "format": "gguf",
+      "quantization": "Q4_K_M",
+      "minimum_memory_mb": 10240,
+      "license": {
+        "path": "LICENSE",
+        "spdx_id": "Apache-2.0"
+      },
+      "provenance": {
+        "base_license": {
+          "path": "LICENSE.base",
+          "spdx_id": "Apache-2.0"
+        },
+        "base_repository": "google/gemma-4-12B-it",
+        "base_revision": "43c9d014b231474fa7212dbb48a762566c2b255d",
+        "quantized_repository": "unsloth/gemma-4-12b-it-GGUF",
+        "quantized_revision": "fc034cfff751157913579611efad8462ac1be606",
+        "path": "PROVENANCE.md"
+      }
+    },
+    "description": "Text model. Needs about 10 GiB of free memory."
+  }
+}
