@@ -728,6 +728,8 @@ pub(in crate::api::gateway) enum RuntimeCustodyPurchaseStageOutcome {
     AwaitingChainSettlement,
     /// The person declined. Nothing was signed, so nothing can arrive later.
     Declined,
+    /// The external handoff expired; the person must check their wallet.
+    HandoffExpired,
 }
 
 pub(in crate::api::gateway) async fn complete_runtime_custody_purchase_stage(
@@ -735,17 +737,15 @@ pub(in crate::api::gateway) async fn complete_runtime_custody_purchase_stage(
     authority: &RuntimeWalletAuthority,
     request: &RuntimeTransactionRequest,
 ) -> anyhow::Result<RuntimeCustodyPurchaseStageOutcome> {
-    let _approval = ensure_exact_runtime_transaction_approval(state, authority, request.clone())
-        .await
-        .map_err(|error| {
-            if error.1 == super::gateway_transaction_effects::TRANSACTION_APPROVAL_HANDOFF_EXPIRED {
-                anyhow::Error::new(RuntimeCustodyApprovalClosed::new(
-                    RuntimeCustodyApprovalClosedReason::HandoffExpired,
-                ))
-            } else {
-                purchase_unavailable!()(error)
-            }
-        })?;
+    match ensure_exact_runtime_transaction_approval(state, authority, request.clone()).await {
+        Ok(_) => {}
+        Err((_, message))
+            if message == super::gateway_transaction_effects::TRANSACTION_APPROVAL_HANDOFF_EXPIRED =>
+        {
+            return Ok(RuntimeCustodyPurchaseStageOutcome::HandoffExpired);
+        }
+        Err(error) => return Err(purchase_unavailable!()(error)),
+    }
     let completion = match complete_runtime_transaction_effect(
         state,
         authority,
@@ -781,6 +781,11 @@ pub(in crate::api::gateway) async fn complete_runtime_custody_purchase_stage(
                 "runtime custody purchase: wallet approval was declined"
             );
             return Ok(RuntimeCustodyPurchaseStageOutcome::Declined);
+        }
+        Err((_, message))
+            if message == super::gateway_transaction_effects::TRANSACTION_APPROVAL_HANDOFF_EXPIRED =>
+        {
+            return Ok(RuntimeCustodyPurchaseStageOutcome::HandoffExpired);
         }
         // Signed and sent, and the Chain's sources have not seen it yet. Asking
         // again reconciles the same transaction; nothing is signed or sent.
@@ -854,6 +859,9 @@ pub(in crate::api::gateway) fn runtime_custody_buy_stage_answer(
                 line,
             )
         }
+        RuntimeCustodyPurchaseStageOutcome::HandoffExpired => anyhow::Error::new(
+            RuntimeCustodyApprovalClosed::new(RuntimeCustodyApprovalClosedReason::HandoffExpired),
+        ),
         // A refusal is not a wait. It keeps the unavailable message rather than
         // the pending one, so a caller polling for settlement stops.
         RuntimeCustodyPurchaseStageOutcome::Declined => anyhow::Error::new(
@@ -1488,10 +1496,9 @@ pub(crate) async fn runtime_custody_buy_via_gateway(
         let approval_completion = match approval_completion {
             RuntimeCustodyPurchaseStageOutcome::Confirmed(completion) => *completion,
             outcome => {
-                // A declined effect is never re-raised or broadcast: the
-                // attempt is over without payment and retired (R41), so it
-                // blocks no later purchase of this item on either path.
-                if matches!(outcome, RuntimeCustodyPurchaseStageOutcome::Declined) {
+                // A declined or expired handoff ends this attempt. A new
+                // purchase gets its own effect; the old effect stays closed.
+                if matches!(outcome, RuntimeCustodyPurchaseStageOutcome::Declined | RuntimeCustodyPurchaseStageOutcome::HandoffExpired) {
                     retire_runtime_listing_attempt(state, &purchase)?;
                 } else {
                     purchase.updated_at = crate::auth::now_ts();
@@ -1534,7 +1541,7 @@ pub(crate) async fn runtime_custody_buy_via_gateway(
         let buy_completion = match buy_completion {
             RuntimeCustodyPurchaseStageOutcome::Confirmed(completion) => *completion,
             outcome => {
-                if matches!(outcome, RuntimeCustodyPurchaseStageOutcome::Declined) {
+                if matches!(outcome, RuntimeCustodyPurchaseStageOutcome::Declined | RuntimeCustodyPurchaseStageOutcome::HandoffExpired) {
                     retire_runtime_listing_attempt(state, &purchase)?;
                 } else {
                     purchase.updated_at = crate::auth::now_ts();

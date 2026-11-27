@@ -90,6 +90,9 @@ async fn runtime_custody_creator_effect_progress(
             Ok(RuntimeTransactionEffectProgress::AwaitingApproval) => {
                 RuntimeCustodyCreatorEffectProgress::AwaitingApproval
             }
+            Ok(RuntimeTransactionEffectProgress::HandoffExpired) => {
+                RuntimeCustodyCreatorEffectProgress::HandoffExpired
+            }
             Ok(RuntimeTransactionEffectProgress::ClosedWithoutSignature) => {
                 RuntimeCustodyCreatorEffectProgress::ClosedWithoutTransaction
             }

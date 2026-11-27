@@ -635,6 +635,8 @@ pub(in crate::api::gateway) enum RuntimeTransactionEffectProgress {
     AwaitingApproval,
     /// The approval expired or was declined, and nothing was signed.
     ClosedWithoutSignature,
+    /// Local handoff authority ended; the external wallet may have sent it.
+    HandoffExpired,
     /// Signed or sent, or approved in the Wallet; a transaction may exist.
     Signed,
     /// The transaction has a receipt.
@@ -677,6 +679,9 @@ pub(in crate::api::gateway) async fn runtime_transaction_effect_progress(
     }
     let approval =
         exact_wallet_approval_by_id(state, authority, &effect.approval_request_id).await?;
+    if approval.as_ref().is_some_and(expired_connector_handoff) {
+        return Ok(RuntimeTransactionEffectProgress::HandoffExpired);
+    }
     // A connector-linked account signs and broadcasts outside the Wallet, so a
     // closed approval there does not prove nothing was sent.
     let connector = approval
@@ -691,7 +696,7 @@ pub(in crate::api::gateway) async fn runtime_transaction_effect_progress(
     Ok(match (status, connector) {
         // A connector-linked account signs and broadcasts outside the Wallet,
         // so an approval there that is not completed proves nothing either way.
-        (Some("pending" | "expired" | "rejected"), Some(connector)) => {
+        (Some("pending" | "approved" | "expired" | "rejected"), Some(connector)) => {
             RuntimeTransactionEffectProgress::InConnector(connector.to_string())
         }
         (Some("expired" | "rejected"), None) => {
@@ -4291,7 +4296,7 @@ mod approved_request_resume_tests {
     async fn expired_connector_handoff_stops_mint_and_buy_without_renewal() {
         use super::super::gateway_provider_proxy::complete_runtime_custody_purchase_stage;
 
-        let message = "This wallet request expired after it was sent to your wallet. Check your wallet for a sent transaction before you start a new request.";
+        let message = "This request expired. Your wallet may still have sent the transaction. Check your wallet before starting a new request.";
         for connector in ["wallet-metamask", "wallet-unisat"] {
             let root = tempfile::tempdir().unwrap();
             let authority = test_authority(
@@ -4371,14 +4376,10 @@ mod approved_request_resume_tests {
                     .await
                     .unwrap_err();
             assert_eq!(error, (StatusCode::CONFLICT, message.to_string()));
-            let error = complete_runtime_custody_purchase_stage(&state, &authority, &request)
+            let outcome = complete_runtime_custody_purchase_stage(&state, &authority, &request)
                 .await
-                .err()
-                .expect("buy must stop waiting after the handoff expires");
-            let answer = crate::library::provider_error_from_for_test(&error);
-            assert_eq!(answer["message"], message);
-            assert_eq!(answer["approval_closed"]["reason"], "handoff_expired");
-            assert!(answer.get("buy_progress").is_none());
+                .unwrap();
+            assert!(matches!(outcome, super::super::gateway_provider_proxy::RuntimeCustodyPurchaseStageOutcome::HandoffExpired));
             assert_eq!(wallet.request_approval_calls.load(Ordering::SeqCst), 0);
             assert_eq!(chain.calls.load(Ordering::SeqCst), 0);
             assert_eq!(

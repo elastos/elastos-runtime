@@ -799,7 +799,7 @@ test("an expired external handoff stops both buy paths with the wallet check ins
   const answer = {
     status: "error",
     code: "library_error",
-    message: "This wallet request expired after it was sent to your wallet. Check your wallet for a sent transaction before you start a new request.",
+    message: "This request expired. Your wallet may still have sent the transaction. Check your wallet before starting a new request.",
     approval_closed: {
       schema: "elastos.protected-content.approval-closed/v1",
       reason: "handoff_expired",

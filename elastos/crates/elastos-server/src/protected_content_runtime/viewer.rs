@@ -136,7 +136,7 @@ const RUNTIME_CUSTODY_RELEASE_RESUME_MIN_SECS: u64 = 20;
 pub(crate) const RUNTIME_CUSTODY_APPROVAL_CLOSED_SCHEMA_V1: &str =
     "elastos.protected-content.approval-closed/v1";
 pub(crate) const RUNTIME_CUSTODY_APPROVAL_HANDOFF_EXPIRED_MESSAGE: &str =
-    "This wallet request expired after it was sent to your wallet. Check your wallet for a sent transaction before you start a new request.";
+    "This request expired. Your wallet may still have sent the transaction. Check your wallet before starting a new request.";
 
 /// Why an outstanding wallet approval will never complete.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

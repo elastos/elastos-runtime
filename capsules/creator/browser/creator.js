@@ -828,6 +828,7 @@ const UNFINISHED_STAGE_LABELS = {
   publish_incomplete: "Store on your Home",
   approval_pending: "Wallet approval",
   approval_in_connector: "Wallet approval",
+  approval_handoff_expired: "Wallet request expired",
   transaction_sent: "Chain confirmation",
   transaction_unconfirmed: "Chain confirmation",
   transaction_mined: "Assemble listing",

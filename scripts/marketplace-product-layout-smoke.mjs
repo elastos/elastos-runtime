@@ -18,7 +18,7 @@ const mediaErrorToken = "marketplace-media-error-token";
 const mediaMalformedToken = "marketplace-media-malformed-token";
 const mediaEmptyToken = "marketplace-media-empty-token";
 const mediaPendingBuyToken = "marketplace-media-pending-buy-token";
-const expiredHandoffMessage = "This wallet request expired after it was sent to your wallet. Check your wallet for a sent transaction before you start a new request.";
+const expiredHandoffMessage = "This request expired. Your wallet may still have sent the transaction. Check your wallet before starting a new request.";
 // A fresh page whose first market read fails once, and one whose market
 // cannot be reached at all. Both hold one listing of this Home's own.
 const marketRetryToken = "marketplace-market-retry-token";
