@@ -38,9 +38,13 @@ test("producer refuses absent or truncated model before writing a package", t =>
   assert.throws(() => readFileSync(join(packageDir, "capsule.json")), /ENOENT/);
 });
 
+test("release contains exactly the three approved pinned model fixtures", () => {
+  const actual = readdirSync(new URL("./", import.meta.url)).filter(name => /^pinned-.*-fixture\.json$/.test(name)).sort();
+  assert.deepEqual(actual, ["pinned-smollm2-fixture.json", "pinned-qwen2.5-1.5b-fixture.json", "pinned-qwen3.5-9b-fixture.json"].sort());
+});
+
 for (const fixture of [SMOL_FIXTURE, QWEN_FIXTURE,
-  loadFixture(new URL("./pinned-qwen3.5-9b-fixture.json", import.meta.url)),
-  loadFixture(new URL("./pinned-gemma4-12b-fixture.json", import.meta.url))]) {
+  loadFixture(new URL("./pinned-qwen3.5-9b-fixture.json", import.meta.url))]) {
   test(`${fixture.id} fixture fetch selects its declared immutable provenance and licensing`, () => {
     const manifest = fixture.capsule_manifest, model = manifest.model_content;
     assert.equal(manifest.role, "content");
@@ -52,17 +56,16 @@ for (const fixture of [SMOL_FIXTURE, QWEN_FIXTURE,
   });
 }
 
-test("release model budgets cover all four pinned models and their preparation charges", () => {
+test("release model budgets cover all three pinned models and their preparation charges", () => {
   const limits = JSON.parse(readFileSync(new URL("../components.json", import.meta.url))).model_catalog.local_use;
   const fixtures = [SMOL_FIXTURE, QWEN_FIXTURE,
-    loadFixture(new URL("./pinned-qwen3.5-9b-fixture.json", import.meta.url)),
-    loadFixture(new URL("./pinned-gemma4-12b-fixture.json", import.meta.url))];
+    loadFixture(new URL("./pinned-qwen3.5-9b-fixture.json", import.meta.url))];
   // Include both license copies, capsule metadata and room for provenance.
   // Runtime charges three copies of the complete closure plus index overhead.
   const charge = fixtures.reduce((total, fixture) => total + 3 * (fixture.model.size
     + 2 * fixture.license.size + Buffer.byteLength(canonical(fixture.capsule_manifest)) + 1024)
     + 8 * 1024 ** 2 + 3 * 65536, 0);
-  assert(limits.max_cache_bytes >= charge, `all four models need at least ${charge} cache bytes`);
+  assert(limits.max_cache_bytes >= charge, `all three models need at least ${charge} cache bytes`);
   for (const fixture of fixtures) {
     assert(limits.max_model_memory_bytes >= fixture.capsule_manifest.model_content.minimum_memory_mb * 1024 ** 2,
       `${fixture.id} exceeds the release model memory budget`);
@@ -132,6 +135,8 @@ function decodeBase(bytes, alphabet, bits) {
 test("disposable catalog verifies the domain, signed bytes, DID and raw content pin", () => {
   const entry = { cid: "bafyfixture", capsule_manifest: SMOL_FIXTURE.capsule_manifest, object_manifest: contentManifest([]) };
   const first = signedCatalog(entry, 12345), second = signedCatalog(entry, 12345);
+  const limits = JSON.parse(readFileSync(new URL("../components.json", import.meta.url))).model_catalog.local_use;
+  assert.equal(first.trust.local_use.max_model_memory_bytes, limits.max_model_memory_bytes);
   assert.notEqual(first.trust.publisher_dids[0], second.trust.publisher_dids[0]);
   const envelope = JSON.parse(first.catalog), multicodec = decodeBase(envelope.signer_did.slice("did:key:z".length), "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz");
   assert.deepEqual(multicodec.subarray(0, 2), Buffer.from([0xed, 1]));

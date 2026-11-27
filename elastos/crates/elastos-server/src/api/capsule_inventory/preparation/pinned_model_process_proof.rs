@@ -86,17 +86,8 @@ static QWEN35_FIXTURE: std::sync::LazyLock<serde_json::Value> = std::sync::LazyL
     )))
     .unwrap()
 });
-static GEMMA4_FIXTURE: std::sync::LazyLock<serde_json::Value> = std::sync::LazyLock::new(|| {
-    serde_json::from_str(include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../../scripts/pinned-gemma4-12b-fixture.json"
-    )))
-    .unwrap()
-});
 static QWEN35: std::sync::LazyLock<PinnedModel> =
     std::sync::LazyLock::new(|| catalog_proof_model(&QWEN35_FIXTURE));
-static GEMMA4: std::sync::LazyLock<PinnedModel> =
-    std::sync::LazyLock::new(|| catalog_proof_model(&GEMMA4_FIXTURE));
 
 fn catalog_proof_model(fixture: &'static serde_json::Value) -> PinnedModel {
     let content = &fixture["capsule_manifest"]["model_content"];
@@ -123,7 +114,8 @@ fn catalog_proof_model(fixture: &'static serde_json::Value) -> PinnedModel {
 
 #[test]
 fn catalog_proof_inputs_match_producer_fixtures() {
-    for (model, fixture) in [(&*QWEN35, &*QWEN35_FIXTURE), (&*GEMMA4, &*GEMMA4_FIXTURE)] {
+    {
+        let (model, fixture) = (&*QWEN35, &*QWEN35_FIXTURE);
         assert_eq!(model.bytes, fixture["model"]["size"].as_u64().unwrap());
         assert_eq!(model.sha, fixture["model"]["sha256"].as_str().unwrap());
         assert_eq!(
@@ -166,7 +158,6 @@ fn pinned_engine_sha(platform: &str) -> &'static str {
 fn catalog_engine_sha(model: &PinnedModel, platform: &str) -> &'static str {
     let fixture = match model.env_prefix {
         "QWEN35" => &*QWEN35_FIXTURE,
-        "GEMMA4" => &*GEMMA4_FIXTURE,
         _ => return pinned_engine_sha(platform),
     };
     fixture["proof"]["engine_sha256"][platform]
@@ -177,7 +168,6 @@ fn catalog_engine_sha(model: &PinnedModel, platform: &str) -> &'static str {
 fn catalog_cancel_status(model: &PinnedModel) -> &'static str {
     let fixture = match model.env_prefix {
         "QWEN35" => &*QWEN35_FIXTURE,
-        "GEMMA4" => &*GEMMA4_FIXTURE,
         _ => return "settlement_unknown",
     };
     fixture["proof"]["cancel_status"]
@@ -706,12 +696,6 @@ async fn model_native_qwen35_exact_profile_lifecycle() {
     native_exact_profile_lifecycle(&QWEN35).await;
 }
 
-#[tokio::test]
-#[ignore = "requires pinned Gemma 4 catalogue weights, verified engine and native provider"]
-async fn model_native_gemma4_exact_profile_lifecycle() {
-    native_exact_profile_lifecycle(&GEMMA4).await;
-}
-
 async fn native_exact_profile_lifecycle(model: &'static PinnedModel) {
     use elastos_runtime::provider::{bridge::ProviderConfig, ProviderBridge};
     let platform = crate::setup::detect_platform();
@@ -1190,10 +1174,4 @@ async fn model_preparation_real_smollm2_cold_reply_restart() {
 #[ignore = "requires pinned Qwen3.5 catalogue weights and isolated Content prerequisites"]
 async fn model_preparation_real_qwen35_cold_reply_restart() {
     preparation_process_with_model(true, Some(PinnedModelProof::from_env(&QWEN35))).await;
-}
-
-#[tokio::test]
-#[ignore = "requires pinned Gemma 4 catalogue weights and isolated Content prerequisites"]
-async fn model_preparation_real_gemma4_cold_reply_restart() {
-    preparation_process_with_model(true, Some(PinnedModelProof::from_env(&GEMMA4))).await;
 }

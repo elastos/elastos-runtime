@@ -17,7 +17,7 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 
 ### Added
 
-- Marketplace raises memory and storage limits for larger text models on this computer.
+- Marketplace adds Qwen3.5 9B alongside the two existing text models for use on this computer.
 - In System > Accounts, Add wallet takes one wallet signature, then a passkey approves sign-in access. Wallet manages payment connections. Sign in offers your available methods and can remember your choice on this device.
 - WalletConnect connects your wallet to Wallet. Scan the QR code with your wallet, or copy the connection link. Compatible browser wallets can connect through the MetaMask option, which uses MetaMask when it is installed.
 - The Home address card in Wallet shows your ESC and Base balances.
@@ -61,7 +61,7 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 
 ### Added
 
-- Marketplace raises memory and storage limits for larger text models on this computer.
+- Marketplace adds Qwen3.5 9B alongside the two existing text models for use on this computer.
 - In System > Accounts, Add wallet takes one wallet signature, then a passkey approves sign-in access. Wallet manages payment connections. Sign in offers your available methods and can remember your choice on this device.
 - WalletConnect connects your wallet to Wallet. Scan the QR code with your wallet, or copy the connection link. Compatible browser wallets can connect through the MetaMask option, which uses MetaMask when it is installed.
 - The Home address card in Wallet shows your ESC and Base balances.

@@ -40,7 +40,7 @@ Arguments:
                   unselected ignored test, wrong test, one real pass).
 
 Environment:
-  ELASTOS_PROOF_MODEL          smollm2 (default), qwen3.5-9b, gemma4-12b
+  ELASTOS_PROOF_MODEL          smollm2 (default), qwen3.5-9b
   ELASTOS_PROOF_MODEL_PATH     Read-only pinned GGUF file (owner-only write)
   ELASTOS_PROOF_LICENSE_PATH   Read-only license text with the pinned digest
   ELASTOS_PROOF_ELASTOS_BIN    Prebuilt `elastos` binary (default: cargo build)
@@ -77,7 +77,7 @@ pinned_field() {
 import json, sys
 from pathlib import Path
 model, field = sys.argv[2:]
-fixtures = {"smollm2": "pinned-smollm2-fixture.json", "qwen3.5-9b": "pinned-qwen3.5-9b-fixture.json", "gemma4-12b": "pinned-gemma4-12b-fixture.json"}
+fixtures = {"smollm2": "pinned-smollm2-fixture.json", "qwen3.5-9b": "pinned-qwen3.5-9b-fixture.json"}
 if model not in fixtures:
     sys.exit(f"[pinned-model-proof] unknown pinned model field {model}:{field}")
 with open(Path(sys.argv[1]) / fixtures[model], encoding="utf-8") as source:
@@ -188,7 +188,7 @@ verifier_self_test() {
         [[ "$reason" == "[pinned-model-proof] unknown pinned model field ${rejected}" ]] \
             || die "self-test: fixture refusal differs from the field contract"
     done
-    for selected in qwen3.5-9b gemma4-12b; do
+    for selected in qwen3.5-9b; do
         [[ "$(pinned_field "$selected" file)" == *.gguf ]] || die "missing fixture weights"
         [[ "$(pinned_field "$selected" native_test)" == model_native_*_exact_profile_lifecycle ]] || die "missing native proof"
     done
