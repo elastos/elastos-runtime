@@ -1619,7 +1619,7 @@ async fn test_walletconnect_unfinished_transaction_is_visible_without_another_ha
             "requested_by_actor":"documents","resource":"elastos://transaction","reason":"Fixture","account_id":"fixture-account",
             "address":format!("0x{}","12".repeat(20)),"proof_type":"siwe","chain_namespace":"eip155:1",
             "connector_id":WALLET_WALLETCONNECT_CAPSULE_ID,"principal_id":owner.principal_id,
-            "payload_hash":format!("0x{}","ab".repeat(32)),"created_at":now_ts(),"expires_at":now_ts()+600,
+            "payload_hash":format!("0x{}","ab".repeat(32)),"created_at":now_ts(),"expires_at":now_ts()-elastos_wallet_contract::WALLETCONNECT_TRANSACTION_COMPLETION_GRACE_SECS-60,
         })]),
         ..Default::default()
     };

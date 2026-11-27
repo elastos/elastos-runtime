@@ -524,14 +524,23 @@ async fn walletconnect_request_binding(
         && request["signed_result"].is_null()
         && request["wallet_outcome"].is_null()
         && request["rejection_reason"] == elastos_wallet_contract::WALLETCONNECT_DISMISSAL_REASON;
+    // Wallet retains the original approved send until its first outcome.
+    // Completion uses that stored authority even after the prompt expires.
+    let awaiting_transaction_outcome = status == "approved"
+        && request["status"] == "approved"
+        && request["approved_at"].as_u64().is_some()
+        && request["intent"] == "transaction_intent"
+        && request["signed_result"].is_null()
+        && request["signature_receipt"].is_null()
+        && request["wallet_outcome"].is_null();
     anyhow::ensure!(
         request["principal_id"].as_str() == Some(authority.verified_context().principal_id())
             && request["connector_id"] == WALLET_WALLETCONNECT_CAPSULE_ID
             && (request["status"] == status || late_transaction_receipt)
             && (request["expires_at"].as_u64().is_some_and(|expiry| expiry > now_ts())
-                // The phone can return a sent transaction after the approval TTL.
-                // Approved state still binds its one completion to the same payload.
-                || status == "approved" && request["intent"] == "transaction_intent"
+                || awaiting_transaction_outcome
+                // Owner dismissal retains its separate bounded receipt window.
+                || late_transaction_receipt
                     && request["expires_at"].as_u64().is_some_and(|expiry| expiry.saturating_add(elastos_wallet_contract::WALLETCONNECT_TRANSACTION_COMPLETION_GRACE_SECS) > now_ts()))
             && request["payload_hash"]
                 .as_str()
