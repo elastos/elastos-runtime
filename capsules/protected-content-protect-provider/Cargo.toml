@@ -5,9 +5,11 @@ edition = "2021"
 description = "ElastOS protected-content protect provider capsule"
 license = "MIT"
 
+# main.rs only calls run_provider_process; the unit tests live in the library.
 [[bin]]
 name = "protected-content-protect-provider"
 path = "src/main.rs"
+test = false
 
 [dependencies]
 base64 = "=0.22.1"

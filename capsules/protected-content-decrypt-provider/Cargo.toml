@@ -5,9 +5,11 @@ edition = "2021"
 description = "ElastOS protected-content decrypt provider capsule"
 license = "MIT"
 
+# main.rs only calls run_provider_process; the unit tests live in the library.
 [[bin]]
 name = "protected-content-decrypt-provider"
 path = "src/main.rs"
+test = false
 
 [dependencies]
 elastos-protected-content-contracts = { path = "../../elastos/crates/elastos-protected-content-contracts" }
