@@ -8848,11 +8848,13 @@ struct CreatorRecoveryFixture {
     registry: Arc<ProviderRegistry>,
     authority: TestPasskeyAuthority,
     wallet_account_id: String,
+    creator_token: String,
 }
 
 impl CreatorRecoveryFixture {
     async fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
+        crate::protected_content_runtime::tests::write_device_key(dir.path(), 0x5a);
         let (state, wallet_provider) = wallet_chain_test_state_with_observer(dir.path()).await;
         let registry = state.provider_registry.as_ref().unwrap().clone();
         registry
@@ -8868,6 +8870,15 @@ impl CreatorRecoveryFixture {
             .provider
             .seed_managed_evm_account_for_principal(&authority.principal_id)
             .await;
+        set_mock_wallet_transaction_default(
+            &wallet_provider.provider,
+            &authority.principal_id,
+            "eip155:8453",
+            &wallet_account_id,
+            10,
+        )
+        .await;
+        let creator_token = app_token_for_authority(dir.path(), CREATOR_CAPSULE_ID, &authority);
         Self {
             dir,
             state,
@@ -8875,12 +8886,16 @@ impl CreatorRecoveryFixture {
             registry,
             authority,
             wallet_account_id,
+            creator_token,
         }
     }
 
     fn wallet_authority(&self) -> RuntimeWalletAuthority {
-        let token = app_token_for_authority(self.dir.path(), CREATOR_CAPSULE_ID, &self.authority);
-        runtime_wallet_authority_for_app_token(self.dir.path(), CREATOR_CAPSULE_ID, &token)
+        runtime_wallet_authority_for_app_token(
+            self.dir.path(),
+            CREATOR_CAPSULE_ID,
+            &self.creator_token,
+        )
     }
 
     fn input(
@@ -9670,6 +9685,209 @@ async fn test_runtime_custody_creator_connector_approval_is_never_declined_or_se
     }
 }
 
+/// Creator Start over archives an expired external handoff, then Protect
+/// raises a new approval for the same file. A waiting WalletConnect stays live.
+#[tokio::test]
+async fn test_creator_same_file_after_expired_handoff_and_waiting_walletconnect() {
+    struct ExternalMintChain {
+        hash: String,
+        from: String,
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for ExternalMintChain {
+        async fn handle(
+            &self,
+            request: ResourceRequest,
+        ) -> Result<ResourceResponse, ProviderError> {
+            MockChainProvider.handle(request).await
+        }
+
+        fn schemes(&self) -> Vec<&'static str> {
+            vec!["elastos"]
+        }
+
+        fn name(&self) -> &'static str {
+            "external-mint-chain"
+        }
+
+        async fn send_raw(&self, request: &Value) -> Result<Value, ProviderError> {
+            let mut answer = MockChainProvider.send_raw(request).await?;
+            if request["op"] == "transaction" && request["hash"] == self.hash {
+                answer["data"]["transaction"]["from"] = json!(self.from);
+            }
+            Ok(answer)
+        }
+    }
+
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    let fx = CreatorRecoveryFixture::new().await;
+    enable_protected_content(fx.dir.path());
+    fx.registry
+        .register_sub_provider(
+            "object",
+            Arc::new(crate::library::ObjectProvider::new(
+                fx.dir.path().to_path_buf(),
+                Arc::downgrade(&fx.registry),
+            )),
+        )
+        .await
+        .unwrap();
+    let token = fx.creator_token.clone();
+    let app = gateway_router(fx.state.clone());
+    let mut seeded = Vec::new();
+    for (name, seed, connector, status) in [
+        ("expired-send.mp4", 0xd1, "wallet-metamask", "expired"),
+        ("waiting-send.mp4", 0xd2, "wallet-walletconnect", "approved"),
+    ] {
+        fx.link_account_to_connector(connector).await;
+        let input = fx.input(name, seed);
+        let (status_code, _, upload) =
+            put_library_upload(app.clone(), &token, &input.object_uri, b"media").await;
+        assert_eq!(status_code, StatusCode::OK, "{upload}");
+        let facts = seed_completed_runtime_custody_mint(fx.dir.path(), &input);
+        assert_eq!(
+            fx.tail(&input, &facts).await.unwrap_err().to_string(),
+            RECOVERY_PENDING_MESSAGE
+        );
+        let old_id = fx
+            .wallet_provider
+            .provider
+            .latest_transaction_approval_request_id()
+            .await
+            .unwrap();
+        {
+            let mut approvals = fx.wallet_provider.provider.approvals.lock().await;
+            let approval = approvals
+                .iter_mut()
+                .find(|a| a["request_id"] == old_id)
+                .unwrap();
+            approval["status"] = json!(status);
+            approval["approved_at"] = json!(crate::auth::now_ts() - 2);
+        }
+        seeded.push((input, facts, old_id, connector));
+    }
+    let _process_fixture = crate::protected_content_runtime::tests::register_runtime_custody_process_providers_for_test_registry(fx.dir.path(), &fx.registry).await;
+    crate::protected_content_runtime::tests::register_runtime_custody_mock_media_provider_for_test_registry(fx.dir.path(), &fx.registry).await;
+    for (input, facts, old_id, connector) in seeded {
+        fx.link_account_to_connector(connector).await;
+        if connector == "wallet-walletconnect" {
+            match fx.unfinished(&input).await {
+                crate::api::gateway::RuntimeCustodyUnfinishedMintOutcome::Unfinished(entry) => {
+                    assert_eq!(entry["stage"], "approval_in_connector", "{entry}");
+                    assert_eq!(entry["can_start_over"], false);
+                }
+                other => panic!("waiting WalletConnect must be offered: {other:?}"),
+            }
+            let (_, refused) = post_library(
+                app.clone(),
+                &token,
+                "discard_protection",
+                json!({"uri": input.object_uri}),
+            )
+            .await;
+            assert_eq!(
+                refused["attempt_conflict"]["reason"], "approval_in_connector",
+                "{refused}"
+            );
+            assert_eq!(fx.current_attempt(&input).attempt(), 0);
+            // The Wallet provider's own suite proves late connector receipt acceptance;
+            // here its completed answer must still finish the original mint.
+            {
+                let mut approvals = fx.wallet_provider.provider.approvals.lock().await;
+                let index = approvals
+                    .iter()
+                    .position(|a| a["request_id"] == old_id)
+                    .unwrap();
+                let last = approvals.len() - 1;
+                approvals.swap(index, last);
+            }
+            let external_hash = fx
+                .wallet_provider
+                .provider
+                .complete_latest_transaction_approval()
+                .await;
+            fx.registry.unregister_sub_provider("chain").await.unwrap();
+            fx.registry
+                .register_sub_provider(
+                    "chain",
+                    Arc::new(ExternalMintChain {
+                        hash: external_hash,
+                        from: input.wallet_account_address.clone(),
+                    }),
+                )
+                .await
+                .unwrap();
+            {
+                let mut approvals = fx.wallet_provider.provider.approvals.lock().await;
+                let approval = approvals
+                    .iter_mut()
+                    .find(|a| a["request_id"] == old_id)
+                    .unwrap();
+                let result = approval["signed_result"].as_object_mut().unwrap();
+                result.remove("signed_transaction");
+                result.insert(
+                    "schema".into(),
+                    json!("elastos.wallet.external-transaction-result/v1"),
+                );
+                result.insert("connector_id".into(), json!(connector));
+            }
+            assert!(fx
+                .resume(&input, &facts)
+                .await
+                .unwrap()
+                .listing_uri
+                .is_some());
+            continue;
+        }
+        assert_eq!(
+            fx.resume(&input, &facts).await.unwrap_err().to_string(),
+            crate::protected_content_runtime::RUNTIME_CUSTODY_APPROVAL_HANDOFF_EXPIRED_MESSAGE
+        );
+        let old_attempt = fx.current_attempt(&input);
+        let (_, discarded) = post_library(
+            app.clone(),
+            &token,
+            "discard_protection",
+            json!({"uri": input.object_uri}),
+        )
+        .await;
+        assert_eq!(discarded["data"]["discarded"], true, "{discarded}");
+        assert!(!fx.is_in_journal(facts.mint_id));
+        let (_, note) = archived_attempt(fx.dir.path(), old_attempt.request_id());
+        assert_eq!(note["stage"], "approval_handoff_expired");
+        assert_eq!(note["chain"]["transaction"], "unknown");
+        let (_, fresh) = post_library(app.clone(), &token, "publish", json!({
+            "uri": input.object_uri,
+            "protection": {"mode": "runtime_custody", "channel": input.channel, "copies": input.copies, "price": input.price, "new_attempt": true},
+        })).await;
+        assert_eq!(fresh["message"], RECOVERY_PENDING_MESSAGE, "{fresh}");
+        assert!(fx.current_attempt(&input).attempt() > 0);
+        let new_id = fx
+            .wallet_provider
+            .provider
+            .latest_transaction_approval_request_id()
+            .await
+            .unwrap();
+        assert_ne!(new_id, old_id);
+        let approvals = fx.wallet_provider.provider.approvals.lock().await;
+        assert_eq!(
+            approvals
+                .iter()
+                .find(|a| a["request_id"] == old_id)
+                .unwrap()["status"],
+            "expired"
+        );
+        assert_eq!(
+            approvals
+                .iter()
+                .find(|a| a["request_id"] == new_id)
+                .unwrap()["status"],
+            "pending"
+        );
+    }
+}
+
 /// A settled mint whose listing file cannot be read is never taken for an
 /// unfinished one: nothing is archived and the refusal says why.
 #[tokio::test]
@@ -10078,7 +10296,7 @@ async fn test_creator_unfinished_protections_offers_recoverable_and_archives_the
         .await
         .unwrap();
     let app = gateway_router(fx.state.clone());
-    let creator_token = app_token_for_authority(fx.dir.path(), CREATOR_CAPSULE_ID, &fx.authority);
+    let creator_token = fx.creator_token.clone();
     let root = crate::auth::principal_localhost_root(&fx.authority.principal_id);
 
     let pending = fx.input("pending.mp4", 0x98);
@@ -11201,7 +11419,8 @@ async fn test_runtime_custody_buy_confirmed_approval_stage_is_not_redriven() {
     assert_eq!(priming_payload["status"], "error");
     assert_eq!(
         priming_payload["message"],
-        crate::protected_content_runtime::RUNTIME_CUSTODY_PURCHASE_PENDING_MESSAGE
+        crate::protected_content_runtime::RUNTIME_CUSTODY_PURCHASE_PENDING_MESSAGE,
+        "{priming_payload}"
     );
     wallet_provider
         .provider
@@ -11211,14 +11430,15 @@ async fn test_runtime_custody_buy_confirmed_approval_stage_is_not_redriven() {
     // First counted call: the approval stage's transaction confirms on chain
     // within this call; the buy stage raises its own (still pending)
     // approval and the purchase stays pending overall.
-    let first_token = app_token_for_authority(dir.path(), LIBRARY_CAPSULE_ID, &authority);
+    let first_token = token.clone();
     let (first_status, first_payload) =
         post_library(app.clone(), &first_token, "buy", buy_body.clone()).await;
     assert_eq!(first_status, StatusCode::OK);
     assert_eq!(first_payload["status"], "error");
     assert_eq!(
         first_payload["message"],
-        crate::protected_content_runtime::RUNTIME_CUSTODY_PURCHASE_PENDING_MESSAGE
+        crate::protected_content_runtime::RUNTIME_CUSTODY_PURCHASE_PENDING_MESSAGE,
+        "{first_payload}"
     );
 
     let purchase_after_first = crate::protected_content_runtime::load_runtime_custody_purchase(
@@ -11250,13 +11470,14 @@ async fn test_runtime_custody_buy_confirmed_approval_stage_is_not_redriven() {
     // be looked up (two `ListApprovals` reads: one from the exact-effect
     // recovery, one from the completion check) -- not a third for approval.
     wallet_provider.clear_requests().await;
-    let second_token = app_token_for_authority(dir.path(), LIBRARY_CAPSULE_ID, &authority);
+    let second_token = token.clone();
     let (second_status, second_payload) = post_library(app, &second_token, "buy", buy_body).await;
     assert_eq!(second_status, StatusCode::OK);
     assert_eq!(second_payload["status"], "error");
     assert_eq!(
         second_payload["message"],
-        crate::protected_content_runtime::RUNTIME_CUSTODY_PURCHASE_PENDING_MESSAGE
+        crate::protected_content_runtime::RUNTIME_CUSTODY_PURCHASE_PENDING_MESSAGE,
+        "{second_payload}"
     );
     let second_call_ops = wallet_provider.recorded_v2_operation_kinds().await;
     let list_approvals_count = second_call_ops
@@ -15364,6 +15585,101 @@ async fn declined_library_buy_does_not_block_a_market_purchase() {
     assert_market_buy_starts(&buyer, &package).await;
 }
 
+/// The listing-package buy also retires an expired handoff before the same
+/// item is bought again, with a new attempt and a new Wallet approval.
+#[tokio::test]
+async fn expired_handoff_library_buy_restarts_same_item() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    reset_mock_chain_raw_requests();
+    reset_mock_protected_content_chain_mode();
+    reset_mock_protected_content_purchase_fixture();
+    set_mock_protected_content_purchase_native();
+    set_mock_protected_content_purchase_access_denied();
+    let asset = publish_two_runtime_market_asset().await;
+    let (buyer, mint_id) = buyer_holding_an_imported_listing(&asset).await;
+    {
+        let mut accounts = buyer.wallet.provider.accounts.lock().await;
+        for account in accounts.iter_mut() {
+            account["connector_id"] = json!("wallet-metamask");
+            account["proof_type"] = json!("siwe");
+            account["signing_status"] = json!("external_connector_available");
+        }
+    }
+    let dead = start_library_buy(&buyer, mint_id).await;
+    let old_id = buyer
+        .wallet
+        .provider
+        .latest_transaction_approval_request_id()
+        .await
+        .unwrap();
+    {
+        let mut approvals = buyer.wallet.provider.approvals.lock().await;
+        let approval = approvals
+            .iter_mut()
+            .find(|a| a["request_id"] == old_id)
+            .unwrap();
+        approval["status"] = json!("expired");
+        approval["approved_at"] = json!(crate::auth::now_ts() - 2);
+    }
+    let (_, stopped) = post_library(
+        buyer.app.clone(),
+        &buyer.library_token,
+        "buy",
+        json!({"mint_id": asset.package.mint_id}),
+    )
+    .await;
+    assert_eq!(
+        stopped["approval_closed"]["reason"], "handoff_expired",
+        "{stopped}"
+    );
+    assert_eq!(
+        stopped["message"],
+        crate::protected_content_runtime::RUNTIME_CUSTODY_APPROVAL_HANDOFF_EXPIRED_MESSAGE
+    );
+    let (next, concurrent) = tokio::join!(
+        start_library_buy(&buyer, mint_id),
+        start_library_buy(&buyer, mint_id),
+    );
+    assert_eq!(
+        next.acquisition_stage.effect_id,
+        concurrent.acquisition_stage.effect_id
+    );
+    assert_ne!(
+        next.acquisition_stage.effect_id,
+        dead.acquisition_stage.effect_id
+    );
+    let new_id = buyer
+        .wallet
+        .provider
+        .latest_transaction_approval_request_id()
+        .await
+        .unwrap();
+    assert_ne!(new_id, old_id);
+    let approvals = buyer.wallet.provider.approvals.lock().await;
+    let transaction_requests = approvals
+        .iter()
+        .filter(|approval| approval["intent"] == "transaction_intent")
+        .count();
+    assert_eq!(
+        transaction_requests, 2,
+        "concurrent presses must raise just one fresh approval"
+    );
+    assert_eq!(
+        approvals
+            .iter()
+            .find(|a| a["request_id"] == old_id)
+            .unwrap()["status"],
+        "expired"
+    );
+    assert_eq!(
+        approvals
+            .iter()
+            .find(|a| a["request_id"] == new_id)
+            .unwrap()["status"],
+        "pending"
+    );
+}
+
 /// R41: a Library `buy` the chain mined and reverted is a spent effect that
 /// paid nothing. Its record is retired (R21's discipline on the listing
 /// path), so the item can be bought from Marketplace.
@@ -16680,7 +16996,7 @@ async fn test_creator_new_mint_of_the_same_file_proceeds_unless_the_last_one_was
     let tail =
         |input: crate::protected_content_runtime::RuntimeCustodyLibraryPublishInput,
          facts: &crate::protected_content_runtime::RuntimeCustodyLibraryPublishFacts| {
-            let token = app_token_for_authority(dir.path(), CREATOR_CAPSULE_ID, &creator);
+            let token = creator_token.clone();
             let authority =
                 runtime_wallet_authority_for_app_token(dir.path(), CREATOR_CAPSULE_ID, &token);
             let state = state.clone();
@@ -19456,6 +19772,7 @@ async fn foreign_pool_market_buy_is_refused_before_payment() {
     let asset = publish_two_runtime_market_asset().await;
     let package = asset.package.clone();
     let buyer = adoption_buyer_with_own_pool(&asset).await;
+    enable_protected_content(buyer.runtime.path());
     let (status, listing) = post_market_listing(
         &buyer,
         json!({"start": {"item": {"ledger": package.ledger, "token_id": package.token_id}}}),
@@ -20483,6 +20800,13 @@ async fn ped_player_open_viewer_denied_before_purchase_has_no_detail() {
             "status": "error",
             "code": "library_error",
             "message": "Runtime custody open is denied before purchase",
+            "detail": "This item belongs to a different account",
+            "open_progress": {
+                "schema": "elastos.protected-content.open-progress/v1",
+                "stage": "denied",
+                "resumable": false,
+                "awaits_person": false,
+            },
         }),
         "{payload}"
     );

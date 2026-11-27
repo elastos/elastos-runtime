@@ -2660,8 +2660,7 @@ async fn runtime_custody_publish_creator_tail_from_facts(
     // it has: no public-store call and no new approval, whatever the consent
     // or the store. Only a new or reissued approval is new authority, and it
     // is raised only after this mint's metadata is public (META-PUBLIC §7.0).
-    // A connector approval that expired is raised again by the approval step,
-    // so it is a reissue and new authority too.
+    // An expired external handoff stays closed under its old effect id.
     let existing =
         runtime_transaction_effect_progress(state, authority, effect_binding.effect_id())
             .await
@@ -2675,6 +2674,7 @@ async fn runtime_custody_publish_creator_tail_from_facts(
                 .map_err(|(_, message)| anyhow::anyhow!(message))?
         }
         RuntimeTransactionEffectProgress::AwaitingApproval
+        | RuntimeTransactionEffectProgress::HandoffExpired
         | RuntimeTransactionEffectProgress::Signed
         | RuntimeTransactionEffectProgress::Mined => false,
     };
@@ -3081,6 +3081,7 @@ async fn repair_runtime_custody_minted_owned_copy(
     }
     let now = crate::auth::now_ts();
     let owned = crate::protected_content_runtime::RuntimeCustodyPurchaseRecord {
+        attempt_id: None,
         schema: crate::protected_content_runtime::RUNTIME_PURCHASE_SCHEMA_V1.to_string(),
         principal_id: principal_id.to_string(),
         profile_did,
@@ -3217,6 +3218,7 @@ async fn record_runtime_custody_minted_owned_copy(
     };
     let now = crate::auth::now_ts();
     let owned = crate::protected_content_runtime::RuntimeCustodyPurchaseRecord {
+        attempt_id: None,
         schema: crate::protected_content_runtime::RUNTIME_PURCHASE_SCHEMA_V1.to_string(),
         principal_id: principal_id.to_string(),
         profile_did,

@@ -1922,6 +1922,10 @@ pub(crate) const RUNTIME_CUSTODY_DOWNLOAD_SCHEMA_V1: &str =
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RuntimeCustodyPurchaseRecord {
+    /// New listing buys bind their effect to an attempt; legacy records keep
+    /// their original request hash when this field is absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) attempt_id: Option<String>,
     pub(crate) schema: String,
     pub(crate) principal_id: String,
     pub(crate) profile_did: String,

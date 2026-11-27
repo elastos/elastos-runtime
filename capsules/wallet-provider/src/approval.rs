@@ -20,11 +20,18 @@ impl WalletProvider {
     ) -> Option<Response> {
         match &wallet_request.operation {
             WalletProviderOperationV2::RequestApproval { .. } => {
-                let existing = self
+                let mut matching_requests = self
                     .store
                     .approval_requests
                     .iter()
-                    .find(|request| request.request_id == wallet_request.request_id)?;
+                    .filter(|request| request.request_id == wallet_request.request_id);
+                let existing = matching_requests.next()?;
+                if matching_requests.next().is_some() {
+                    return Some(Response::error(
+                        "approval_identity_conflict",
+                        "Wallet approval identity names multiple stored requests",
+                    ));
+                }
                 let authority_binding = wallet_authority_binding(&wallet_request.authority);
                 // Who is asking, and on whose authority, can never differ --
                 // that is substitution, and no state of the existing request
@@ -38,42 +45,8 @@ impl WalletProvider {
                     ));
                 }
                 if existing.wallet_request_sha256 != wallet_request.request_sha256 {
-                    // A DELIBERATE narrowing of replay protection, and the
-                    // only case where one request id may carry two different
-                    // requests.
-                    //
-                    // An approval request carries its own expiry, so asking
-                    // again after one lapses necessarily digests differently.
-                    // Without this, a request id that expired could never be
-                    // asked again -- and the effect bound to it is stranded
-                    // for good, together with everything already done for it:
-                    // a mint keeps its published content and provisioned
-                    // custody with no way back to a prompt, because nobody
-                    // answered within ten minutes.
-                    //
-                    // What this gives up: for a request whose approval has
-                    // lapsed, the id no longer pins one exact request, so a
-                    // replay carrying altered content is accepted where it
-                    // would previously have been refused. It is bounded to a
-                    // lapsed request under an identical principal and
-                    // authority, and a lapsed approval never produced a
-                    // signature -- but it is a real narrowing and is written
-                    // down as one rather than discovered later.
-                    //
-                    // Rejected is NOT included. Declining is an answer, and
-                    // re-asking under the same identity would let a caller
-                    // keep asking until it got a different one.
-                    let lapsed = existing.status == ApprovalStatus::Expired
-                        || (existing.status == ApprovalStatus::Pending
-                            && existing.expires_at <= now_ts());
-                    if !lapsed {
-                        return Some(Response::error(
-                            "approval_identity_conflict",
-                            "Wallet approval identity was reused with substituted semantics or authority",
-                        ));
-                    }
-                    // Fall through: the lapsed record is replaced rather than
-                    // replayed.
+                    // Creation checks that this is an unanswered, expiry-only
+                    // renewal before replacing the existing record.
                     return None;
                 }
                 Some(Response::ok(json!({
@@ -205,6 +178,40 @@ impl WalletProvider {
             return response;
         }
         let now = now_ts();
+        if let Some(existing) = self
+            .store
+            .approval_requests
+            .iter()
+            .find(|request| request.request_id == input.request_id)
+        {
+            // A stale card names only this id. Keep every approved field bound
+            // to it; an unanswered prompt may renew only its expiry.
+            let unanswered = existing.approved_at.is_none()
+                && existing.completed_at.is_none()
+                && existing.signature_receipt.is_none()
+                && existing.signed_result.is_none()
+                && existing.validated_chain_outcome.is_none()
+                && existing.rejection_reason.is_none()
+                && existing.wallet_outcome.is_none();
+            let lapsed = matches!(
+                existing.status,
+                ApprovalStatus::Pending | ApprovalStatus::Expired
+            ) && existing.expires_at <= now;
+            let same_request = existing.principal_id == input.principal_id
+                && existing.authority_binding == input.authority_binding
+                && existing.account_id == input.account_id
+                && existing.chain_namespace == input.chain_namespace
+                && existing.intent == input.intent
+                && existing.resource == input.resource
+                && existing.reason == input.reason
+                && existing.payload == input.payload;
+            if !unanswered || !lapsed || !same_request {
+                return Response::error(
+                    "approval_identity_conflict",
+                    "Wallet approval identity was reused with substituted semantics or authority",
+                );
+            }
+        }
         if let Err(err) = input.validate(now) {
             return Response::error("invalid_request", err);
         }
@@ -312,25 +319,11 @@ impl WalletProvider {
             );
         }
 
-        // An approval that lapsed is replaced, not duplicated.
-        //
-        // The request id is derived from what is being approved, so a second
-        // attempt at the same thing arrives under the same id. Pushing beside
-        // the lapsed record would leave two approvals sharing one identity,
-        // and the exact-effect lookup treats that as a conflict and refuses --
-        // which would wedge the very retry this exists to allow.
-        //
-        // Only a request that expired is replaced. An approval the person
-        // rejected stays exactly where it is: declining is an answer, and
-        // overwriting it would let a caller ask again until it got a
-        // different one. Note this does drop the lapsed record from the
-        // resolved history that `ListApprovals` reports, which is the cost of
-        // reusing one identity across attempts.
-        // `prune_store` above has already marked anything elapsed as expired,
-        // so this sees the lapsed record in its settled state.
-        self.store.approval_requests.retain(|existing| {
-            existing.request_id != input.request_id || existing.status != ApprovalStatus::Expired
-        });
+        // Renewal was checked before pruning. Keep one record for this id so
+        // Runtime's exact-effect lookup can recover the unanswered retry.
+        self.store
+            .approval_requests
+            .retain(|existing| existing.request_id != input.request_id);
 
         let request = WalletApprovalRequest {
             schema: "elastos.wallet.approval_request/v1".to_string(),

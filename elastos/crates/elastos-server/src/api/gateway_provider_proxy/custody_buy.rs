@@ -1,4 +1,7 @@
 use super::*;
+use crate::protected_content_runtime::{
+    RuntimeCustodyApprovalClosed, RuntimeCustodyApprovalClosedReason,
+};
 
 /// Carry how far a purchase has got out to the caller, keeping the stable
 /// sentence outermost for the consumers that still read it.
@@ -135,13 +138,14 @@ pub(in crate::api::gateway) fn runtime_custody_purchase_stage_record(
     )
 }
 
-/// What the stable request hash binds besides the offer. A listing-package
-/// buy binds its package digest and mint id exactly as today; a market buy
-/// binds the asset URI instead.
+/// What the stable request hash binds besides the offer. A listing buy binds
+/// its package digest and mint id, plus its attempt id for new purchases.
+/// Legacy records keep their original hash; a market buy binds its asset URI.
 pub(crate) enum RuntimePurchaseBinding<'a> {
     ListingPackage {
         listing_sha256: &'a str,
         mint_id: elastos_protected_content_contracts::Digest32,
+        attempt_id: Option<&'a str>,
     },
     /// `attempt_id` is the recorded attempt's own identity (R23): a retry
     /// after a reverted buy, even at identical terms, hashes to a new effect.
@@ -174,14 +178,19 @@ pub(in crate::api::gateway) fn runtime_custody_purchase_transaction_request(
         RuntimePurchaseBinding::ListingPackage {
             listing_sha256,
             mint_id,
+            attempt_id,
         } => {
             let mint_id_hex = hex::encode(mint_id.as_bytes());
+            let mut stable_fields = serde_json::json!({
+                "listing_sha256": listing_sha256,
+                "mint_id": mint_id_hex,
+            });
+            if let Some(attempt_id) = attempt_id {
+                stable_fields["attempt_id"] = serde_json::json!(attempt_id);
+            }
             (
                 "elastos.protected-content.purchase-request/v1",
-                serde_json::json!({
-                    "listing_sha256": listing_sha256,
-                    "mint_id": mint_id_hex,
-                }),
+                stable_fields,
                 serde_json::json!({
                     "mint_id": mint_id_hex,
                     "listing_sha256": listing_sha256,
@@ -725,6 +734,8 @@ pub(in crate::api::gateway) enum RuntimeCustodyPurchaseStageOutcome {
     AwaitingChainSettlement,
     /// The person declined. Nothing was signed, so nothing can arrive later.
     Declined,
+    /// The external handoff expired; the person must check their wallet.
+    HandoffExpired,
 }
 
 pub(in crate::api::gateway) async fn complete_runtime_custody_purchase_stage(
@@ -732,9 +743,16 @@ pub(in crate::api::gateway) async fn complete_runtime_custody_purchase_stage(
     authority: &RuntimeWalletAuthority,
     request: &RuntimeTransactionRequest,
 ) -> anyhow::Result<RuntimeCustodyPurchaseStageOutcome> {
-    let _approval = ensure_exact_runtime_transaction_approval(state, authority, request.clone())
-        .await
-        .map_err(purchase_unavailable!())?;
+    match ensure_exact_runtime_transaction_approval(state, authority, request.clone()).await {
+        Ok(_) => {}
+        Err((_, message))
+            if message
+                == super::gateway_transaction_effects::TRANSACTION_APPROVAL_HANDOFF_EXPIRED =>
+        {
+            return Ok(RuntimeCustodyPurchaseStageOutcome::HandoffExpired);
+        }
+        Err(error) => return Err(purchase_unavailable!()(error)),
+    }
     let completion = match complete_runtime_transaction_effect(
         state,
         authority,
@@ -770,6 +788,12 @@ pub(in crate::api::gateway) async fn complete_runtime_custody_purchase_stage(
                 "runtime custody purchase: wallet approval was declined"
             );
             return Ok(RuntimeCustodyPurchaseStageOutcome::Declined);
+        }
+        Err((_, message))
+            if message
+                == super::gateway_transaction_effects::TRANSACTION_APPROVAL_HANDOFF_EXPIRED =>
+        {
+            return Ok(RuntimeCustodyPurchaseStageOutcome::HandoffExpired);
         }
         // Signed and sent, and the Chain's sources have not seen it yet. Asking
         // again reconciles the same transaction; nothing is signed or sent.
@@ -843,6 +867,9 @@ pub(in crate::api::gateway) fn runtime_custody_buy_stage_answer(
                 line,
             )
         }
+        RuntimeCustodyPurchaseStageOutcome::HandoffExpired => anyhow::Error::new(
+            RuntimeCustodyApprovalClosed::new(RuntimeCustodyApprovalClosedReason::HandoffExpired),
+        ),
         // A refusal is not a wait. It keeps the unavailable message rather than
         // the pending one, so a caller polling for settlement stops.
         RuntimeCustodyPurchaseStageOutcome::Declined => anyhow::Error::new(
@@ -1205,6 +1232,13 @@ pub(crate) async fn runtime_custody_buy_via_gateway(
         .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
         .map(Digest32::new)
         .ok_or_else(purchase_denied_missing!())?;
+    // One driver per mint: concurrent presses resume the recorded attempt,
+    // including when an expired attempt is retired and a fresh one starts.
+    let attempt_lock = crate::protected_content_runtime::runtime_custody_creator_attempt_lock(
+        &state.data_dir,
+        mint_id,
+    );
+    let _attempt = attempt_lock.lock().await;
     let listing_record =
         crate::protected_content_runtime::load_runtime_custody_listing(&state.data_dir, mint_id)?
             .ok_or_else(purchase_denied_missing!())?;
@@ -1230,9 +1264,17 @@ pub(crate) async fn runtime_custody_buy_via_gateway(
         listing,
         &listing.content_access_id,
     );
+    let attempt_id = match persisted_purchase.as_ref() {
+        Some(existing) => existing.attempt_id.clone(),
+        None => Some(
+            crate::protected_content_market::new_runtime_market_attempt_id()
+                .map_err(purchase_unavailable!())?,
+        ),
+    };
     let binding = RuntimePurchaseBinding::ListingPackage {
         listing_sha256: &listing_sha256,
         mint_id,
+        attempt_id: attempt_id.as_deref(),
     };
     let localhost_root = crate::auth::principal_localhost_root(&input.principal_id);
     let profile = crate::collaboration_profile_authority::load_profile_authority(
@@ -1372,6 +1414,7 @@ pub(crate) async fn runtime_custody_buy_via_gateway(
                 buy_step,
             )?;
             let purchase = crate::protected_content_runtime::RuntimeCustodyPurchaseRecord {
+                attempt_id: attempt_id.clone(),
                 schema: crate::protected_content_runtime::RUNTIME_PURCHASE_SCHEMA_V1.to_string(),
                 principal_id: input.principal_id.clone(),
                 profile_did: profile_did.clone(),
@@ -1477,10 +1520,13 @@ pub(crate) async fn runtime_custody_buy_via_gateway(
         let approval_completion = match approval_completion {
             RuntimeCustodyPurchaseStageOutcome::Confirmed(completion) => *completion,
             outcome => {
-                // A declined effect is never re-raised or broadcast: the
-                // attempt is over without payment and retired (R41), so it
-                // blocks no later purchase of this item on either path.
-                if matches!(outcome, RuntimeCustodyPurchaseStageOutcome::Declined) {
+                // A declined or expired handoff ends this attempt. A new
+                // purchase gets its own effect; the old effect stays closed.
+                if matches!(
+                    outcome,
+                    RuntimeCustodyPurchaseStageOutcome::Declined
+                        | RuntimeCustodyPurchaseStageOutcome::HandoffExpired
+                ) {
                     retire_runtime_listing_attempt(state, &purchase)?;
                 } else {
                     purchase.updated_at = crate::auth::now_ts();
@@ -1523,7 +1569,11 @@ pub(crate) async fn runtime_custody_buy_via_gateway(
         let buy_completion = match buy_completion {
             RuntimeCustodyPurchaseStageOutcome::Confirmed(completion) => *completion,
             outcome => {
-                if matches!(outcome, RuntimeCustodyPurchaseStageOutcome::Declined) {
+                if matches!(
+                    outcome,
+                    RuntimeCustodyPurchaseStageOutcome::Declined
+                        | RuntimeCustodyPurchaseStageOutcome::HandoffExpired
+                ) {
                     retire_runtime_listing_attempt(state, &purchase)?;
                 } else {
                     purchase.updated_at = crate::auth::now_ts();
@@ -1667,9 +1717,9 @@ pub(crate) async fn runtime_custody_buy_via_gateway(
     Ok(runtime_custody_buy_terminal_response(&purchase))
 }
 
-/// Retire a listing-package attempt that is provably over without payment
-/// (R41): its Wallet approval was declined, or its buy was mined and
-/// reverted. R29 refuses a market purchase of an item while a listing
+/// Retire a listing-package attempt after decline, a mined revert, or an
+/// expired external handoff. The expired handoff's payment outcome stays
+/// unknown. R29 refuses a market purchase of an item while a listing
 /// purchase of it is recorded, so a dead attempt left recorded would block
 /// the item on both paths for good. Only this attempt is removed, under the
 /// market-purchase lock; a newer one is left as it is. A revert known only
@@ -1684,7 +1734,7 @@ fn retire_runtime_listing_attempt(
     tracing::debug!(
         effect_id = %purchase.acquisition_stage.effect_id,
         retired,
-        "runtime custody purchase: attempt over without payment"
+        "runtime custody purchase: local attempt retired"
     );
     Ok(())
 }

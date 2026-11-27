@@ -580,9 +580,9 @@ pub(crate) fn create_runtime_listing_purchase_unless_market(
     })
 }
 
-/// Retire a listing-package purchase (`buy`) that is provably over without
-/// payment -- its Wallet approval was declined, or its buy was mined and
-/// reverted (R41). Held under this market-purchase lock, the same one R29's
+/// Retire a listing-package purchase (`buy`) after decline, a mined revert,
+/// or an expired external handoff whose payment outcome remains unknown.
+/// Held under this market-purchase lock, the same one R29's
 /// cross-path checks run under, and only while the record is still `attempt`
 /// ([`retire_runtime_custody_purchase_attempt`]), so a newer attempt is never
 /// removed. `Ok(false)` when there was nothing of this attempt's to retire.

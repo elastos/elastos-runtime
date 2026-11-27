@@ -1365,6 +1365,9 @@ async fn test_walletconnect_capsule_completion_enforces_hash_and_request_binding
         "pending",
         "expired",
         "outside-grace",
+        "expired-unapproved",
+        "expired-signature",
+        "expired-recorded",
         "principal",
         "connector",
     ] {
@@ -1381,14 +1384,14 @@ async fn test_walletconnect_capsule_completion_enforces_hash_and_request_binding
         let provider = Arc::new(RecordingWalletProvider::new(MockWalletProvider {
             approvals: TokioMutex::new(vec![json!({
                 "request_id":"wallet-approval:wc-complete", "status":if case == "pending" { "pending" } else if case.starts_with("dismissed") { "rejected" } else { "approved" },
-                "intent":"transaction_intent", "requested_by_actor":"documents", "resource":"elastos://transaction", "reason":"Fixture",
+                "intent":if case == "expired-signature" { "browser_personal_sign" } else { "transaction_intent" }, "requested_by_actor":"documents", "resource":"elastos://transaction", "reason":"Fixture",
                 "account_id":"fixture-account", "address":address, "proof_type":"siwe", "chain_namespace":"eip155:20",
                 "connector_id":if case == "connector" { WALLET_METAMASK_CAPSULE_ID } else { WALLET_WALLETCONNECT_CAPSULE_ID },
                 "principal_id":if case == "principal" { "other-principal" } else { &owner.principal_id },
-                "approved_at":if case == "dismissed-pending" { None } else { Some(now_ts()-60) },
+                "approved_at":if matches!(case, "dismissed-pending" | "expired-unapproved") { None } else { Some(now_ts()-60) },
                 "rejection_reason":if case.starts_with("dismissed") { Some(elastos_wallet_contract::WALLETCONNECT_DISMISSAL_REASON) } else { None },
-                "signed_result":if case == "dismissed-recorded" { json!({"transaction_hash":"recorded"}) } else { Value::Null },
-                "payload_hash":payload, "created_at":now_ts(), "expires_at":if matches!(case, "expired" | "dismissed") { now_ts()-1 } else if matches!(case, "outside-grace" | "dismissed-outside-grace") { now_ts()-elastos_wallet_contract::WALLETCONNECT_TRANSACTION_COMPLETION_GRACE_SECS } else { now_ts()+600 },
+                "signed_result":if matches!(case, "dismissed-recorded" | "expired-recorded") { json!({"transaction_hash":"recorded"}) } else { Value::Null },
+                "payload_hash":payload, "created_at":now_ts(), "expires_at":if matches!(case, "expired" | "dismissed" | "expired-unapproved" | "expired-signature" | "expired-recorded") { now_ts()-1 } else if matches!(case, "outside-grace" | "dismissed-outside-grace") { now_ts()-elastos_wallet_contract::WALLETCONNECT_TRANSACTION_COMPLETION_GRACE_SECS } else { now_ts()+600 },
             })]),
             ..Default::default()
         }));
@@ -1409,7 +1412,7 @@ async fn test_walletconnect_capsule_completion_enforces_hash_and_request_binding
             .header("x-elastos-home-token", &connector).header(CONTENT_TYPE, "application/json")
             .body(Body::from(body.to_string())).unwrap()).await.unwrap();
         let operations = provider.recorded_v2_operation_kinds().await;
-        if matches!(case, "valid" | "expired" | "dismissed") {
+        if matches!(case, "valid" | "expired" | "outside-grace" | "dismissed") {
             assert_eq!(response.status(), StatusCode::OK, "{case}");
             assert!(operations.contains(&WalletOperationKind::CompleteConnectorHandoff));
             let response_body = axum::body::to_bytes(response.into_body(), usize::MAX)
@@ -1616,7 +1619,7 @@ async fn test_walletconnect_unfinished_transaction_is_visible_without_another_ha
             "requested_by_actor":"documents","resource":"elastos://transaction","reason":"Fixture","account_id":"fixture-account",
             "address":format!("0x{}","12".repeat(20)),"proof_type":"siwe","chain_namespace":"eip155:1",
             "connector_id":WALLET_WALLETCONNECT_CAPSULE_ID,"principal_id":owner.principal_id,
-            "payload_hash":format!("0x{}","ab".repeat(32)),"created_at":now_ts(),"expires_at":now_ts()+600,
+            "payload_hash":format!("0x{}","ab".repeat(32)),"created_at":now_ts(),"expires_at":now_ts()-elastos_wallet_contract::WALLETCONNECT_TRANSACTION_COMPLETION_GRACE_SECS-60,
         })]),
         ..Default::default()
     };

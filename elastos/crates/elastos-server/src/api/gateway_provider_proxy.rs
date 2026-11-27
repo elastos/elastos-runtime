@@ -1596,6 +1596,7 @@ mod tests {
             &RuntimePurchaseBinding::ListingPackage {
                 listing_sha256: &listing_sha256,
                 mint_id,
+                attempt_id: None,
             },
             &stage,
         )

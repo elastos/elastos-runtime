@@ -1026,6 +1026,84 @@ async fn buy_offer_retires_a_declined_attempt() {
     assert_eq!(env.wallet_transaction_requests().await, 2);
 }
 
+/// An expired external send retires the attempt; the same item gets a new
+/// attempt and approval without reissuing the old request, at either stage.
+#[tokio::test]
+async fn buy_offer_restarts_same_item_after_expired_handoff() {
+    for allowance in [false, true] {
+        let env = buy_env().await;
+        {
+            let mut accounts = env.wallet.accounts.lock().await;
+            for account in accounts.iter_mut() {
+                account["connector_id"] = json!("wallet-metamask");
+                account["proof_type"] = json!("siwe");
+                account["signing_status"] = json!("external_connector_available");
+            }
+        }
+        let body = if allowance {
+            buy_offer_body(LISTING_SELLER, "0xf4240", LISTING_PAY_TOKEN)
+        } else {
+            native_buy_body()
+        };
+        env.buy_offer(body.clone()).await;
+        let dead = env.market_purchase().unwrap();
+        let old_id = env
+            .wallet
+            .latest_transaction_approval_request_id()
+            .await
+            .unwrap();
+        {
+            let mut approvals = env.wallet.approvals.lock().await;
+            let approval = approvals
+                .iter_mut()
+                .find(|a| a["request_id"] == old_id)
+                .unwrap();
+            approval["status"] = json!("expired");
+            approval["approved_at"] = json!(crate::auth::now_ts() - 2);
+        }
+        let (_, stopped) = env.buy_offer(body.clone()).await;
+        assert_eq!(
+            stopped["approval_closed"]["reason"], "handoff_expired",
+            "{stopped}"
+        );
+        assert_eq!(
+            stopped["message"],
+            crate::protected_content_runtime::RUNTIME_CUSTODY_APPROVAL_HANDOFF_EXPIRED_MESSAGE
+        );
+        assert_eq!(env.wallet_transaction_requests().await, 1);
+        let (_, fresh) = env.buy_offer(body).await;
+        assert_eq!(
+            fresh["buy_progress"]["stage"],
+            if allowance {
+                "allowance_approval"
+            } else {
+                "purchase_approval"
+            },
+            "{fresh}"
+        );
+        let next = env.market_purchase().unwrap();
+        assert_ne!(next.attempt_id, dead.attempt_id);
+        assert_ne!(
+            next.acquisition_stage.effect_id,
+            dead.acquisition_stage.effect_id
+        );
+        assert_ne!(
+            env.wallet
+                .latest_transaction_approval_request_id()
+                .await
+                .unwrap(),
+            old_id
+        );
+        assert_eq!(env.wallet_transaction_requests().await, 2);
+        let approvals = env.wallet.approvals.lock().await;
+        let old = approvals
+            .iter()
+            .find(|a| a["request_id"] == old_id)
+            .unwrap();
+        assert_eq!(old["status"], "expired");
+    }
+}
+
 /// The ERC-20 path: the allowance approval is recorded and raised first, the
 /// buy after it confirms, and each effect is raised exactly once.
 #[tokio::test]
@@ -1199,6 +1277,7 @@ fn pending_listing_purchase(
         data: LISTING_MARKET_BUY_DATA.to_string(),
     };
     crate::protected_content_runtime::RuntimeCustodyPurchaseRecord {
+        attempt_id: None,
         schema: crate::protected_content_runtime::RUNTIME_PURCHASE_SCHEMA_V1.to_string(),
         principal_id: principal_id.to_string(),
         profile_did: "did:key:z6MkListingPurchaseFixture".to_string(),

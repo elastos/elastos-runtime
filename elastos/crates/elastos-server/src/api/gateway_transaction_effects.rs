@@ -25,6 +25,20 @@ pub(in crate::api::gateway) const TRANSACTION_APPROVAL_REJECTED: &str =
     "transaction approval was rejected";
 pub(in crate::api::gateway) const TRANSACTION_APPROVAL_EXPIRED: &str =
     "transaction approval expired";
+pub(in crate::api::gateway) const TRANSACTION_APPROVAL_HANDOFF_EXPIRED: &str =
+    crate::protected_content_runtime::RUNTIME_CUSTODY_APPROVAL_HANDOFF_EXPIRED_MESSAGE;
+
+fn expired_connector_handoff(approval: &Value) -> bool {
+    approval.get("status").and_then(Value::as_str) == Some("expired")
+        && approval
+            .get("connector_id")
+            .and_then(Value::as_str)
+            .is_some()
+        && approval
+            .get("approved_at")
+            .is_some_and(|value| !value.is_null())
+}
+
 const TRANSACTION_EFFECT_SCHEMA: &str = "elastos.runtime.transaction-effect/v1";
 const TRANSACTION_EFFECT_STORE_RELATIVE_PATH: &str =
     ".AppData/ElastOS/Runtime/transaction-effects.json";
@@ -621,6 +635,8 @@ pub(in crate::api::gateway) enum RuntimeTransactionEffectProgress {
     AwaitingApproval,
     /// The approval expired or was declined, and nothing was signed.
     ClosedWithoutSignature,
+    /// Local handoff authority ended; the external wallet may have sent it.
+    HandoffExpired,
     /// Signed or sent, or approved in the Wallet; a transaction may exist.
     Signed,
     /// The transaction has a receipt.
@@ -663,6 +679,9 @@ pub(in crate::api::gateway) async fn runtime_transaction_effect_progress(
     }
     let approval =
         exact_wallet_approval_by_id(state, authority, &effect.approval_request_id).await?;
+    if approval.as_ref().is_some_and(expired_connector_handoff) {
+        return Ok(RuntimeTransactionEffectProgress::HandoffExpired);
+    }
     // A connector-linked account signs and broadcasts outside the Wallet, so a
     // closed approval there does not prove nothing was sent.
     let connector = approval
@@ -677,7 +696,7 @@ pub(in crate::api::gateway) async fn runtime_transaction_effect_progress(
     Ok(match (status, connector) {
         // A connector-linked account signs and broadcasts outside the Wallet,
         // so an approval there that is not completed proves nothing either way.
-        (Some("pending" | "expired" | "rejected"), Some(connector)) => {
+        (Some("pending" | "approved" | "expired" | "rejected"), Some(connector)) => {
             RuntimeTransactionEffectProgress::InConnector(connector.to_string())
         }
         (Some("expired" | "rejected"), None) => {
@@ -720,6 +739,7 @@ pub(in crate::api::gateway) async fn runtime_transaction_effect_approval_lapsed(
         exact_wallet_approval_by_id(state, authority, &effect.approval_request_id).await?;
     Ok(approval
         .as_ref()
+        .filter(|approval| !expired_connector_handoff(approval))
         .and_then(|approval| approval.get("status"))
         .and_then(Value::as_str)
         == Some("expired"))
@@ -856,7 +876,16 @@ pub(in crate::api::gateway) async fn ensure_exact_runtime_transaction_approval(
             Some(approval) => {
                 let effect = &store.effects[effect_index];
                 validate_approval_snapshot(effect, authority, &approval)?;
-                // A lapsed approval is asked again rather than kept forever.
+                let lapsed = approval.get("status").and_then(Value::as_str) == Some("expired");
+                if effect.produced_nothing() && expired_connector_handoff(&approval) {
+                    // The connector may still send. Stop before changing the
+                    // effect or attempting renewal of an answered request.
+                    return Err((
+                        StatusCode::CONFLICT,
+                        TRANSACTION_APPROVAL_HANDOFF_EXPIRED.to_string(),
+                    ));
+                }
+                // A lapsed, unanswered approval is asked again.
                 //
                 // An approval that expired never produced a signature, so no
                 // transaction can ever come of it -- but the effect stays
@@ -872,7 +901,6 @@ pub(in crate::api::gateway) async fn ensure_exact_runtime_transaction_approval(
                 // something was signed or sent, and asking again could put a
                 // second transaction on chain for one intent. A rejected
                 // approval is never re-raised either: the person answered.
-                let lapsed = approval.get("status").and_then(Value::as_str) == Some("expired");
                 if lapsed && effect.produced_nothing() {
                     let effect = &mut store.effects[effect_index];
                     // The approval operation carries its own expiry, so the
@@ -1253,12 +1281,9 @@ pub(in crate::api::gateway) async fn complete_runtime_transaction_effect(
             .await?
         };
         validate_approval_snapshot(&store.effects[effect_index], authority, &approval)?;
-        // "not completed" used to cover all three of pending, rejected and
-        // expired, so a caller polling for completion could not tell a wait
-        // from a dead end and waited on an approval that would never complete.
-        // Only `pending` is a wait; the other two are terminal, because a
-        // declined or lapsed approval never produced a signature and so can
-        // never produce a transaction.
+        // Rejected and expired end local approval. An expired external
+        // handoff may still send outside Runtime, so its terminal answer
+        // tells the person to check the wallet before a new request.
         let approval_status = approval
             .get("status")
             .and_then(Value::as_str)
@@ -1268,6 +1293,9 @@ pub(in crate::api::gateway) async fn complete_runtime_transaction_effect(
                 StatusCode::BAD_REQUEST,
                 match approval_status {
                     "rejected" => TRANSACTION_APPROVAL_REJECTED.to_string(),
+                    "expired" if expired_connector_handoff(&approval) => {
+                        TRANSACTION_APPROVAL_HANDOFF_EXPIRED.to_string()
+                    }
                     "expired" => TRANSACTION_APPROVAL_EXPIRED.to_string(),
                     _ => "transaction approval is not completed".to_string(),
                 },
@@ -4262,6 +4290,165 @@ mod approved_request_resume_tests {
             persisted.effects[0].approval_request_id,
             wallet_request_id(&request.effect_id, "approval")
         );
+    }
+
+    #[tokio::test]
+    async fn waiting_walletconnect_handoff_stays_in_connector_past_expiry() {
+        let root = tempfile::tempdir().unwrap();
+        let authority = test_authority(
+            "principal:test",
+            "session:create",
+            "creator",
+            "launch:create",
+        );
+        let (_, mut effect, mut approval, _) = exact_resume_fixture(&authority);
+        effect.state = TransactionEffectState::ApprovalPending;
+        effect.approval_expires_at = now_ts() - 1;
+        effect.wallet_request_sha256 = wallet_operation_request_sha256(
+            &authority,
+            &effect.approval_request_id,
+            transaction_approval_operation(&effect),
+        )
+        .unwrap();
+        approval["status"] = json!("approved");
+        approval["connector_id"] = json!("wallet-walletconnect");
+        approval["approved_at"] = json!(now_ts() - 2);
+        approval["expires_at"] = json!(effect.approval_expires_at);
+        approval["wallet_request_sha256"] = json!(effect.wallet_request_sha256);
+        approval["signed_result"] = Value::Null;
+        effect.approval_snapshot = Some(approval.clone());
+        let wallet = Arc::new(MockApprovedWalletProvider::new(vec![approval]));
+        let registry = Arc::new(ProviderRegistry::new());
+        registry
+            .register_sub_provider("wallet", wallet.clone())
+            .await
+            .unwrap();
+        let state = test_gateway_state(root.path(), Some(registry));
+        let mut store = RuntimeTransactionEffectStore::empty("principal:test");
+        let effect_id = effect.effect_id.clone();
+        store.effects.push(effect);
+        save_transaction_effect_store(&state, &store).unwrap();
+        assert_eq!(
+            runtime_transaction_effect_progress(&state, &authority, &effect_id)
+                .await
+                .unwrap(),
+            RuntimeTransactionEffectProgress::InConnector("wallet-walletconnect".into())
+        );
+        assert_eq!(wallet.request_approval_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn expired_connector_handoff_stops_mint_and_buy_without_renewal() {
+        use super::super::gateway_provider_proxy::complete_runtime_custody_purchase_stage;
+
+        let message = "This request expired. Your wallet may still have sent the transaction. Check your wallet before starting a new request.";
+        for connector in ["wallet-metamask", "wallet-unisat"] {
+            let root = tempfile::tempdir().unwrap();
+            let authority = test_authority(
+                "principal:test",
+                "session:create",
+                "library",
+                "launch:create",
+            );
+            let (request, mut effect, mut approval, _hash) = exact_resume_fixture(&authority);
+            effect.state = TransactionEffectState::ApprovalPending;
+            effect.requested_audit_completed = true;
+            effect.approval_expires_at = now_ts() - 1;
+            effect.wallet_request_sha256 = wallet_operation_request_sha256(
+                &authority,
+                &effect.approval_request_id,
+                transaction_approval_operation(&effect),
+            )
+            .unwrap();
+            approval["status"] = json!("expired");
+            approval["approved_at"] = json!(now_ts() - 2);
+            approval["connector_id"] = json!(connector);
+            approval["expires_at"] = json!(effect.approval_expires_at);
+            approval["wallet_request_sha256"] = json!(effect.wallet_request_sha256);
+            approval.as_object_mut().unwrap().remove("signed_result");
+            effect.approval_snapshot = Some(approval.clone());
+            let wallet = Arc::new(MockApprovedWalletProvider::new(vec![approval]));
+            let mut fresh = request.clone();
+            fresh.request_sha256 =
+                runtime_transaction_request_sha256(&json!({ "new": true })).unwrap();
+            fresh.effect_id = exact_runtime_transaction_effect_id(
+                fresh.source,
+                authority.verified_context().principal_id(),
+                &fresh.request_sha256,
+                &transaction_request_binding(&fresh),
+            )
+            .unwrap();
+            let chain = Arc::new(MockPrepareChainProvider::new(
+                fresh.clone(),
+                effect.intent.clone(),
+            ));
+            let registry = Arc::new(ProviderRegistry::new());
+            registry
+                .register_sub_provider("wallet", wallet.clone())
+                .await
+                .unwrap();
+            registry
+                .register_sub_provider("chain", chain.clone())
+                .await
+                .unwrap();
+            let state = test_gateway_state(root.path(), Some(registry));
+            let mut store = RuntimeTransactionEffectStore::empty("principal:test");
+            store.effects.push(effect);
+            save_transaction_effect_store(&state, &store).unwrap();
+            let before = serde_json::to_value(&store).unwrap();
+
+            // Creator settles an existing handoff without republishing metadata.
+            assert!(!runtime_transaction_effect_approval_lapsed(
+                &state,
+                &authority,
+                &request.effect_id
+            )
+            .await
+            .unwrap());
+            let error = complete_runtime_transaction_effect(
+                &state,
+                &authority,
+                RuntimeTransactionLookup::ApprovalId(&store.effects[0].approval_request_id),
+                Some(&request),
+                None,
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(error, (StatusCode::BAD_REQUEST, message.to_string()));
+            // Creator propagates this exact approval error to its failure view.
+            let error =
+                ensure_exact_runtime_transaction_approval(&state, &authority, request.clone())
+                    .await
+                    .unwrap_err();
+            assert_eq!(error, (StatusCode::CONFLICT, message.to_string()));
+            let outcome = complete_runtime_custody_purchase_stage(&state, &authority, &request)
+                .await
+                .unwrap();
+            assert!(matches!(outcome, super::super::gateway_provider_proxy::RuntimeCustodyPurchaseStageOutcome::HandoffExpired));
+            assert_eq!(wallet.request_approval_calls.load(Ordering::SeqCst), 0);
+            assert_eq!(chain.calls.load(Ordering::SeqCst), 0);
+            assert_eq!(
+                serde_json::to_value(
+                    load_transaction_effect_store(&state, "principal:test").unwrap()
+                )
+                .unwrap(),
+                before
+            );
+            // History pruning also cannot recreate this effect's old approval.
+            wallet.approvals.lock().await.clear();
+            assert!(
+                ensure_exact_runtime_transaction_approval(&state, &authority, request)
+                    .await
+                    .is_err()
+            );
+            assert_eq!(wallet.request_approval_calls.load(Ordering::SeqCst), 0);
+            let accepted = ensure_exact_runtime_transaction_approval(&state, &authority, fresh)
+                .await
+                .unwrap();
+            assert_eq!(accepted.approval_request["status"], "pending");
+            assert_eq!(wallet.request_approval_calls.load(Ordering::SeqCst), 1);
+            assert_eq!(chain.calls.load(Ordering::SeqCst), 1);
+        }
     }
 
     #[tokio::test]

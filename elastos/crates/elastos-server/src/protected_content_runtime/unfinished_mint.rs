@@ -1,6 +1,5 @@
 //! Unfinished creator mints: which of them a creator is offered back, and how
-//! an attempt that never sent a transaction is set aside so a new mint of the
-//! same file proceeds.
+//! a closed attempt is set aside so a new mint of the same file proceeds.
 //!
 //! An attempt that sent nothing on chain never blocks a new one. It is
 //! archived -- its journal records moved aside under
@@ -8,6 +7,8 @@
 //! the source moves on to a new attempt with an identity of its own. An
 //! attempt whose transaction was sent or mined is never archived: it keeps its
 //! terms and is finished by Resume, so no token is ever left behind.
+//! An expired external handoff can also be archived after the warning to check
+//! the wallet. Its archive records that the transaction outcome is unknown.
 //! [`RuntimeCustodyUnfinishedMintStage::may_start_over`] is that rule;
 //! [`RuntimeCustodyUnfinishedMintStage::recoverable`] decides whether Creator
 //! offers an attempt back or archives it without asking.
@@ -35,6 +36,8 @@ pub(crate) enum RuntimeCustodyCreatorEffectProgress {
     AwaitingApproval,
     /// The approval expired or was declined, and nothing was ever signed.
     ClosedWithoutTransaction,
+    /// Local handoff authority ended; the wallet may have sent a transaction.
+    HandoffExpired,
     /// Something was signed or sent; it may already be on chain.
     Sent,
     /// The transaction has a receipt.
@@ -65,6 +68,8 @@ pub(crate) enum RuntimeCustodyUnfinishedMintStage {
     ApprovalInConnector,
     /// The approval expired or was declined before anything was signed.
     ApprovalClosed,
+    /// The external handoff ended; Start over keeps its record in the archive.
+    ApprovalHandoffExpired,
     /// Signed or sent, no receipt yet.
     TransactionSent,
     /// The transaction has a receipt; the mint has not settled here yet.
@@ -84,6 +89,7 @@ impl RuntimeCustodyUnfinishedMintStage {
             Self::ApprovalPending => "approval_pending",
             Self::ApprovalInConnector => "approval_in_connector",
             Self::ApprovalClosed => "approval_closed",
+            Self::ApprovalHandoffExpired => "approval_handoff_expired",
             Self::TransactionSent => "transaction_sent",
             Self::TransactionMined => "transaction_mined",
             Self::TransactionUnconfirmed => "transaction_unconfirmed",
@@ -112,13 +118,15 @@ impl RuntimeCustodyUnfinishedMintStage {
     /// transaction was sent or mined, or that settled, keeps its terms and is
     /// finished by Resume. One whose state cannot be confirmed -- the Wallet
     /// cannot be asked, the approval is not on record, or it went to an
-    /// external connector -- is refused, and Resume is its way on.
+    /// external connector -- is refused, and Resume is its way on. An expired
+    /// external handoff can be archived with its transaction outcome unknown.
     pub(crate) const fn disposition(self) -> RuntimeCustodyAttemptDisposition {
         match self {
             Self::EscrowIncomplete
             | Self::PublishIncomplete
             | Self::RecordedOnly
-            | Self::ApprovalClosed => RuntimeCustodyAttemptDisposition::SetAside,
+            | Self::ApprovalClosed
+            | Self::ApprovalHandoffExpired => RuntimeCustodyAttemptDisposition::SetAside,
             Self::ApprovalPending => RuntimeCustodyAttemptDisposition::SetAsideOnceDeclined,
             Self::TransactionSent | Self::TransactionMined | Self::ListingNotAssembled => {
                 RuntimeCustodyAttemptDisposition::Keep
@@ -148,7 +156,7 @@ impl RuntimeCustodyUnfinishedMintStage {
 /// What [`RuntimeCustodyUnfinishedMintStage::disposition`] allows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RuntimeCustodyAttemptDisposition {
-    /// Nothing went on chain: set it aside.
+    /// The attempt ended or has no transaction: set it aside.
     SetAside,
     /// Decline its Wallet approval, and set it aside once the Wallet confirms
     /// the approval closed with nothing signed.
@@ -195,6 +203,9 @@ pub(crate) fn classify_runtime_custody_unfinished_mint(
             Some(RuntimeCustodyCreatorEffectProgress::AwaitingApproval) => Stage::ApprovalPending,
             Some(RuntimeCustodyCreatorEffectProgress::ClosedWithoutTransaction) => {
                 Stage::ApprovalClosed
+            }
+            Some(RuntimeCustodyCreatorEffectProgress::HandoffExpired) => {
+                Stage::ApprovalHandoffExpired
             }
             Some(RuntimeCustodyCreatorEffectProgress::Sent) => Stage::TransactionSent,
             Some(RuntimeCustodyCreatorEffectProgress::Mined) => Stage::TransactionMined,
@@ -479,10 +490,9 @@ pub(crate) fn archive_runtime_custody_attempt(
         "mint_id": mint.map(|mint| hex::encode(mint.draft().mint_id().as_bytes())),
         "stage": stage.map(RuntimeCustodyUnfinishedMintStage::wire_value),
         "terms": creator_state.map(|state| runtime_custody_creator_terms_json(state.desired_terms())),
-        // Only an attempt that sent nothing is ever archived, so this names
-        // the approval it raised, if any, and how it was closed.
+        // Keep the expired handoff's uncertainty with its archived approval.
         "chain": {
-            "transaction": "none",
+            "transaction": if stage == Some(RuntimeCustodyUnfinishedMintStage::ApprovalHandoffExpired) { "unknown" } else { "none" },
             "effect_id": creator_state.and_then(|state| state.effect()).map(|effect| effect.effect_id()),
             "approval_request_id": creator_state
                 .and_then(|state| state.effect())

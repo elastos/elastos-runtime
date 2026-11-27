@@ -18,6 +18,7 @@ const mediaErrorToken = "marketplace-media-error-token";
 const mediaMalformedToken = "marketplace-media-malformed-token";
 const mediaEmptyToken = "marketplace-media-empty-token";
 const mediaPendingBuyToken = "marketplace-media-pending-buy-token";
+const expiredHandoffMessage = "This request expired. Your wallet may still have sent the transaction. Check your wallet before starting a new request.";
 // A fresh page whose first market read fails once, and one whose market
 // cannot be reached at all. Both hold one listing of this Home's own.
 const marketRetryToken = "marketplace-market-retry-token";
@@ -1242,6 +1243,16 @@ function startServer() {
         requestLog.push({ path: url.pathname, token, method: request.method, body });
         const scenario = state[token] || {};
         const seller = String(body?.seller || "");
+        if (scenario.expiredHandoffSeller === seller) {
+          json(response, buyOfferRefusal("library_error", {
+            message: expiredHandoffMessage,
+            approval_closed: {
+              schema: "elastos.protected-content.approval-closed/v1",
+              reason: "handoff_expired",
+            },
+          }));
+          return;
+        }
         if (scenario.buyOfferWaitingSellers?.has(seller)) {
           json(response, {
             status: "error",
@@ -3416,6 +3427,23 @@ async function run() {
       "A Buy of an item whose kid is null must name no kid, and a Buy refused as unavailable must stay pressable",
       unreachableRequest,
     );
+    await closeSheet();
+    await pasteLink(marketScenarioLink);
+    await frame.locator("#detail-modal.active .offer-list").waitFor();
+    state[normalToken].expiredHandoffSeller = marketSellerDeclined;
+    await pressBuy(marketSellerDeclined);
+    await waitForToast(expiredHandoffMessage);
+    const afterExpiredHandoff = buyOfferCount();
+    await page.waitForTimeout(200);
+    assert(
+      buyOfferCount() === afterExpiredHandoff
+        && await offerRow(marketSellerDeclined).locator('[data-action="buy-offer"]').isEnabled(),
+      "An expired handoff must stop polling and clear the busy control",
+    );
+    delete state[normalToken].expiredHandoffSeller;
+    await closeSheet();
+    await pasteLink(marketUnknownLink);
+    await frame.locator("#detail-modal.active .offer-list").waitFor();
     await pressBuy(marketSellerUnknownOk);
     await waitForToast("Bought. The item is in your Library.");
 

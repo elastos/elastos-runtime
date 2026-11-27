@@ -1164,6 +1164,22 @@ test("a connector approval is listed as waiting in the external wallet", () => {
   assert.equal(model.items[0].canStartOver, false);
 });
 
+test("an expired handoff offers Start over for the same file", async () => {
+  const model = unfinishedDialogModel(
+    { unfinished: [unfinishedEntry({ stage: "approval_handoff_expired", can_start_over: true })] },
+    PAY_TOKENS,
+  );
+  assert.match(model.items[0].line, /Wallet request expired/);
+  assert.equal(model.items[0].canStartOver, true);
+  const calls = [];
+  const uri = "localhost://Users/test/Creator/clip.mp4";
+  await discardProtectionAndRetry(uri, async (op, body) => {
+    calls.push([op, body.uri]);
+    return { schema: "elastos.library.protection-discarded/v1", uri, discarded: true };
+  }, async () => calls.push(["protect", uri]));
+  assert.deepEqual(calls, [["discard_protection", uri], ["protect", uri]]);
+});
+
 // ---------------------------------------------------------------------------
 // META-PUBLIC Task 6 (A4/A5): the Creator reads the public metadata status and
 // stays locked for new mints without consent; consent and Stop live in Inbox.

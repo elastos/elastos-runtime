@@ -449,14 +449,19 @@ export function noWalletAccountCopy(chainNamespace) {
 }
 
 /**
- * The sentence for a buy Runtime refused before any payment, read from the
+ * The sentence for a buy request Runtime closed, read from the
  * answer -- either buy path -- or `null` when it is not one this page words
  * itself: the pool cannot be reached (`custody_elsewhere`), or this Home has
- * no Wallet account for the chain (`wallet_default`).
+ * no Wallet account for the chain (`wallet_default`), or a handoff expired.
  */
 export function buyRefusalCopy(answer) {
   if (!answer || typeof answer !== "object") {
     return null;
+  }
+  if (answer.approval_closed?.schema === "elastos.protected-content.approval-closed/v1"
+    && answer.approval_closed.reason === "handoff_expired"
+    && typeof answer.message === "string") {
+    return answer.message;
   }
   const walletDefault = walletDefaultRefusal(answer);
   if (walletDefault) {
