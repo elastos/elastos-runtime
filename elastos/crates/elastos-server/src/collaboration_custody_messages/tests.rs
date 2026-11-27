@@ -153,6 +153,7 @@ async fn custody_pair(root: &Path, node_learns_owner_scope: bool) -> CustodyPair
     let now = crate::auth::now_ts();
     let (root_a, root_b) = (root.join("a"), root.join("b"));
     for (identity, data_dir) in [(&pair.identity_a, &root_a), (&pair.identity_b, &root_b)] {
+        std::fs::write(data_dir.join("config.toml"), "protected_content = true\n").unwrap();
         ensure_custody_signing_scope(
             data_dir,
             &identity.principal_id,

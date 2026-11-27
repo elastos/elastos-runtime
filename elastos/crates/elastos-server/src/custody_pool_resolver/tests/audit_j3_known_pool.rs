@@ -7,6 +7,7 @@ async fn audit_j3_f6_an_item_of_a_newer_epoch_refreshes_the_known_pool() {
     let now = crate::auth::now_ts();
     let (_reader_dir, reader) = data_dir();
     let (_owner_dir, owner) = data_dir();
+    std::fs::write(owner.join("config.toml"), "protected_content = true\n").unwrap();
     let original = pool_bundle(xwing, now);
     let stale = pool_descriptor_with(
         &original,
