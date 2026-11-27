@@ -205,7 +205,7 @@ fn renewal_state_table_keeps_answers_and_allows_only_unanswered_expiry_retry() {
 
 #[test]
 fn handed_off_transaction_survives_expiry_restart_and_history_pressure_until_first_outcome() {
-    for connector in ["wallet-metamask", "wallet-walletconnect"] {
+    for connector in ["wallet-walletconnect"] {
         for legacy_expired in [false, true] {
             let dir = tempfile::tempdir().unwrap();
             let mut provider = init_provider(dir.path());
@@ -325,6 +325,116 @@ fn handed_off_transaction_survives_expiry_restart_and_history_pressure_until_fir
                 WalletProviderOperationV2::AttachValidatedChainOutcome { outcome },
             )
             .is_ok());
+        }
+    }
+}
+
+#[test]
+fn abandoned_non_dismissible_handoff_expires_releases_capacity_and_can_be_pruned() {
+    for connector in ["wallet-metamask", "wallet-unisat"] {
+        for legacy_expired in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut provider = init_provider(dir.path());
+            let original = approval_fixture(&mut provider, Some(connector));
+            assert!(invoke_wallet(
+                &mut provider,
+                PRINCIPAL,
+                connector,
+                WalletProviderOperationV2::ApproveConnectorHandoff {
+                    request_id: original.request_id.clone(),
+                    reason: "Send once".into(),
+                },
+            )
+            .is_ok());
+            let handed_off = provider.store.approval_requests[0].clone();
+            for i in 1..MAX_ACTIVE_APPROVAL_REQUESTS_PER_PRINCIPAL {
+                let mut other = handed_off.clone();
+                other.request_id = format!("active:{i}");
+                provider.store.approval_requests.push(other);
+            }
+            let new_request = WalletProviderRequestV2::new(
+                &wallet_context(PRINCIPAL, "system"),
+                "new-transaction".into(),
+                now_ts(),
+                now_ts() + 120,
+                original.operation.clone(),
+            )
+            .unwrap();
+            assert!(matches!(
+                invoke_wallet_request(&mut provider, &new_request),
+                Response::Error { ref code, .. } if code == "approval_limit_reached"
+            ));
+            let now = now_ts();
+            let expired = &mut provider.store.approval_requests[0];
+            expired.expires_at = now - 1;
+            if legacy_expired {
+                expired.status = ApprovalStatus::Expired;
+                expired.resolved_at = Some(now - 1);
+            }
+            provider.save().unwrap();
+            let mut provider = init_provider(dir.path());
+            let expired = provider
+                .store
+                .approval_requests
+                .iter()
+                .find(|r| r.request_id == original.request_id)
+                .unwrap();
+            assert_eq!(
+                expired.status,
+                ApprovalStatus::Expired,
+                "{connector}/{legacy_expired}"
+            );
+            assert!(!approval_authority_is_active(expired, now));
+            assert_eq!(
+                provider
+                    .store
+                    .approval_requests
+                    .iter()
+                    .filter(|r| approval_authority_is_active(r, now))
+                    .count(),
+                MAX_ACTIVE_APPROVAL_REQUESTS_PER_PRINCIPAL - 1
+            );
+            assert!(matches!(
+                invoke_wallet(
+                    &mut provider,
+                    PRINCIPAL,
+                    connector,
+                    WalletProviderOperationV2::ApproveConnectorHandoff {
+                        request_id: original.request_id.clone(),
+                        reason: "Stale card".into(),
+                    },
+                ),
+                Response::Error { .. }
+            ));
+            let mut operation = original.operation.clone();
+            if let WalletProviderOperationV2::RequestApproval { expires_at, .. } = &mut operation {
+                *expires_at = now + 300;
+            }
+            assert!(matches!(
+                invoke_wallet_request(&mut provider, &retry(&original, operation)),
+                Response::Error { ref code, .. } if code == "approval_identity_conflict"
+            ));
+            assert!(invoke_wallet_request(&mut provider, &new_request).is_ok());
+            let expired = provider
+                .store
+                .approval_requests
+                .iter()
+                .find(|r| r.request_id == original.request_id)
+                .unwrap()
+                .clone();
+            provider.store.approval_requests = vec![expired.clone()];
+            for i in 0..MAX_RESOLVED_APPROVAL_HISTORY_PER_PRINCIPAL {
+                let mut other = expired.clone();
+                other.request_id = format!("resolved:{i}");
+                other.created_at += i as u64 + 1;
+                provider.store.approval_requests.push(other);
+            }
+            provider.store = prune_store(provider.store, now);
+            assert!(!provider
+                .store
+                .approval_requests
+                .iter()
+                .any(|r| r.request_id == original.request_id));
         }
     }
 }
