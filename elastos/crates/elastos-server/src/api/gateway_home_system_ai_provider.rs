@@ -233,14 +233,7 @@ fn require_system_admin(
     headers: &HeaderMap,
 ) -> anyhow::Result<HomeLaunchTokenContext> {
     let context = require_home_launch_token_context(data_dir, headers, SYSTEM_CAPSULE_ID)?;
-    let Some(proof_binding_id) = context.proof_binding_id.as_deref() else {
-        return Err(anyhow::anyhow!("admin passkey required"));
-    };
-    let principal = crate::auth::load_principal_for_proof_binding(data_dir, proof_binding_id)?;
-    crate::auth::ensure_proof_binding_not_revoked(&principal)?;
-    if !crate::auth::is_admin(&principal) || principal.proof_binding.passkey.is_none() {
-        return Err(anyhow::anyhow!("admin passkey required"));
-    }
+    super::gateway_home_system::require_admin_signin_principal(data_dir, &context)?;
     Ok(context)
 }
 

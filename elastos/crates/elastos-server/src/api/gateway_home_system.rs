@@ -5585,7 +5585,7 @@ pub(super) fn require_admin_principal(
     require_admin_proof_binding(data_dir, context.proof_binding_id.as_deref())
 }
 
-/// Account role check for actions whose consumer separately requires a fresh passkey.
+/// Admin account authority for a passkey or wallet sign-in session.
 pub(super) fn require_admin_signin_principal(
     data_dir: &std::path::Path,
     context: &HomeLaunchTokenContext,

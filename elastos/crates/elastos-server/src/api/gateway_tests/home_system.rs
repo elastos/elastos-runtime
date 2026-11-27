@@ -12284,6 +12284,7 @@ async fn test_system_ai_provider_refuses_non_admin_and_non_signin_authority_on_e
         "guest",
         "wallet-guest",
         "revoked",
+        "revoked-wallet",
         "payment-wallet",
         "principal-mismatch",
         "wrong-app",
@@ -12293,34 +12294,51 @@ async fn test_system_ai_provider_refuses_non_admin_and_non_signin_authority_on_e
         let authority = passkey_authority(dir.path());
         let token = match kind {
             "local" => issue_home_launch_token(dir.path(), SYSTEM_CAPSULE_ID).unwrap(),
-            "guest" | "wallet-guest" => {
-                let guest = passkey_authority_with_name_role(
+            "guest" => {
+                passkey_authority_with_name_role(
                     dir.path(),
                     Some("guest"),
                     crate::auth::RuntimePrincipalRole::Guest,
-                );
-                if kind == "guest" {
-                    guest.system_token
-                } else {
-                    let grant = ai_provider_wallet_grant(dir.path(), &guest);
+                )
+                .system_token
+            }
+            "wallet-guest" => {
+                let grant = ai_provider_wallet_grant(dir.path(), &authority);
+                let mut auth = crate::auth::load_auth_state(dir.path()).unwrap();
+                for principal in &mut auth.principals {
+                    if principal.principal_id == authority.principal_id {
+                        principal.role = crate::auth::RuntimePrincipalRole::Guest;
+                    }
+                }
+                crate::auth::save_auth_state(dir.path(), &auth, None).unwrap();
+                issue_home_launch_token_for_auth_grant(dir.path(), SYSTEM_CAPSULE_ID, &grant)
+                    .unwrap()
+            }
+            "revoked" | "revoked-wallet" => {
+                let token = if kind == "revoked-wallet" {
+                    let grant = ai_provider_wallet_grant(dir.path(), &authority);
                     issue_home_launch_token_for_auth_grant(dir.path(), SYSTEM_CAPSULE_ID, &grant)
                         .unwrap()
-                }
-            }
-            "revoked" => {
+                } else {
+                    authority.system_token
+                };
                 crate::auth::revoke_passkey_binding(
                     dir.path(),
                     &authority.proof_binding_id,
                     crate::auth::now_ts(),
                 )
                 .unwrap();
-                authority.system_token
+                token
             }
             "payment-wallet" => {
                 let now = crate::auth::now_ts();
                 let principal = crate::auth::upsert_principal_for_binding_as_role_named(
                     dir.path(),
-                    ProofBinding::evm_account(1, "0x0000000000000000000000000000000000000001", now),
+                    ProofBinding::evm_account(
+                        1,
+                        "0x0000000000000000000000000000000000000001",
+                        now,
+                    ),
                     authority.principal_id.clone(),
                     crate::auth::RuntimePrincipalRole::Admin,
                     Some("owner"),
@@ -12338,27 +12356,57 @@ async fn test_system_ai_provider_refuses_non_admin_and_non_signin_authority_on_e
                 grant.session_id = format!("auth:{}", uuid_like_token());
                 grant.grant_id = format!("grant:{}", uuid_like_token());
                 crate::auth::store_session_grant(dir.path(), grant.clone()).unwrap();
-                issue_home_launch_token_for_auth_grant(dir.path(), SYSTEM_CAPSULE_ID, &grant).unwrap()
+                issue_home_launch_token_for_auth_grant(dir.path(), SYSTEM_CAPSULE_ID, &grant)
+                    .unwrap()
             }
             "principal-mismatch" => {
                 let mut grant = ai_provider_wallet_grant(dir.path(), &authority);
                 grant.principal_id = "principal:other".to_string();
-                issue_home_launch_token_for_auth_grant(dir.path(), SYSTEM_CAPSULE_ID, &grant).unwrap()
+                issue_home_launch_token_for_auth_grant(dir.path(), SYSTEM_CAPSULE_ID, &grant)
+                    .unwrap()
             }
             "wrong-app" => authority.home_token,
             _ => unreachable!(),
         };
         for (method, route, body) in [
             ("GET", "/api/apps/system/ai-provider", None),
-            ("POST", "/api/apps/system/ai-provider/validate", Some(json!({"provider": "openrouter", "api_key": "sk-or-fixture-valid"}))),
-            ("POST", "/api/apps/system/ai-provider", Some(json!({"provider": "openrouter", "api_key": "sk-or-fixture-valid", "model": "fixture/model"}))),
-            ("POST", "/api/apps/system/ai-provider/share", Some(json!({"id": "model:fixture", "enabled": true, "terms_ack": "openrouter-5.1-5.2+model"}))),
-            ("DELETE", "/api/apps/system/ai-provider", Some(json!({"id": "model:fixture"}))),
-            ("DELETE", "/api/apps/system/ai-provider/staged", Some(json!({"id": "model:fixture"}))),
-            ("POST", "/api/apps/system/approval-lens/revoke", Some(json!({"id": "model:fixture"}))),
+            (
+                "POST",
+                "/api/apps/system/ai-provider/validate",
+                Some(json!({"provider": "openrouter", "api_key": "sk-or-fixture-valid"})),
+            ),
+            (
+                "POST",
+                "/api/apps/system/ai-provider",
+                Some(json!({"provider": "openrouter", "api_key": "sk-or-fixture-valid", "model": "fixture/model"})),
+            ),
+            (
+                "POST",
+                "/api/apps/system/ai-provider/share",
+                Some(json!({"id": "model:fixture", "enabled": true, "terms_ack": "openrouter-5.1-5.2+model"})),
+            ),
+            (
+                "DELETE",
+                "/api/apps/system/ai-provider",
+                Some(json!({"id": "model:fixture"})),
+            ),
+            (
+                "DELETE",
+                "/api/apps/system/ai-provider/staged",
+                Some(json!({"id": "model:fixture"})),
+            ),
+            (
+                "POST",
+                "/api/apps/system/approval-lens/revoke",
+                Some(json!({"id": "model:fixture"})),
+            ),
         ] {
             let (status, body) = ai_provider_raw(&app, method, route, &token, body).await;
-            assert_eq!(status, StatusCode::FORBIDDEN, "{kind} {method} {route}: {body}");
+            assert_eq!(
+                status,
+                StatusCode::FORBIDDEN,
+                "{kind} {method} {route}: {body}"
+            );
             assert_ai_provider_http_omits_secrets(&body);
         }
         assert!(!ai_provider_config_path(dir.path()).exists(), "{kind}");
