@@ -15600,9 +15600,12 @@ async fn expired_handoff_library_buy_restarts_same_item() {
         .unwrap();
     assert_ne!(new_id, old_id);
     let approvals = buyer.wallet.provider.approvals.lock().await;
+    let transaction_requests = approvals
+        .iter()
+        .filter(|approval| approval["intent"] == "transaction_intent")
+        .count();
     assert_eq!(
-        approvals.iter().filter(|a| a["intent"] == "transaction_intent").count(),
-        2,
+        transaction_requests, 2,
         "concurrent presses must raise just one fresh approval"
     );
     assert_eq!(
