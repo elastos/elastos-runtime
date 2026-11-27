@@ -9670,6 +9670,79 @@ async fn test_runtime_custody_creator_connector_approval_is_never_declined_or_se
     }
 }
 
+/// Creator Start over archives an expired external handoff, then Protect
+/// raises a new approval for the same file. A waiting WalletConnect stays live.
+#[tokio::test]
+async fn test_creator_same_file_after_expired_handoff_and_waiting_walletconnect() {
+    let _guard = protected_content_gateway_mock_test_guard().lock().await;
+    let fx = CreatorRecoveryFixture::new().await;
+    enable_protected_content(fx.dir.path());
+    crate::protected_content_runtime::tests::write_device_key(fx.dir.path(), 0x5a);
+    let token = app_token_for_authority(fx.dir.path(), CREATOR_CAPSULE_ID, &fx.authority);
+    let app = gateway_router(fx.state.clone());
+    let mut seeded = Vec::new();
+    for (name, seed, connector, status) in [
+        ("expired-send.mp4", 0xd1, "wallet-metamask", "expired"),
+        ("waiting-send.mp4", 0xd2, "wallet-walletconnect", "approved"),
+    ] {
+        fx.link_account_to_connector(connector).await;
+        let input = fx.input(name, seed);
+        let (status_code, _, upload) = put_library_upload(app.clone(), &token, &input.object_uri, b"media").await;
+        assert_eq!(status_code, StatusCode::OK, "{upload}");
+        let facts = seed_completed_runtime_custody_mint(fx.dir.path(), &input);
+        assert!(fx.tail(&input, &facts).await.is_err());
+        let old_id = fx.wallet_provider.provider.latest_transaction_approval_request_id().await.unwrap();
+        {
+            let mut approvals = fx.wallet_provider.provider.approvals.lock().await;
+            let approval = approvals.iter_mut().find(|a| a["request_id"] == old_id).unwrap();
+            approval["status"] = json!(status);
+            approval["approved_at"] = json!(crate::auth::now_ts() - 2);
+            approval["expires_at"] = json!(crate::auth::now_ts() - 1);
+        }
+        seeded.push((input, facts, old_id, connector));
+    }
+    let _process_fixture = crate::protected_content_runtime::tests::register_runtime_custody_process_providers_for_test_registry(fx.dir.path(), &fx.registry).await;
+    crate::protected_content_runtime::tests::register_runtime_custody_mock_media_provider_for_test_registry(fx.dir.path(), &fx.registry).await;
+    for (input, facts, old_id, connector) in seeded.into_iter().rev() {
+        fx.link_account_to_connector(connector).await;
+        if connector == "wallet-walletconnect" {
+            match fx.unfinished(&input).await {
+                crate::api::gateway::RuntimeCustodyUnfinishedMintOutcome::Unfinished(entry) => {
+                    assert_eq!(entry["stage"], "approval_in_connector", "{entry}");
+                    assert_eq!(entry["can_start_over"], false);
+                }
+                other => panic!("waiting WalletConnect must be offered: {other:?}"),
+            }
+            let (_, refused) = post_library(app.clone(), &token, "discard_protection", json!({"uri": input.object_uri})).await;
+            assert_eq!(refused["attempt_conflict"]["reason"], "approval_in_connector", "{refused}");
+            assert_eq!(fx.current_attempt(&input).attempt(), 0);
+            // The Wallet provider's own suite proves late connector receipt acceptance;
+            // here its completed answer must still finish the original mint.
+            fx.wallet_provider.provider.complete_latest_transaction_approval().await;
+            assert!(fx.resume(&input, &facts).await.unwrap().listing_uri.is_some());
+            continue;
+        }
+        assert_eq!(fx.resume(&input, &facts).await.unwrap_err().to_string(), crate::protected_content_runtime::RUNTIME_CUSTODY_APPROVAL_HANDOFF_EXPIRED_MESSAGE);
+        let old_attempt = fx.current_attempt(&input);
+        let (_, discarded) = post_library(app.clone(), &token, "discard_protection", json!({"uri": input.object_uri})).await;
+        assert_eq!(discarded["data"]["discarded"], true, "{discarded}");
+        assert!(!fx.is_in_journal(facts.mint_id));
+        let (_, note) = archived_attempt(fx.dir.path(), old_attempt.request_id());
+        assert_eq!(note["stage"], "approval_handoff_expired");
+        let (_, fresh) = post_library(app.clone(), &token, "publish", json!({
+            "uri": input.object_uri,
+            "protection": {"mode": "runtime_custody", "channel": input.channel, "copies": input.copies, "price": input.price, "new_attempt": true},
+        })).await;
+        assert_eq!(fresh["message"], RECOVERY_PENDING_MESSAGE, "{fresh}");
+        assert!(fx.current_attempt(&input).attempt() > 0);
+        let new_id = fx.wallet_provider.provider.latest_transaction_approval_request_id().await.unwrap();
+        assert_ne!(new_id, old_id);
+        let approvals = fx.wallet_provider.provider.approvals.lock().await;
+        assert_eq!(approvals.iter().find(|a| a["request_id"] == old_id).unwrap()["status"], "expired");
+        assert_eq!(approvals.iter().find(|a| a["request_id"] == new_id).unwrap()["status"], "pending");
+    }
+}
+
 /// A settled mint whose listing file cannot be read is never taken for an
 /// unfinished one: nothing is archived and the refusal says why.
 #[tokio::test]
