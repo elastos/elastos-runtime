@@ -116,7 +116,7 @@ try {
         else if (url.pathname === "/api/capsules/catalog") body = {capsules:[]};
         else if (url.pathname === "/api/capsules/interfaces") body = {interfaces:[]};
         else if (url.pathname === "/api/provider/chain/networks") body = {status:'ok', data:{networks:[]}};
-        else if (url.pathname === "/api/apps/system/ai-provider") body = {connections:[]};
+        else if (url.pathname === "/api/apps/system/ai-provider") body = {can_change:true,connections:[]};
         else if (url.pathname === "/api/apps/browser/internet") body = {status:'off'};
         // An unconfigured Home: gateway_home_system.rs system_community_membership_summary
         // and gateway_collaboration_presence.rs community_presence_response.

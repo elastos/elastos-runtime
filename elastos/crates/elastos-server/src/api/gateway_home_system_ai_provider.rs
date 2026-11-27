@@ -675,6 +675,8 @@ pub(super) async fn system_ai_provider_get(
     match crate::api::ai_provider_status(&state.data_dir) {
         Ok(status) => {
             let mut result = serde_json::to_value(status).expect("serializable provider status");
+            result["can_change"] =
+                serde_json::json!(require_system_passkey_admin(&state.data_dir, &headers).is_ok());
             result["hosted_external_https"] = serde_json::json!(if cfg!(target_os = "macos") {
                 "consent_required"
             } else {
@@ -777,7 +779,7 @@ pub(super) async fn system_ai_provider_validate(
     headers: HeaderMap,
     Json(req): Json<AiProviderValidateRequest>,
 ) -> Response {
-    let admin = match require_system_admin(&state.data_dir, &headers) {
+    let admin = match require_system_passkey_admin(&state.data_dir, &headers) {
         Ok(admin) => admin,
         Err(err) => return system_error_response(err),
     };
@@ -793,7 +795,7 @@ pub(super) async fn system_ai_provider_validate(
         .clone()
         .unwrap_or_else(|| format!("model:hosted-{:032x}", rand::random::<u128>()));
     let _setup = hosted_setup_gate(&state.data_dir).lock_owned().await;
-    if let Err(err) = require_system_admin(&state.data_dir, &headers) {
+    if let Err(err) = require_system_passkey_admin(&state.data_dir, &headers) {
         return system_error_response(err);
     }
     let api_key = match crate::api::model_provider_config::hosted_key_for_save(
@@ -840,7 +842,7 @@ pub(super) async fn system_ai_provider_save(
     headers: HeaderMap,
     Json(req): Json<AiProviderSaveRequest>,
 ) -> Response {
-    let admin = match require_system_admin(&state.data_dir, &headers) {
+    let admin = match require_system_passkey_admin(&state.data_dir, &headers) {
         Ok(admin) => admin,
         Err(err) => return system_error_response(err),
     };
@@ -856,7 +858,7 @@ pub(super) async fn system_ai_provider_save(
         .clone()
         .unwrap_or_else(|| format!("model:hosted-{:032x}", rand::random::<u128>()));
     let _setup = hosted_setup_gate(&state.data_dir).lock_owned().await;
-    if let Err(err) = require_system_admin(&state.data_dir, &headers) {
+    if let Err(err) = require_system_passkey_admin(&state.data_dir, &headers) {
         return system_error_response(err);
     }
     let api_key = match if req.api_key.trim().is_empty() {
@@ -903,7 +905,7 @@ pub(super) async fn system_ai_provider_save(
     let _model_share_guard = super::gateway_model_service::model_share_gate()
         .write()
         .await;
-    if let Err(err) = require_system_admin(&state.data_dir, &headers) {
+    if let Err(err) = require_system_passkey_admin(&state.data_dir, &headers) {
         return system_error_response(err);
     }
     match crate::api::save_hosted_offer(

@@ -143,6 +143,7 @@ export function inertSystemApiResponse(pathname) {
   }
   if (pathname === "/api/apps/system/ai-provider") {
     return {
+      can_change: true,
       hosted_external_https: "paused",
       // A decision model saved by an earlier release is listed so it can be disconnected.
       connections: [

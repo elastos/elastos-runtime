@@ -914,6 +914,7 @@ async function main() {
     // An Inbox decision reaches the open System: Home forwards the Runtime's
     // inbox event, or System is shown again. Access controls stay visible and focus stays.
     const veniceStatus = (fields) => ({
+      can_change: true,
       hosted_external_https: "consent_required",
       connections: [{
         id: "model:hosted-22222222222222222222222222222222", name: "VeniceQwen3.8F", provider: "venice",
@@ -1043,6 +1044,22 @@ async function main() {
     await frame.click("#ai-provider-cancel");
     await frame.waitForSelector("#ai-provider-instances .ai-provider-instance >> text=Discard staged key");
     failStagedDiscard = false;
+
+    hostedStatus = { ...veniceStatus({ egress_state: "ready", egress_approval_state: "approved" }),
+      can_change: false,
+      staged_connections: [{ id: "model:hosted-33333333333333333333333333333333", provider: "OpenRouter" }] };
+    await page.goto(`${server.baseUrl}/fixture?settings=models`, { waitUntil: "networkidle" });
+    frame = await waitForSystemFrame(page);
+    await frame.waitForFunction(() => document.querySelector('[data-field="ai-provider-state"]')?.textContent
+      === "Sign in with a passkey to change hosted AI.");
+    const readOnly = await frame.evaluate(() => ({
+      addHidden: document.querySelector("#ai-provider-add").hidden,
+      formHidden: document.querySelector("#ai-provider-form").hidden,
+      cards: document.querySelectorAll("#ai-provider-instances .ai-provider-instance").length,
+      buttons: [...document.querySelectorAll("#ai-provider-instances button")].map(button => button.textContent),
+    }));
+    assert(readOnly.addHidden && readOnly.formHidden && readOnly.cards === 2
+      && readOnly.buttons.join() === "Use in Assistant", "Wallet hosted AI was not read-only", readOnly);
 
     assert(
       appearancePlans.length === 0,

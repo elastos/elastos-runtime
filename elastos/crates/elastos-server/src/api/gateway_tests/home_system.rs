@@ -12223,13 +12223,51 @@ async fn test_system_ai_provider_wallet_signin_admin_status_and_management() {
         ai_provider_raw(&app, "GET", "/api/apps/system/ai-provider", &token, None).await;
     assert_eq!(status, StatusCode::OK, "wallet admin GET: {body}");
     assert_ai_provider_http_omits_secrets(&body);
+    assert_eq!(
+        serde_json::from_str::<Value>(&body).unwrap()["can_change"],
+        false,
+        "status change capability"
+    );
+    let (status, body) = ai_provider_raw(
+        &app,
+        "GET",
+        "/api/apps/system/ai-provider",
+        &authority.system_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        serde_json::from_str::<Value>(&body).unwrap()["can_change"],
+        true,
+        "status change capability"
+    );
+    for (route, request) in [
+        (
+            "/api/apps/system/ai-provider/validate",
+            json!({"provider": "openrouter", "api_key": "sk-or-fixture-valid"}),
+        ),
+        (
+            "/api/apps/system/ai-provider",
+            json!({
+                "provider": "openrouter",
+                "api_key": "sk-or-fixture-valid",
+                "model": "fixture/model"
+            }),
+        ),
+    ] {
+        let (status, body) = ai_provider_raw(&app, "POST", route, &token, Some(request)).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(body, "admin passkey required");
+    }
+    assert!(!ai_provider_config_path(dir.path()).exists());
 
     install_valid_hosted_doubles();
     let (status, body) = ai_provider_raw(
         &app,
         "POST",
         "/api/apps/system/ai-provider/validate",
-        &token,
+        &authority.system_token,
         Some(json!({"provider": "openrouter", "api_key": "sk-or-fixture-valid"})),
     )
     .await;
@@ -12240,7 +12278,7 @@ async fn test_system_ai_provider_wallet_signin_admin_status_and_management() {
         &app,
         "POST",
         "/api/apps/system/ai-provider",
-        &token,
+        &authority.system_token,
         Some(json!({
             "provider": "openrouter",
             "api_key": "sk-or-fixture-valid",

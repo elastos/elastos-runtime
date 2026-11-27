@@ -950,6 +950,8 @@ function configureAiProvider() {
   const selectedProvider = () => (providerSelect.value === "venice" ? "venice" : "openrouter");
   let editingId = "";
   let latestStatus = null;
+  let canChangeHosted = false;
+  const readOnlyMessage = "Sign in with a passkey to change hosted AI.";
   // Inbox decisions change hosted access while System is open; Home reports them as
   // `inbox.changed`. Refresh then and when System is shown again, but never under the
   // person's open form or while one of this page's own requests is in flight.
@@ -968,17 +970,17 @@ function configureAiProvider() {
   };
   const updateValidationEnd = () => {
     const state = latestStatus?.validation_egress_approval_state?.[selectedProvider()];
-    validationEndButton.hidden = state !== "pending" && state !== "approved";
+    validationEndButton.hidden = !canChangeHosted || (state !== "pending" && state !== "approved");
   };
   const setBusy = (busy) => {
-    addButton.disabled = busy || !hasShellAccess();
-    nameInput.disabled = busy || !hasShellAccess();
-    providerSelect.disabled = busy || !hasShellAccess() || Boolean(editingId);
-    keyInput.disabled = busy || !hasShellAccess();
-    modelSelect.disabled = busy || !hasShellAccess();
-    validateButton.disabled = busy || !hasShellAccess();
-    validationEndButton.disabled = busy || !hasShellAccess();
-    saveButton.disabled = busy || !hasShellAccess();
+    addButton.disabled = busy || !hasShellAccess() || !canChangeHosted;
+    nameInput.disabled = busy || !hasShellAccess() || !canChangeHosted;
+    providerSelect.disabled = busy || !hasShellAccess() || !canChangeHosted || Boolean(editingId);
+    keyInput.disabled = busy || !hasShellAccess() || !canChangeHosted;
+    modelSelect.disabled = busy || !hasShellAccess() || !canChangeHosted;
+    validateButton.disabled = busy || !hasShellAccess() || !canChangeHosted;
+    validationEndButton.disabled = busy || !hasShellAccess() || !canChangeHosted;
+    saveButton.disabled = busy || !hasShellAccess() || !canChangeHosted;
     cancelButton.disabled = busy;
     cancelButton.textContent = latestStatus?.staged_connections?.some((entry) => entry.id === editingId)
       ? "Close" : "Cancel";
@@ -1031,7 +1033,7 @@ function configureAiProvider() {
     formNode.hidden = true;
     instancesNode.hidden = false;
     document.querySelector("#local-models").hidden = false;
-    addButton.hidden = false;
+    addButton.hidden = !canChangeHosted;
     nameInput.value = "";
     keyInput.value = "";
     providerSelect.value = "openrouter";
@@ -1041,6 +1043,7 @@ function configureAiProvider() {
     if (liveRefreshWanted) scheduleLiveRefresh();
   };
   const showForm = (instance) => {
+    if (!canChangeHosted) return;
     formNode.hidden = false;
     instancesNode.hidden = true;
     document.querySelector("#local-models").hidden = true;
@@ -1096,7 +1099,7 @@ function configureAiProvider() {
       disconnectButton.type = "button";
       disconnectButton.textContent = "Disconnect";
       disconnectButton.addEventListener("click", async () => {
-        if (!hasShellAccess()) return;
+        if (!hasShellAccess() || !canChangeHosted) return;
         setBusy(true);
         showState("", "");
         try {
@@ -1127,13 +1130,13 @@ function configureAiProvider() {
       summary.textContent = "Details and access";
       const secondary = document.createElement("div");
       secondary.className = "system-inline-row";
-      if (connection.approval_state === "approved" || ["pending", "approved"].includes(connection.egress_approval_state)) {
+      if (canChangeHosted && (connection.approval_state === "approved" || ["pending", "approved"].includes(connection.egress_approval_state))) {
         const endApproval = document.createElement("button");
         endApproval.className = "pc2-btn pc2-btn-secondary";
         endApproval.type = "button";
         endApproval.textContent = "End hosted approval";
         endApproval.addEventListener("click", async () => {
-          if (!hasShellAccess()) return;
+          if (!hasShellAccess() || !canChangeHosted) return;
           endApproval.disabled = true;
           try {
             await hostedFetch("/api/apps/system/approval-lens/revoke", {
@@ -1149,13 +1152,14 @@ function configureAiProvider() {
         });
         secondary.append(endApproval);
       }
-      secondary.append(disconnectButton);
+      if (canChangeHosted) secondary.append(disconnectButton);
       more.append(summary, secondary);
       // A decision model saved by an earlier release cannot run Assistant
       // prompts; it stays listed so it can be disconnected.
-      if (connection.operation === "decision.evaluate") actions.append(replaceButton);
-      else actions.append(useButton, replaceButton);
-      card.append(title, detail, actions, more);
+      if (connection.operation !== "decision.evaluate") actions.append(useButton);
+      if (canChangeHosted) actions.append(replaceButton);
+      card.append(title, detail, actions);
+      if (canChangeHosted) card.append(more);
       instancesNode.append(card);
     }
     for (const staged of Array.isArray(status?.staged_connections) ? status.staged_connections : []) {
@@ -1179,7 +1183,7 @@ function configureAiProvider() {
       discard.type = "button";
       discard.textContent = "Discard staged key";
       discard.addEventListener("click", async () => {
-        if (!hasShellAccess()) return;
+        if (!hasShellAccess() || !canChangeHosted) return;
         discard.disabled = true;
         showState("Finishing any current key check, then removing the staged key.", "");
         try {
@@ -1194,7 +1198,8 @@ function configureAiProvider() {
           discard.disabled = false;
         }
       });
-      card.append(detail, resume, discard);
+      card.append(detail);
+      if (canChangeHosted) card.append(resume, discard);
       instancesNode.append(card);
     }
     if (focused) {
@@ -1202,7 +1207,16 @@ function configureAiProvider() {
     }
   };
   const applyStatus = (status) => {
+    const wasReadOnly = !canChangeHosted;
     latestStatus = status;
+    canChangeHosted = status?.can_change === true;
+    addButton.hidden = !canChangeHosted;
+    if (!canChangeHosted) {
+      hideForm();
+      showState(readOnlyMessage, "");
+    } else if (wasReadOnly) {
+      showState("", "");
+    }
     const egressNote = document.querySelector("#ai-provider-egress-note");
     egressNote.hidden = latestStatus.hosted_external_https !== "paused";
     egressNote.textContent = egressNote.hidden ? "" : "External HTTPS is paused on this Home.";
@@ -1241,7 +1255,7 @@ function configureAiProvider() {
     if (!liveRefreshTimer) liveRefreshTimer = window.setTimeout(runLiveRefresh, 250);
   };
   validationEndButton.addEventListener("click", async () => {
-    if (!hasShellAccess()) return;
+    if (!hasShellAccess() || !canChangeHosted) return;
     setBusy(true);
     try {
       await hostedFetch("/api/apps/system/approval-lens/revoke", {
@@ -1270,7 +1284,7 @@ function configureAiProvider() {
     showPrivacy(selectedOption ? selectedOption.dataset.privacy : "");
   });
   validateButton.addEventListener("click", async () => {
-    if (!hasShellAccess()) return;
+    if (!hasShellAccess() || !canChangeHosted) return;
     setBusy(true);
     showState("", "");
     // The check sends the typed key, or with a blank field a key staged by an earlier check.
@@ -1317,7 +1331,7 @@ function configureAiProvider() {
     }
   });
   saveButton.addEventListener("click", async () => {
-    if (!hasShellAccess()) return;
+    if (!hasShellAccess() || !canChangeHosted) return;
     setBusy(true);
     showState("", "");
     try {
