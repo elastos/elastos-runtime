@@ -1734,7 +1734,7 @@ boot().catch((error) => {
 });
 
 registerHomeServiceWorker();
-bindHomeUnlock();
+bindHomeUnlock({openTarget:openTargetFromHomeGui});
 
 shellHostRecoveryHomeButton?.addEventListener("click", () => {
   recoverToHomeGui().catch((error) => {

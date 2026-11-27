@@ -11,6 +11,7 @@ function fixture({lost=false,passkeyRetry=false}={}) {
   const flow=createWalletSigninFlow({
     randomSecret:()=> 'a'.repeat(64),
     api:async(path,body)=>{
+      if(path==='/api/apps/wallet-walletconnect/internet')return {status:'granted'};
       calls.push({path,body:structuredClone(body)});
       if(path.endsWith('/begin')) {lastAction=body.action;return {ceremony_id:'ceremony',message:'exact Home message',expires_at:Date.now()/1000+120,approval:{operation:'auth.wallet.method.change',request:{ceremony_id:'ceremony',action:body.action,principal_id:'principal:alex',proof_binding_id:method.proof_binding_id}}};}
       if(path==='/api/auth/wallet-methods') {reads++;if(lost&&reads===1)throw new TypeError('lost status');return {principal_id:'principal:alex',methods:committed&&lastAction!=='remove'?[method]:[]};}
@@ -124,6 +125,7 @@ test('WalletConnect Add pairs in the signed-in ceremony and selects its exact ap
   const calls=[],states=[];
   const flow=createWalletSigninFlow({randomSecret:()=> 'a'.repeat(64),
     api:async(path,body)=>{
+      if(path==='/api/apps/wallet-walletconnect/internet')return {status:'granted'};
       calls.push({path,body});
       if(path.endsWith('/begin') || path.endsWith('/select'))return {ceremony_id:'addition',message:path.endsWith('/select')?'Add this wallet':'',expires_at:Date.now()/1000+120,
         approval:{operation:'auth.wallet.method.change',request:{ceremony_id:'addition',action:'add',principal_id:'principal:alex',proof_binding_id:'new',address:body.address}}};
@@ -132,7 +134,7 @@ test('WalletConnect Add pairs in the signed-in ceremony and selects its exact ap
   await flow.start({action:'add',accountId:'principal:alex'});await flow.choose('walletconnect');
   assert.equal(states.at(-1).stage,'review');
   assert.deepEqual(calls.map(c=>c.path),['/api/auth/wallet-methods/begin','/api/auth/wallet/signin/select']);
-  assert.equal(calls[0].body.address,'');assert.equal(calls[0].body.action,'add');assert.equal(calls[0].body.allow_temporary_internet,true);
+  assert.equal(calls[0].body.address,'');assert.equal(calls[0].body.action,'add');assert.equal(calls[0].body.allow_temporary_internet,undefined);
   assert.equal(calls[1].body.address,method.address);assert.equal(calls[1].body.browser_secret,calls[0].body.browser_secret);
   await flow.cancel();assert.equal(calls.at(-1).body.ceremony_id,'addition');
 });
@@ -144,7 +146,7 @@ test('signed-out WalletConnect requires an enabled compatible method and interne
       select:async()=>({...method,connector:'walletconnect',close(){}}),approve(){},render:s=>states.push(s)});
     await flow.start();assert.equal(states.at(-1).walletconnectAvailable,available);await flow.choose('walletconnect');
     assert.equal(calls.filter(c=>c.path.endsWith('/begin')).length,available?1:0);
-    if(available)assert.equal(calls.find(c=>c.path.endsWith('/begin')).body.allow_temporary_internet,true);
+    if(available)assert.equal(calls.find(c=>c.path.endsWith('/begin')).body.allow_temporary_internet,undefined);
     else assert.equal(states.at(-1).stage,'error');
     await flow.cancel();
   }
@@ -319,6 +321,7 @@ function ceremony({lost=false,change=false,connector='metamask'}={}) {
   const flow=createWalletSigninFlow({
     randomSecret:()=> 'a'.repeat(64),
     api:async(path,body)=>{
+      if(path==='/api/apps/wallet-walletconnect/internet')return {status:'granted'};
       calls.push({path,body});
       if(path.endsWith('/begin'))return {ceremony_id:'one',message:'Use this wallet to sign in to this Home for Alex',expires_at:Date.now()/1000+120,approval:{operation:'auth.wallet.method.change',request:{ceremony_id:'one',action:body.action,principal_id:'alex',proof_binding_id:'new-method'}}};
       if(path==='/api/auth/wallet-methods'){if(lost&&reads++===0)throw new TypeError('lost status');return {principal_id:'alex',methods:[{proof_binding_id:'new-method',sign_in_enabled:true}]};}

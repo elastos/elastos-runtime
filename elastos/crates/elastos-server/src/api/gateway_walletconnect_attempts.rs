@@ -62,6 +62,7 @@ pub(in crate::api) async fn admit_attempt(
 ) -> anyhow::Result<crate::auth::wallet_signin::AttemptContext> {
     let context = context(state, headers)?;
     let inner = state.walletconnect.inner.lock().await;
+    check_owner(state, false).await?;
     let store = inner
         .attempts
         .get(&context.ceremony_id)
@@ -125,6 +126,7 @@ pub(in crate::api) async fn preflight(
     source: Option<std::net::IpAddr>,
 ) -> anyhow::Result<()> {
     let mut inner = state.walletconnect.inner.lock().await;
+    check_owner(state, false).await?;
     capacity(&mut inner, local, session, reuse, source)
 }
 fn capacity(
@@ -251,6 +253,7 @@ async fn install(
     session: Option<&str>,
     source: Option<std::net::IpAddr>,
 ) -> anyhow::Result<()> {
+    check_owner(state, false).await?;
     let source = source.map(address_budget_key);
     crate::auth::wallet_signin::set_transport_local(
         &home_launch_auth_data_dir(&state.data_dir),
@@ -258,6 +261,7 @@ async fn install(
         local,
     )?;
     let mut inner = state.walletconnect.inner.lock().await;
+    check_owner(state, false).await?;
     // Browser-claim renewal keeps its starting share even after an address
     // change. It gains neither another slot nor a later deadline.
     let source = inner
@@ -399,6 +403,7 @@ async fn response<T: Serialize>(
             Json(json!({"error":"wallet_transport_unavailable"})),
         )
             .into_response(),
+        Err(error) if error.is::<InternetOff>() => private_response::<serde_json::Value>(Err(error)),
         Err(error) if error.is::<StaleRevision>() => {
             private_response::<serde_json::Value>(Err(error))
         }
@@ -839,4 +844,12 @@ mod tests {
         )
         .is_ok());
     }
+}
+
+pub(super) fn cancel_all(data: &FsPath, inner: &mut Inner) -> anyhow::Result<()> {
+    for (id, attempt) in &inner.attempts {
+        crate::auth::wallet_signin::expire_attempt(&home_launch_auth_data_dir(data), id, &attempt.instance)?;
+    }
+    inner.attempts.clear();
+    Ok(())
 }

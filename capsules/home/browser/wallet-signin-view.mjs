@@ -20,12 +20,12 @@ export async function walletSigninApi(path,body,token='',{signal}={}) {
       headers:{'content-type':'application/json',...(token?{'x-elastos-home-token':token}:{})},
       ...(body===undefined?{}:{body:JSON.stringify(body)}),
     });
-    if(!response.ok)throw Object.assign(new Error('Home refused the wallet request'),{status:response.status,retryAfter:Number(response.headers.get('retry-after'))});
+    if(!response.ok){const error=await response.json().catch(()=>({}));throw Object.assign(new Error('Home refused the wallet request'),{code:error.error||error.code,status:response.status,retryAfter:Number(response.headers.get('retry-after'))});}
     return await response.json();
   } finally {clearTimeout(timer);signal?.removeEventListener('abort',abort);}
 
 }
-export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=>{}}) {
+export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=>{},onShowRequest=()=>{}}) {
   let passkeyController,passkeyFinished=Promise.resolve();
   let dialog,previousFocus,token='',initial={},watcher,managementTimer,epoch=0,remember=false,currentState,management={kind:'idle'};
   const flow=createWalletSigninFlow({
@@ -151,7 +151,7 @@ export function createHomeWalletSignin({approve,onSignin,onPasskey,onChanged=()=
       const choices=[...(signinBrowserWallets().length?signinBrowserWallets().map(p=>({connector:'metamask',providerId:p.rdns,label:p.name})):[{connector:'metamask'}]),{connector:'unisat'},{connector:'walletconnect'}].map(choice=>{
         const rows=(state.methods||[]).filter(m=>m.connector===choice.connector&&(!choice.providerId||m.providerId===choice.providerId));return {...choice,used:rows.length>0&&rows.every(m=>m.sign_in_enabled)};
       });
-      renderWalletSigninManagement(body,footer,state,{account:initial.account||'Your account',methods:choices,choose:chooseAdd,confirm:()=>flow.confirm(),approve:()=>flow.approve(),cancel,retry:retryManagement});
+      renderWalletSigninManagement(body,footer,state,{account:initial.account||'Your account',methods:choices,choose:chooseAdd,confirm:()=>flow.confirm(),approve:()=>flow.approve(),cancel,retry:retryManagement,showRequest:()=>{dialog?.close();onShowRequest({notification_id:'walletconnect-internet:permission'});}});
       if(hadFocus)dialog.querySelector('button')?.focus();
       return;
     }

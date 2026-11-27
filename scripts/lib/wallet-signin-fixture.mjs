@@ -71,13 +71,13 @@ export async function signinFixture() {
           if(state.scenario==='offline')return json({},503);
           if(state.scenario==='conflict')return json({},409);
           if(body.connector==='walletconnect') {
-            if(body.allow_temporary_internet!==true)return json({},403);
+            if((state.internetStatus||'granted')!=='granted')return json({error:'walletconnect_internet_off'},403);
             if(path==='/api/auth/wallet/signin/begin'&&!state.methods.some(m=>m.sign_in_enabled&&m.connector==='walletconnect'&&[20,8453].includes(m.chain_id)))return json({},403);
           }
           if(['add'].includes(body.action) && body.address && state.methods.some(m=>m.address.toLowerCase()===body.address.toLowerCase() && m.chain_id===body.chain_id && m.network===body.network))return json({},409);
           const method=body.proof_binding_id?state.methods.find(m=>m.proof_binding_id===body.proof_binding_id):body;
           const ceremony_id=`ceremony:${++state.serial}`,expires_at=now+(state.scenario==='expired'?1:180);
-          const approval={operation:'auth.wallet.method.change',notice:body.action==='add'&&method?.connector==='walletconnect'?relayNotice:'',request:{ceremony_id,principal_id:'principal:alex',action:body.action,proof_binding_id:body.proof_binding_id||`wallet:${body.connector}`,connector:method?.connector,address:method?.address,chain_id:method?.chain_id,network:method?.network,authorizes_short_public_walletconnect:body.action==='add'&&method?.connector==='walletconnect'&&[20,8453].includes(method?.chain_id)}};
+          const approval={operation:'auth.wallet.method.change',notice:body.action==='add'&&method?.connector==='walletconnect'?relayNotice:'',request:{ceremony_id,principal_id:'principal:alex',action:body.action,proof_binding_id:body.proof_binding_id||`wallet:${body.connector}`,connector:method?.connector,address:method?.address,chain_id:method?.chain_id,network:method?.network}};
           const result={ceremony_id,message:body.action==='remove'||!method?.address?'':`Sign in to ${origin}\nAccount: ${method?.address||'Select wallet'}\nRequest: ${ceremony_id}${state.longSigningMessage?'\nMessage detail line'.repeat(150):''}`,expires_at,...(body.action?{approval}:{}),
             ...(method?.connector==='walletconnect'?{attempt_token:`fixture-attempt:${ceremony_id}`,instance_id:`instance:${ceremony_id}`,storage_revision:0}:{})};
           state.ceremonies.set(ceremony_id,{...result,secret:body.browser_secret,action:body.action||'signin',method,actor:body.action?req.headers['x-elastos-home-token']:null});return json(result);
@@ -152,7 +152,7 @@ export async function signinFixture() {
           }
         }
         if(path==='/api/apps/wallet-walletconnect/wallet/config')return json({walletconnect:{project_id:'fixture-project',storage_revision:'"0"'}});
-        if(path==='/api/apps/wallet-walletconnect/internet')return json({status:state.internetStatus||'granted'});
+        if(path==='/api/apps/wallet-walletconnect/internet'){if(req.method==='POST'&&body?.action==='request'&&!state.cleanupPending)state.internetStatus='requested';return json({status:state.internetStatus||'granted',cleanup_pending:Boolean(state.cleanupPending),request:{id:'fixture-internet',issued_at:now,expires_at:now+1800}});}
         if(path==='/api/apps/wallet-walletconnect/storage'&&!req.headers['x-elastos-wallet-attempt'])return json(state.wcConnected?{'wc//session':[{expiry:now+600}]}:{});
         const connectorRead=path.match(/^\/api\/apps\/(wallet-metamask|wallet-unisat|wallet-walletconnect)\/wallet\/(accounts|approvals)$/);
         if(connectorRead)return json(connectorRead[2]==='accounts'?{accounts:state.connected.filter(a=>a.connector_id===connectorRead[1])}:{approval_requests:[]});
