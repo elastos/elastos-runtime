@@ -132,7 +132,19 @@ fn catalog_proof_inputs_match_producer_fixtures() {
         );
         assert!(model.bytes > SMOLLM2.bytes);
         assert_eq!(model.quantization, "Q4_K_M");
+        assert_eq!(
+            catalog_engine_sha(model, "linux-amd64"),
+            "93e2300242ded0aadabe83686e5aad9a06a3cefe63e3b5095aa4949c125f3869"
+        );
     }
+    assert_eq!(
+        catalog_engine_sha(&SMOLLM2, "linux-amd64"),
+        pinned_engine_sha("linux-amd64")
+    );
+    assert_eq!(
+        catalog_engine_sha(&QWEN, "linux-amd64"),
+        pinned_engine_sha("linux-amd64")
+    );
 }
 
 /// SHA-256 of the verified `llama-server` executable inside the pinned
@@ -144,6 +156,19 @@ fn pinned_engine_sha(platform: &str) -> &'static str {
         "linux-arm64" => "da88cc0a679c80cdf699fe368c4d2f772e5bce4280ad9316c30ed4c09e9d2cde",
         other => panic!("no pinned b10516 engine identity for {other}"),
     }
+}
+
+// Existing proof pins remain stable; catalogue fixtures bind the bundle
+// selected by the current release recipes independently of those older pins.
+fn catalog_engine_sha(model: &PinnedModel, platform: &str) -> &'static str {
+    let fixture = match model.env_prefix {
+        "QWEN35" => &*QWEN35_FIXTURE,
+        "GEMMA4" => &*GEMMA4_FIXTURE,
+        _ => return pinned_engine_sha(platform),
+    };
+    fixture["proof"]["engine_sha256"][platform]
+        .as_str()
+        .expect("catalogue proof requires an engine pin for this host")
 }
 
 const PACKAGE_ADD_ARGS: &[&str] = &[
@@ -569,7 +594,7 @@ impl PinnedModelProof {
             crate::setup::verified_local_model_engine(&self.engine_data, &manifest).unwrap();
         assert_eq!(
             identity.sha256.trim_start_matches("sha256:"),
-            pinned_engine_sha(&crate::setup::detect_platform())
+            catalog_engine_sha(self.model, &crate::setup::detect_platform())
         );
         let source = identity.path.parent().unwrap();
         let receipt: serde_json::Value =
@@ -691,7 +716,7 @@ async fn native_exact_profile_lifecycle(model: &'static PinnedModel) {
     let engine = crate::setup::verified_local_model_engine(&engine_data, &manifest).unwrap();
     assert_eq!(
         engine.sha256.trim_start_matches("sha256:"),
-        pinned_engine_sha(&platform)
+        catalog_engine_sha(model, &platform)
     );
     let engine_path = engine.path.canonicalize().unwrap();
     let base = weights

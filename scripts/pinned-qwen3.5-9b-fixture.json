@@ -51,6 +51,12 @@
   "proof": {
     "env_prefix": "QWEN35",
     "native_test": "model_native_qwen35_exact_profile_lifecycle",
-    "cold_test": "model_preparation_real_qwen35_cold_reply_restart"
+    "cold_test": "model_preparation_real_qwen35_cold_reply_restart",
+    "engine_sha256": {
+      "linux-amd64": "93e2300242ded0aadabe83686e5aad9a06a3cefe63e3b5095aa4949c125f3869"
+    },
+    "engine_archive_sha256": {
+      "linux-amd64": "0dee60d855f864aa9e8a7200014baf9419e3a4c9ccb3f3609532aad0ed34f2c0"
+    }
   }
 }
