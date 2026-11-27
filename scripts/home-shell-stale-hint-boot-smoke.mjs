@@ -111,7 +111,6 @@ class FakeElement {
     this.removed = false;
     this.textContent = "";
     this.title = "";
-    this.src = "";
     this.attributes = new Map();
     this.listeners = new Map();
     this.classList = new FakeClassList();
@@ -121,6 +120,12 @@ class FakeElement {
           cloneNode: () => new FakeElement(`:template-fragment`, false),
         }
       : { firstElementChild: null };
+  }
+
+  get src() { return this.attributes.get("src") || ""; }
+
+  set src(value) {
+    this.attributes.set("src", String(value));
   }
 
   addEventListener(type, callback) {
@@ -371,4 +376,6 @@ assert(activeShellFrame.dataset.route.includes("/apps/home-cli/"), "stale-hint b
 assert(elementForSelector("#home-shell-boot-mask").hidden === true, "stale-hint boot left the neutral mask over Home CLI");
 assert(!requests.some((request) => request.url === "/api/apps/home/active-shell"), "stale-hint boot used the hint to switch shells", requests);
 
+assert(elementForSelector("#active-shell-frame").getAttribute("src") === elementForSelector("#active-shell-frame").src,
+  "fake iframe src property and content attribute diverged");
 console.log("[home-shell-stale-hint-boot] PASS");

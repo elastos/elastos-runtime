@@ -104,7 +104,6 @@ class FakeElement {
     this.removed = false;
     this.textContent = "";
     this.title = "";
-    this.src = "";
     this.attributes = new Map();
     this.listeners = new Map();
     this.classList = new FakeClassList();
@@ -114,6 +113,12 @@ class FakeElement {
           cloneNode: () => new FakeElement(`:template-fragment`, false),
         }
       : { firstElementChild: null };
+  }
+
+  get src() { return this.attributes.get("src") || ""; }
+
+  set src(value) {
+    this.attributes.set("src", String(value));
   }
 
   addEventListener(type, callback) {
@@ -270,6 +275,10 @@ globalThis.window = {
       windowListeners.set(type, []);
     }
     windowListeners.get(type).push(callback);
+  },
+  dispatchEvent(event) {
+    for (const listener of windowListeners.get(event.type) || []) listener(event);
+    return !event.defaultPrevented;
   },
   clearInterval(id) {
     intervals.delete(id);
@@ -471,6 +480,8 @@ if (guestRegistrationEnabled) {
     "Create account started passkey sign-in instead of enrollment",
     requests,
   );
+  assert(elementForSelector("#active-shell-frame").getAttribute("src") === elementForSelector("#active-shell-frame").src,
+    "fake iframe src property and content attribute diverged");
   console.log("[home-shell-auth-gate] PASS (guest registration on)");
   process.exit(0);
 }
@@ -607,7 +618,7 @@ const { refreshHomeSession } = await import(
   `../capsules/home/browser/shell-auth.js?v=${moduleVersion}`
 );
 const { hasHomeAuthorityToken, shellState } = await import(
-  `../capsules/home/browser/shell-core.js?v=${moduleVersion}`
+  "../capsules/home/browser/shell-core.js?v=home-wallpaper-20261030b"
 );
 for (const mode of ["network-error", "timed-out", "unavailable", "unauthorized", "forbidden"]) {
   sessionResponseMode = "success";
@@ -795,6 +806,8 @@ eventsResponseMode = "success";
 await shellState.requestSummaryRefresh();
 const finalStream = eventSources.at(-1);
 finalStream.onerror({});
+// The reconnect fallback checks are complete. Session checks use the native API.
+AbortSignal.timeout = nativeAbortTimeout;
 eventsResponseMode = "unauthorized";
 console.warn = () => {};
 try {
@@ -812,6 +825,8 @@ assert(reconnectDeadlines.length > 0 && reconnectDeadlines.every(delay => delay 
   "Home reconnect requests lost their finite deadline", reconnectDeadlines);
 assert(requestDeadlineTimers.size === 0, "closed event channel retained request deadlines");
 
+assert(elementForSelector("#active-shell-frame").getAttribute("src") === elementForSelector("#active-shell-frame").src,
+  "fake iframe src property and content attribute diverged");
 console.log("[home-shell-auth-gate] PASS");
 
 const { spawnSync } = await import("node:child_process");

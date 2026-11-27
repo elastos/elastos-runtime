@@ -5667,15 +5667,20 @@ body[data-form-factor="phone"] .window.window-active {
   background: var(--frame-fill);
   opacity: 0;
   transition: opacity 220ms cubic-bezier(0.2, 0, 0, 1);
-  pointer-events: none;
 }
 
 .window-frame.is-ready {
   opacity: 1;
 }
 
-.window-active .window-frame {
-  pointer-events: auto;
+/* Keep iframe input regions stable when focus moves between app windows.
+   Toggling iframe pointer-events leaves WebKit's async wheel target stale.
+   Home catches the first press on inactive content and activates its window. */
+.window:not(.window-active) .window-body-frame::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
 }
 
 /* Browser close waits for Runtime cleanup (a few seconds): say so on the

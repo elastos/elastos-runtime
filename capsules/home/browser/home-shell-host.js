@@ -206,7 +206,12 @@ function clearActiveShellFrameSource() {
     return;
   }
   activeShellFrame.hidden = true;
-  activeShellFrame.src = "about:blank";
+  // Retire a live document once. An extra blank navigation on an empty frame
+  // can overtake the admitted route in WebKit and leave the shell unloaded.
+  const source = activeShellFrame.getAttribute("src");
+  if (source && source !== "about:blank") {
+    activeShellFrame.src = "about:blank";
+  }
   activeShellFrame.dataset.route = "";
 }
 

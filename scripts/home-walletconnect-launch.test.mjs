@@ -14,6 +14,22 @@ test("Home forwards connector account hints to the kept-open Wallet in WebKit", 
 });
 
 for (const engine of ["chromium", "webkit"]) {
+  test(`Wallet preserves market refreshes after account errors in ${engine}`, windowTestOptions(engine,90000), async () => {
+    const { stdout, stderr } = await promisify(execFile)(process.execPath, ["scripts/home-wallet-connector-launch-headless-smoke.mjs"], {
+      env: {...process.env, HOME_WALLET_CONNECTOR_ENGINE:engine, WALLET_CONNECT_RETURN:"1", WALLET_RETURN_RECOVERY:"all"}, timeout:85000,
+    });
+    process.stdout.write(stdout);
+    process.stderr.write(stderr);
+  });
+
+  test(`Wallet updates and accepts the first wheel after MetaMask closes in ${engine}`, windowTestOptions(engine,90000), async () => {
+    const { stdout, stderr } = await promisify(execFile)(process.execPath, ["scripts/home-wallet-connector-launch-headless-smoke.mjs"], {
+      env: {...process.env, HOME_WALLET_CONNECTOR_ENGINE:engine, WALLET_CONNECT_RETURN:"1", WALLET_RETURN_SLOW:"all"}, timeout:85000,
+    });
+    process.stdout.write(stdout);
+    process.stderr.write(stderr);
+  });
+
   test(`Wallet's phone Connect path keeps each connector in front in ${engine}`, windowTestOptions(engine,90000), async () => {
     const { stdout } = await promisify(execFile)(process.execPath, ["scripts/home-wallet-connector-launch-headless-smoke.mjs"], {
       env: {...process.env, HOME_WALLET_CONNECTOR_ENGINE:engine, WALLET_PHONE_OPEN:"1"}, timeout:85000,

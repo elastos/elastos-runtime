@@ -84,7 +84,8 @@ class FakeElement {
     this.textContent = "";
     this.title = "";
     this.value = "";
-    this.src = "";
+    this._src = "";
+    this.sourceWrites = [];
     this.attributes = new Map();
     this.listeners = new Map();
     this.queries = new Map();
@@ -95,6 +96,14 @@ class FakeElement {
           cloneNode: () => new FakeElement(`:template-fragment`, false),
         }
       : { firstElementChild: null };
+  }
+
+  get src() { return this._src; }
+
+  set src(value) {
+    this._src = String(value);
+    this.attributes.set("src", this._src);
+    this.sourceWrites.push(this._src);
   }
 
   addEventListener(type, callback) {
@@ -468,7 +477,7 @@ globalThis.fetch = async (url, init = {}) => {
       );
       assert(
         elementForSelector("#active-shell-frame").hidden === true &&
-          !elementForSelector("#active-shell-frame").getAttribute("src"),
+          ["", "about:blank"].includes(elementForSelector("#active-shell-frame").getAttribute("src")),
         "alternate shell boot hint loaded a frame before Runtime launch authority",
         elementForSelector("#active-shell-frame").dataset,
       );
@@ -780,6 +789,8 @@ const body = document.body;
 const activeShellRoot = elementForSelector("#active-shell-root");
 const activeShellFrame = elementForSelector("#active-shell-frame");
 const shellHostRecovery = elementForSelector("#shell-host-recovery");
+assert(activeShellFrame.sourceWrites.length === 1 && activeShellFrame.sourceWrites[0] === activeShellFrame.dataset.route,
+  "initial shell boot navigates once to the admitted route instead of resetting an empty frame", activeShellFrame.sourceWrites);
 const launchRequest = requests.find((request) => request.url === "/api/apps/home/launch");
 
 assert(body.dataset.homeShell === "alternate", "alternate shell did not take root mode", body.dataset);
@@ -1076,6 +1087,8 @@ for (const listener of windowListeners.get("message") || []) {
 for (let attempt = 0; attempt < 20 && activeShellFrame.dataset.route.includes("home-cli"); attempt += 1) {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
+assert(activeShellFrame.sourceWrites.filter(source => source === "about:blank").length === 1,
+  "switching shells retires the live document once and keeps an already blank reset idle", activeShellFrame.sourceWrites);
 assert(body.dataset.homeShell === "desktop", "explicit graphical action did not switch to desktop shell mode", body.dataset);
 assert(body.dataset.homeGui === "mounted", "explicit graphical action did not mount Home GUI", body.dataset);
 assert(activeShellRoot.hidden === false, "explicit graphical action hid the active shell root");

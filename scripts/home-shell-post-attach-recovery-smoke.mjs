@@ -67,7 +67,6 @@ class FakeElement {
     this.textContent = "";
     this.title = "";
     this.value = "";
-    this.src = "";
     this.attributes = new Map();
     this.listeners = new Map();
     this.classList = new FakeClassList();
@@ -77,6 +76,12 @@ class FakeElement {
           cloneNode: () => new FakeElement(`:template-fragment`, false),
         }
       : { firstElementChild: null };
+  }
+
+  get src() { return this.attributes.get("src") || ""; }
+
+  set src(value) {
+    this.attributes.set("src", String(value));
   }
 
   addEventListener(type, callback) {
@@ -431,4 +436,6 @@ await waitFor(
   () => ({ requests }),
 );
 
+assert(elementForSelector("#active-shell-frame").getAttribute("src") === elementForSelector("#active-shell-frame").src,
+  "fake iframe src property and content attribute diverged");
 console.log("[home-shell-post-attach-recovery] PASS");

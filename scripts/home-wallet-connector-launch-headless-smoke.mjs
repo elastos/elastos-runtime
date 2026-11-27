@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { historicalTestSource } from './lib/historical-test-source.mjs';
 
+import {installSigninProviders, evmAddress, bitcoinAddress} from './lib/wallet-signin-fixture.mjs';
 import {windowTestOptions} from './lib/walletconnect-window-resources.mjs';
 
 import { createServer } from "node:http";
@@ -28,9 +29,20 @@ else if (process.env.MARKETPLACE_CONNECT_BEFORE === "1") {
     await runSmoke();
   }
 }
-else await runSmoke();
+else if (process.env.WALLET_CONNECT_RETURN === "1") {
+  const failures = [];
+  const delays = process.env.WALLET_RETURN_SLOW === 'all' ? ['prices','balances','existing-balances'] : [process.env.WALLET_RETURN_SLOW || 'normal'];
+  const recoveries = process.env.WALLET_RETURN_RECOVERY === 'all' ? ['summary','approvals'] : [process.env.WALLET_RETURN_RECOVERY || ''];
+  for (const marketFailure of recoveries) for (const slowMarket of delays) for (const width of [1440, 390]) {
+    try {
+      await runSmoke({connectReturn:true,width,slowMarket,marketFailure});
+    }
+    catch (error) { failures.push(error); console.error(`[wallet-connect-return] FAIL ${engine} ${width} ${marketFailure || slowMarket}: ${error.stack}`); }
+  }
+  if (failures.length) throw new AggregateError(failures, 'Wallet connection return failed');
+} else await runSmoke();
 
-async function runSmoke() {
+async function runSmoke({connectReturn = false, width = 1440, slowMarket = 'normal', marketFailure = ''} = {}) {
 const repoRoot = fileURLToPath(new URL("../", import.meta.url));
 const principalId = "did:elastos:fixture-wallet-connector-launch";
 const homeAuthorityToken = "fixture-home-authority-token";
@@ -59,8 +71,17 @@ const state = {
   },
   connectorEffects: 0,
   approvalRequests: [],
-  walletAccounts: [],
+  walletAccounts: connectReturn ? [
+    {account_id:'fixture-home',address:'0x'+'34'.repeat(20),chain_namespace:'eip155:20',proof_type:'managed_evm',label:'Home address'},
+    {account_id:'fixture-bitcoin',address:bitcoinAddress,chain_namespace:'bip122:000000000019d6689c085ae165831e93',proof_type:'bip322_simple',connector_id:'wallet-unisat',wallet_display_name:'UniSat'},
+  ] : [],
   walletSummaryReads: 0,
+  summaryFailure: false,
+  approvalsUnavailable: false,
+  balanceHex: marketFailure ? '0xde0b6b3a7640000' : '0x0',
+  balanceReads: [],
+  holdMarket: '',
+  heldMarket: [],
   homeStateWrites: [],
   serverErrors: [],
 };
@@ -321,18 +342,29 @@ async function handleApi(req, res, url) {
       return true;
     }
     state.walletSummaryReads++;
+    if(state.summaryFailure) {json(res,503,{error:'fixture summary unavailable'});return true;}
     json(res, 200, {
       wallet_accounts: { accounts: state.walletAccounts, default_accounts: [] },
-      wallet_approvals: { approval_requests: state.approvalRequests },
+      wallet_approvals: { available: !state.approvalsUnavailable, approval_requests: state.approvalRequests },
       approval_methods: { walletconnect: { available: true } },
     });
+    return true;
+  }
+  if (connectReturn && url.pathname === '/api/provider/chain/balance') {
+    const input = await readBody(req);
+    state.balanceReads.push({address:input.address,network:input.network});
+    const value = {status:'ok',data:{balance_hex:state.balanceHex}};
+    if (state.holdMarket === 'balances') state.heldMarket.push(()=>json(res,200,value));
+    else json(res,200,value);
     return true;
   }
   if (url.pathname === "/api/wallet/prices" && req.method === "GET") {
     if (!requireToken(req, walletToken, res)) {
       return true;
     }
-    json(res, 200, { prices: {}, stale: false, unavailable: false });
+    const value = {prices:{},stale:false,unavailable:false};
+    if (state.holdMarket === 'prices') state.heldMarket.push(()=>json(res,200,value));
+    else json(res,200,value);
     return true;
   }
   for (const [target, token] of Object.entries(connectorTokens)) {
@@ -353,7 +385,7 @@ async function handleApi(req, res, url) {
       if (!requireToken(req, token, res)) {
         return true;
       }
-      json(res, 200, { accounts: [] });
+      json(res, 200, { accounts: connectReturn ? state.walletAccounts.filter(account=>account.connector_id===target) : [] });
       return true;
     }
     if (
@@ -369,6 +401,20 @@ async function handleApi(req, res, url) {
   }
   if (url.pathname.includes("/wallet-connector/")) {
     state.connectorEffects += 1;
+    if (connectReturn && req.method === 'POST') {
+      if (!requireToken(req, homeAuthorityToken, res)) return true;
+      const body = await readBody(req);
+      assert(body.connector_id === 'wallet-metamask', 'only the named test connector links');
+      const schema = 'elastos.home.wallet-connector.effect.result/v1';
+      if (url.pathname.endsWith('/evm/link/challenge')) {
+        json(res,200,{schema,action:'evm_link_challenge',connector_id:body.connector_id,challenge:{schema:'elastos.auth.challenge/v1',challenge_id:'fixture-return',message:'Isolated wallet return proof',expires_at:Math.floor(Date.now()/1000)+300,resources:[]}});return true;
+      }
+      if (url.pathname.endsWith('/evm/link/verify')) {
+        if (slowMarket !== 'normal') state.holdMarket = slowMarket === 'prices' ? 'prices' : 'balances';
+        state.walletAccounts.push({account_id:'fixture-new-metamask',address:evmAddress,chain_namespace:'eip155:20',proof_type:'siwe',connector_id:'wallet-metamask',wallet_display_name:'MetaMask'});
+        json(res,200,{schema,action:'evm_link_complete',connector_id:body.connector_id,status:'linked'});return true;
+      }
+    }
     json(res, 500, { error: "credential-free fixture forbids connector effects" });
     return true;
   }
@@ -806,11 +852,15 @@ try {
     ],
     } : {}),
   });
-  const phoneLayout = process.env.MARKETPLACE_OPEN_CASE === "connectors-phone" || process.env.WALLET_PHONE_OPEN === "1";
-  const context = await browser.newContext(process.env.MARKETPLACE_OPEN_CASE || phoneLayout
+  const phoneLayout = process.env.MARKETPLACE_OPEN_CASE === "connectors-phone" || process.env.WALLET_PHONE_OPEN === "1" || connectReturn && width === 390;
+  const context = await browser.newContext(process.env.MARKETPLACE_OPEN_CASE || phoneLayout || connectReturn
     ? { reducedMotion: "reduce", ...(phoneLayout
-      ? {viewport:{width:390,height:844},isMobile:true,hasTouch:true} : {}) } : {});
+      ? {viewport:{width:390,height:844},isMobile:!connectReturn,hasTouch:true} : {}) } : {});
+  if (connectReturn) {
+    await context.addInitScript(installSigninProviders, {evmAddress,bitcoinAddress,theme:'dark'});
+  }
   const page = await context.newPage();
+  if (connectReturn) await page.setViewportSize({width,height:780});
   const pageErrors = [];
   page.on("pageerror", (error) => pageErrors.push(String(error?.stack || error)));
   page.on("console", message => {
@@ -827,6 +877,114 @@ try {
   );
   await waitFor(() => frameFor(page, "home-gui"), 15_000, "real Home GUI frame");
   const homeGui = frameFor(page, "home-gui");
+  if (connectReturn) {
+    if (phoneLayout) await homeGui.locator('.taskbar-item[data-target="wallet"]').tap();
+    else {
+      await homeGui.locator('#launcher-toggle').click();
+      await homeGui.locator('#launcher-grid [data-target="wallet"]').click();
+    }
+    const windowNode = homeGui.locator('.window[data-target="wallet"]');
+    const walletFrame = windowNode.locator('iframe');
+    await walletFrame.waitFor({timeout:15000});
+    const wallet = await (await walletFrame.elementHandle()).contentFrame();
+    await wallet.locator('.one-wallet').nth(1).waitFor();
+    await wallet.evaluate(()=>{window.walletReturnDocument=document;});
+    if(marketFailure) {
+      const balance = amount => wallet.waitForFunction(value=>[...document.querySelectorAll('.one-network-balance strong')].some(node=>node.textContent===value),`${amount}.00 ELA`,{timeout:3000});
+      const refresh = (count=1) => homeGui.evaluate(count=>{
+        const frame=document.querySelector('.window[data-target="wallet"] iframe');
+        for(let i=0;i<count;i++)frame.contentWindow.postMessage({type:'elastos:wallet-refresh'},'*');
+      },count);
+      const release = () => {for(const finish of state.heldMarket.splice(0))finish();};
+      const oldAddress=state.walletAccounts[0].address;
+      const newAddress='0x'+'56'.repeat(20);
+      await balance(1);
+      // A valid market result is already pending when the next account read fails.
+      state.holdMarket='balances';state.balanceHex='0x1bc16d674ec80000';
+      await refresh();
+      await waitFor(()=>state.heldMarket.length===3,3000,'market read for the shown accounts');
+      state.walletAccounts=[{...state.walletAccounts[0],account_id:'fixture-replacement',address:newAddress,label:'Replacement address'},state.walletAccounts[1]];
+      state.summaryFailure=marketFailure==='summary';
+      state.approvalsUnavailable=marketFailure==='approvals';
+      const response=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/apps/wallet/wallet/summary');
+      await refresh(2);
+      await (await response).finished();
+      await wallet.evaluate(()=>new Promise(requestAnimationFrame));
+      const shownAddress=marketFailure==='summary'?oldAddress:newAddress;
+      await wallet.locator(`.one-meta code[title="${shownAddress}"]`).waitFor();
+      state.balanceHex='0x29a2241af62c0000';
+      release();
+      try {
+        if(marketFailure==='summary')await balance(2);
+        await waitFor(()=>state.heldMarket.length===3,3000,'replacement market read after account error');
+      } catch(error) {
+        throw new Error(`${marketFailure}: ${error.message}; ${JSON.stringify({held:state.heldMarket.length,reads:state.balanceReads.length,view:await wallet.locator('#wallet-inventory').innerText()})}`);
+      }
+      const expectedAddresses=new Set([shownAddress,state.walletAccounts[1].address]);
+      assert(state.balanceReads.slice(-3).every(read=>expectedAddresses.has(read.address)),
+        'replacement balances belong to the committed account list',state.balanceReads.slice(-3));
+      if(marketFailure==='approvals')assert(!await wallet.locator('.one-network-balances').innerText().then(text=>text.includes('2.00 ELA')),
+        'old-account market results stay out of the new list');
+      state.holdMarket='';release();
+      await balance(3);
+      await wallet.waitForFunction(()=>document.querySelector('#wallet-status').dataset.tone==='error');
+      assert(await wallet.locator(`.one-meta code[title="${shownAddress}"]`).count()===1 && state.serverErrors.length===0 && pageErrors.length===0,
+        'account error keeps its committed list and reports its error after market recovery',{pageErrors,errors:state.serverErrors});
+      console.log(`[wallet-market-recovery] PASS ${engine} ${width} ${marketFailure}: shown-account balances 1 -> ${marketFailure==='summary'?'2 -> ':''}3; replacement market read completed`);
+      return;
+    }
+    if (slowMarket === 'existing-balances') {
+      state.holdMarket = 'balances';
+      await wallet.evaluate(()=>top.postMessage({type:'home:refresh-summary',homeToken:new URLSearchParams(location.hash.slice(1)).get('home_token')},new URLSearchParams(location.search).get('home_origin')));
+      await waitFor(()=>state.heldMarket.length>0,5000,'an earlier balance read waits');
+    }
+    await wallet.getByRole('button',{name:'Add wallet for apps',exact:true}).click();
+    await wallet.locator('[data-wallet-open-method="wallet-metamask"]').click();
+    await waitFor(()=>frameFor(page,'wallet-metamask'),15000,'MetaMask opens');
+    const connector = frameFor(page,'wallet-metamask');
+    await connector.locator('[data-action="connect"]').click();
+    await connector.locator('[data-state="linked"]').waitFor({timeout:15000}).catch(async error=>{
+      throw new Error(`${error.message}\n${await connector.locator('body').innerText()}\n${JSON.stringify({effects:state.connectorEffects,accounts:state.walletAccounts.length,errors:state.serverErrors,pageErrors})}`);
+    });
+    if (slowMarket !== 'normal') await waitFor(()=>state.heldMarket.length>0,5000,'market data waits after connect');
+    await connector.locator('[data-action="close-window"]').click();
+    await waitFor(()=>!frameFor(page,'wallet-metamask'),5000,'MetaMask closes');
+    await windowNode.evaluate(()=>{window.walletReturnFocus=document.activeElement;});
+    const before = await wallet.evaluate(()=>({rows:document.querySelectorAll('.one-wallet').length,metamask:[...document.querySelectorAll('.one-wallet')].some(node=>node.textContent.includes('MetaMask')),scroll:document.scrollingElement.scrollTop,height:document.scrollingElement.scrollHeight,viewport:document.documentElement.clientHeight,modal:!!document.querySelector(':modal'),inert:document.body.inert}));
+    assert(before.rows===3 && before.metamask && before.height>before.viewport && !before.modal && !before.inert,
+      'Wallet renders the saved MetaMask and its scroll range as the connector closes, while market reads wait',before);
+    const observeWheel = process.env.WALLET_RETURN_WHEEL_RECEIPT === '1';
+    await wallet.evaluate(observe=>{
+      window.walletReturnPointer=null;
+      addEventListener('pointermove',event=>{window.walletReturnPointer={trusted:event.isTrusted,wallet:!!event.target.closest('.one-wallet')};},{once:true});
+      // Receipt runs are separate: the main regression leaves WebKit's async
+      // wheel path unobserved, since a wheel listener can change its routing.
+      window.walletReturnWheels=[];
+      if(observe)addEventListener('wheel',event=>window.walletReturnWheels.push({trusted:event.isTrusted,deltaY:event.deltaY,prevented:event.defaultPrevented}),{passive:true});
+    },observeWheel);
+    await wallet.locator('.one-wallet').first().hover();
+    assert(await wallet.evaluate(top=>document.scrollingElement.scrollTop===top,before.scroll),
+      'Targeting the visible Wallet card keeps the initial scroll position');
+    await page.mouse.wheel(0,460);
+    await wallet.waitForFunction(top=>document.scrollingElement.scrollTop>top,before.scroll,{timeout:3000}).catch(()=>{});
+    const after = await wallet.evaluate(()=>({pointer:window.walletReturnPointer,wheels:window.walletReturnWheels,rows:document.querySelectorAll('.one-wallet').length,scroll:document.scrollingElement.scrollTop,metamask:[...document.querySelectorAll('.one-wallet')].some(node=>node.textContent.includes('MetaMask')),sameDocument:window.walletReturnDocument===document}));
+    const chrome = await windowNode.evaluate(node=>({active:node.classList.contains('window-active'),inert:node.inert,pointer:getComputedStyle(node.querySelector('iframe')).pointerEvents,sameFocus:document.activeElement===window.walletReturnFocus}));
+    console.log('[wallet-connect-return] measurement '+JSON.stringify({engine,width,slowMarket,observeWheel,held:state.heldMarket.length,before,after,chrome}));
+    assert(after.metamask && after.rows===3 && after.scroll>before.scroll && after.pointer?.trusted && after.pointer.wallet && chrome.sameFocus,
+      'Wallet accepts the first wheel after connector close without a focus change',{before,after,chrome});
+    if(observeWheel)assert(after.wheels.length===1 && after.wheels[0].trusted && after.wheels[0].deltaY>0 && !after.wheels[0].prevented,
+      'Wallet receives one trusted, uncancelled wheel',after.wheels);
+    const held = state.heldMarket.splice(0); state.holdMarket = ''; for (const release of held) release();
+    const copy = await wallet.locator('body').innerText();
+    assert(!copy.includes('Built-in addresses')&&!copy.includes('Passkey-controlled')&&!copy.includes('Wallet Send')&&!copy.includes('Wallets & signers'),'rc.2 Wallet copy stays removed');
+    if (process.env.WALLET_RETURN_SCREENS) {
+      mkdirSync(process.env.WALLET_RETURN_SCREENS,{recursive:true});
+      await page.screenshot({path:join(process.env.WALLET_RETURN_SCREENS,`wallet-connected-${engine}-${width}-${slowMarket}.png`)});
+    }
+    assert(state.connectorEffects===2 && after.sameDocument && state.serverErrors.length===0 && pageErrors.length===0,'one real connector link completes in the same Wallet without source errors',{effects:state.connectorEffects,pageErrors,errors:state.serverErrors});
+    console.log(`[wallet-connect-return] PASS ${engine} ${width} ${slowMarket}: new entry and first wheel, same Wallet frame`);
+    return;
+  }
   if (process.env.WALLET_SIGNIN_ENTRY === "1") {
     await homeGui.evaluate(async()=>{const rail=await import('./shell-wallet-rail.js?v=home-20261101d');rail.preloadWalletRail();});
     await waitFor(()=>frameFor(page,'wallet'),15000,'preloaded hidden Wallet rail');
@@ -1020,8 +1178,13 @@ try {
       state.approvalRequests = [{request_id:"metamask-second",capsule_id:"browser",address:"0x3333333333333333333333333333333333333333",connector_id:target,proof_type:"siwe",intent:"browser_personal_sign",status:"pending",reason:"Second MetaMask request",chain_namespace:"eip155:20",expires_at:Math.floor(Date.now()/1000)+600}];
       // Wallet's real request card opens the second request while the first connector stays open.
       await homeGui.evaluate(() => document.querySelector('.window[data-target="wallet"] iframe').contentWindow.postMessage({type:'elastos:wallet-refresh'},'*'));
-      await homeGui.locator('.window[data-target="wallet"] .window-head').click({position:{x:80,y:14}});
-      await wallet.getByRole('button',{name:'Add wallet for apps',exact:true}).click();await wallet.locator('.one-dialog [data-wallet-open-method="wallet-metamask"]').click();
+      const add = wallet.getByRole('button',{name:'Add wallet for apps',exact:true});
+      const addBounds = await add.boundingBox();
+      // The first press on inactive app content belongs to Home's focus layer.
+      await page.mouse.click(addBounds.x+addBounds.width/2,addBounds.y+addBounds.height/2);
+      assert((await homeWindowSnapshot(homeGui,'wallet')).active && await wallet.locator(':modal').count()===0,
+        'inactive Wallet content activates its window before an app control can run');
+      await add.click();await wallet.locator('.one-dialog [data-wallet-open-method="wallet-metamask"]').click();
       await waitFor(() => page.frames().filter(frame=>frame.url().includes('/apps/wallet-metamask/')).length === 2,5000,'fresh MetaMask request window');
       const fresh = page.frames().filter(frame=>frame.url().includes('/apps/wallet-metamask/')).find(frame=>frame!==connector);
       await fresh.getByText('Second MetaMask request',{exact:true}).waitFor();
@@ -1267,8 +1430,11 @@ try {
       `connector_effects=${state.connectorEffects}`,
   );
 } finally {
-  await browser?.close().catch(() => {});
-  await new Promise((resolveClose) => server.close(resolveClose));
+  try {
+    await browser?.close();
+  } finally {
+    await new Promise((resolveClose) => server.close(resolveClose));
+  }
 }
 
 }
