@@ -9696,7 +9696,10 @@ async fn test_creator_same_file_after_expired_handoff_and_waiting_walletconnect(
 
     #[async_trait::async_trait]
     impl Provider for ExternalMintChain {
-        async fn handle(&self, request: ResourceRequest) -> Result<ResourceResponse, ProviderError> {
+        async fn handle(
+            &self,
+            request: ResourceRequest,
+        ) -> Result<ResourceResponse, ProviderError> {
             MockChainProvider.handle(request).await
         }
 
