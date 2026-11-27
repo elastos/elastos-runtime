@@ -146,12 +146,19 @@ fn renewal_refuses_duplicate_identities_without_discarding_an_existing_answer() 
     answered.approved_at = Some(now_ts() - 2);
     provider.store.approval_requests = vec![expired, answered];
     let before = provider.store.approval_requests.clone();
-    let response =
-        invoke_wallet_request(&mut provider, &retry(&original, original.operation.clone()));
-    assert!(
-        matches!(response, Response::Error { ref code, .. } if code == "approval_identity_conflict")
-    );
-    assert_eq!(provider.store.approval_requests, before);
+    for renew in [false, true] {
+        let mut operation = original.operation.clone();
+        if renew {
+            if let WalletProviderOperationV2::RequestApproval { expires_at, .. } = &mut operation {
+                *expires_at = now_ts() + 300;
+            }
+        }
+        let response = invoke_wallet_request(&mut provider, &retry(&original, operation));
+        assert!(
+            matches!(response, Response::Error { ref code, .. } if code == "approval_identity_conflict")
+        );
+        assert_eq!(provider.store.approval_requests, before);
+    }
 }
 
 #[test]

@@ -20,11 +20,18 @@ impl WalletProvider {
     ) -> Option<Response> {
         match &wallet_request.operation {
             WalletProviderOperationV2::RequestApproval { .. } => {
-                let existing = self
+                let mut matching_requests = self
                     .store
                     .approval_requests
                     .iter()
-                    .find(|request| request.request_id == wallet_request.request_id)?;
+                    .filter(|request| request.request_id == wallet_request.request_id);
+                let existing = matching_requests.next()?;
+                if matching_requests.next().is_some() {
+                    return Some(Response::error(
+                        "approval_identity_conflict",
+                        "Wallet approval identity names multiple stored requests",
+                    ));
+                }
                 let authority_binding = wallet_authority_binding(&wallet_request.authority);
                 // Who is asking, and on whose authority, can never differ --
                 // that is substitution, and no state of the existing request
