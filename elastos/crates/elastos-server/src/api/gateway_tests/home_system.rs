@@ -12136,6 +12136,7 @@ async fn test_system_ai_provider_guest_get_forbidden() {
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body, "admin passkey required");
     assert!(!body.contains("sk-or"));
     assert!(!body.contains("sk-vnz"));
 }
@@ -12260,6 +12261,17 @@ async fn test_system_ai_provider_wallet_signin_admin_status_and_management() {
         Some(json!({"id": id, "enabled": true, "terms_ack": "openrouter-5.1-5.2+model"})),
     )
     .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(body, "admin passkey required");
+    assert!(shareable_hosted_ids(dir.path()).is_empty());
+    let (status, body) = ai_provider_raw(
+        &app,
+        "POST",
+        "/api/apps/system/ai-provider/share",
+        &authority.system_token,
+        Some(json!({"id": id, "enabled": true, "terms_ack": "openrouter-5.1-5.2+model"})),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(shareable_hosted_ids(dir.path()), vec![id.clone()]);
     let (status, body) = ai_provider_raw(
@@ -12267,6 +12279,17 @@ async fn test_system_ai_provider_wallet_signin_admin_status_and_management() {
         "DELETE",
         "/api/apps/system/ai-provider",
         &token,
+        Some(json!({"id": id})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(body, "admin passkey required");
+    assert_eq!(shareable_hosted_ids(dir.path()), vec![id.clone()]);
+    let (status, body) = ai_provider_raw(
+        &app,
+        "DELETE",
+        "/api/apps/system/ai-provider",
+        &authority.system_token,
         Some(json!({"id": id})),
     )
     .await;
@@ -12404,10 +12427,70 @@ async fn test_system_ai_provider_refuses_non_admin_and_non_signin_authority_on_e
                 StatusCode::FORBIDDEN,
                 "{kind} {method} {route}: {body}"
             );
+            if matches!(kind, "guest" | "wallet-guest") {
+                assert_eq!(body, "admin passkey required", "{kind} {method} {route}");
+            }
             assert_ai_provider_http_omits_secrets(&body);
         }
         assert!(!ai_provider_config_path(dir.path()).exists(), "{kind}");
     }
+}
+
+#[tokio::test]
+async fn test_system_ai_provider_staged_discard_and_revoke_keep_passkey_authority() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = gateway_router(test_state(dir.path()));
+    let authority = passkey_authority(dir.path());
+    let grant = ai_provider_wallet_grant(dir.path(), &authority);
+    let token =
+        issue_home_launch_token_for_auth_grant(dir.path(), SYSTEM_CAPSULE_ID, &grant).unwrap();
+    let id = "model:hosted-ffffffffffffffffffffffffffffffff";
+    crate::api::model_provider_config::stage_hosted_key(
+        dir.path(),
+        crate::api::HostedAiProvider::OpenRouter,
+        id,
+        "fixture-key",
+    )
+    .unwrap();
+    for (method, route) in [
+        ("DELETE", "/api/apps/system/ai-provider/staged"),
+        ("POST", "/api/apps/system/approval-lens/revoke"),
+    ] {
+        let (status, body) =
+            ai_provider_raw(&app, method, route, &token, Some(json!({"id": id}))).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(body, "admin passkey required");
+    }
+    assert_eq!(
+        crate::api::model_provider_config::staged_hosted_connections(dir.path())
+            .unwrap()
+            .len(),
+        1
+    );
+    let (status, body) = ai_provider_raw(
+        &app,
+        "DELETE",
+        "/api/apps/system/ai-provider/staged",
+        &authority.system_token,
+        Some(json!({"id": id})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        crate::api::model_provider_config::staged_hosted_connections(dir.path())
+            .unwrap()
+            .is_empty()
+    );
+    let (status, body) = ai_provider_raw(
+        &app,
+        "POST",
+        "/api/apps/system/approval-lens/revoke",
+        &authority.system_token,
+        Some(json!({"id": id})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body, "hosted connection has no active approval");
 }
 
 #[tokio::test]
