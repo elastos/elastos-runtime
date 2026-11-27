@@ -132,11 +132,14 @@ fn catalog_proof_inputs_match_producer_fixtures() {
         );
         assert!(model.bytes > SMOLLM2.bytes);
         assert_eq!(model.quantization, "Q4_K_M");
+        assert_eq!(catalog_cancel_status(model), "cancelled");
         assert_eq!(
             catalog_engine_sha(model, "linux-amd64"),
             "93e2300242ded0aadabe83686e5aad9a06a3cefe63e3b5095aa4949c125f3869"
         );
     }
+    assert_eq!(catalog_cancel_status(&SMOLLM2), "settlement_unknown");
+    assert_eq!(catalog_cancel_status(&QWEN), "settlement_unknown");
     assert_eq!(
         catalog_engine_sha(&SMOLLM2, "linux-amd64"),
         pinned_engine_sha("linux-amd64")
@@ -169,6 +172,17 @@ fn catalog_engine_sha(model: &PinnedModel, platform: &str) -> &'static str {
     fixture["proof"]["engine_sha256"][platform]
         .as_str()
         .expect("catalogue proof requires an engine pin for this host")
+}
+
+fn catalog_cancel_status(model: &PinnedModel) -> &'static str {
+    let fixture = match model.env_prefix {
+        "QWEN35" => &*QWEN35_FIXTURE,
+        "GEMMA4" => &*GEMMA4_FIXTURE,
+        _ => return "settlement_unknown",
+    };
+    fixture["proof"]["cancel_status"]
+        .as_str()
+        .expect("catalogue proof requires its cancellation contract")
 }
 
 const PACKAGE_ADD_ARGS: &[&str] = &[
@@ -1021,11 +1035,10 @@ async fn pinned_runs_and_active_cancel(
     let cancelled = bridge.send_raw(&cancel).await.unwrap();
     report_terminal(&cancelled);
     assert_eq!(cancelled["status"], "ok");
+    let expected_cancel = catalog_cancel_status(model);
     assert!(
-        matches!(
-            cancelled["data"]["status"].as_str(),
-            Some("reconciling" | "settlement_unknown")
-        ),
+        cancelled["data"]["status"] == "reconciling"
+            || cancelled["data"]["status"] == expected_cancel,
         "active cancellation raced terminal completion: {}",
         cancelled["data"]["status"]
     );
@@ -1045,12 +1058,12 @@ async fn pinned_runs_and_active_cancel(
         tokio::time::sleep(Duration::from_millis(100)).await;
     };
     report_terminal(&cancelled_terminal);
-    // Preserve the unresolved run outcome. HTTP disconnect does not prove that
-    // backend execution stopped; later artifact removal needs physical close proof.
-    assert_eq!(cancelled_terminal["data"]["status"], "settlement_unknown");
+    // Preserve each fixture's cancellation contract. The older proof pins
+    // retain their unresolved outcome; current catalogue pins confirm stop.
+    assert_eq!(cancelled_terminal["data"]["status"], expected_cancel);
     assert_eq!(
         cancelled_terminal["data"]["terminal"]["error"]["class"],
-        "settlement_unknown"
+        expected_cancel
     );
     let events = serde_json::json!({"op":"runs_events","run_id":id,
         "after_sequence":0,"runtime_binding":access});
@@ -1154,8 +1167,8 @@ async fn pinned_reply_and_restart(
         .kept(&context().principal_id, cid));
     serde_json::json!({"offer_id":offer,"cid":cid,"reply_completed":true,"restart_replay_exact":true,
         "keep_persisted":true,"provider_shutdown_reap":true,"engine_process_group_absence":null,
-        "active_text_delta_bytes":proof.active_delta_bytes,"active_cancel_unknown_replay":true,
-        "per_run_backend_stop_confirmed":false})
+        "active_text_delta_bytes":proof.active_delta_bytes,"active_cancel_unknown_replay":catalog_cancel_status(model) == "settlement_unknown",
+        "per_run_backend_stop_confirmed":catalog_cancel_status(model) == "cancelled"})
 }
 
 #[tokio::test]

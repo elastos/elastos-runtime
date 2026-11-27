@@ -57,6 +57,7 @@
     },
     "engine_archive_sha256": {
       "linux-amd64": "0dee60d855f864aa9e8a7200014baf9419e3a4c9ccb3f3609532aad0ed34f2c0"
-    }
+    },
+    "cancel_status": "cancelled"
   }
 }
