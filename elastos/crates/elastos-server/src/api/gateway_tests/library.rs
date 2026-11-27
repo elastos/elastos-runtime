@@ -15570,7 +15570,14 @@ async fn expired_handoff_library_buy_restarts_same_item() {
         stopped["message"],
         crate::protected_content_runtime::RUNTIME_CUSTODY_APPROVAL_HANDOFF_EXPIRED_MESSAGE
     );
-    let next = start_library_buy(&buyer, mint_id).await;
+    let (next, concurrent) = tokio::join!(
+        start_library_buy(&buyer, mint_id),
+        start_library_buy(&buyer, mint_id),
+    );
+    assert_eq!(
+        next.acquisition_stage.effect_id,
+        concurrent.acquisition_stage.effect_id
+    );
     assert_ne!(
         next.acquisition_stage.effect_id,
         dead.acquisition_stage.effect_id

@@ -399,6 +399,7 @@ fn sample_listing_purchase(
 ) -> crate::protected_content_runtime::RuntimeCustodyPurchaseRecord {
     let item = sample_item();
     crate::protected_content_runtime::RuntimeCustodyPurchaseRecord {
+        attempt_id: None,
         schema: crate::protected_content_runtime::RUNTIME_PURCHASE_SCHEMA_V1.to_string(),
         principal_id: principal_id.to_string(),
         profile_did: "did:key:z6MkFixture".to_string(),

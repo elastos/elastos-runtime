@@ -212,8 +212,8 @@ pub(crate) async fn runtime_custody_attempt_may_start_over(
     }
 }
 
-/// Set a source's current attempt aside -- only if it never sent a
-/// transaction. The caller holds the source lock, and the creator attempt lock
+/// Set an eligible source's current attempt aside. The caller holds the
+/// source lock, and the creator attempt lock
 /// for `mint` when there is one.
 ///
 /// An attempt whose transaction was sent or mined, or whose mint is listed, is
@@ -223,7 +223,8 @@ pub(crate) async fn runtime_custody_attempt_may_start_over(
 /// Wallet confirms it closed with nothing signed (approved meanwhile: kept); an
 /// approval that went to an external connector is never declined; anything
 /// that cannot be confirmed is refused with `approval_open` or
-/// `approval_in_connector`, and nothing moves.
+/// `approval_in_connector`, and nothing moves. An expired external handoff
+/// can be archived with its transaction outcome recorded as unknown.
 pub(super) async fn archive_runtime_custody_creator_attempt_locked(
     state: &GatewayState,
     authority: &RuntimeWalletAuthority,

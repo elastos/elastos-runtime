@@ -145,6 +145,7 @@ pub(crate) enum RuntimePurchaseBinding<'a> {
     ListingPackage {
         listing_sha256: &'a str,
         mint_id: elastos_protected_content_contracts::Digest32,
+        attempt_id: Option<&'a str>,
     },
     /// `attempt_id` is the recorded attempt's own identity (R23): a retry
     /// after a reverted buy, even at identical terms, hashes to a new effect.
@@ -177,14 +178,19 @@ pub(in crate::api::gateway) fn runtime_custody_purchase_transaction_request(
         RuntimePurchaseBinding::ListingPackage {
             listing_sha256,
             mint_id,
+            attempt_id,
         } => {
             let mint_id_hex = hex::encode(mint_id.as_bytes());
+            let mut stable_fields = serde_json::json!({
+                "listing_sha256": listing_sha256,
+                "mint_id": mint_id_hex,
+            });
+            if let Some(attempt_id) = attempt_id {
+                stable_fields["attempt_id"] = serde_json::json!(attempt_id);
+            }
             (
                 "elastos.protected-content.purchase-request/v1",
-                serde_json::json!({
-                    "listing_sha256": listing_sha256,
-                    "mint_id": mint_id_hex,
-                }),
+                stable_fields,
                 serde_json::json!({
                     "mint_id": mint_id_hex,
                     "listing_sha256": listing_sha256,
@@ -942,6 +948,13 @@ pub(crate) async fn runtime_custody_download_owned_copy_via_gateway(
         .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
         .map(Digest32::new)
         .ok_or_else(download_denied_missing!())?;
+    // One driver per mint: concurrent presses resume the recorded attempt,
+    // including when an expired attempt is retired and a fresh one starts.
+    let attempt_lock = crate::protected_content_runtime::runtime_custody_creator_attempt_lock(
+        &state.data_dir,
+        mint_id,
+    );
+    let _attempt = attempt_lock.lock().await;
     let listing_record =
         crate::protected_content_runtime::load_runtime_custody_listing(&state.data_dir, mint_id)?
             .ok_or_else(download_denied_missing!())?;
@@ -1251,9 +1264,17 @@ pub(crate) async fn runtime_custody_buy_via_gateway(
         listing,
         &listing.content_access_id,
     );
+    let attempt_id = match persisted_purchase.as_ref() {
+        Some(existing) => existing.attempt_id.clone(),
+        None => Some(
+            crate::protected_content_market::new_runtime_market_attempt_id()
+                .map_err(purchase_unavailable!())?,
+        ),
+    };
     let binding = RuntimePurchaseBinding::ListingPackage {
         listing_sha256: &listing_sha256,
         mint_id,
+        attempt_id: attempt_id.as_deref(),
     };
     let localhost_root = crate::auth::principal_localhost_root(&input.principal_id);
     let profile = crate::collaboration_profile_authority::load_profile_authority(
@@ -1393,6 +1414,7 @@ pub(crate) async fn runtime_custody_buy_via_gateway(
                 buy_step,
             )?;
             let purchase = crate::protected_content_runtime::RuntimeCustodyPurchaseRecord {
+                attempt_id: attempt_id.clone(),
                 schema: crate::protected_content_runtime::RUNTIME_PURCHASE_SCHEMA_V1.to_string(),
                 principal_id: input.principal_id.clone(),
                 profile_did: profile_did.clone(),

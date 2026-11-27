@@ -2342,6 +2342,7 @@ pub(crate) async fn adopt_runtime_granted_listing(
     // first is never overwritten by the grant.
     let now = crate::auth::now_ts();
     let record = RuntimeCustodyPurchaseRecord {
+        attempt_id: None,
         schema: RUNTIME_PURCHASE_SCHEMA_V1.to_string(),
         principal_id: principal_id.to_string(),
         profile_did: profile_did.to_string(),
@@ -2490,6 +2491,7 @@ pub(crate) async fn adopt_runtime_market_listing(
     if load_runtime_custody_purchase(data_dir, &purchase.principal_id, draft_mint_id)?.is_none() {
         let now = crate::auth::now_ts();
         let record = RuntimeCustodyPurchaseRecord {
+            attempt_id: None,
             schema: RUNTIME_PURCHASE_SCHEMA_V1.to_string(),
             principal_id: purchase.principal_id.clone(),
             profile_did: profile_did.to_string(),

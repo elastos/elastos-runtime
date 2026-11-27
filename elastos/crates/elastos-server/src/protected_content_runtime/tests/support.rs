@@ -1933,6 +1933,7 @@ pub(super) fn persist_runtime_custody_purchase_for_mint(
         "network": "esc-mainnet",
     });
     let record = RuntimeCustodyPurchaseRecord {
+        attempt_id: None,
         schema: RUNTIME_PURCHASE_SCHEMA_V1.to_string(),
         principal_id: principal_id.to_string(),
         profile_did: profile_did.to_string(),
@@ -3645,6 +3646,7 @@ pub(super) fn sample_purchase_record() -> (String, Digest32, RuntimeCustodyPurch
     let principal_id = "person:local:ledger-fixture".to_string();
     let mint_id = Digest32::new([0x77; 32]);
     let record = RuntimeCustodyPurchaseRecord {
+        attempt_id: None,
         schema: RUNTIME_PURCHASE_SCHEMA_V1.to_string(),
         principal_id: principal_id.clone(),
         profile_did: "did:key:z6MkFixture".to_string(),

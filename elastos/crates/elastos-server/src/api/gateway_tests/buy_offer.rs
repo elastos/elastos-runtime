@@ -1277,6 +1277,7 @@ fn pending_listing_purchase(
         data: LISTING_MARKET_BUY_DATA.to_string(),
     };
     crate::protected_content_runtime::RuntimeCustodyPurchaseRecord {
+        attempt_id: None,
         schema: crate::protected_content_runtime::RUNTIME_PURCHASE_SCHEMA_V1.to_string(),
         principal_id: principal_id.to_string(),
         profile_did: "did:key:z6MkListingPurchaseFixture".to_string(),

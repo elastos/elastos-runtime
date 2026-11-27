@@ -4293,6 +4293,51 @@ mod approved_request_resume_tests {
     }
 
     #[tokio::test]
+    async fn waiting_walletconnect_handoff_stays_in_connector_past_expiry() {
+        let root = tempfile::tempdir().unwrap();
+        let authority = test_authority(
+            "principal:test",
+            "session:create",
+            "creator",
+            "launch:create",
+        );
+        let (_, mut effect, mut approval, _) = exact_resume_fixture(&authority);
+        effect.state = TransactionEffectState::ApprovalPending;
+        effect.approval_expires_at = now_ts() - 1;
+        effect.wallet_request_sha256 = wallet_operation_request_sha256(
+            &authority,
+            &effect.approval_request_id,
+            transaction_approval_operation(&effect),
+        )
+        .unwrap();
+        approval["status"] = json!("approved");
+        approval["connector_id"] = json!("wallet-walletconnect");
+        approval["approved_at"] = json!(now_ts() - 2);
+        approval["expires_at"] = json!(effect.approval_expires_at);
+        approval["wallet_request_sha256"] = json!(effect.wallet_request_sha256);
+        approval["signed_result"] = Value::Null;
+        effect.approval_snapshot = Some(approval.clone());
+        let wallet = Arc::new(MockApprovedWalletProvider::new(vec![approval]));
+        let registry = Arc::new(ProviderRegistry::new());
+        registry
+            .register_sub_provider("wallet", wallet.clone())
+            .await
+            .unwrap();
+        let state = test_gateway_state(root.path(), Some(registry));
+        let mut store = RuntimeTransactionEffectStore::empty("principal:test");
+        let effect_id = effect.effect_id.clone();
+        store.effects.push(effect);
+        save_transaction_effect_store(&state, &store).unwrap();
+        assert_eq!(
+            runtime_transaction_effect_progress(&state, &authority, &effect_id)
+                .await
+                .unwrap(),
+            RuntimeTransactionEffectProgress::InConnector("wallet-walletconnect".into())
+        );
+        assert_eq!(wallet.request_approval_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
     async fn expired_connector_handoff_stops_mint_and_buy_without_renewal() {
         use super::super::gateway_provider_proxy::complete_runtime_custody_purchase_stage;
 
