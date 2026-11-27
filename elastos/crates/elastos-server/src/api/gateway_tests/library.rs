@@ -9807,6 +9807,7 @@ async fn test_creator_same_file_after_expired_handoff_and_waiting_walletconnect(
                 .provider
                 .complete_latest_transaction_approval()
                 .await;
+            fx.registry.unregister_sub_provider("chain").await.unwrap();
             fx.registry
                 .register_sub_provider(
                     "chain",
