@@ -3575,7 +3575,7 @@ import { createHomeNavigationClient } from "/apps/home/home-navigation-client.js
       showToast(
         outcome.stage === "declined"
           ? "You declined this in your wallet."
-          : buyRefusalCopy(answer) || publicError(answer?.message, "The purchase did not finish."),
+          : buyRefusalCopy(answer) || "The purchase did not finish.",
         true,
       );
       renderOfferSheetIfShowing(listing.item);

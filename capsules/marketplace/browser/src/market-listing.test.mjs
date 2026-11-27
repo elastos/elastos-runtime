@@ -794,3 +794,18 @@ test("a buy refused because the item's pool cannot be reached says nothing was p
   assert.equal(buyRefusalCopy({ code: "library_error" }), null);
   assert.equal(buyRefusalCopy(null), null);
 });
+
+test("an expired external handoff stops both buy paths with the wallet check instruction", () => {
+  const answer = {
+    status: "error",
+    code: "library_error",
+    message: "This wallet request expired after it was sent to your wallet. Check your wallet for a sent transaction before you start a new request.",
+    approval_closed: {
+      schema: "elastos.protected-content.approval-closed/v1",
+      reason: "handoff_expired",
+    },
+  };
+  assert.equal(parseBuyOfferAnswer(answer).kind, "failed");
+  assert.equal(buyRefusalCopy(answer), answer.message);
+  assert.equal(buyRefusalCopy({ ...answer, approval_closed: undefined }), null);
+});

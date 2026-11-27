@@ -1244,7 +1244,13 @@ function startServer() {
         const scenario = state[token] || {};
         const seller = String(body?.seller || "");
         if (scenario.expiredHandoffSeller === seller) {
-          json(response, buyOfferRefusal("library_error", { message: expiredHandoffMessage }));
+          json(response, buyOfferRefusal("library_error", {
+            message: expiredHandoffMessage,
+            approval_closed: {
+              schema: "elastos.protected-content.approval-closed/v1",
+              reason: "handoff_expired",
+            },
+          }));
           return;
         }
         if (scenario.buyOfferWaitingSellers?.has(seller)) {

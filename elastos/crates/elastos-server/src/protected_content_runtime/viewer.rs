@@ -135,6 +135,8 @@ const RUNTIME_CUSTODY_RELEASE_RESUME_MIN_SECS: u64 = 20;
 /// never complete.
 pub(crate) const RUNTIME_CUSTODY_APPROVAL_CLOSED_SCHEMA_V1: &str =
     "elastos.protected-content.approval-closed/v1";
+pub(crate) const RUNTIME_CUSTODY_APPROVAL_HANDOFF_EXPIRED_MESSAGE: &str =
+    "This wallet request expired after it was sent to your wallet. Check your wallet for a sent transaction before you start a new request.";
 
 /// Why an outstanding wallet approval will never complete.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -143,6 +145,8 @@ pub(crate) enum RuntimeCustodyApprovalClosedReason {
     Rejected,
     /// It lapsed before anyone answered it.
     Expired,
+    /// Local authority expired after dispatch; the wallet may still send.
+    HandoffExpired,
 }
 
 impl RuntimeCustodyApprovalClosedReason {
@@ -150,6 +154,7 @@ impl RuntimeCustodyApprovalClosedReason {
         match self {
             Self::Rejected => "approval_rejected",
             Self::Expired => "approval_expired",
+            Self::HandoffExpired => "handoff_expired",
         }
     }
 }
@@ -161,8 +166,8 @@ impl RuntimeCustodyApprovalClosedReason {
 /// transaction read exactly like one the person had not got to. A caller
 /// polling for completion waited on it forever.
 ///
-/// Neither of these ever produced a signature, so neither can produce a
-/// transaction — which is what makes them terminal rather than slow.
+/// An expired external handoff may still produce a transaction in the wallet.
+/// Its local approval is closed; the person checks the wallet before a new ask.
 #[derive(Debug, Clone)]
 pub(crate) struct RuntimeCustodyApprovalClosed {
     reason: RuntimeCustodyApprovalClosedReason,
@@ -198,6 +203,9 @@ impl std::fmt::Display for RuntimeCustodyApprovalClosed {
                 "This transaction approval expired before it was answered, so the listing did not \
                  complete"
             ),
+            RuntimeCustodyApprovalClosedReason::HandoffExpired => {
+                formatter.write_str(RUNTIME_CUSTODY_APPROVAL_HANDOFF_EXPIRED_MESSAGE)
+            }
         }
     }
 }

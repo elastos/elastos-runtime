@@ -26,7 +26,7 @@ pub(in crate::api::gateway) const TRANSACTION_APPROVAL_REJECTED: &str =
 pub(in crate::api::gateway) const TRANSACTION_APPROVAL_EXPIRED: &str =
     "transaction approval expired";
 pub(in crate::api::gateway) const TRANSACTION_APPROVAL_HANDOFF_EXPIRED: &str =
-    "This wallet request expired after it was sent to your wallet. Check your wallet for a sent transaction before you start a new request.";
+    crate::protected_content_runtime::RUNTIME_CUSTODY_APPROVAL_HANDOFF_EXPIRED_MESSAGE;
 const TRANSACTION_EFFECT_SCHEMA: &str = "elastos.runtime.transaction-effect/v1";
 const TRANSACTION_EFFECT_STORE_RELATIVE_PATH: &str =
     ".AppData/ElastOS/Runtime/transaction-effects.json";
@@ -4349,6 +4349,7 @@ mod approved_request_resume_tests {
             .expect("buy must stop waiting after the handoff expires");
             let answer = crate::library::provider_error_from_for_test(&error);
             assert_eq!(answer["message"], message);
+            assert_eq!(answer["approval_closed"]["reason"], "handoff_expired");
             assert!(answer.get("buy_progress").is_none());
             assert_eq!(wallet.request_approval_calls.load(Ordering::SeqCst), 0);
             assert_eq!(chain.calls.load(Ordering::SeqCst), 0);

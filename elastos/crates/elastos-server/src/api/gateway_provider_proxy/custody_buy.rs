@@ -1,4 +1,5 @@
 use super::*;
+use crate::protected_content_runtime::{RuntimeCustodyApprovalClosed, RuntimeCustodyApprovalClosedReason};
 
 /// Carry how far a purchase has got out to the caller, keeping the stable
 /// sentence outermost for the consumers that still read it.
@@ -736,7 +737,9 @@ pub(in crate::api::gateway) async fn complete_runtime_custody_purchase_stage(
         .await
         .map_err(|error| {
             if error.1 == super::gateway_transaction_effects::TRANSACTION_APPROVAL_HANDOFF_EXPIRED {
-                anyhow::anyhow!(error.1)
+                anyhow::Error::new(RuntimeCustodyApprovalClosed::new(
+                    RuntimeCustodyApprovalClosedReason::HandoffExpired,
+                ))
             } else {
                 purchase_unavailable!()(error)
             }
