@@ -30,8 +30,13 @@ pub(in crate::api::gateway) const TRANSACTION_APPROVAL_HANDOFF_EXPIRED: &str =
 
 fn expired_connector_handoff(approval: &Value) -> bool {
     approval.get("status").and_then(Value::as_str) == Some("expired")
-        && approval.get("connector_id").and_then(Value::as_str).is_some()
-        && approval.get("approved_at").is_some_and(|value| !value.is_null())
+        && approval
+            .get("connector_id")
+            .and_then(Value::as_str)
+            .is_some()
+        && approval
+            .get("approved_at")
+            .is_some_and(|value| !value.is_null())
 }
 
 const TRANSACTION_EFFECT_SCHEMA: &str = "elastos.runtime.transaction-effect/v1";
@@ -4343,11 +4348,13 @@ mod approved_request_resume_tests {
             let before = serde_json::to_value(&store).unwrap();
 
             // Creator settles an existing handoff without republishing metadata.
-            assert!(
-                !runtime_transaction_effect_approval_lapsed(&state, &authority, &request.effect_id)
-                    .await
-                    .unwrap()
-            );
+            assert!(!runtime_transaction_effect_approval_lapsed(
+                &state,
+                &authority,
+                &request.effect_id
+            )
+            .await
+            .unwrap());
             let error = complete_runtime_transaction_effect(
                 &state,
                 &authority,
