@@ -33,7 +33,17 @@ else if (process.env.WALLET_CONNECT_RETURN === "1") {
   const failures = [];
   const delays = process.env.WALLET_RETURN_SLOW === 'all' ? ['prices','balances','existing-balances'] : [process.env.WALLET_RETURN_SLOW || 'normal'];
   for (const slowMarket of delays) for (const width of [1440, 390]) {
-    try { await runSmoke({connectReturn:true, width, slowMarket}); }
+    try {
+      const options={connectReturn:true,width,slowMarket};
+      try { await runSmoke(options); }
+      catch(error) {
+        if(engine!=='webkit' || error.message!=='timed out waiting for real Home GUI frame')throw error;
+        // Match the phone layout smoke's bounded fresh-context boot recovery.
+        // runSmoke has closed the failed browser; Wallet has not opened yet.
+        console.warn(`[wallet-connect-return] ${engine} ${width} ${slowMarket}: Home GUI boot retry in a fresh browser`);
+        await runSmoke(options);
+      }
+    }
     catch (error) { failures.push(error); console.error(`[wallet-connect-return] FAIL ${engine} ${width} ${slowMarket}: ${error.stack}`); }
   }
   if (failures.length) throw new AggregateError(failures, 'Wallet connection return failed');
@@ -896,18 +906,31 @@ try {
     await connector.locator('[data-action="close-window"]').click();
     await waitFor(()=>!frameFor(page,'wallet-metamask'),5000,'MetaMask closes');
     await windowNode.evaluate(()=>{window.walletReturnFocus=document.activeElement;});
-    const before = await wallet.evaluate(()=>({rows:document.querySelectorAll('.one-wallet').length,scroll:document.scrollingElement.scrollTop,height:document.scrollingElement.scrollHeight,viewport:document.documentElement.clientHeight,modal:!!document.querySelector(':modal'),overflow:getComputedStyle(document.body).overflow,inert:document.body.inert}));
-    const frame = windowNode.locator('iframe');
-    const bounds = await frame.boundingBox();
-    await page.mouse.move(bounds.x+bounds.width/2,bounds.y+bounds.height/2);
+    const before = await wallet.evaluate(()=>({rows:document.querySelectorAll('.one-wallet').length,metamask:[...document.querySelectorAll('.one-wallet')].some(node=>node.textContent.includes('MetaMask')),scroll:document.scrollingElement.scrollTop,height:document.scrollingElement.scrollHeight,viewport:document.documentElement.clientHeight,modal:!!document.querySelector(':modal'),inert:document.body.inert}));
+    assert(before.rows===3 && before.metamask && before.height>before.viewport && !before.modal && !before.inert,
+      'Wallet renders the saved MetaMask and its scroll range as the connector closes, while market reads wait',before);
+    const observeWheel = process.env.WALLET_RETURN_WHEEL_RECEIPT === '1';
+    await wallet.evaluate(observe=>{
+      window.walletReturnPointer=null;
+      addEventListener('pointermove',event=>{window.walletReturnPointer={trusted:event.isTrusted,wallet:!!event.target.closest('.one-wallet')};},{once:true});
+      // Receipt runs are separate: the main regression leaves WebKit's async
+      // wheel path unobserved, since a wheel listener can change its routing.
+      window.walletReturnWheels=[];
+      if(observe)addEventListener('wheel',event=>window.walletReturnWheels.push({trusted:event.isTrusted,deltaY:event.deltaY,prevented:event.defaultPrevented}),{passive:true});
+    },observeWheel);
+    await wallet.locator('.one-wallet').first().hover();
+    assert(await wallet.evaluate(top=>document.scrollingElement.scrollTop===top,before.scroll),
+      'Targeting the visible Wallet card keeps the initial scroll position');
     await page.mouse.wheel(0,460);
     await wallet.waitForFunction(top=>document.scrollingElement.scrollTop>top,before.scroll,{timeout:3000}).catch(()=>{});
-    const after = await wallet.evaluate(()=>({rows:document.querySelectorAll('.one-wallet').length,scroll:document.scrollingElement.scrollTop,bodyScroll:document.body.scrollTop,windowScroll:scrollY,metamask:!![...document.querySelectorAll('.one-wallet')].find(node=>node.textContent.includes('MetaMask')),sameDocument:window.walletReturnDocument===document}));
-    const chrome = await windowNode.evaluate(node=>({active:node.classList.contains('window-active'),inert:node.inert,pointer:getComputedStyle(node.querySelector('iframe')).pointerEvents,sameFocus:document.activeElement===window.walletReturnFocus,focus:document.activeElement?.outerHTML.slice(0,180)}));
-    console.log('[wallet-connect-return] measurement '+JSON.stringify({engine,width,slowMarket,held:state.heldMarket.length,before,after,chrome}));
+    const after = await wallet.evaluate(()=>({pointer:window.walletReturnPointer,wheels:window.walletReturnWheels,rows:document.querySelectorAll('.one-wallet').length,scroll:document.scrollingElement.scrollTop,metamask:[...document.querySelectorAll('.one-wallet')].some(node=>node.textContent.includes('MetaMask')),sameDocument:window.walletReturnDocument===document}));
+    const chrome = await windowNode.evaluate(node=>({active:node.classList.contains('window-active'),inert:node.inert,pointer:getComputedStyle(node.querySelector('iframe')).pointerEvents,sameFocus:document.activeElement===window.walletReturnFocus}));
+    console.log('[wallet-connect-return] measurement '+JSON.stringify({engine,width,slowMarket,observeWheel,held:state.heldMarket.length,before,after,chrome}));
+    assert(after.metamask && after.rows===3 && after.scroll>before.scroll && after.pointer?.trusted && after.pointer.wallet && chrome.sameFocus,
+      'Wallet accepts the first wheel after connector close without a focus change',{before,after,chrome});
+    if(observeWheel)assert(after.wheels.length===1 && after.wheels[0].trusted && after.wheels[0].deltaY>0 && !after.wheels[0].prevented,
+      'Wallet receives one trusted, uncancelled wheel',after.wheels);
     const held = state.heldMarket.splice(0); state.holdMarket = ''; for (const release of held) release();
-    await wallet.locator('.one-wallet').nth(2).waitFor({timeout:5000});
-    assert(after.metamask && after.rows===3 && after.scroll>before.scroll && chrome.sameFocus,'Wallet lists the new MetaMask and accepts the first wheel after connector close without a focus change',{before,after,chrome});
     const copy = await wallet.locator('body').innerText();
     assert(!copy.includes('Built-in addresses')&&!copy.includes('Passkey-controlled')&&!copy.includes('Wallet Send')&&!copy.includes('Wallets & signers'),'rc.2 Wallet copy stays removed');
     if (process.env.WALLET_RETURN_SCREENS) {
@@ -1111,8 +1134,13 @@ try {
       state.approvalRequests = [{request_id:"metamask-second",capsule_id:"browser",address:"0x3333333333333333333333333333333333333333",connector_id:target,proof_type:"siwe",intent:"browser_personal_sign",status:"pending",reason:"Second MetaMask request",chain_namespace:"eip155:20",expires_at:Math.floor(Date.now()/1000)+600}];
       // Wallet's real request card opens the second request while the first connector stays open.
       await homeGui.evaluate(() => document.querySelector('.window[data-target="wallet"] iframe').contentWindow.postMessage({type:'elastos:wallet-refresh'},'*'));
-      await homeGui.locator('.window[data-target="wallet"] .window-head').click({position:{x:80,y:14}});
-      await wallet.getByRole('button',{name:'Add wallet for apps',exact:true}).click();await wallet.locator('.one-dialog [data-wallet-open-method="wallet-metamask"]').click();
+      const add = wallet.getByRole('button',{name:'Add wallet for apps',exact:true});
+      const addBounds = await add.boundingBox();
+      // The first press on inactive app content belongs to Home's focus layer.
+      await page.mouse.click(addBounds.x+addBounds.width/2,addBounds.y+addBounds.height/2);
+      assert((await homeWindowSnapshot(homeGui,'wallet')).active && await wallet.locator(':modal').count()===0,
+        'inactive Wallet content activates its window before an app control can run');
+      await add.click();await wallet.locator('.one-dialog [data-wallet-open-method="wallet-metamask"]').click();
       await waitFor(() => page.frames().filter(frame=>frame.url().includes('/apps/wallet-metamask/')).length === 2,5000,'fresh MetaMask request window');
       const fresh = page.frames().filter(frame=>frame.url().includes('/apps/wallet-metamask/')).find(frame=>frame!==connector);
       await fresh.getByText('Second MetaMask request',{exact:true}).waitFor();
