@@ -134,6 +134,27 @@ fn renewal_refuses_every_operation_substitution_after_expiry() {
 }
 
 #[test]
+fn renewal_refuses_duplicate_identities_without_discarding_an_existing_answer() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut provider = init_provider(dir.path());
+    let original = approval_fixture(&mut provider, None);
+    let mut expired = provider.store.approval_requests[0].clone();
+    expired.status = ApprovalStatus::Expired;
+    expired.expires_at = now_ts() - 1;
+    let mut answered = expired.clone();
+    answered.status = ApprovalStatus::Approved;
+    answered.approved_at = Some(now_ts() - 2);
+    provider.store.approval_requests = vec![expired, answered];
+    let before = provider.store.approval_requests.clone();
+    let response =
+        invoke_wallet_request(&mut provider, &retry(&original, original.operation.clone()));
+    assert!(
+        matches!(response, Response::Error { ref code, .. } if code == "approval_identity_conflict")
+    );
+    assert_eq!(provider.store.approval_requests, before);
+}
+
+#[test]
 fn renewal_state_table_keeps_answers_and_allows_only_unanswered_expiry_retry() {
     for connector in [None, Some("wallet-metamask"), Some("wallet-walletconnect")] {
         let dir = tempfile::tempdir().unwrap();
