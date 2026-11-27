@@ -19,7 +19,9 @@ export function walletSigninError(error, action) {
   if(error?.code === 'changed') return 'Your wallet is using a different account or network; select Try again.';
   if(error?.code === 'wallet-unavailable') return 'Open the wallet with this account, then try again.';
   if(error?.code === 'payment-pending')return 'Finish or check the payment in Wallet, then select Try again.';
-  if(error?.code === 'walletconnect_internet_off') return action === 'signin' ? 'WalletConnect is off on this Home. Use your passkey, MetaMask or UniSat to sign in.' : 'WalletConnect is off on this Home. Allow internet access in Inbox to continue.';
+  if(error?.code === 'walletconnect_internet_off') return action === 'signin' ? 'WalletConnect is off on this Home. Choose another way to sign in.' : 'WalletConnect is off on this Home. Allow internet access in Inbox to continue.';
+  if(error?.code === 'permission-cleanup') return action === 'signin' ? 'WalletConnect is off on this Home. Choose another way to sign in.' : 'Choose Finish disconnecting in Inbox before you allow internet access again.';
+  if(error?.code === 'permission' && action==='signin')return 'WalletConnect is off on this Home. Choose another way to sign in.';
   if(error?.code === 'permission') return 'Allow WalletConnect internet access in Inbox, then select Try again.';
   if(error?.code === 'missing') return 'Choose another wallet or use a browser with this wallet installed.';
   if(error?.code === 'network') return 'Use Elastos Smart Chain or Base with your wallet.';

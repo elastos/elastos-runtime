@@ -71,7 +71,7 @@ export async function signinFixture() {
           if(state.scenario==='offline')return json({},503);
           if(state.scenario==='conflict')return json({},409);
           if(body.connector==='walletconnect') {
-            if((state.internetStatus||'granted')!=='granted')return json({error:'walletconnect_internet_off'},403);
+            if(!state.allowLegacyRelay&&(state.internetStatus||'granted')!=='granted')return json({error:'walletconnect_internet_off'},403);
             if(path==='/api/auth/wallet/signin/begin'&&!state.methods.some(m=>m.sign_in_enabled&&m.connector==='walletconnect'&&[20,8453].includes(m.chain_id)))return json({},403);
           }
           if(['add'].includes(body.action) && body.address && state.methods.some(m=>m.address.toLowerCase()===body.address.toLowerCase() && m.chain_id===body.chain_id && m.network===body.network))return json({},409);

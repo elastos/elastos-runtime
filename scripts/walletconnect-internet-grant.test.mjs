@@ -27,7 +27,7 @@ for(const delegateWalletConnect of [false,true])test(`System waits for the one I
 test('signed-out off refusal names the state and other sign-in methods, without filing a request',async t=>{
  const calls=[];const flow=createWalletSigninFlow({api:async(path,body)=>{calls.push({path,body});if(path.endsWith('/status'))return {walletconnect_signin_available:true};throw Object.assign(new Error('off'),{status:403,code:'walletconnect_internet_off'});},select(){throw new Error('QR before grant');},approve(){},render(){}});t.after(()=>flow.cancel());
  await flow.start();await flow.choose('walletconnect');assert.equal(flow.state.stage,'error');
- assert.equal(flow.state.message,'WalletConnect is off on this Home. Use your passkey, MetaMask or UniSat to sign in.');
+ assert.equal(flow.state.message,'WalletConnect is off on this Home. Choose another way to sign in.');
  assert(!calls.some(c=>c.path===internet));
  assert.equal(walletSigninError({status:403,code:'walletconnect_internet_off'},'signin'),flow.state.message);
 });
@@ -40,5 +40,5 @@ test('System cleanup waits in the same Inbox entry before filing the request',as
 for(const [permission,cleanupPending,pending,expected]of [['revoked',true,false,'internet-clearing'],['revoked',false,false,'internet-refused'],['refused',false,false,'internet-refused'],['requested',false,false,'internet-off'],['requested',false,true,'internet-pending']])test(`window ${permission}, cleanup ${cleanupPending}, pending ${pending} leads to the one Inbox entry`,()=>{
  const result=windowPresentation({permission,cleanupPending,pending,accounts:[],requests:[]},Date.now()/1000);
  assert.equal(result.input.stage,expected);assert.equal(screens.walletconnect[expected].primary.id,'inbox');
- if(cleanupPending)assert.match(screens.walletconnect[expected].notice,/Finish disconnecting/);
+ if(cleanupPending){assert.match(screens.walletconnect[expected].notice,/Finish disconnecting/);assert.equal(result.input.localReturn,false);}
 });

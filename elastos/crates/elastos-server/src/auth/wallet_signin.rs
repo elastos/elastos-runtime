@@ -2440,7 +2440,7 @@ pub(crate) mod tests {
         }
     }
     #[test]
-    fn walletconnect_add_signin_pairs_selects_and_completes_with_consent() {
+    fn walletconnect_add_pairs_selects_and_ignores_client_internet_flag() {
         let f = fixture();
         let request = |consent| {
             let mut req = input("add", "", "");

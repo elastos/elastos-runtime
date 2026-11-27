@@ -9,7 +9,7 @@ import {signinFixture,installSigninProviders,evmAddress,bitcoinAddress} from './
 const baseline=process.env.WC_GRANT_BASELINE==='1',output=process.env.WC_GRANT_SCREENS;
 for(const engine of ['chromium','webkit'])test(`${baseline?'baseline':'one-grant'} System Add and signed-out off state in ${engine}`,{timeout:60000},async t=>{
  const f=await signinFixture();t.after(()=>f.close());
- f.state.methods=[];f.state.connected=[];f.state.wcConnected=false;f.state.internetStatus='off';
+ f.state.methods=[];f.state.connected=[];f.state.wcConnected=false;f.state.internetStatus='off';f.state.allowLegacyRelay=baseline;
  const browser=await requireProductSmokePlaywright()[engine].launch({headless:true});t.after(()=>browser.close());
  const context=await browser.newContext({viewport:{width:480,height:560},locale:'en-US',reducedMotion:'reduce'});
  await context.addInitScript(installSigninProviders,{evmAddress,bitcoinAddress});
@@ -27,9 +27,8 @@ for(const engine of ['chromium','webkit'])test(`${baseline?'baseline':'one-grant
  const system=page.frameLocator('iframe[title=system]');await system.getByRole('button',{name:'Add wallet',exact:true}).click();
  const dialog=page.locator('.signin-dialog');await dialog.locator('.connection-option').filter({hasText:'WalletConnect'}).waitFor();
  await shot('system-not-allowed');
- if(baseline)f.state.internetStatus='granted';
  await dialog.locator('.connection-option').filter({hasText:'WalletConnect'}).click();
- if(baseline){await page.locator('.signin-dialog[data-state=pairing]').waitFor();await shot('system-off-opened-qr');}
+ if(baseline){await page.locator('.signin-dialog[data-state=pairing]').waitFor();assert.equal(f.state.internetStatus,'off');await shot('system-off-opened-qr');}
  else {
   await page.locator('.signin-dialog[data-state=internet-pending]').waitFor();
   assert.equal(await page.locator('iframe[title=WalletConnect]').count(),0);assert.equal(await dialog.locator('.connection-qr').count(),0);
@@ -44,16 +43,17 @@ for(const engine of ['chromium','webkit'])test(`${baseline?'baseline':'one-grant
   f.state.internetStatus='granted';await page.locator('.signin-dialog[data-state=pairing]').waitFor();await shot('system-allowed');
   assert.equal(f.state.calls.filter(c=>c.path==='/api/auth/wallet-methods/begin'&&c.status===200).length,1);
  }
- await dialog.getByRole('button',{name:'Cancel',exact:true}).click();
+ await dialog.getByRole('button',{name:'Cancel',exact:true}).click();await page.waitForLoadState('networkidle');
  f.state.signed=false;f.state.internetStatus='off';f.state.methods=[{connector:'walletconnect',address:evmAddress,chain_id:20,network:'',proof_binding_id:'phone',sign_in_enabled:true}];
  await page.goto(f.origin+'/home/');await page.getByRole('button',{name:'Sign in',exact:true}).click();
  const choice=page.locator('.signin-dialog .connection-option').filter({hasText:'WalletConnect'});await choice.waitFor();
- if(baseline)f.state.internetStatus='granted';
  await choice.click();
- if(baseline){await page.locator('.signin-dialog[data-state=pairing]').waitFor();await shot('signed-out-off-opened-qr');}
- else {await page.locator('.signin-dialog[data-state=error]').waitFor();assert.match(await dialog.innerText(),/WalletConnect is off on this Home\. Use your passkey, MetaMask or UniSat to sign in\./);assert.equal(await dialog.locator('.connection-option').filter({hasText:'Passkey'}).count(),1);assert.equal(await dialog.getByRole('button',{name:'Try again',exact:true}).count(),0);await shot('signed-out-off');}
+ if(baseline){await page.locator('.signin-dialog[data-state=pairing]').waitFor();assert.equal(f.state.internetStatus,'off');await shot('signed-out-off-opened-qr');await dialog.getByRole('button',{name:'Cancel',exact:true}).click();await page.waitForLoadState('networkidle');}
+ else {await page.locator('.signin-dialog[data-state=error]').waitFor();assert.match(await dialog.innerText(),/WalletConnect is off on this Home\. Choose another way to sign in\./);assert.equal(await dialog.locator('.connection-option').filter({hasText:'Passkey'}).count(),1);assert.equal(await dialog.getByRole('button',{name:'Try again',exact:true}).count(),0);await shot('signed-out-off');await dialog.locator('.connection-option').filter({hasText:'Passkey'}).click();await page.waitForFunction(()=>window.openedPrincipal==='principal:alex');assert.equal(f.state.internetStatus,'off','passkey signs in while WalletConnect stays off');assert.equal(f.state.calls.filter(c=>c.path.endsWith('/internet')&&c.body?.action==='request').length,1,'signed-out sign-in files no internet request');}
  await page.goto(f.origin+'/home/');
- await page.addStyleTag({content:await readFile(new URL('../capsules/home/browser/wallet-connection-view.css',import.meta.url),'utf8')});
+ await page.setContent('<!doctype html><html data-el-theme=light><head></head><body></body></html>');
+ await page.addStyleTag({content:await readFile(new URL('../capsules/wallet-walletconnect/browser/elastos-ui.css',import.meta.url),'utf8')});
+ await page.addStyleTag({content:await readFile(new URL('../capsules/_shared/wallet-connection-view.css',import.meta.url),'utf8')});
  for(const stage of ['internet-pending','internet-refused','internet-off','internet-expired','internet-clearing','request-internet-off','request-internet-pending']) {
   const row=states.find(row=>row.window==='walletconnect'&&row.stage===stage);
   assert.ok(row,`captured state fixture: ${stage}`);

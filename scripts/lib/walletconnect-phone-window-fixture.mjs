@@ -38,7 +38,7 @@ export async function windowFixture() {
     if(state.guest&&path.endsWith('/internet')&&req.method==='POST'&&state.permission!=='granted'){assert.equal(req.headers.accept,'application/json');return json({code:'walletconnect_admin_required',message:'Fixture wording differs from the product sentence.'},500);}
     let input='';for await(const chunk of req)input+=chunk;const body=input?JSON.parse(input):{};
     if(path.endsWith('/internet')&&req.method==='POST'&&state.permission!=='granted')state.permission='requested';
-    if(path.endsWith('/internet'))return json({status:state.permission,request:{id:'request-1',issued_at:Math.floor(Date.now()/1000)}});
+    if(path.endsWith('/internet'))return json({status:state.permission,cleanup_pending:Boolean(state.cleanupPending),request:{id:'request-1',issued_at:Math.floor(Date.now()/1000)}});
     if(path.endsWith('/wallet/config'))return json({walletconnect:{project_id:'fixture-project',storage_revision:JSON.stringify(String(state.revision))}});
     if(path.endsWith('/relay-admission'))return json({token:'fixture-admission'});
     if(path.endsWith('/storage')){
