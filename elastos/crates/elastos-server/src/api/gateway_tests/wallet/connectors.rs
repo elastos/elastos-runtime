@@ -1412,7 +1412,7 @@ async fn test_walletconnect_capsule_completion_enforces_hash_and_request_binding
             .header("x-elastos-home-token", &connector).header(CONTENT_TYPE, "application/json")
             .body(Body::from(body.to_string())).unwrap()).await.unwrap();
         let operations = provider.recorded_v2_operation_kinds().await;
-        if matches!(case, "valid" | "expired" | "dismissed" | "expired-unapproved" | "expired-signature" | "expired-recorded") {
+        if matches!(case, "valid" | "expired" | "outside-grace" | "dismissed") {
             assert_eq!(response.status(), StatusCode::OK, "{case}");
             assert!(operations.contains(&WalletOperationKind::CompleteConnectorHandoff));
             let response_body = axum::body::to_bytes(response.into_body(), usize::MAX)
