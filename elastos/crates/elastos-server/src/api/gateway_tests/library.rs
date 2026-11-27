@@ -9677,6 +9677,16 @@ async fn test_creator_same_file_after_expired_handoff_and_waiting_walletconnect(
     let _guard = protected_content_gateway_mock_test_guard().lock().await;
     let fx = CreatorRecoveryFixture::new().await;
     enable_protected_content(fx.dir.path());
+    fx.registry
+        .register_sub_provider(
+            "object",
+            Arc::new(crate::library::ObjectProvider::new(
+                fx.dir.path().to_path_buf(),
+                Arc::downgrade(&fx.registry),
+            )),
+        )
+        .await
+        .unwrap();
     set_mock_wallet_transaction_default(
         &fx.wallet_provider.provider,
         &fx.authority.principal_id,
