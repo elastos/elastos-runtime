@@ -169,7 +169,7 @@ A new model catalogue is produced, signed and pinned before release preparation,
 `node scripts/ci-model-package.mjs produce FIXTURE OUT DID KUBO_DATA` with its pinned fixture (`scripts/pinned-smollm2-fixture.json`,
 `scripts/pinned-qwen2.5-1.5b-fixture.json`, `scripts/pinned-qwen3.5-9b-fixture.json`,
 `scripts/pinned-gemma4-12b-fixture.json`); it downloads and checks the pinned weights, builds `OUT/package`, prints its CID and
-byte size and writes `OUT/entry.json`. Then `node scripts/ci-model-package.mjs catalog CAT DID OUT1/entry.json OUT2/entry.json ...`
+byte size and writes `OUT/entry.json`. Use the complete license from the pinned model or base revision, including its copyright notices. Then `node scripts/ci-model-package.mjs catalog CAT DID OUT1/entry.json OUT2/entry.json ...`
 writes the unsigned `CAT/payload.json` with the entries in that order (1 to 8), after the signer's own catalogue check accepts it.
 (2) Sign: `release-signer.py --policy POLICY --input-root DIR --model-catalog CAT/payload.json --output-root NEW_DIR`.
 The policy approves the payload by `model_catalog_sha256`; the operator types the DID. The signer refuses a payload the Runtime would refuse,

@@ -9,9 +9,9 @@
   },
   "license": {
     "name": "LICENSE",
-    "path": "fixtures/licenses/Apache-2.0.txt",
-    "size": 11358,
-    "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    "url": "https://huggingface.co/Qwen/Qwen3.5-9B/resolve/c202236235762e1c871ad0ccb60c8ee5ba337b9a/LICENSE",
+    "size": 11544,
+    "sha256": "bbedc3fda3305820b977265f01b8619d87570a6739de3a5582c3464840f1e57a"
   },
   "capsule_manifest": {
     "schema": "elastos.capsule/v1",

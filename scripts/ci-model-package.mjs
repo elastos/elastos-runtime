@@ -58,8 +58,9 @@ export function loadFixture(path) {
   }
   const pinned = `https://huggingface.co/${provenance.quantized_repository}/resolve/${provenance.quantized_revision}/`;
   assert.equal(fixture.model.url, pinned + fixture.model.name, "fixture weights must come from the pinned quantized repository revision");
+  const basePinned = `https://huggingface.co/${provenance.base_repository}/resolve/${provenance.base_revision}/LICENSE`;
   assert(fixture.license.url === undefined ? fixture.license.path === APACHE_LICENSE_PATH
-    : fixture.license.path === undefined && fixture.license.url === pinned + "LICENSE",
+    : fixture.license.path === undefined && [pinned + "LICENSE", basePinned].includes(fixture.license.url),
   "fixture license must come from the pinned revision or the vendored Apache License text");
   assert(["Q1_0", "Q4_K_M", "Q8_0"].includes(model.quantization), "fixture quantization is unsupported");
   assert(model.license.spdx_id === "Apache-2.0" && provenance.base_license.spdx_id === "Apache-2.0", "fixture licenses must be Apache-2.0");

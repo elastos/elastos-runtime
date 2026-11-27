@@ -69,6 +69,27 @@ test("release model budgets cover all four pinned models and their preparation c
   }
 });
 
+test("Qwen3.5 pins the complete upstream license with its copyright notice", () => {
+  const fixture = loadFixture(new URL("./pinned-qwen3.5-9b-fixture.json", import.meta.url));
+  const provenance = fixture.capsule_manifest.model_content.provenance;
+  assert.equal(fixture.license.url,
+    `https://huggingface.co/${provenance.base_repository}/resolve/${provenance.base_revision}/LICENSE`);
+  assert.equal(fixture.license.size, 11544);
+  assert.equal(fixture.license.sha256, "bbedc3fda3305820b977265f01b8619d87570a6739de3a5582c3464840f1e57a");
+});
+
+test("a model fixture preserves the base revision license and refuses a mutable base license", t => {
+  const root = temporary(t), path = join(root, "fixture.json");
+  const fixture = structuredClone(QWEN_FIXTURE);
+  const provenance = fixture.capsule_manifest.model_content.provenance;
+  fixture.license.url = `https://huggingface.co/${provenance.base_repository}/resolve/${provenance.base_revision}/LICENSE`;
+  writeFileSync(path, JSON.stringify(fixture));
+  assert.deepEqual(loadFixture(path).license, fixture.license);
+  fixture.license.url = fixture.license.url.replace(provenance.base_revision, "main");
+  writeFileSync(path, JSON.stringify(fixture));
+  assert.throws(() => loadFixture(path), /pinned revision or the vendored Apache License text/);
+});
+
 test("fixture loading refuses escaping names, injected text, unpinned weights and a title Runtime would not show", t => {
   const root = temporary(t), path = join(root, "fixture.json");
   const refused = (mutate, message) => {
