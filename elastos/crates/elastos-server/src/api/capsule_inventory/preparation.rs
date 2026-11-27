@@ -5783,9 +5783,11 @@ mod tests {
                 .await
                 .unwrap();
             drop(worker);
-            assert!(!load_operation(root.path(), &record.operation_id)
-                .unwrap()
-                .activation_pending);
+            assert!(
+                !load_operation(root.path(), &record.operation_id)
+                    .unwrap()
+                    .activation_pending
+            );
             provider.calls.lock().unwrap().clear();
             retention_intent(root.path(), &context(), &record.package_cid, true).unwrap();
             let (app, token) = readiness_catalog_app(root.path(), registry.clone(), &context());
