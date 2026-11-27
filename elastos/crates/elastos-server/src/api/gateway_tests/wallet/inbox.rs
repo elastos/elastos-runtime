@@ -50,7 +50,7 @@ fn test_inbox_wallet_approval_offers_passkey_approval_only_for_built_in_wallets(
     );
     assert_eq!(
         entries[1]["action_ref"]["action_id"],
-        "wallet-approve-request:external"
+        "wallet-review-request:external"
     );
     assert_eq!(entries[0]["source_app"], "documents");
     assert_eq!(

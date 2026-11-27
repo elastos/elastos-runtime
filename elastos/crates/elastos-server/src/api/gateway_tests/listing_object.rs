@@ -625,6 +625,7 @@ pub(super) struct ListingEnv {
 impl ListingEnv {
     pub(super) async fn new(chain: ListingChainFixture, content: ListingContentFixture) -> Self {
         let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("config.toml"), "protected_content = true\n").unwrap();
         seed_test_browser_capsules(dir.path());
         let chain = Arc::new(std::sync::Mutex::new(chain));
         let content = Arc::new(std::sync::Mutex::new(content));

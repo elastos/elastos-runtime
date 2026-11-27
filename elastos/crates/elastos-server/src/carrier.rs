@@ -15254,8 +15254,11 @@ pub(crate) mod tests {
             .await
             .unwrap();
         let remote_dir = tempfile::tempdir().unwrap();
-        std::fs::write(remote_dir.path().join("config.toml"), "protected_content = true\n")
-            .unwrap();
+        std::fs::write(
+            remote_dir.path().join("config.toml"),
+            "protected_content = true\n",
+        )
+        .unwrap();
         // The remote Home has published the fixture CID, so peers may read it.
         crate::library::publish_cid_for_test(remote_dir.path(), FIXTURE_CID);
         let (remote_sk, remote_did) = elastos_identity::derive_did(&[remote_seed; 32]);
@@ -16511,8 +16514,11 @@ pub(crate) mod tests {
             .await
             .unwrap();
         let remote_dir = tempfile::tempdir().unwrap();
-        std::fs::write(remote_dir.path().join("config.toml"), "protected_content = true\n")
-            .unwrap();
+        std::fs::write(
+            remote_dir.path().join("config.toml"),
+            "protected_content = true\n",
+        )
+        .unwrap();
         let (remote_sk, remote_did) = elastos_identity::derive_did(&[97; 32]);
         let remote_node = start_isolated_carrier_node_with_registry(
             &remote_sk,
