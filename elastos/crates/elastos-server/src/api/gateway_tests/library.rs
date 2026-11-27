@@ -8848,11 +8848,13 @@ struct CreatorRecoveryFixture {
     registry: Arc<ProviderRegistry>,
     authority: TestPasskeyAuthority,
     wallet_account_id: String,
+    creator_token: String,
 }
 
 impl CreatorRecoveryFixture {
     async fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
+        crate::protected_content_runtime::tests::write_device_key(dir.path(), 0x5a);
         let (state, wallet_provider) = wallet_chain_test_state_with_observer(dir.path()).await;
         let registry = state.provider_registry.as_ref().unwrap().clone();
         registry
@@ -8876,6 +8878,7 @@ impl CreatorRecoveryFixture {
             10,
         )
         .await;
+        let creator_token = app_token_for_authority(dir.path(), CREATOR_CAPSULE_ID, &authority);
         Self {
             dir,
             state,
@@ -8883,12 +8886,16 @@ impl CreatorRecoveryFixture {
             registry,
             authority,
             wallet_account_id,
+            creator_token,
         }
     }
 
     fn wallet_authority(&self) -> RuntimeWalletAuthority {
-        let token = app_token_for_authority(self.dir.path(), CREATOR_CAPSULE_ID, &self.authority);
-        runtime_wallet_authority_for_app_token(self.dir.path(), CREATOR_CAPSULE_ID, &token)
+        runtime_wallet_authority_for_app_token(
+            self.dir.path(),
+            CREATOR_CAPSULE_ID,
+            &self.creator_token,
+        )
     }
 
     fn input(
@@ -9695,7 +9702,7 @@ async fn test_creator_same_file_after_expired_handoff_and_waiting_walletconnect(
         )
         .await
         .unwrap();
-    let token = app_token_for_authority(fx.dir.path(), CREATOR_CAPSULE_ID, &fx.authority);
+    let token = fx.creator_token.clone();
     let app = gateway_router(fx.state.clone());
     let mut seeded = Vec::new();
     for (name, seed, connector, status) in [
@@ -10246,7 +10253,7 @@ async fn test_creator_unfinished_protections_offers_recoverable_and_archives_the
         .await
         .unwrap();
     let app = gateway_router(fx.state.clone());
-    let creator_token = app_token_for_authority(fx.dir.path(), CREATOR_CAPSULE_ID, &fx.authority);
+    let creator_token = fx.creator_token.clone();
     let root = crate::auth::principal_localhost_root(&fx.authority.principal_id);
 
     let pending = fx.input("pending.mp4", 0x98);
@@ -11380,7 +11387,7 @@ async fn test_runtime_custody_buy_confirmed_approval_stage_is_not_redriven() {
     // First counted call: the approval stage's transaction confirms on chain
     // within this call; the buy stage raises its own (still pending)
     // approval and the purchase stays pending overall.
-    let first_token = app_token_for_authority(dir.path(), LIBRARY_CAPSULE_ID, &authority);
+    let first_token = token.clone();
     let (first_status, first_payload) =
         post_library(app.clone(), &first_token, "buy", buy_body.clone()).await;
     assert_eq!(first_status, StatusCode::OK);
@@ -11420,7 +11427,7 @@ async fn test_runtime_custody_buy_confirmed_approval_stage_is_not_redriven() {
     // be looked up (two `ListApprovals` reads: one from the exact-effect
     // recovery, one from the completion check) -- not a third for approval.
     wallet_provider.clear_requests().await;
-    let second_token = app_token_for_authority(dir.path(), LIBRARY_CAPSULE_ID, &authority);
+    let second_token = token.clone();
     let (second_status, second_payload) = post_library(app, &second_token, "buy", buy_body).await;
     assert_eq!(second_status, StatusCode::OK);
     assert_eq!(second_payload["status"], "error");
@@ -16946,7 +16953,7 @@ async fn test_creator_new_mint_of_the_same_file_proceeds_unless_the_last_one_was
     let tail =
         |input: crate::protected_content_runtime::RuntimeCustodyLibraryPublishInput,
          facts: &crate::protected_content_runtime::RuntimeCustodyLibraryPublishFacts| {
-            let token = app_token_for_authority(dir.path(), CREATOR_CAPSULE_ID, &creator);
+            let token = creator_token.clone();
             let authority =
                 runtime_wallet_authority_for_app_token(dir.path(), CREATOR_CAPSULE_ID, &token);
             let state = state.clone();
@@ -19722,6 +19729,7 @@ async fn foreign_pool_market_buy_is_refused_before_payment() {
     let asset = publish_two_runtime_market_asset().await;
     let package = asset.package.clone();
     let buyer = adoption_buyer_with_own_pool(&asset).await;
+    enable_protected_content(buyer.runtime.path());
     let (status, listing) = post_market_listing(
         &buyer,
         json!({"start": {"item": {"ledger": package.ledger, "token_id": package.token_id}}}),
@@ -20749,6 +20757,13 @@ async fn ped_player_open_viewer_denied_before_purchase_has_no_detail() {
             "status": "error",
             "code": "library_error",
             "message": "Runtime custody open is denied before purchase",
+            "detail": "This item belongs to a different account",
+            "open_progress": {
+                "schema": "elastos.protected-content.open-progress/v1",
+                "stage": "denied",
+                "resumable": false,
+                "awaits_person": false,
+            },
         }),
         "{payload}"
     );
