@@ -948,13 +948,6 @@ pub(crate) async fn runtime_custody_download_owned_copy_via_gateway(
         .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
         .map(Digest32::new)
         .ok_or_else(download_denied_missing!())?;
-    // One driver per mint: concurrent presses resume the recorded attempt,
-    // including when an expired attempt is retired and a fresh one starts.
-    let attempt_lock = crate::protected_content_runtime::runtime_custody_creator_attempt_lock(
-        &state.data_dir,
-        mint_id,
-    );
-    let _attempt = attempt_lock.lock().await;
     let listing_record =
         crate::protected_content_runtime::load_runtime_custody_listing(&state.data_dir, mint_id)?
             .ok_or_else(download_denied_missing!())?;
@@ -1239,6 +1232,13 @@ pub(crate) async fn runtime_custody_buy_via_gateway(
         .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
         .map(Digest32::new)
         .ok_or_else(purchase_denied_missing!())?;
+    // One driver per mint: concurrent presses resume the recorded attempt,
+    // including when an expired attempt is retired and a fresh one starts.
+    let attempt_lock = crate::protected_content_runtime::runtime_custody_creator_attempt_lock(
+        &state.data_dir,
+        mint_id,
+    );
+    let _attempt = attempt_lock.lock().await;
     let listing_record =
         crate::protected_content_runtime::load_runtime_custody_listing(&state.data_dir, mint_id)?
             .ok_or_else(purchase_denied_missing!())?;
