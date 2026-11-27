@@ -48,6 +48,7 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 - Browser displays Chinese, Japanese and Korean text, and opens on the first try after its engine finishes downloading.
 - Copy works in Wallet, its connection windows and Assistant.
 - Updating works for a Home installed through a linked folder.
+- A newly connected wallet appears right away and the Wallet window scrolls without clicking elsewhere.
 
 ### Security
 
@@ -91,6 +92,7 @@ release's Added, Changed, Fixed, Removed and Security bullets before you update;
 - Browser displays Chinese, Japanese and Korean text, and opens on the first try after its engine finishes downloading.
 - Copy works in Wallet, its connection windows and Assistant.
 - Updating works for a Home installed through a linked folder.
+- A newly connected wallet appears right away and the Wallet window scrolls without clicking elsewhere.
 
 ### Security
 
